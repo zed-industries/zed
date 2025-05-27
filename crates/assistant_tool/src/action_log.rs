@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
-use collections::BTreeMap;
+use collections::{BTreeMap, HashSet};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
@@ -110,6 +110,8 @@ impl ActionLog {
                     snapshot: text_snapshot.clone(),
                     status,
                     version: buffer.read(cx).version(),
+                    formatting_only_changes: false,
+                    last_editor: ChangeAuthor::Agent,
                     diff,
                     diff_update: diff_update_tx,
                     _open_lsp_handle: open_lsp_handle,
@@ -147,6 +149,8 @@ impl ActionLog {
         let Some(tracked_buffer) = self.tracked_buffers.get_mut(&buffer) else {
             return;
         };
+        tracked_buffer.formatting_only_changes = false;
+        tracked_buffer.last_editor = ChangeAuthor::User;
         tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
     }
 
@@ -309,6 +313,9 @@ impl ActionLog {
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;
         }
+        tracked_buffer.last_editor = ChangeAuthor::Agent;
+        // When agent edits, assume subsequent changes are formatting-only until user edits
+        tracked_buffer.formatting_only_changes = true;
         tracked_buffer.schedule_diff_update(ChangeAuthor::Agent, cx);
     }
 
@@ -524,7 +531,10 @@ impl ActionLog {
     }
 
     /// Iterate over buffers changed since last read or edited by the model
-    pub fn stale_buffers<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a Entity<Buffer>> {
+    pub fn stale_buffers<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl Iterator<Item = (&'a Entity<Buffer>, bool)> {
         self.tracked_buffers
             .iter()
             .filter(|(buffer, tracked)| {
@@ -535,7 +545,20 @@ impl ActionLog {
                         .file()
                         .map_or(false, |file| file.disk_state() != DiskState::Deleted)
             })
-            .map(|(buffer, _)| buffer)
+            .map(|(buffer, tracked)| (buffer, tracked.formatting_only_changes))
+    }
+
+    pub fn mark_buffers_as_formatting_only(&mut self, buffers: &HashSet<Entity<Buffer>>) {
+        for buffer in buffers {
+            if let Some(tracked) = self.tracked_buffers.get_mut(buffer) {
+                // Only mark as formatting-only if the last editor was the agent
+                // If a user has edited the buffer since the agent last saw it,
+                // we should not mark it as formatting-only
+                if tracked.last_editor == ChangeAuthor::Agent {
+                    tracked.formatting_only_changes = true;
+                }
+            }
+        }
     }
 }
 
@@ -655,7 +678,7 @@ fn point_to_row_edit(edit: Edit<Point>, old_text: &Rope, new_text: &Rope) -> Edi
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum ChangeAuthor {
     User,
     Agent,
@@ -673,6 +696,8 @@ struct TrackedBuffer {
     unreviewed_changes: Patch<u32>,
     status: TrackedBufferStatus,
     version: clock::Global,
+    formatting_only_changes: bool,
+    last_editor: ChangeAuthor,
     diff: Entity<BufferDiff>,
     snapshot: text::BufferSnapshot,
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,

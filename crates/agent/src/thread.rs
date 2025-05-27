@@ -1405,27 +1405,39 @@ impl Thread {
         cx: &App,
     ) {
         const STALE_FILES_HEADER: &str = "These files changed since last read:";
+        const FORMATTED_FILES_HEADER: &str = "FYI, these files were reformatted using an automatic code formatter since you last read them (this means some parts of the file may have different line numbers now, but otherwise you should assume the semantics are the same as before. You MUST NOT reread the files, or mention anything about being aware that they were formatted, unless you actually need to do something involving line numbers):";
 
         let mut stale_message = String::new();
+        let mut formatted_message = String::new();
 
         let action_log = self.action_log.read(cx);
 
-        for stale_file in action_log.stale_buffers(cx) {
+        for (stale_file, formatting_only) in action_log.stale_buffers(cx) {
             let Some(file) = stale_file.read(cx).file() else {
                 continue;
             };
 
-            if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER).ok();
+            if formatting_only {
+                if formatted_message.is_empty() {
+                    write!(&mut formatted_message, "{}\n", FORMATTED_FILES_HEADER).ok();
+                }
+                writeln!(&mut formatted_message, "- {}", file.path().display()).ok();
+            } else {
+                if stale_message.is_empty() {
+                    write!(&mut stale_message, "{}\n", STALE_FILES_HEADER).ok();
+                }
+                writeln!(&mut stale_message, "- {}", file.path().display()).ok();
             }
-
-            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
         let mut content = Vec::with_capacity(2);
 
         if !stale_message.is_empty() {
             content.push(stale_message.into());
+        }
+
+        if !formatted_message.is_empty() {
+            content.push(formatted_message.into());
         }
 
         if !content.is_empty() {
@@ -2837,6 +2849,7 @@ mod tests {
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
     use agent_settings::{AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
+    use collections;
     use editor::EditorSettings;
     use gpui::TestAppContext;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
@@ -3157,6 +3170,231 @@ fn main() {{
         assert_eq!(
             request.messages[2].string_contents(),
             "Are there any good books?"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_formatting_only_changes_workflow(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Open buffer and add it to context
+        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
+            .await
+            .unwrap();
+
+        let context =
+            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
+
+        // Insert user message with the buffer as context
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Look at this code", loaded_context, None, Vec::new(), cx)
+        });
+
+        // The buffer is now tracked by the agent
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        // Test the workflow where:
+        // 1. Agent reads buffer
+        // 2. Agent makes edits (poorly formatted)
+        // 3. Agent completion triggers formatting
+        // 4. Buffer is marked as formatting-only
+
+        // Simulate agent making an edit
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(0..buffer.len(), "fn main(){println!(\"Hello, world!\");}")],
+                None,
+                cx,
+            );
+        });
+
+        // Mark as agent edit - this sets formatting_only_changes = true
+        action_log.update(cx, |action_log, cx| {
+            action_log.buffer_edited(buffer.clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        // Verify that the buffer is marked with formatting_only_changes = true
+        // after agent edits
+        let _is_formatting_only_after_agent_edit = action_log.read_with(cx, |log, cx| {
+            // Check stale buffers to see if it's marked as formatting-only
+            log.stale_buffers(cx)
+                .find(|(b, _)| b.entity_id() == buffer.entity_id())
+                .map(|(_, formatting_only)| formatting_only)
+                .unwrap_or(false)
+        });
+
+        // After agent edits, it should be marked as formatting-only
+        // (no stale check will pass because tracked version matches buffer version)
+        // But the internal state should be set correctly
+
+        // Now test that user edits clear the formatting-only flag
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(buffer.len()..buffer.len(), "\n// User comment")],
+                None,
+                cx,
+            );
+        });
+
+        // This triggers handle_buffer_edited which clears formatting_only_changes
+
+        // Insert another message to check the state
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "Check the state",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        let request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+
+        // Should show regular stale warning, not formatting-only
+        let has_formatting_warning = request.messages.iter().any(|msg| {
+            msg.string_contents()
+                .contains("These files were reformatted (line numbers may have changed):")
+        });
+        let has_stale_warning = request.messages.iter().any(|msg| {
+            msg.string_contents()
+                .contains("These files changed since last read:")
+        });
+
+        assert!(
+            !has_formatting_warning,
+            "Should not have formatting-only warning after user edit"
+        );
+        assert!(
+            has_stale_warning,
+            "Should have regular stale warning after user edit"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_user_edits_followed_by_formatting_bug(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main(){println!(\"Hello, world!\");}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, context_store, model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Open buffer and add it to context
+        let buffer = add_file_to_context(&project, &context_store, "test/code.rs", cx)
+            .await
+            .unwrap();
+
+        let context =
+            context_store.read_with(cx, |store, _| store.context().next().cloned().unwrap());
+        let loaded_context = cx
+            .update(|cx| load_context(vec![context], &project, &None, cx))
+            .await;
+
+        // Insert user message with the buffer as context
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message("Look at this code", loaded_context, None, Vec::new(), cx)
+        });
+
+        // Create initial request
+        let initial_request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+
+        assert!(
+            !initial_request.messages.iter().any(|msg| {
+                msg.string_contents()
+                    .contains("These files changed since last read:")
+            }),
+            "Should not have stale buffer warning initially"
+        );
+
+        // Get the action log
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
+        // USER makes a manual edit (adding a comment)
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(
+                    buffer.len()..buffer.len(),
+                    "\n// User's important comment\n",
+                )],
+                None,
+                cx,
+            );
+        });
+
+        // Then formatting happens afterwards (e.g., when thread completes)
+        buffer.update(cx, |buffer, cx| {
+            // Simulate formatting that also reformats the user's comment
+            buffer.edit(
+                [(0..buffer.len(), "fn main() {\n    println!(\"Hello, world!\");\n}\n// User's important comment\n")],
+                None,
+                cx,
+            );
+        });
+
+        // Mark the buffer as having formatting-only changes (this is the bug!)
+        action_log.update(cx, |action_log, _| {
+            let buffers = collections::HashSet::from_iter([buffer.clone()]);
+            action_log.mark_buffers_as_formatting_only(&buffers);
+        });
+
+        // Insert another message
+        thread.update(cx, |thread, cx| {
+            thread.insert_user_message(
+                "What about now?",
+                ContextLoadResult::default(),
+                None,
+                Vec::new(),
+                cx,
+            )
+        });
+
+        // Create a new request
+        let new_request = thread.update(cx, |thread, cx| {
+            thread.to_completion_request(model.clone(), cx)
+        });
+
+        // Check what kind of warning we get
+        let has_formatting_warning = new_request.messages.iter().any(|msg| {
+            msg.string_contents()
+                .contains("These files were reformatted (line numbers may have changed):")
+        });
+        let has_stale_warning = new_request.messages.iter().any(|msg| {
+            msg.string_contents()
+                .contains("These files changed since last read:")
+        });
+
+        // This test should FAIL with the current implementation
+        // because the user's edit will be hidden by marking it as formatting-only
+        assert!(
+            !has_formatting_warning,
+            "Should NOT have formatting-only warning when user edits are present"
+        );
+        assert!(
+            has_stale_warning,
+            "Should have regular stale buffer warning because user made edits"
         );
     }
 

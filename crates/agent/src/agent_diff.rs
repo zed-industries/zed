@@ -1480,7 +1480,7 @@ impl AgentDiff {
             return;
         };
 
-        let action_log = thread.read(cx).action_log();
+        let action_log = thread.read(cx).action_log().clone();
         let all_changed_buffers = action_log.read(cx).changed_buffers(cx);
 
         // Filter buffers that should be formatted based on format_on_save settings
@@ -1505,6 +1505,9 @@ impl AgentDiff {
         }
         let project = workspace.read(cx).project().clone();
 
+        let action_log_for_task = action_log.clone();
+        let buffers_to_mark = buffers_to_format.clone();
+
         let format_task = project.update(cx, |project, cx| {
             project.format(
                 buffers_to_format,
@@ -1514,7 +1517,18 @@ impl AgentDiff {
                 cx,
             )
         });
-        format_task.detach_and_log_err(cx);
+
+        cx.spawn(async move |_, cx| {
+            format_task.await.ok();
+
+            // Mark these buffers as having formatting-only changes after formatting completes
+            action_log_for_task
+                .update(cx, |action_log, _| {
+                    action_log.mark_buffers_as_formatting_only(&buffers_to_mark);
+                })
+                .ok();
+        })
+        .detach();
     }
 
     fn update_reviewing_editors(
@@ -1804,16 +1818,18 @@ mod tests {
     use fs::Fs;
     use futures::StreamExt;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
-    use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher};
+    use language::{FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, Point};
+
     use language_settings::{AllLanguageSettings, FormatOnSave};
     use lsp;
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::sync::Arc;
+    use std::{collections::HashSet, sync::Arc};
     use theme::ThemeSettings;
     use util::path;
+    use workspace::Workspace;
 
     #[gpui::test]
     async fn test_multibuffer_agent_diff(cx: &mut TestAppContext) {
@@ -1862,10 +1878,16 @@ mod tests {
 
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let agent_diff = cx.new_window_entity(|window, cx| {
+
+        // Set up AgentDiff using set_active_thread
+        cx.update(|window, cx| {
+            AgentDiff::set_active_thread(&workspace.downgrade(), &thread, window, cx);
+        });
+
+        let agent_diff_pane = cx.new_window_entity(|window, cx| {
             AgentDiffPane::new(thread.clone(), workspace.downgrade(), window, cx)
         });
-        let editor = agent_diff.read_with(cx, |diff, _cx| diff.editor.clone());
+        let editor = agent_diff_pane.read_with(cx, |diff, _cx| diff.editor.clone());
 
         let buffer = project
             .update(cx, |project, cx| project.open_buffer(buffer_path, cx))
@@ -1904,7 +1926,7 @@ mod tests {
         );
 
         // After keeping a hunk, the cursor should be positioned on the second hunk.
-        agent_diff.update_in(cx, |diff, window, cx| diff.keep(&Keep, window, cx));
+        agent_diff_pane.update_in(cx, |diff, window, cx| diff.keep(&Keep, window, cx));
         cx.run_until_parked();
         assert_eq!(
             editor.read_with(cx, |editor, cx| editor.text(cx)),
@@ -1923,7 +1945,7 @@ mod tests {
                 selections.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
             });
         });
-        agent_diff.update_in(cx, |diff, window, cx| {
+        agent_diff_pane.update_in(cx, |diff, window, cx| {
             diff.reject(&crate::Reject, window, cx)
         });
         cx.run_until_parked();
@@ -1939,7 +1961,7 @@ mod tests {
         );
 
         // Keeping a range that doesn't intersect the current selection doesn't move it.
-        agent_diff.update_in(cx, |_diff, window, cx| {
+        agent_diff_pane.update_in(cx, |_diff, window, cx| {
             let position = editor
                 .read(cx)
                 .buffer()
@@ -1973,14 +1995,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_format_with_list_setting(cx: &mut TestAppContext) {
-        // Test that FormatOnSave::List works correctly
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
 
-            // Enable format_on_save with a specific formatter list
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                     use language_settings::{Formatter, FormatterList};
@@ -2000,7 +2020,6 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
-        // Set up a Rust language with LSP formatting support
         let rust_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -2013,7 +2032,6 @@ mod tests {
             None,
         ));
 
-        // Register the language and fake LSP
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_language);
 
@@ -2028,7 +2046,6 @@ mod tests {
             },
         );
 
-        // Open the buffer
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/test/src/main.rs"), cx)
@@ -2036,14 +2053,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Register the buffer with language servers
         let _handle = project.update(cx, |project, cx| {
             project.register_buffer_with_language_servers(&buffer, cx)
         });
 
         const FORMATTED_CONTENT: &str = "fn main() {\n    println!(\"Hello!\");\n}\n";
 
-        // Get the fake language server and set up formatting handler
         let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>({
             |_, _| async move {
@@ -2054,7 +2069,6 @@ mod tests {
             }
         });
 
-        // Simulate agent editing the buffer
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 [(0..buffer.len(), "fn main() {println!(\"Hello!\");}\n")],
@@ -2063,7 +2077,6 @@ mod tests {
             );
         });
 
-        // Format the buffer directly (simulating what would happen when agent finishes)
         let format_task = project.update(cx, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer.clone()]),
@@ -2076,13 +2089,11 @@ mod tests {
 
         format_task.await.unwrap();
 
-        // Save the buffer
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
             .await
             .unwrap();
 
-        // Verify the file was formatted with FormatOnSave::List
         let content = fs.load(path!("/test/src/main.rs").as_ref()).await.unwrap();
         assert_eq!(
             content.replace("\r\n", "\n"),
@@ -2410,7 +2421,6 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
 
-            // Enable format_on_save
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                     settings.defaults.format_on_save = Some(FormatOnSave::On);
@@ -2427,7 +2437,6 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
-        // Set up a Rust language with LSP formatting support
         let rust_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -2440,7 +2449,6 @@ mod tests {
             None,
         ));
 
-        // Register the language and fake LSP
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_language);
 
@@ -2455,7 +2463,6 @@ mod tests {
             },
         );
 
-        // Open the buffer
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/test/src/main.rs"), cx)
@@ -2463,14 +2470,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Register the buffer with language servers
         let _handle = project.update(cx, |project, cx| {
             project.register_buffer_with_language_servers(&buffer, cx)
         });
 
         const FORMATTED_CONTENT: &str = "fn main() {\n    println!(\"Hello!\");\n}\n";
 
-        // Get the fake language server and set up formatting handler
         let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>({
             |_, _| async move {
@@ -2481,7 +2486,6 @@ mod tests {
             }
         });
 
-        // Format the buffer directly
         let format_task = project.update(cx, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer.clone()]),
@@ -2494,13 +2498,11 @@ mod tests {
 
         format_task.await.unwrap();
 
-        // Save the buffer
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
             .await
             .unwrap();
 
-        // Verify the file was formatted
         let content = fs.load(path!("/test/src/main.rs").as_ref()).await.unwrap();
         assert_eq!(
             content.replace("\r\n", "\n"),
@@ -2521,7 +2523,6 @@ mod tests {
             language::init(cx);
             Project::init_settings(cx);
 
-            // Enable format_on_save
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                     settings.defaults.format_on_save = Some(FormatOnSave::On);
@@ -2538,7 +2539,6 @@ mod tests {
 
         let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
-        // Set up a Rust language with LSP formatting support
         let rust_language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".into(),
@@ -2551,7 +2551,6 @@ mod tests {
             None,
         ));
 
-        // Register the language and fake LSP
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_language);
 
@@ -2566,7 +2565,6 @@ mod tests {
             },
         );
 
-        // Open the buffer
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(path!("/test/src/main.rs"), cx)
@@ -2574,14 +2572,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Register the buffer with language servers
         let _handle = project.update(cx, |project, cx| {
             project.register_buffer_with_language_servers(&buffer, cx)
         });
 
         const FORMATTED_CONTENT: &str = "fn main() {\n    println!(\"Hello!\");\n}\n";
 
-        // Get the fake language server and set up formatting handler
         let fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>({
             |_, _| async move {
@@ -2592,7 +2588,6 @@ mod tests {
             }
         });
 
-        // Simulate agent editing the buffer
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 [(0..buffer.len(), "fn main() {println!(\"Hello!\");}\n")],
@@ -2601,7 +2596,6 @@ mod tests {
             );
         });
 
-        // Format the buffer directly (simulating what would happen when agent finishes)
         let format_task = project.update(cx, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer.clone()]),
@@ -2614,13 +2608,11 @@ mod tests {
 
         format_task.await.unwrap();
 
-        // Save the buffer
         project
             .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
             .await
             .unwrap();
 
-        // Verify the file was formatted
         let content = fs.load(path!("/test/src/main.rs").as_ref()).await.unwrap();
         assert_eq!(
             content.replace("\r\n", "\n"),
