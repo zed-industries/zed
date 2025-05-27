@@ -23,7 +23,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
-use paths::{self, remote_server_dir_relative};
+
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
@@ -1722,7 +1722,7 @@ impl SshRemoteConnection {
             let src_path = self
                 .build_local(build_remote_server, self.platform().await?, delegate, cx)
                 .await?;
-            let tmp_path = remote_server_dir_relative().join(format!(
+            let tmp_path = paths::remote_server_dir_relative().join(format!(
                 "download-{}",
                 src_path.file_name().unwrap().to_string_lossy()
             ));
