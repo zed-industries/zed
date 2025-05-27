@@ -18,6 +18,7 @@ use settings::watch_config_dir;
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 pub const COPILOT_CHAT_MODELS_URL: &str = "https://api.githubcopilot.com/models";
+pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
 
 // Copilot's base model; defined by Microsoft in premium requests table
 // This will be moved to the front of the Copilot model list, and will be used for
@@ -373,13 +374,46 @@ impl CopilotChat {
             .map(|model| model.0.clone())
     }
 
+    pub fn get_oauth_token() -> Option<String> {
+        let (oauth_token, _from_env) = std::env::var(COPILOT_OAUTH_ENV_VAR)
+            .map(|key| (Some(key), true))
+            .unwrap_or((None, false));
+        oauth_token
+    }
+
+    async fn load_models_for_token(
+        oauth_token: &str,
+        client: Arc<dyn HttpClient>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<()> {
+        let api_token = request_api_token(oauth_token, client.clone()).await?;
+        cx.update(|cx| {
+            if let Some(this) = Self::global(cx).as_ref() {
+                this.update(cx, |this, cx| {
+                    this.api_token = Some(api_token.clone());
+                    cx.notify();
+                });
+            }
+        })?;
+        let models = get_models(api_token.api_key, client.clone()).await?;
+        cx.update(|cx| {
+            if let Some(this) = Self::global(cx).as_ref() {
+                this.update(cx, |this, cx| {
+                    this.models = Some(models);
+                    cx.notify();
+                });
+            }
+        })?;
+        Ok(())
+    }
+
     pub fn new(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &App) -> Self {
         let config_paths: HashSet<PathBuf> = copilot_chat_config_paths().into_iter().collect();
         let dir_path = copilot_chat_config_dir();
 
         cx.spawn({
             let client = client.clone();
-            async move |cx| {
+            async move |mut cx| {
                 let mut parent_watch_rx = watch_config_dir(
                     cx.background_executor(),
                     fs.clone(),
@@ -398,24 +432,7 @@ impl CopilotChat {
                     })?;
 
                     if let Some(ref oauth_token) = oauth_token {
-                        let api_token = request_api_token(oauth_token, client.clone()).await?;
-                        cx.update(|cx| {
-                            if let Some(this) = Self::global(cx).as_ref() {
-                                this.update(cx, |this, cx| {
-                                    this.api_token = Some(api_token.clone());
-                                    cx.notify();
-                                });
-                            }
-                        })?;
-                        let models = get_models(api_token.api_key, client.clone()).await?;
-                        cx.update(|cx| {
-                            if let Some(this) = Self::global(cx).as_ref() {
-                                this.update(cx, |this, cx| {
-                                    this.models = Some(models);
-                                    cx.notify();
-                                });
-                            }
-                        })?;
+                        Self::load_models_for_token(oauth_token, client.clone(), &mut cx).await?;
                     }
                 }
                 anyhow::Ok(())
@@ -423,8 +440,20 @@ impl CopilotChat {
         })
         .detach_and_log_err(cx);
 
+        let client_clone = client.clone();
+        cx.spawn({
+            async move |mut cx| {
+                if let Some(ref oauth_token) = CopilotChat::get_oauth_token() {
+                    Self::load_models_for_token(oauth_token, client_clone, &mut cx).await?;
+                }
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
+
+        let oauth_token = CopilotChat::get_oauth_token();
         Self {
-            oauth_token: None,
+            oauth_token,
             api_token: None,
             models: None,
             client,
