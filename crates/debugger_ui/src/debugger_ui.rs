@@ -47,6 +47,7 @@ actions!(
         ShowStackTrace,
         ToggleThreadPicker,
         ToggleSessionPicker,
+        RerunLastSession,
     ]
 );
 
@@ -208,7 +209,18 @@ pub fn init(cx: &mut App) {
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                     NewSessionModal::show(workspace, window, cx);
-                });
+                })
+                .register_action(
+                    |workspace: &mut Workspace, _: &RerunLastSession, window, cx| {
+                        let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                            return;
+                        };
+
+                        debug_panel.update(cx, |debug_panel, cx| {
+                            debug_panel.rerun_last_session(workspace, window, cx);
+                        })
+                    },
+                );
         })
     })
     .detach();
