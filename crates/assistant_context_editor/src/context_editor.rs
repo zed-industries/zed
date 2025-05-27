@@ -2072,16 +2072,18 @@ impl ContextEditor {
 
         let active_completion_mode = context.completion_mode();
         let max_mode_enabled = active_completion_mode == CompletionMode::Max;
+        let icon = if max_mode_enabled {
+            IconName::ZedBurnModeOn
+        } else {
+            IconName::ZedBurnMode
+        };
 
         Some(
-            Button::new("max-mode", "Max Mode")
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .icon(IconName::ZedMaxMode)
+            IconButton::new("burn-mode", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
                 .toggle_state(max_mode_enabled)
+                .selected_icon_color(Color::Error)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.context().update(cx, |context, _cx| {
                         context.set_completion_mode(match active_completion_mode {
@@ -2552,6 +2554,7 @@ impl Render for ContextEditor {
         };
 
         let language_model_selector = self.language_model_selector_menu_handle.clone();
+        let max_mode_toggle = self.render_max_mode_toggle(cx);
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -2608,8 +2611,9 @@ impl Render for ContextEditor {
                                         .pl_0p5()
                                         .child(self.render_language_model_selector(cx)),
                                 )
-                                .child(ui::Divider::vertical())
-                                .children(self.render_max_mode_toggle(cx)),
+                                .when_some(max_mode_toggle, |this, element| {
+                                    this.child(ui::Divider::vertical()).child(element)
+                                }),
                         )
                         .child(
                             h_flex()
