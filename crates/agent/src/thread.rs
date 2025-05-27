@@ -966,7 +966,7 @@ impl Thread {
         self.messages.push(Message {
             id,
             role: Role::User,
-            segments: vec![MessageSegment::Text("continue".into())],
+            segments: vec![MessageSegment::Text("Continue where you left off.".into())],
             loaded_context: LoadedContext::default(),
             creases: vec![],
             is_hidden: true,
@@ -1670,6 +1670,8 @@ impl Thread {
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
+
+                                            // Clean up empty assistant message if one was created
                                         }
                                     }
                                 }
