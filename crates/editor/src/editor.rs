@@ -1921,6 +1921,9 @@ impl Editor {
                             blink_manager.disable(cx);
                         }
                     });
+                    if active {
+                        editor.show_mouse_cursor();
+                    }
                 }),
             ],
             tasks_update_task: None,
@@ -2157,6 +2160,10 @@ impl Editor {
         }
 
         key_context
+    }
+
+    fn show_mouse_cursor(&mut self) {
+        self.mouse_cursor_hidden = false;
     }
 
     pub fn hide_mouse_cursor(&mut self, origin: &HideMouseCursorOrigin) {
