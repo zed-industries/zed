@@ -1,13 +1,9 @@
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
-use serde_json::Value;
-use smol::{
-    io::AsyncReadExt,
-    process::{Command, Stdio},
-};
-use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
+
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
 
 pub(crate) struct PythonLocator;
 
@@ -51,7 +47,7 @@ impl DapLocator for PythonLocator {
         })
     }
 
-    async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {
-        bail!("nope");
+    async fn run(&self, _: SpawnInTerminal) -> Result<DebugRequest> {
+        bail!("Python locator should not require DapLocator::run to be ran");
     }
 }
