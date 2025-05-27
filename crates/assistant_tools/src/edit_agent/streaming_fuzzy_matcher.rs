@@ -27,6 +27,11 @@ impl StreamingFuzzyMatcher {
         }
     }
 
+    /// Returns the query lines.
+    pub fn query_lines(&self) -> &[String] {
+        &self.query_lines
+    }
+
     /// Push a new chunk of text and get the best match found so far.
     ///
     /// This method accumulates text chunks and processes complete lines.
@@ -58,16 +63,16 @@ impl StreamingFuzzyMatcher {
 
     /// Finish processing and return the final best match.
     ///
-    /// This consumes the finder and processes any remaining incomplete line
-    /// before returning the final match result.
-    pub fn finish(mut self) -> Option<Range<usize>> {
+    /// This processes any remaining incomplete line before returning the final
+    /// match result.
+    pub fn finish(&mut self) -> Option<Range<usize>> {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {
             self.query_lines.push(self.incomplete_line.clone());
             self.best_match = self.resolve_location_fuzzy();
         }
 
-        self.best_match
+        self.best_match.clone()
     }
 
     fn resolve_location_fuzzy(&mut self) -> Option<Range<usize>> {
@@ -251,6 +256,20 @@ mod tests {
     use language::{BufferId, TextBuffer};
     use rand::prelude::*;
     use util::test::{generate_marked_text, marked_text_ranges};
+
+    #[test]
+    fn test_empty_query() {
+        let buffer = TextBuffer::new(
+            0,
+            BufferId::new(1).unwrap(),
+            "Hello world\nThis is a test\nFoo bar baz",
+        );
+        let snapshot = buffer.snapshot();
+
+        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
+        assert_eq!(push(&mut finder, ""), None);
+        assert_eq!(finish(finder), None);
+    }
 
     #[test]
     fn test_streaming_exact_match() {
@@ -710,7 +729,7 @@ mod tests {
             .map(|range| finder.snapshot.text_for_range(range).collect::<String>())
     }
 
-    fn finish(finder: StreamingFuzzyMatcher) -> Option<String> {
+    fn finish(mut finder: StreamingFuzzyMatcher) -> Option<String> {
         let snapshot = finder.snapshot.clone();
         finder
             .finish()

@@ -244,7 +244,10 @@ impl Tool for EditFileTool {
                             .log_err();
                         }
                     }
-                    EditAgentOutputEvent::OldTextNotFound(_) => hallucinated_old_text = true,
+                    EditAgentOutputEvent::UnresolvedEditRange => hallucinated_old_text = true,
+                    EditAgentOutputEvent::ResolvingEditRange(range) => {
+                        // todo!("if card doesn't have a diff show the old text getting resolved")
+                    }
                 }
             }
             let agent_output = output.await?;
