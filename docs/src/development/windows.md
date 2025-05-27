@@ -284,7 +284,7 @@ Then you should try to update your driver.
 
 Then you are in bad luck, check `4.`
 
-4. One of the possible issue&solution we find untill NOW(2025/05/27)
+4. One of the possible issue&solution we find until NOW(2025/05/27)
 
 Check if you have installed `bandicam`. If you do, try to uninstall it / remove the `bdcamvk64.dll`.
 
