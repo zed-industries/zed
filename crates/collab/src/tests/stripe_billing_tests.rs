@@ -20,11 +20,11 @@ async fn test_initialize() {
 
     // Add test meters
     let meter1 = StripeMeter {
-        id: StripeMeterId(Arc::from("meter_1")),
+        id: StripeMeterId("meter_1".into()),
         event_name: "event_1".to_string(),
     };
     let meter2 = StripeMeter {
-        id: StripeMeterId(Arc::from("meter_2")),
+        id: StripeMeterId("meter_2".into()),
         event_name: "event_2".to_string(),
     };
     stripe_client
@@ -38,19 +38,19 @@ async fn test_initialize() {
 
     // Add test prices
     let price1 = StripePrice {
-        id: StripePriceId(Arc::from("price_1")),
+        id: StripePriceId("price_1".into()),
         unit_amount: Some(1_000),
         lookup_key: Some("zed-pro".to_string()),
         recurring: None,
     };
     let price2 = StripePrice {
-        id: StripePriceId(Arc::from("price_2")),
+        id: StripePriceId("price_2".into()),
         unit_amount: Some(0),
         lookup_key: Some("zed-free".to_string()),
         recurring: None,
     };
     let price3 = StripePrice {
-        id: StripePriceId(Arc::from("price_3")),
+        id: StripePriceId("price_3".into()),
         unit_amount: Some(500),
         lookup_key: None,
         recurring: Some(StripePriceRecurring {

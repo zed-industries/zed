@@ -81,7 +81,7 @@ impl StripeClient for RealStripeClient {
             )
             .await?;
 
-        Ok(response.data.into_iter().map(StripeMeter::from).collect())
+        Ok(response.data)
     }
 }
 
