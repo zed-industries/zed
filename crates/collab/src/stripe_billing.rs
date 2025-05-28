@@ -53,7 +53,7 @@ impl StripeBilling {
         let mut state = self.state.write().await;
 
         let (meters, prices) =
-            futures::try_join!(self.client.list_meters(), self.client.list_prices(),)?;
+            futures::try_join!(self.client.list_meters(), self.client.list_prices())?;
 
         for meter in meters {
             state
