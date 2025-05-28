@@ -25,13 +25,18 @@ impl DapLocator for PythonLocator {
         }
         let module_specifier_position = build_config
             .args
-            .windows(2)
-            .position(|tuple| tuple[0] == "-m");
-        let mod_name = module_specifier_position.and_then(|pos| build_config.args.get(pos + 1));
-        let args_start = module_specifier_position
-            .map(|pos| pos + 1)
-            .unwrap_or_default();
-        let args = build_config.args[args_start..].to_owned();
+            .iter()
+            .position(|arg| arg == "-m")
+            .map(|position| position + 1);
+        // Skip the -m and module name, get all that's after.
+        let mut rest_of_the_args = module_specifier_position
+            .and_then(|position| build_config.args.get(position..))
+            .into_iter()
+            .flatten()
+            .fuse();
+        let mod_name = rest_of_the_args.next();
+        let args = rest_of_the_args.collect::<Vec<_>>();
+
         Some(DebugScenario {
             adapter: adapter.0,
             label: resolved_label.to_string().into(),

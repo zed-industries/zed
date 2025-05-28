@@ -547,6 +547,10 @@ impl RunningState {
                     .for_each(|value| Self::substitute_variables_in_config(value, context));
             }
             serde_json::Value::String(s) => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
                     *s = substituted;
                 }
