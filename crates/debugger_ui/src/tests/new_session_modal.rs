@@ -184,7 +184,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
         .expect("Modal should be active");
 
     modal.update_in(cx, |modal, window, cx| {
-        modal.set_custom("/project/main", "/project", false, window, cx);
+        modal.set_configure("/project/main", "/project", false, window, cx);
         modal.save_scenario(window, cx);
     });
 
@@ -213,7 +213,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
     pretty_assertions::assert_eq!(expected_content, actual_lines);
 
     modal.update_in(cx, |modal, window, cx| {
-        modal.set_custom("/project/other", "/project", true, window, cx);
+        modal.set_configure("/project/other", "/project", true, window, cx);
         modal.save_scenario(window, cx);
     });
 

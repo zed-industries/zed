@@ -47,7 +47,7 @@ pub(super) struct NewSessionModal {
     mode: NewSessionMode,
     launch_picker: Entity<Picker<DebugScenarioDelegate>>,
     attach_mode: Entity<AttachMode>,
-    custom_mode: Entity<CustomMode>,
+    configure_mode: Entity<ConfigureMode>,
     debugger: Option<DebugAdapterName>,
     save_scenario_state: Option<SaveScenarioState>,
     _subscriptions: [Subscription; 2],
@@ -110,7 +110,7 @@ impl NewSessionModal {
                         ),
                     ];
 
-                    let custom_mode = CustomMode::new(None, window, cx);
+                    let configure_mode = ConfigureMode::new(None, window, cx);
 
                     cx.spawn_in(window, {
                         let workspace_handle = workspace_handle.clone();
@@ -126,8 +126,8 @@ impl NewSessionModal {
                                     .active_context()
                                     .and_then(|context| context.cwd.clone())
                                 {
-                                    this.custom_mode.update(cx, |custom, cx| {
-                                        custom.load(active_cwd, window, cx);
+                                    this.configure_mode.update(cx, |configure, cx| {
+                                        configure.load(active_cwd, window, cx);
                                     });
 
                                     this.debugger = None;
@@ -151,7 +151,7 @@ impl NewSessionModal {
                     Self {
                         launch_picker,
                         attach_mode,
-                        custom_mode,
+                        configure_mode,
                         debugger: None,
                         mode: NewSessionMode::Launch,
                         debug_panel: debug_panel.downgrade(),
@@ -173,7 +173,7 @@ impl NewSessionModal {
             NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
                 this.clone().render(window, cx).into_any_element()
             }),
-            NewSessionMode::Custom => self.custom_mode.update(cx, |this, cx| {
+            NewSessionMode::Configure => self.configure_mode.update(cx, |this, cx| {
                 this.clone().render(dap_menu, window, cx).into_any_element()
             }),
             NewSessionMode::Launch => v_flex()
@@ -186,15 +186,15 @@ impl NewSessionModal {
     fn mode_focus_handle(&self, cx: &App) -> FocusHandle {
         match self.mode {
             NewSessionMode::Attach => self.attach_mode.read(cx).attach_picker.focus_handle(cx),
-            NewSessionMode::Custom => self.custom_mode.read(cx).program.focus_handle(cx),
+            NewSessionMode::Configure => self.configure_mode.read(cx).program.focus_handle(cx),
             NewSessionMode::Launch => self.launch_picker.focus_handle(cx),
         }
     }
 
     fn debug_scenario(&self, debugger: &str, cx: &App) -> Option<DebugScenario> {
         let request = match self.mode {
-            NewSessionMode::Custom => Some(DebugRequest::Launch(
-                self.custom_mode.read(cx).debug_request(cx),
+            NewSessionMode::Configure => Some(DebugRequest::Launch(
+                self.configure_mode.read(cx).debug_request(cx),
             )),
             NewSessionMode::Attach => Some(DebugRequest::Attach(
                 self.attach_mode.read(cx).debug_request(),
@@ -203,8 +203,8 @@ impl NewSessionModal {
         }?;
         let label = suggested_label(&request, debugger);
 
-        let stop_on_entry = if let NewSessionMode::Custom = &self.mode {
-            Some(self.custom_mode.read(cx).stop_on_entry.selected())
+        let stop_on_entry = if let NewSessionMode::Configure = &self.mode {
+            Some(self.configure_mode.read(cx).stop_on_entry.selected())
         } else {
             None
         };
@@ -527,7 +527,7 @@ static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select De
 
 #[derive(Clone)]
 pub(crate) enum NewSessionMode {
-    Custom,
+    Configure,
     Attach,
     Launch,
 }
@@ -535,9 +535,9 @@ pub(crate) enum NewSessionMode {
 impl std::fmt::Display for NewSessionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mode = match self {
-            NewSessionMode::Launch => "Launch".to_owned(),
-            NewSessionMode::Attach => "Attach".to_owned(),
-            NewSessionMode::Custom => "Custom".to_owned(),
+            NewSessionMode::Launch => "Launch",
+            NewSessionMode::Attach => "Attach",
+            NewSessionMode::Configure => "Configure",
         };
 
         write!(f, "{}", mode)
@@ -637,37 +637,58 @@ impl Render for NewSessionModal {
                             .justify_start()
                             .w_full()
                             .child(
-                                ToggleButton::new("debugger-session-ui-picker-button", "Launch")
-                                    .size(ButtonSize::Default)
-                                    .style(ui::ButtonStyle::Subtle)
-                                    .toggle_state(matches!(self.mode, NewSessionMode::Launch))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.mode = NewSessionMode::Launch;
-                                        this.mode_focus_handle(cx).focus(window);
-                                        cx.notify();
-                                    }))
-                                    .first(),
+                                ToggleButton::new(
+                                    "debugger-session-ui-picker-button",
+                                    NewSessionMode::Launch.to_string(),
+                                )
+                                .size(ButtonSize::Default)
+                                .style(ui::ButtonStyle::Subtle)
+                                .toggle_state(matches!(self.mode, NewSessionMode::Launch))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.mode = NewSessionMode::Launch;
+                                    this.mode_focus_handle(cx).focus(window);
+                                    cx.notify();
+                                }))
+                                .first(),
                             )
                             .child(
-                                ToggleButton::new("debugger-session-ui-attach-button", "Attach")
-                                    .size(ButtonSize::Default)
-                                    .toggle_state(matches!(self.mode, NewSessionMode::Attach))
-                                    .style(ui::ButtonStyle::Subtle)
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.mode = NewSessionMode::Attach;
+                                ToggleButton::new(
+                                    "debugger-session-ui-attach-button",
+                                    NewSessionMode::Attach.to_string(),
+                                )
+                                .size(ButtonSize::Default)
+                                .toggle_state(matches!(self.mode, NewSessionMode::Attach))
+                                .style(ui::ButtonStyle::Subtle)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.mode = NewSessionMode::Attach;
 
-                                        if let Some(debugger) = this.debugger.as_ref() {
-                                            Self::update_attach_picker(
-                                                &this.attach_mode,
-                                                &debugger,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                        this.mode_focus_handle(cx).focus(window);
-                                        cx.notify();
-                                    }))
-                                    .last(),
+                                    if let Some(debugger) = this.debugger.as_ref() {
+                                        Self::update_attach_picker(
+                                            &this.attach_mode,
+                                            &debugger,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                    this.mode_focus_handle(cx).focus(window);
+                                    cx.notify();
+                                }))
+                                .last(),
+                            )
+                            .child(
+                                ToggleButton::new(
+                                    "debugger-session-ui-custom-button",
+                                    NewSessionMode::Configure.to_string(),
+                                )
+                                .size(ButtonSize::Default)
+                                .toggle_state(matches!(self.mode, NewSessionMode::Configure))
+                                .style(ui::ButtonStyle::Subtle)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.mode = NewSessionMode::Configure;
+                                    this.mode_focus_handle(cx).focus(window);
+                                    cx.notify();
+                                }))
+                                .last(),
                             ),
                     )
                     .justify_between()
@@ -675,83 +696,82 @@ impl Render for NewSessionModal {
                     .border_b_1(),
             )
             .child(v_flex().child(self.render_mode(window, cx)))
-            .child(
-                h_flex()
+            .map(|el| {
+                let container = h_flex()
                     .justify_between()
                     .gap_2()
                     .p_2()
                     .border_color(cx.theme().colors().border_variant)
                     .border_t_1()
-                    .w_full()
-                    .child(match self.mode {
-                        NewSessionMode::Attach => {
-                            div().child(self.adapter_drop_down_menu(window, cx))
-                        }
-                        NewSessionMode::Launch => div().child(
-                            Button::new("new-session-modal-custom", "Custom").on_click({
-                                let this = cx.weak_entity();
-                                move |_, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        this.mode = NewSessionMode::Custom;
-                                        this.mode_focus_handle(cx).focus(window);
-                                    })
-                                    .ok();
-                                }
-                            }),
-                        ),
-                        NewSessionMode::Custom => h_flex()
+                    .w_full();
+                match self.mode {
+                    NewSessionMode::Configure => el.child(
+                        container
                             .child(
-                                Button::new("new-session-modal-back", "Save to .zed/debug.json...")
+                                h_flex()
+                                    .child(
+                                        Button::new(
+                                            "new-session-modal-back",
+                                            "Save to .zed/debug.json...",
+                                        )
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.save_debug_scenario(window, cx);
+                                        }))
+                                        .disabled(
+                                            self.debugger.is_none()
+                                                || self
+                                                    .configure_mode
+                                                    .read(cx)
+                                                    .program
+                                                    .read(cx)
+                                                    .is_empty(cx)
+                                                || self.save_scenario_state.is_some(),
+                                        ),
+                                    )
+                                    .child(self.render_save_state(cx)),
+                            )
+                            .child(
+                                Button::new("debugger-spawn", "Start")
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.save_debug_scenario(window, cx);
+                                        this.start_new_session(window, cx)
                                     }))
                                     .disabled(
                                         self.debugger.is_none()
                                             || self
-                                                .custom_mode
+                                                .configure_mode
                                                 .read(cx)
                                                 .program
                                                 .read(cx)
-                                                .is_empty(cx)
-                                            || self.save_scenario_state.is_some(),
+                                                .is_empty(cx),
                                     ),
-                            )
-                            .child(self.render_save_state(cx)),
-                    })
-                    .child(
-                        Button::new("debugger-spawn", "Start")
-                            .on_click(cx.listener(|this, _, window, cx| match &this.mode {
-                                NewSessionMode::Launch => {
-                                    this.launch_picker.update(cx, |picker, cx| {
-                                        picker.delegate.confirm(true, window, cx)
-                                    })
-                                }
-                                _ => this.start_new_session(window, cx),
-                            }))
-                            .disabled(match self.mode {
-                                NewSessionMode::Launch => {
-                                    !self.launch_picker.read(cx).delegate.matches.is_empty()
-                                }
-                                NewSessionMode::Attach => {
-                                    self.debugger.is_none()
-                                        || self
-                                            .attach_mode
-                                            .read(cx)
-                                            .attach_picker
-                                            .read(cx)
-                                            .picker
-                                            .read(cx)
-                                            .delegate
-                                            .match_count()
-                                            == 0
-                                }
-                                NewSessionMode::Custom => {
-                                    self.debugger.is_none()
-                                        || self.custom_mode.read(cx).program.read(cx).is_empty(cx)
-                                }
-                            }),
+                            ),
                     ),
-            )
+                    NewSessionMode::Attach => el.child(
+                        container
+                            .child(div().child(self.adapter_drop_down_menu(window, cx)))
+                            .child(
+                                Button::new("debugger-spawn", "Start")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.start_new_session(window, cx)
+                                    }))
+                                    .disabled(
+                                        self.debugger.is_none()
+                                            || self
+                                                .attach_mode
+                                                .read(cx)
+                                                .attach_picker
+                                                .read(cx)
+                                                .picker
+                                                .read(cx)
+                                                .delegate
+                                                .match_count()
+                                                == 0,
+                                    ),
+                            ),
+                    ),
+                    NewSessionMode::Launch => el,
+                }
+            })
     }
 }
 
@@ -774,13 +794,13 @@ impl RenderOnce for AttachMode {
 }
 
 #[derive(Clone)]
-pub(super) struct CustomMode {
+pub(super) struct ConfigureMode {
     program: Entity<Editor>,
     cwd: Entity<Editor>,
     stop_on_entry: ToggleState,
 }
 
-impl CustomMode {
+impl ConfigureMode {
     pub(super) fn new(
         past_launch_config: Option<LaunchRequest>,
         window: &mut Window,
@@ -1206,7 +1226,7 @@ pub(crate) fn resolve_path(path: &mut String) {
 
 #[cfg(test)]
 impl NewSessionModal {
-    pub(crate) fn set_custom(
+    pub(crate) fn set_configure(
         &mut self,
         program: impl AsRef<str>,
         cwd: impl AsRef<str>,
@@ -1214,21 +1234,21 @@ impl NewSessionModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.mode = NewSessionMode::Custom;
+        self.mode = NewSessionMode::Configure;
         self.debugger = Some(dap::adapters::DebugAdapterName("fake-adapter".into()));
 
-        self.custom_mode.update(cx, |custom, cx| {
-            custom.program.update(cx, |editor, cx| {
+        self.configure_mode.update(cx, |configure, cx| {
+            configure.program.update(cx, |editor, cx| {
                 editor.clear(window, cx);
                 editor.set_text(program.as_ref(), window, cx);
             });
 
-            custom.cwd.update(cx, |editor, cx| {
+            configure.cwd.update(cx, |editor, cx| {
                 editor.clear(window, cx);
                 editor.set_text(cwd.as_ref(), window, cx);
             });
 
-            custom.stop_on_entry = match stop_on_entry {
+            configure.stop_on_entry = match stop_on_entry {
                 true => ToggleState::Selected,
                 _ => ToggleState::Unselected,
             }
