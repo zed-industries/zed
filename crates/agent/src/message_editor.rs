@@ -9,8 +9,8 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use agent_settings::{AgentSettings, CompletionMode};
 use assistant_context_editor::language_model_selector::ToggleModelSelector;
-use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -480,16 +480,18 @@ impl MessageEditor {
 
         let active_completion_mode = thread.completion_mode();
         let max_mode_enabled = active_completion_mode == CompletionMode::Max;
+        let icon = if max_mode_enabled {
+            IconName::ZedBurnModeOn
+        } else {
+            IconName::ZedBurnMode
+        };
 
         Some(
-            Button::new("max-mode", "Max Mode")
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .icon(IconName::ZedMaxMode)
+            IconButton::new("burn-mode", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
                 .toggle_state(max_mode_enabled)
+                .selected_icon_color(Color::Error)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.thread.update(cx, |thread, _cx| {
                         thread.set_completion_mode(match active_completion_mode {
@@ -686,7 +688,6 @@ impl MessageEditor {
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .gap_1()
                                     .child(self.render_follow_toggle(cx))
                                     .children(self.render_max_mode_toggle(cx)),
                             )
@@ -1272,7 +1273,7 @@ impl MessageEditor {
                         tools: vec![],
                         tool_choice: None,
                         stop: vec![],
-                        temperature: AssistantSettings::temperature_for_model(&model.model, cx),
+                        temperature: AgentSettings::temperature_for_model(&model.model, cx),
                     };
 
                     Some(model.model.count_tokens(request, cx))

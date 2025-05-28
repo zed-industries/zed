@@ -585,7 +585,7 @@ impl AnyWeakEntity {
             // Safety:
             //   Docs say this is safe but can be unspecified if slotmap changes the representation
             //   after `1.0.7`, that said, providing a valid entity_id here is not necessary as long
-            //   as we guarantee that that `entity_id` is never used if `entity_ref_counts` equals
+            //   as we guarantee that `entity_id` is never used if `entity_ref_counts` equals
             //   to `Weak::new()` (that is, it's unable to upgrade), that is the invariant that
             //   actually needs to be hold true.
             //

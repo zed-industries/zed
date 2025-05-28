@@ -24,6 +24,7 @@ menu.workspace = true
 picker.workspace = true
 project.workspace = true
 schemars.workspace = true
+search.workspace = true
 settings.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
@@ -40,6 +41,7 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 picker = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

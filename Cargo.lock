@@ -53,9 +53,9 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
@@ -132,6 +132,33 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
+]
+
+[[package]]
+name = "agent_settings"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "collections",
+ "deepseek",
+ "fs",
+ "gpui",
+ "indexmap",
+ "language_model",
+ "lmstudio",
+ "log",
+ "mistral",
+ "ollama",
+ "open_ai",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "workspace-hack",
  "zed_llm_client",
 ]
 
@@ -482,8 +509,8 @@ dependencies = [
 name = "assistant_context_editor"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "chrono",
@@ -532,33 +559,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "assistant_settings"
-version = "0.1.0"
-dependencies = [
- "anthropic",
- "anyhow",
- "collections",
- "deepseek",
- "fs",
- "gpui",
- "indexmap",
- "language_model",
- "lmstudio",
- "log",
- "mistral",
- "ollama",
- "open_ai",
- "paths",
- "schemars",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
- "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -657,10 +657,10 @@ dependencies = [
 name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
+ "agent_settings",
  "anyhow",
- "assistant_settings",
  "assistant_tool",
+ "async-watch",
  "buffer_diff",
  "chrono",
  "client",
@@ -684,7 +684,6 @@ dependencies = [
  "language_models",
  "log",
  "markdown",
- "once_cell",
  "open",
  "paths",
  "portable-pty",
@@ -2977,9 +2976,9 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-stripe",
@@ -4032,6 +4031,8 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
+ "tree-sitter",
+ "tree-sitter-go",
  "util",
  "workspace-hack",
  "zlog",
@@ -4058,10 +4059,10 @@ dependencies = [
  "gpui",
  "json_dotpath",
  "language",
+ "log",
  "paths",
  "serde",
  "serde_json",
- "smol",
  "task",
  "util",
  "workspace-hack",
@@ -4731,6 +4732,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
+ "unicode-script",
  "unicode-segmentation",
  "unindent",
  "url",
@@ -4996,8 +4998,8 @@ name = "eval"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "agent_settings",
  "anyhow",
- "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-trait",
@@ -5382,8 +5384,10 @@ dependencies = [
  "language",
  "menu",
  "picker",
+ "pretty_assertions",
  "project",
  "schemars",
+ "search",
  "serde",
  "serde_derive",
  "serde_json",
@@ -6098,9 +6102,9 @@ dependencies = [
 name = "git_ui"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "askpass",
- "assistant_settings",
  "buffer_diff",
  "chrono",
  "collections",
@@ -9566,6 +9570,7 @@ dependencies = [
  "assets",
  "base64 0.22.1",
  "env_logger 0.11.8",
+ "futures 0.3.31",
  "gpui",
  "language",
  "languages",
@@ -17111,8 +17116,6 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
- "unicode-script",
- "unicode-segmentation",
  "util_macros",
  "walkdir",
  "workspace-hack",
@@ -19680,12 +19683,12 @@ version = "0.189.0"
 dependencies = [
  "activity_indicator",
  "agent",
+ "agent_settings",
  "anyhow",
  "ashpd",
  "askpass",
  "assets",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-watch",
