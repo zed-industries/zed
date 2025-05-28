@@ -44,23 +44,23 @@ pub struct StripeSubscriptionItem {
     pub price: Option<StripePrice>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UpdateSubscriptionParams {
     pub items: Option<Vec<UpdateSubscriptionItems>>,
     pub trial_settings: Option<UpdateSubscriptionTrialSettings>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct UpdateSubscriptionItems {
     pub price: Option<StripePriceId>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UpdateSubscriptionTrialSettings {
     pub end_behavior: UpdateSubscriptionTrialSettingsEndBehavior,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UpdateSubscriptionTrialSettingsEndBehavior {
     pub missing_payment_method: UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 }

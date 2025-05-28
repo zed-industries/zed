@@ -15,6 +15,8 @@ use crate::stripe_client::{
 pub struct FakeStripeClient {
     pub customers: Arc<Mutex<HashMap<StripeCustomerId, StripeCustomer>>>,
     pub subscriptions: Arc<Mutex<HashMap<StripeSubscriptionId, StripeSubscription>>>,
+    pub update_subscription_calls:
+        Arc<Mutex<Vec<(StripeSubscriptionId, UpdateSubscriptionParams)>>>,
     pub prices: Arc<Mutex<HashMap<StripePriceId, StripePrice>>>,
     pub meters: Arc<Mutex<HashMap<StripeMeterId, StripeMeter>>>,
 }
@@ -24,6 +26,7 @@ impl FakeStripeClient {
         Self {
             customers: Arc::new(Mutex::new(HashMap::default())),
             subscriptions: Arc::new(Mutex::new(HashMap::default())),
+            update_subscription_calls: Arc::new(Mutex::new(Vec::new())),
             prices: Arc::new(Mutex::new(HashMap::default())),
             meters: Arc::new(Mutex::new(HashMap::default())),
         }
@@ -69,9 +72,13 @@ impl StripeClient for FakeStripeClient {
     async fn update_subscription(
         &self,
         subscription_id: &StripeSubscriptionId,
-        _params: UpdateSubscriptionParams,
+        params: UpdateSubscriptionParams,
     ) -> Result<()> {
-        let _subscription = self.get_subscription(subscription_id).await?;
+        let subscription = self.get_subscription(subscription_id).await?;
+
+        self.update_subscription_calls
+            .lock()
+            .push((subscription.id, params));
 
         Ok(())
     }
