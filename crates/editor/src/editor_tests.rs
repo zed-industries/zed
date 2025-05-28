@@ -9111,11 +9111,10 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
-            Ok(Some(vec![]))
+            Ok(Some(Vec::new()))
         })
         .next()
         .await;
-    cx.executor().start_waiting();
     save.await;
 }
 
@@ -20835,6 +20834,19 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
                 if i == 3:
                     break
             else:ˇ
+    "});
+
+    // test does not outdent on typing after line with square brackets
+    cx.set_state(indoc! {"
+        def f() -> list[str]:
+            ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("a", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def f() -> list[str]:
+            aˇ
     "});
 }
 

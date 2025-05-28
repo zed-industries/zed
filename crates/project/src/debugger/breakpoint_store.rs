@@ -267,7 +267,7 @@ impl BreakpointStore {
         message: TypedEnvelope<proto::ToggleBreakpoint>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let breakpoints = this.update(&mut cx, |this, _| this.breakpoint_store())?;
+        let breakpoints = this.read_with(&mut cx, |this, _| this.breakpoint_store())?;
         let path = this
             .update(&mut cx, |this, cx| {
                 this.project_path_for_absolute_path(message.payload.path.as_ref(), cx)
@@ -803,7 +803,7 @@ impl BreakpointStore {
                         log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
                         continue;
                     };
-                    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
                     let mut breakpoints_for_file =
                         this.update(cx, |_, cx| BreakpointsInFile::new(buffer, cx))?;

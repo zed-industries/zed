@@ -39,9 +39,14 @@ To follow the agent reading through your codebase and performing edits, click on
 
 ### Get Notified {#get-notified}
 
-If you send a prompt to the Agent and then move elsewhere, thus putting Zed in the background, a notification will pop up at the top right of your screen indicating that the Agent has completed its work.
+If you send a prompt to the Agent and then move elsewhere, thus putting Zed in the background, you can be notified of whether its response is finished either via:
 
-You can customize the notification behavior, including the option to turn it off entirely, by using the `agent.notify_when_agent_waiting` settings key.
+- a visual notification that appears in the top right of your screen
+- or a sound notification
+
+Both notification methods can be used together or individually according to your preference.
+
+You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
 
 ### Reviewing Changes {#reviewing-changes}
 

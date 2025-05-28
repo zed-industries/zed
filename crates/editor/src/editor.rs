@@ -63,8 +63,8 @@ use dap::TelemetrySpawnLocation;
 use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
-    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, SearchSettings,
-    ShowScrollbar,
+    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes,
+    SearchSettings, ShowScrollbar,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
@@ -201,7 +201,7 @@ use ui::{
     ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
 };
-use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc, wrap_with_prefix};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -716,15 +716,36 @@ impl ScrollbarMarkerState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MinimapVisibility {
     Disabled,
-    Enabled(bool),
+    Enabled {
+        /// The configuration currently present in the users settings.
+        setting_configuration: bool,
+        /// Whether to override the currently set visibility from the users setting.
+        toggle_override: bool,
+    },
 }
 
 impl MinimapVisibility {
     fn for_mode(mode: &EditorMode, cx: &App) -> Self {
         if mode.is_full() {
-            Self::Enabled(EditorSettings::get_global(cx).minimap.minimap_enabled())
+            Self::Enabled {
+                setting_configuration: EditorSettings::get_global(cx).minimap.minimap_enabled(),
+                toggle_override: false,
+            }
         } else {
             Self::Disabled
+        }
+    }
+
+    fn hidden(&self) -> Self {
+        match *self {
+            Self::Enabled {
+                setting_configuration,
+                ..
+            } => Self::Enabled {
+                setting_configuration,
+                toggle_override: setting_configuration,
+            },
+            Self::Disabled => Self::Disabled,
         }
     }
 
@@ -735,16 +756,35 @@ impl MinimapVisibility {
         }
     }
 
+    fn settings_visibility(&self) -> bool {
+        match *self {
+            Self::Enabled {
+                setting_configuration,
+                ..
+            } => setting_configuration,
+            _ => false,
+        }
+    }
+
     fn visible(&self) -> bool {
         match *self {
-            Self::Enabled(visible) => visible,
+            Self::Enabled {
+                setting_configuration,
+                toggle_override,
+            } => setting_configuration ^ toggle_override,
             _ => false,
         }
     }
 
     fn toggle_visibility(&self) -> Self {
         match *self {
-            Self::Enabled(visible) => Self::Enabled(!visible),
+            Self::Enabled {
+                toggle_override,
+                setting_configuration,
+            } => Self::Enabled {
+                setting_configuration,
+                toggle_override: !toggle_override,
+            },
             Self::Disabled => Self::Disabled,
         }
     }
@@ -921,7 +961,7 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
-    show_scrollbars: bool,
+    show_scrollbars: ScrollbarAxes,
     minimap_visibility: MinimapVisibility,
     offset_content: bool,
     disable_expand_excerpt_buttons: bool,
@@ -1630,6 +1670,13 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
+                        project::Event::LanguageServerAdded(..)
+                        | project::Event::LanguageServerRemoved(..) => {
+                            if editor.tasks_update_task.is_none() {
+                                editor.tasks_update_task =
+                                    Some(editor.refresh_runnables(window, cx));
+                            }
+                        }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
@@ -1761,7 +1808,10 @@ impl Editor {
             project,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
-            show_scrollbars: full_mode,
+            show_scrollbars: ScrollbarAxes {
+                horizontal: full_mode,
+                vertical: full_mode,
+            },
             minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
             offset_content: !matches!(mode, EditorMode::SingleLine { .. }),
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
@@ -1881,6 +1931,9 @@ impl Editor {
                             blink_manager.disable(cx);
                         }
                     });
+                    if active {
+                        editor.show_mouse_cursor();
+                    }
                 }),
             ],
             tasks_update_task: None,
@@ -2117,6 +2170,10 @@ impl Editor {
         }
 
         key_context
+    }
+
+    fn show_mouse_cursor(&mut self) {
+        self.mouse_cursor_hidden = false;
     }
 
     pub fn hide_mouse_cursor(&mut self, origin: &HideMouseCursorOrigin) {
@@ -4937,14 +4994,12 @@ impl Editor {
             (buffer_position..buffer_position, None)
         };
 
-        let completion_settings = language_settings(
-            buffer_snapshot
-                .language_at(buffer_position)
-                .map(|language| language.name()),
-            buffer_snapshot.file(),
-            cx,
-        )
-        .completions;
+        let language = buffer_snapshot
+            .language_at(buffer_position)
+            .map(|language| language.name());
+
+        let completion_settings =
+            language_settings(language.clone(), buffer_snapshot.file(), cx).completions;
 
         // The document can be large, so stay in reasonable bounds when searching for words,
         // otherwise completion pop-up might be slow to appear.
@@ -5056,16 +5111,26 @@ impl Editor {
                 let menu = if completions.is_empty() {
                     None
                 } else {
-                    let mut menu = CompletionsMenu::new(
-                        id,
-                        sort_completions,
-                        show_completion_documentation,
-                        ignore_completion_provider,
-                        position,
-                        buffer.clone(),
-                        completions.into(),
-                        snippet_sort_order,
-                    );
+                    let mut menu = editor.update(cx, |editor, cx| {
+                        let languages = editor
+                            .workspace
+                            .as_ref()
+                            .and_then(|(workspace, _)| workspace.upgrade())
+                            .map(|workspace| workspace.read(cx).app_state().languages.clone());
+                        CompletionsMenu::new(
+                            id,
+                            sort_completions,
+                            show_completion_documentation,
+                            ignore_completion_provider,
+                            position,
+                            buffer.clone(),
+                            completions.into(),
+                            snippet_sort_order,
+                            languages,
+                            language,
+                            cx,
+                        )
+                    })?;
 
                     menu.filter(
                         if filter_completions {
@@ -5138,6 +5203,22 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    pub fn with_completions_menu_matching_id<R>(
+        &self,
+        id: CompletionId,
+        on_absent: impl FnOnce() -> R,
+        on_match: impl FnOnce(&mut CompletionsMenu) -> R,
+    ) -> R {
+        let mut context_menu = self.context_menu.borrow_mut();
+        let Some(CodeContextMenu::Completions(completions_menu)) = &mut *context_menu else {
+            return on_absent();
+        };
+        if completions_menu.id != id {
+            return on_absent();
+        }
+        on_match(completions_menu)
     }
 
     pub fn confirm_completion(
@@ -6601,8 +6682,7 @@ impl Editor {
                 }
 
                 // Store the transaction ID and selections before applying the edit
-                let transaction_id_prev =
-                    self.buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
+                let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
 
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let last_edit_end = edits.last().unwrap().0.end.bias_right(&snapshot);
@@ -6616,9 +6696,7 @@ impl Editor {
                 });
 
                 let selections = self.selections.disjoint_anchors();
-                if let Some(transaction_id_now) =
-                    self.buffer.read_with(cx, |b, cx| b.last_transaction_id(cx))
-                {
+                if let Some(transaction_id_now) = self.buffer.read(cx).last_transaction_id(cx) {
                     let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
                     if has_new_transaction {
                         self.selection_history
@@ -7114,9 +7192,10 @@ impl Editor {
         for (buffer_snapshot, range, excerpt_id) in
             multi_buffer_snapshot.range_to_buffer_ranges(range)
         {
-            let Some(buffer) = project.read_with(cx, |this, cx| {
-                this.buffer_for_id(buffer_snapshot.remote_id(), cx)
-            }) else {
+            let Some(buffer) = project
+                .read(cx)
+                .buffer_for_id(buffer_snapshot.remote_id(), cx)
+            else {
                 continue;
             };
             let breakpoints = breakpoint_store.read(cx).breakpoints(
@@ -8638,7 +8717,7 @@ impl Editor {
     ) -> Option<AnyElement> {
         self.context_menu.borrow_mut().as_mut().and_then(|menu| {
             if menu.visible() {
-                menu.render_aside(self, max_size, window, cx)
+                menu.render_aside(max_size, window, cx)
             } else {
                 None
             }
@@ -9724,7 +9803,7 @@ impl Editor {
         })?;
 
         let enclosing_excerpt = breakpoint_position.excerpt_id;
-        let buffer = project.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))?;
+        let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let row = buffer_snapshot
@@ -13471,6 +13550,7 @@ impl Editor {
         }
         let project = self.project.as_ref().map(Entity::downgrade);
         let task_sources = self.lsp_task_sources(cx);
+        let multi_buffer = self.buffer.downgrade();
         cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
@@ -13554,7 +13634,19 @@ impl Editor {
                 return;
             };
 
-            let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
+            let Ok(prefer_lsp) = multi_buffer.update(cx, |buffer, cx| {
+                buffer.language_settings(cx).tasks.prefer_lsp
+            }) else {
+                return;
+            };
+
+            let rows = Self::runnable_rows(
+                project,
+                display_snapshot,
+                prefer_lsp && !lsp_tasks_by_rows.is_empty(),
+                new_rows,
+                cx.clone(),
+            );
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();
@@ -13582,15 +13674,21 @@ impl Editor {
     fn runnable_rows(
         project: Entity<Project>,
         snapshot: DisplaySnapshot,
+        prefer_lsp: bool,
         runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
     ) -> Vec<((BufferId, BufferRow), RunnableTasks)> {
         runnable_ranges
             .into_iter()
             .filter_map(|mut runnable| {
-                let tasks = cx
+                let mut tasks = cx
                     .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
                     .ok()?;
+                if prefer_lsp {
+                    tasks.retain(|(task_kind, _)| {
+                        !matches!(task_kind, TaskSourceKind::Language { .. })
+                    });
+                }
                 if tasks.is_empty() {
                     return None;
                 }
@@ -14565,7 +14663,7 @@ impl Editor {
             let location = match location_task {
                 Some(task) => Some({
                     let target_buffer_handle = task.await.context("open local buffer")?;
-                    let range = target_buffer_handle.update(cx, |target_buffer, _| {
+                    let range = target_buffer_handle.read_with(cx, |target_buffer, _| {
                         let target_start = target_buffer
                             .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
                         let target_end = target_buffer
@@ -14754,7 +14852,7 @@ impl Editor {
         } else {
             if PreviewTabsSettings::get_global(cx).enable_preview_from_code_navigation {
                 let (preview_item_id, preview_item_idx) =
-                    workspace.active_pane().update(cx, |pane, _| {
+                    workspace.active_pane().read_with(cx, |pane, _| {
                         (pane.preview_item_id(), pane.preview_item_idx())
                     });
 
@@ -15153,7 +15251,7 @@ impl Editor {
             }
         };
 
-        let transaction_id_prev = buffer.read_with(cx, |b, cx| b.last_transaction_id(cx));
+        let transaction_id_prev = buffer.read(cx).last_transaction_id(cx);
         let selections_prev = transaction_id_prev
             .and_then(|transaction_id_prev| {
                 // default to selections as they were after the last edit, if we have them,
@@ -16954,8 +17052,21 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_show_scrollbars(&mut self, show_scrollbars: bool, cx: &mut Context<Self>) {
-        self.show_scrollbars = show_scrollbars;
+    pub fn set_show_scrollbars(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars = ScrollbarAxes {
+            horizontal: show,
+            vertical: show,
+        };
+        cx.notify();
+    }
+
+    pub fn set_show_vertical_scrollbar(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars.vertical = show;
+        cx.notify();
+    }
+
+    pub fn set_show_horizontal_scrollbar(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars.horizontal = show;
         cx.notify();
     }
 
@@ -16979,6 +17090,10 @@ impl Editor {
     pub fn disable_scrollbars_and_minimap(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_show_scrollbars(false, cx);
         self.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
+    }
+
+    pub fn hide_minimap_by_default(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_minimap_visibility(self.minimap_visibility.hidden(), window, cx);
     }
 
     /// Normally the text in full mode and auto height editors is padded on the
@@ -18520,9 +18635,9 @@ impl Editor {
             }
 
             let minimap_settings = EditorSettings::get_global(cx).minimap;
-            if self.minimap_visibility.visible() != minimap_settings.minimap_enabled() {
+            if self.minimap_visibility.settings_visibility() != minimap_settings.minimap_enabled() {
                 self.set_minimap_visibility(
-                    self.minimap_visibility.toggle_visibility(),
+                    MinimapVisibility::for_mode(self.mode(), cx),
                     window,
                     cx,
                 );
@@ -19498,6 +19613,347 @@ fn update_uncommitted_diff_for_buffer(
     })
 }
 
+fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
+    let tab_size = tab_size.get() as usize;
+    let mut width = offset;
+
+    for ch in text.chars() {
+        width += if ch == '\t' {
+            tab_size - (width % tab_size)
+        } else {
+            1
+        };
+    }
+
+    width - offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_size_with_expanded_tabs() {
+        let nz = |val| NonZeroU32::new(val).unwrap();
+        assert_eq!(char_len_with_expanded_tabs(0, "", nz(4)), 0);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello", nz(4)), 5);
+        assert_eq!(char_len_with_expanded_tabs(0, "\thello", nz(4)), 9);
+        assert_eq!(char_len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
+        assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
+        assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
+        assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+    }
+}
+
+/// Tokenizes a string into runs of text that should stick together, or that is whitespace.
+struct WordBreakingTokenizer<'a> {
+    input: &'a str,
+}
+
+impl<'a> WordBreakingTokenizer<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input }
+    }
+}
+
+fn is_char_ideographic(ch: char) -> bool {
+    use unicode_script::Script::*;
+    use unicode_script::UnicodeScript;
+    matches!(ch.script(), Han | Tangut | Yi)
+}
+
+fn is_grapheme_ideographic(text: &str) -> bool {
+    text.chars().any(is_char_ideographic)
+}
+
+fn is_grapheme_whitespace(text: &str) -> bool {
+    text.chars().any(|x| x.is_whitespace())
+}
+
+fn should_stay_with_preceding_ideograph(text: &str) -> bool {
+    text.chars().next().map_or(false, |ch| {
+        matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…')
+    })
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+enum WordBreakToken<'a> {
+    Word { token: &'a str, grapheme_len: usize },
+    InlineWhitespace { token: &'a str, grapheme_len: usize },
+    Newline,
+}
+
+impl<'a> Iterator for WordBreakingTokenizer<'a> {
+    /// Yields a span, the count of graphemes in the token, and whether it was
+    /// whitespace. Note that it also breaks at word boundaries.
+    type Item = WordBreakToken<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use unicode_segmentation::UnicodeSegmentation;
+        if self.input.is_empty() {
+            return None;
+        }
+
+        let mut iter = self.input.graphemes(true).peekable();
+        let mut offset = 0;
+        let mut grapheme_len = 0;
+        if let Some(first_grapheme) = iter.next() {
+            let is_newline = first_grapheme == "\n";
+            let is_whitespace = is_grapheme_whitespace(first_grapheme);
+            offset += first_grapheme.len();
+            grapheme_len += 1;
+            if is_grapheme_ideographic(first_grapheme) && !is_whitespace {
+                if let Some(grapheme) = iter.peek().copied() {
+                    if should_stay_with_preceding_ideograph(grapheme) {
+                        offset += grapheme.len();
+                        grapheme_len += 1;
+                    }
+                }
+            } else {
+                let mut words = self.input[offset..].split_word_bound_indices().peekable();
+                let mut next_word_bound = words.peek().copied();
+                if next_word_bound.map_or(false, |(i, _)| i == 0) {
+                    next_word_bound = words.next();
+                }
+                while let Some(grapheme) = iter.peek().copied() {
+                    if next_word_bound.map_or(false, |(i, _)| i == offset) {
+                        break;
+                    };
+                    if is_grapheme_whitespace(grapheme) != is_whitespace
+                        || (grapheme == "\n") != is_newline
+                    {
+                        break;
+                    };
+                    offset += grapheme.len();
+                    grapheme_len += 1;
+                    iter.next();
+                }
+            }
+            let token = &self.input[..offset];
+            self.input = &self.input[offset..];
+            if token == "\n" {
+                Some(WordBreakToken::Newline)
+            } else if is_whitespace {
+                Some(WordBreakToken::InlineWhitespace {
+                    token,
+                    grapheme_len,
+                })
+            } else {
+                Some(WordBreakToken::Word {
+                    token,
+                    grapheme_len,
+                })
+            }
+        } else {
+            None
+        }
+    }
+}
+
+#[test]
+fn test_word_breaking_tokenizer() {
+    let tests: &[(&str, &[WordBreakToken<'static>])] = &[
+        ("", &[]),
+        ("  ", &[whitespace("  ", 2)]),
+        ("Ʒ", &[word("Ʒ", 1)]),
+        ("Ǽ", &[word("Ǽ", 1)]),
+        ("⋑", &[word("⋑", 1)]),
+        ("⋑⋑", &[word("⋑⋑", 2)]),
+        (
+            "原理，进而",
+            &[word("原", 1), word("理，", 2), word("进", 1), word("而", 1)],
+        ),
+        (
+            "hello world",
+            &[word("hello", 5), whitespace(" ", 1), word("world", 5)],
+        ),
+        (
+            "hello, world",
+            &[word("hello,", 6), whitespace(" ", 1), word("world", 5)],
+        ),
+        (
+            "  hello world",
+            &[
+                whitespace("  ", 2),
+                word("hello", 5),
+                whitespace(" ", 1),
+                word("world", 5),
+            ],
+        ),
+        (
+            "这是什么 \n 钢笔",
+            &[
+                word("这", 1),
+                word("是", 1),
+                word("什", 1),
+                word("么", 1),
+                whitespace(" ", 1),
+                newline(),
+                whitespace(" ", 1),
+                word("钢", 1),
+                word("笔", 1),
+            ],
+        ),
+        (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
+    ];
+
+    fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+        WordBreakToken::Word {
+            token,
+            grapheme_len,
+        }
+    }
+
+    fn whitespace(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+        WordBreakToken::InlineWhitespace {
+            token,
+            grapheme_len,
+        }
+    }
+
+    fn newline() -> WordBreakToken<'static> {
+        WordBreakToken::Newline
+    }
+
+    for (input, result) in tests {
+        assert_eq!(
+            WordBreakingTokenizer::new(input)
+                .collect::<Vec<_>>()
+                .as_slice(),
+            *result,
+        );
+    }
+}
+
+fn wrap_with_prefix(
+    line_prefix: String,
+    unwrapped_text: String,
+    wrap_column: usize,
+    tab_size: NonZeroU32,
+    preserve_existing_whitespace: bool,
+) -> String {
+    let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
+    let mut wrapped_text = String::new();
+    let mut current_line = line_prefix.clone();
+
+    let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
+    let mut current_line_len = line_prefix_len;
+    let mut in_whitespace = false;
+    for token in tokenizer {
+        let have_preceding_whitespace = in_whitespace;
+        match token {
+            WordBreakToken::Word {
+                token,
+                grapheme_len,
+            } => {
+                in_whitespace = false;
+                if current_line_len + grapheme_len > wrap_column
+                    && current_line_len != line_prefix_len
+                {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                }
+                current_line.push_str(token);
+                current_line_len += grapheme_len;
+            }
+            WordBreakToken::InlineWhitespace {
+                mut token,
+                mut grapheme_len,
+            } => {
+                in_whitespace = true;
+                if have_preceding_whitespace && !preserve_existing_whitespace {
+                    continue;
+                }
+                if !preserve_existing_whitespace {
+                    token = " ";
+                    grapheme_len = 1;
+                }
+                if current_line_len + grapheme_len > wrap_column {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if current_line_len != line_prefix_len || preserve_existing_whitespace {
+                    current_line.push_str(token);
+                    current_line_len += grapheme_len;
+                }
+            }
+            WordBreakToken::Newline => {
+                in_whitespace = true;
+                if preserve_existing_whitespace {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if have_preceding_whitespace {
+                    continue;
+                } else if current_line_len + 1 > wrap_column && current_line_len != line_prefix_len
+                {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if current_line_len != line_prefix_len {
+                    current_line.push(' ');
+                    current_line_len += 1;
+                }
+            }
+        }
+    }
+
+    if !current_line.is_empty() {
+        wrapped_text.push_str(&current_line);
+    }
+    wrapped_text
+}
+
+#[test]
+fn test_wrap_with_prefix() {
+    assert_eq!(
+        wrap_with_prefix(
+            "# ".to_string(),
+            "abcdefg".to_string(),
+            4,
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
+        "# abcdefg"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            "".to_string(),
+            "\thello world".to_string(),
+            8,
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
+        "hello\nworld"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            "// ".to_string(),
+            "xx \nyy zz aa bb cc".to_string(),
+            12,
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
+        "// xx yy zz\n// aa bb cc"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            String::new(),
+            "这是什么 \n 钢笔".to_string(),
+            3,
+            NonZeroU32::new(4).unwrap(),
+            false,
+        ),
+        "这是什\n么 钢\n笔"
+    );
+}
+
 pub trait CollaborationHub {
     fn collaborators<'a>(&self, cx: &'a App) -> &'a HashMap<PeerId, Collaborator>;
     fn user_participant_indices<'a>(&self, cx: &'a App) -> &'a HashMap<u64, ParticipantIndex>;
@@ -19516,9 +19972,7 @@ impl CollaborationHub for Entity<Project> {
     fn user_names(&self, cx: &App) -> HashMap<u64, SharedString> {
         let this = self.read(cx);
         let user_ids = this.collaborators().values().map(|c| c.user_id);
-        this.user_store().read_with(cx, |user_store, cx| {
-            user_store.participant_names(user_ids, cx)
-        })
+        this.user_store().read(cx).participant_names(user_ids, cx)
     }
 }
 
@@ -20068,7 +20522,7 @@ impl SemanticsProvider for Entity<Project> {
                     PrepareRenameResponse::InvalidPosition => None,
                     PrepareRenameResponse::OnlyUnpreparedRenameSupported => {
                         // Fallback on using TreeSitter info to determine identifier range
-                        buffer.update(cx, |buffer, _| {
+                        buffer.read_with(cx, |buffer, _| {
                             let snapshot = buffer.snapshot();
                             let (range, kind) = snapshot.surrounding_word(position);
                             if kind != Some(CharKind::Word) {
@@ -21449,7 +21903,7 @@ fn render_diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .occlude()
+        .stop_mouse_events_except_scroll()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")

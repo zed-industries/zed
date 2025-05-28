@@ -232,7 +232,7 @@ impl RegisteredBuffer {
                         Some(buffer.snapshot.version.clone())
                     })
                     .ok()??;
-                let new_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
+                let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
                     .background_spawn({
