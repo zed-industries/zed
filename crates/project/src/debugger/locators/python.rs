@@ -63,6 +63,9 @@ impl DapLocator for PythonLocator {
         } else {
             args
         };
+        if program_position.is_none() && mod_name.is_none() {
+            return None;
+        }
         let mut config = serde_json::json!({
             "request": "launch",
             "python": build_config.command,
