@@ -575,6 +575,10 @@ impl RunningState {
                     .for_each(|value| Self::relativlize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 resolve_path(s);
 
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {

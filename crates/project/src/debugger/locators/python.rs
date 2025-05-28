@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
@@ -23,6 +25,10 @@ impl DapLocator for PythonLocator {
         if adapter.as_ref() != "Debugpy" {
             return None;
         }
+        if build_config.args.iter().any(|arg| arg == "-c") {
+            // We cannot debug selections.
+            return None;
+        }
         let module_specifier_position = build_config
             .args
             .iter()
@@ -37,17 +43,43 @@ impl DapLocator for PythonLocator {
         let mod_name = rest_of_the_args.next();
         let args = rest_of_the_args.collect::<Vec<_>>();
 
+        let program_position = mod_name
+            .is_none()
+            .then(|| {
+                build_config
+                    .args
+                    .iter()
+                    .position(|arg| *arg == "\"$ZED_FILE\"")
+            })
+            .flatten();
+        let args = if let Some(position) = program_position {
+            args.into_iter().skip(position).collect::<Vec<_>>()
+        } else {
+            args
+        };
+        let mut config = serde_json::json!({
+            "request": "launch",
+            "python": build_config.command,
+            "args": args,
+            "cwd": build_config.cwd.clone()
+        });
+        if let Some(config_obj) = config.as_object_mut() {
+            if let Some(module) = mod_name {
+                config_obj.insert("module".to_string(), module.clone().into());
+            }
+            if let Some(program) = program_position {
+                config_obj.insert(
+                    "program".to_string(),
+                    build_config.args[program].clone().into(),
+                );
+            }
+        }
+
         Some(DebugScenario {
             adapter: adapter.0,
             label: resolved_label.to_string().into(),
             build: None,
-            config: serde_json::json!({
-                "request": "launch",
-                "python": build_config.command,
-                "args": args,
-                "module": mod_name,
-                "cwd": build_config.cwd.clone()
-            }),
+            config,
             tcp_connection: None,
         })
     }
