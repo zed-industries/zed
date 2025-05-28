@@ -237,6 +237,18 @@ impl TaskTemplate {
             env
         };
 
+        // We filter out env variables here that aren't set so we don't have extra white space in args
+        let args = self
+            .args
+            .iter()
+            .filter(|arg| {
+                arg.starts_with('$')
+                    .then(|| env.get(&arg[1..]).is_some_and(|arg| !arg.trim().is_empty()))
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect();
+
         Some(ResolvedTask {
             id: id.clone(),
             substituted_variables,
@@ -256,7 +268,7 @@ impl TaskTemplate {
                     },
                 ),
                 command,
-                args: self.args.clone(),
+                args,
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,

@@ -836,22 +836,6 @@ impl RunningState {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
-                task.resolved.args = task
-                    .resolved
-                    .args
-                    .into_iter()
-                    .filter(|arg| {
-                        arg.starts_with('$')
-                            .then(|| {
-                                task.resolved
-                                    .env
-                                    .get(&arg[1..])
-                                    .is_some_and(|arg| !arg.trim().is_empty())
-                            })
-                            .unwrap_or(true)
-                    })
-                    .collect();
-
                 let locator_name = if let Some(locator_name) = locator_name {
                     debug_assert!(!config_is_valid);
                     Some(locator_name)
@@ -883,17 +867,6 @@ impl RunningState {
                 let command_label = builder.command_label(&task.resolved.command_label);
                 let (command, args) =
                     builder.build(task.resolved.command.clone(), &task.resolved.args);
-
-                // Splitting the args correctly avoids some errors with cargo
-                let args = args
-                    .into_iter()
-                    .flat_map(|string| {
-                        string
-                            .split_whitespace()
-                            .map(|str| str.to_owned())
-                            .collect::<Vec<String>>()
-                    })
-                    .collect();
 
                 let task_with_shell = SpawnInTerminal {
                     command_label,
