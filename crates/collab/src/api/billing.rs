@@ -499,8 +499,10 @@ async fn manage_billing_subscription(
     let flow = match body.intent {
         ManageSubscriptionIntent::ManageSubscription => None,
         ManageSubscriptionIntent::UpgradeToPro => {
-            let zed_pro_price_id = stripe_billing.zed_pro_price_id().await?;
-            let zed_free_price_id = stripe_billing.zed_free_price_id().await?;
+            let zed_pro_price_id: stripe::PriceId =
+                stripe_billing.zed_pro_price_id().await?.try_into()?;
+            let zed_free_price_id: stripe::PriceId =
+                stripe_billing.zed_free_price_id().await?.try_into()?;
 
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;

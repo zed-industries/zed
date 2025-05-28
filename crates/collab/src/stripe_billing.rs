@@ -4,14 +4,16 @@ use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
-use stripe::{PriceId, SubscriptionStatus};
+use stripe::SubscriptionStatus;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::Result;
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
-use crate::stripe_client::{RealStripeClient, StripeClient, StripeCustomerId};
+use crate::stripe_client::{
+    RealStripeClient, StripeClient, StripeCustomerId, StripeMeter, StripePrice, StripePriceId,
+};
 
 pub struct StripeBilling {
     state: RwLock<StripeBillingState>,
@@ -22,8 +24,8 @@ pub struct StripeBilling {
 #[derive(Default)]
 struct StripeBillingState {
     meters_by_event_name: HashMap<String, StripeMeter>,
-    price_ids_by_meter_id: HashMap<String, stripe::PriceId>,
-    prices_by_lookup_key: HashMap<String, stripe::Price>,
+    price_ids_by_meter_id: HashMap<String, StripePriceId>,
+    prices_by_lookup_key: HashMap<String, StripePrice>,
 }
 
 impl StripeBilling {
@@ -50,24 +52,16 @@ impl StripeBilling {
 
         let mut state = self.state.write().await;
 
-        let (meters, prices) = futures::try_join!(
-            StripeMeter::list(&self.real_client),
-            stripe::Price::list(
-                &self.real_client,
-                &stripe::ListPrices {
-                    limit: Some(100),
-                    ..Default::default()
-                }
-            )
-        )?;
+        let (meters, prices) =
+            futures::try_join!(self.client.list_meters(), self.client.list_prices(),)?;
 
-        for meter in meters.data {
+        for meter in meters {
             state
                 .meters_by_event_name
                 .insert(meter.event_name.clone(), meter);
         }
 
-        for price in prices.data {
+        for price in prices {
             if let Some(lookup_key) = price.lookup_key.clone() {
                 state.prices_by_lookup_key.insert(lookup_key, price.clone());
             }
@@ -84,15 +78,15 @@ impl StripeBilling {
         Ok(())
     }
 
-    pub async fn zed_pro_price_id(&self) -> Result<PriceId> {
+    pub async fn zed_pro_price_id(&self) -> Result<StripePriceId> {
         self.find_price_id_by_lookup_key("zed-pro").await
     }
 
-    pub async fn zed_free_price_id(&self) -> Result<PriceId> {
+    pub async fn zed_free_price_id(&self) -> Result<StripePriceId> {
         self.find_price_id_by_lookup_key("zed-free").await
     }
 
-    pub async fn find_price_id_by_lookup_key(&self, lookup_key: &str) -> Result<PriceId> {
+    pub async fn find_price_id_by_lookup_key(&self, lookup_key: &str) -> Result<StripePriceId> {
         self.state
             .read()
             .await
@@ -102,7 +96,7 @@ impl StripeBilling {
             .ok_or_else(|| crate::Error::Internal(anyhow!("no price ID found for {lookup_key:?}")))
     }
 
-    pub async fn find_price_by_lookup_key(&self, lookup_key: &str) -> Result<stripe::Price> {
+    pub async fn find_price_by_lookup_key(&self, lookup_key: &str) -> Result<StripePrice> {
         self.state
             .read()
             .await
@@ -116,8 +110,10 @@ impl StripeBilling {
         &self,
         subscription: &stripe::Subscription,
     ) -> Option<SubscriptionKind> {
-        let zed_pro_price_id = self.zed_pro_price_id().await.ok()?;
-        let zed_free_price_id = self.zed_free_price_id().await.ok()?;
+        let zed_pro_price_id: stripe::PriceId =
+            self.zed_pro_price_id().await.ok()?.try_into().ok()?;
+        let zed_free_price_id: stripe::PriceId =
+            self.zed_free_price_id().await.ok()?.try_into().ok()?;
 
         subscription.items.data.iter().find_map(|item| {
             let price = item.price.as_ref()?;
@@ -171,12 +167,13 @@ impl StripeBilling {
     pub async fn subscribe_to_price(
         &self,
         subscription_id: &stripe::SubscriptionId,
-        price: &stripe::Price,
+        price: &StripePrice,
     ) -> Result<()> {
         let subscription =
             stripe::Subscription::retrieve(&self.real_client, &subscription_id, &[]).await?;
 
-        if subscription_contains_price(&subscription, &price.id) {
+        let price_id = price.id.clone().try_into()?;
+        if subscription_contains_price(&subscription, &price_id) {
             return Ok(());
         }
 
@@ -372,24 +369,6 @@ impl StripeBilling {
 
         let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
         Ok(session.url.context("no checkout session URL")?)
-    }
-}
-
-#[derive(Clone, Deserialize)]
-struct StripeMeter {
-    id: String,
-    event_name: String,
-}
-
-impl StripeMeter {
-    pub fn list(client: &stripe::Client) -> stripe::Response<stripe::List<Self>> {
-        #[derive(Serialize)]
-        struct Params {
-            #[serde(skip_serializing_if = "Option::is_none")]
-            limit: Option<u64>,
-        }
-
-        client.get_query("/billing/meters", Params { limit: Some(100) })
     }
 }
 
