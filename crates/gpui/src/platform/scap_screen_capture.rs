@@ -37,7 +37,7 @@ pub(crate) fn start_scap_default_target_source(
 }
 
 struct ScapCaptureSource {
-    target: scap::target::Display,
+    target: scap::Display,
     size: Size<DevicePixels>,
 }
 
@@ -115,6 +115,7 @@ struct ScapDefaultTargetCaptureSource {
         // Callback for frames.
         Box<dyn Fn(ScreenCaptureFrame) + Send>,
     )>,
+    target: scap::Display,
     size: Size<DevicePixels>,
 }
 
@@ -241,7 +242,7 @@ impl ScreenCaptureStream for ScapStream {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             resolution: self.size,
-            label: self.display.title.clone().into(),
+            label: self.display.title.into(),
             is_main: None,
             id: self.display.id as u64,
         })
