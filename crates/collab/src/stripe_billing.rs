@@ -13,6 +13,9 @@ use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_client::{
     RealStripeClient, StripeClient, StripeCustomerId, StripeMeter, StripePrice, StripePriceId,
+    StripeSubscription, StripeSubscriptionId, UpdateSubscriptionItems, UpdateSubscriptionParams,
+    UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
+    UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 };
 
 pub struct StripeBilling {
@@ -166,14 +169,12 @@ impl StripeBilling {
 
     pub async fn subscribe_to_price(
         &self,
-        subscription_id: &stripe::SubscriptionId,
+        subscription_id: &StripeSubscriptionId,
         price: &StripePrice,
     ) -> Result<()> {
-        let subscription =
-            stripe::Subscription::retrieve(&self.real_client, &subscription_id, &[]).await?;
+        let subscription = self.client.get_subscription(subscription_id).await?;
 
-        let price_id = price.id.clone().try_into()?;
-        if subscription_contains_price(&subscription, &price_id) {
+        if subscription_contains_price(&subscription, &price.id) {
             return Ok(());
         }
 
@@ -182,23 +183,21 @@ impl StripeBilling {
         let price_per_unit = price.unit_amount.unwrap_or_default();
         let _units_for_billing_threshold = BILLING_THRESHOLD_IN_CENTS / price_per_unit;
 
-        stripe::Subscription::update(
-            &self.real_client,
-            subscription_id,
-            stripe::UpdateSubscription {
-                items: Some(vec![stripe::UpdateSubscriptionItems {
-                    price: Some(price.id.to_string()),
-                    ..Default::default()
-                }]),
-                trial_settings: Some(stripe::UpdateSubscriptionTrialSettings {
-                    end_behavior: stripe::UpdateSubscriptionTrialSettingsEndBehavior {
-                        missing_payment_method: stripe::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
-                    },
-                }),
-                ..Default::default()
-            },
-        )
-        .await?;
+        self.client
+            .update_subscription(
+                subscription_id,
+                UpdateSubscriptionParams {
+                    items: Some(vec![UpdateSubscriptionItems {
+                        price: Some(price.id.clone()),
+                    }]),
+                    trial_settings: Some(UpdateSubscriptionTrialSettings {
+                        end_behavior: UpdateSubscriptionTrialSettingsEndBehavior {
+                            missing_payment_method: UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel
+                        },
+                    }),
+                },
+            )
+            .await?;
 
         Ok(())
     }
@@ -419,10 +418,10 @@ struct StripeCreateMeterEventPayload<'a> {
 }
 
 fn subscription_contains_price(
-    subscription: &stripe::Subscription,
-    price_id: &stripe::PriceId,
+    subscription: &StripeSubscription,
+    price_id: &StripePriceId,
 ) -> bool {
-    subscription.items.data.iter().any(|item| {
+    subscription.items.iter().any(|item| {
         item.price
             .as_ref()
             .map_or(false, |price| price.id == *price_id)

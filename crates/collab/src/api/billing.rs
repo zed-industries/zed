@@ -1578,7 +1578,7 @@ async fn sync_model_request_usage_with_stripe(
             };
 
             stripe_billing
-                .subscribe_to_price(&stripe_subscription_id, price)
+                .subscribe_to_price(&stripe_subscription_id.into(), price)
                 .await?;
             stripe_billing
                 .bill_model_request_usage(

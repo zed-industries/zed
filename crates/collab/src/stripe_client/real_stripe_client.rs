@@ -4,11 +4,17 @@ use std::sync::Arc;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use serde::Serialize;
-use stripe::{CreateCustomer, Customer, CustomerId, ListCustomers, Price, PriceId, Recurring};
+use stripe::{
+    CreateCustomer, Customer, CustomerId, ListCustomers, Price, PriceId, Recurring, Subscription,
+    SubscriptionId, SubscriptionItem, SubscriptionItemId, UpdateSubscriptionItems,
+    UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
+    UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
+};
 
 use crate::stripe_client::{
     CreateCustomerParams, StripeClient, StripeCustomer, StripeCustomerId, StripeMeter, StripePrice,
-    StripePriceId, StripePriceRecurring,
+    StripePriceId, StripePriceRecurring, StripeSubscription, StripeSubscriptionId,
+    StripeSubscriptionItem, StripeSubscriptionItemId, UpdateSubscriptionParams,
 };
 
 pub struct RealStripeClient {
@@ -51,6 +57,46 @@ impl StripeClient for RealStripeClient {
         .await?;
 
         Ok(StripeCustomer::from(customer))
+    }
+
+    async fn get_subscription(
+        &self,
+        subscription_id: &StripeSubscriptionId,
+    ) -> Result<StripeSubscription> {
+        let subscription_id = subscription_id.try_into()?;
+
+        let subscription = Subscription::retrieve(&self.client, &subscription_id, &[]).await?;
+
+        Ok(StripeSubscription::from(subscription))
+    }
+
+    async fn update_subscription(
+        &self,
+        subscription_id: &StripeSubscriptionId,
+        params: UpdateSubscriptionParams,
+    ) -> Result<()> {
+        let subscription_id = subscription_id.try_into()?;
+
+        stripe::Subscription::update(
+            &self.client,
+            &subscription_id,
+            stripe::UpdateSubscription {
+                items: params.items.map(|items| {
+                    items
+                        .into_iter()
+                        .map(|item| UpdateSubscriptionItems {
+                            price: item.price.map(|price| price.to_string()),
+                            ..Default::default()
+                        })
+                        .collect()
+                }),
+                trial_settings: params.trial_settings.map(Into::into),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        Ok(())
     }
 
     async fn list_prices(&self) -> Result<Vec<StripePrice>> {
@@ -104,6 +150,80 @@ impl From<Customer> for StripeCustomer {
         StripeCustomer {
             id: value.id.into(),
             email: value.email,
+        }
+    }
+}
+
+impl From<SubscriptionId> for StripeSubscriptionId {
+    fn from(value: SubscriptionId) -> Self {
+        Self(value.as_str().into())
+    }
+}
+
+impl TryFrom<&StripeSubscriptionId> for SubscriptionId {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &StripeSubscriptionId) -> Result<Self, Self::Error> {
+        Self::from_str(value.0.as_ref()).context("failed to parse Stripe subscription ID")
+    }
+}
+
+impl From<Subscription> for StripeSubscription {
+    fn from(value: Subscription) -> Self {
+        Self {
+            id: value.id.into(),
+            items: value.items.data.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+impl From<SubscriptionItemId> for StripeSubscriptionItemId {
+    fn from(value: SubscriptionItemId) -> Self {
+        Self(value.as_str().into())
+    }
+}
+
+impl From<SubscriptionItem> for StripeSubscriptionItem {
+    fn from(value: SubscriptionItem) -> Self {
+        Self {
+            id: value.id.into(),
+            price: value.price.map(Into::into),
+        }
+    }
+}
+
+impl From<crate::stripe_client::UpdateSubscriptionTrialSettings>
+    for UpdateSubscriptionTrialSettings
+{
+    fn from(value: crate::stripe_client::UpdateSubscriptionTrialSettings) -> Self {
+        Self {
+            end_behavior: value.end_behavior.into(),
+        }
+    }
+}
+
+impl From<crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehavior>
+    for UpdateSubscriptionTrialSettingsEndBehavior
+{
+    fn from(value: crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehavior) -> Self {
+        Self {
+            missing_payment_method: value.missing_payment_method.into(),
+        }
+    }
+}
+
+impl From<crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod>
+    for UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod
+{
+    fn from(
+        value: crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
+    ) -> Self {
+        match value {
+            crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel => Self::Cancel,
+            crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::CreateInvoice => {
+                Self::CreateInvoice
+            }
+            crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Pause => Self::Pause,
         }
     }
 }

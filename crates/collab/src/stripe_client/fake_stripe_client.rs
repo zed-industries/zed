@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -8,11 +8,13 @@ use uuid::Uuid;
 
 use crate::stripe_client::{
     CreateCustomerParams, StripeClient, StripeCustomer, StripeCustomerId, StripeMeter,
-    StripeMeterId, StripePrice, StripePriceId,
+    StripeMeterId, StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
+    UpdateSubscriptionParams,
 };
 
 pub struct FakeStripeClient {
     pub customers: Arc<Mutex<HashMap<StripeCustomerId, StripeCustomer>>>,
+    pub subscriptions: Arc<Mutex<HashMap<StripeSubscriptionId, StripeSubscription>>>,
     pub prices: Arc<Mutex<HashMap<StripePriceId, StripePrice>>>,
     pub meters: Arc<Mutex<HashMap<StripeMeterId, StripeMeter>>>,
 }
@@ -21,6 +23,7 @@ impl FakeStripeClient {
     pub fn new() -> Self {
         Self {
             customers: Arc::new(Mutex::new(HashMap::default())),
+            subscriptions: Arc::new(Mutex::new(HashMap::default())),
             prices: Arc::new(Mutex::new(HashMap::default())),
             meters: Arc::new(Mutex::new(HashMap::default())),
         }
@@ -50,6 +53,27 @@ impl StripeClient for FakeStripeClient {
             .insert(customer.id.clone(), customer.clone());
 
         Ok(customer)
+    }
+
+    async fn get_subscription(
+        &self,
+        subscription_id: &StripeSubscriptionId,
+    ) -> Result<StripeSubscription> {
+        self.subscriptions
+            .lock()
+            .get(subscription_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("no subscription found for {subscription_id:?}"))
+    }
+
+    async fn update_subscription(
+        &self,
+        subscription_id: &StripeSubscriptionId,
+        _params: UpdateSubscriptionParams,
+    ) -> Result<()> {
+        let _subscription = self.get_subscription(subscription_id).await?;
+
+        Ok(())
     }
 
     async fn list_prices(&self) -> Result<Vec<StripePrice>> {
