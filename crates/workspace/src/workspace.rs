@@ -3470,6 +3470,32 @@ impl Workspace {
         !(bounds1.right() <= bounds2.left() || bounds1.left() >= bounds2.right())
     }
 
+    /// Helper function to check if two bounds have significant horizontal overlap (for circular navigation)
+    fn significant_horizontal_overlap(bounds1: Bounds<Pixels>, bounds2: Bounds<Pixels>) -> bool {
+        let overlap_start = bounds1.left().max(bounds2.left());
+        let overlap_end = bounds1.right().min(bounds2.right());
+        if overlap_end <= overlap_start {
+            return false; // No overlap
+        }
+        let overlap_width = overlap_end - overlap_start;
+        let min_width = bounds1.size.width.min(bounds2.size.width);
+        // Require at least 25% overlap of the smaller element's width
+        overlap_width >= min_width * 0.25
+    }
+
+    /// Helper function to check if two bounds have significant vertical overlap (for circular navigation)  
+    fn significant_vertical_overlap(bounds1: Bounds<Pixels>, bounds2: Bounds<Pixels>) -> bool {
+        let overlap_start = bounds1.top().max(bounds2.top());
+        let overlap_end = bounds1.bottom().min(bounds2.bottom());
+        if overlap_end <= overlap_start {
+            return false; // No overlap
+        }
+        let overlap_height = overlap_end - overlap_start;
+        let min_height = bounds1.size.height.min(bounds2.size.height);
+        // Require at least 25% overlap of the smaller element's height
+        overlap_height >= min_height * 0.25
+    }
+
     /// Returns (is_adjacent, distance) for the target bounds in the given direction from origin
     fn distance_if_adjacent(
         origin: &Bounds<Pixels>,
@@ -3636,32 +3662,42 @@ impl Workspace {
             }
 
             // For circular navigation, find the most extreme position in the opposite direction
-            let (target_pos, is_better) = match direction {
+            // But only consider targets that have the right overlap for the navigation axis
+            let (target_pos, is_better, has_required_overlap) = match direction {
                 SplitDirection::Right => {
-                    // Going right, wrap to leftmost
+                    // Going right, wrap to leftmost, but must have significant vertical overlap
                     let pos = bounds.left().0;
-                    println!("  circular right->left: target pos={}, best_extreme_pos={}", pos, best_extreme_pos);
-                    (pos, pos < best_extreme_pos)
+                    let overlap = Self::significant_vertical_overlap(bounds, origin);
+                    println!("  circular right->left: target pos={}, best_extreme_pos={}, significant_vertical_overlap={}", pos, best_extreme_pos, overlap);
+                    (pos, pos < best_extreme_pos, overlap)
                 },
                 SplitDirection::Left => {
-                    // Going left, wrap to rightmost  
+                    // Going left, wrap to rightmost, but must have significant vertical overlap
                     let pos = bounds.right().0;
-                    println!("  circular left->right: target pos={}, best_extreme_pos={}", pos, best_extreme_pos);
-                    (pos, pos > best_extreme_pos)
+                    let overlap = Self::significant_vertical_overlap(bounds, origin);
+                    println!("  circular left->right: target pos={}, best_extreme_pos={}, significant_vertical_overlap={}", pos, best_extreme_pos, overlap);
+                    (pos, pos > best_extreme_pos, overlap)
                 },
                 SplitDirection::Down => {
-                    // Going down, wrap to topmost
+                    // Going down, wrap to topmost, but must have significant horizontal overlap
                     let pos = bounds.top().0;
-                    println!("  circular down->up: target pos={}, best_extreme_pos={}", pos, best_extreme_pos);
-                    (pos, pos < best_extreme_pos)
+                    let overlap = Self::significant_horizontal_overlap(bounds, origin);
+                    println!("  circular down->up: target pos={}, best_extreme_pos={}, significant_horizontal_overlap={}", pos, best_extreme_pos, overlap);
+                    (pos, pos < best_extreme_pos, overlap)
                 },
                 SplitDirection::Up => {
-                    // Going up, wrap to bottommost
+                    // Going up, wrap to bottommost, but must have significant horizontal overlap
                     let pos = bounds.bottom().0;
-                    println!("  circular up->down: target pos={}, best_extreme_pos={}", pos, best_extreme_pos);
-                    (pos, pos > best_extreme_pos)
+                    let overlap = Self::significant_horizontal_overlap(bounds, origin);
+                    println!("  circular up->down: target pos={}, best_extreme_pos={}, significant_horizontal_overlap={}", pos, best_extreme_pos, overlap);
+                    (pos, pos > best_extreme_pos, overlap)
                 },
             };
+
+            if !has_required_overlap {
+                println!("  circular: skipping due to no overlap");
+                continue;
+            }
 
             if is_better || (target_pos == best_extreme_pos && ts > best_ts) {
                 best_extreme_pos = target_pos;
@@ -3677,7 +3713,7 @@ impl Workspace {
                 FocusTarget::Dock(d, _, _) => println!("circular best target dock {:?}", d.read(cx).position()),
             }
         } else {
-            println!("no circular target found either");
+            println!("no circular target found either - staying in place");
         }
         
         best
