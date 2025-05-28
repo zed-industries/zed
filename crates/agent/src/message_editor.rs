@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::agent_model_selector::{AgentModelSelector, ModelType};
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
@@ -8,6 +9,17 @@ use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
+use crate::context_store::ContextStore;
+use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::profile_selector::ProfileSelector;
+use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
+use crate::thread_store::{TextThreadStore, ThreadStore};
+use crate::{
+    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
+    RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+};
+
 use assistant_settings::{AssistantSettings, CompletionMode};
 use buffer_diff::BufferDiff;
 use client::UserStore;
@@ -24,6 +36,7 @@ use futures::{FutureExt as _, future};
 use gpui::{
     Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    actions,
 };
 use language::{Buffer, Language};
 use language_model::{
@@ -36,22 +49,39 @@ use project::Project;
 use prompt_store::PromptStore;
 use proto::Plan;
 use settings::Settings;
-use std::time::Duration;
 use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
 
-use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
-use crate::context_store::ContextStore;
-use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::profile_selector::ProfileSelector;
-use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
-use crate::thread_store::{TextThreadStore, ThreadStore};
-use crate::{
-    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
-    RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
-};
+// Voice actions
+actions!(voice, [ToggleVoiceInput]);
+
+// Voice recording state
+#[derive(Clone, Debug)]
+pub struct VoiceRecording {
+    pub id: String,
+    pub duration: Duration,
+    pub data: Vec<u8>, // Raw audio data
+    pub sample_rate: u32,
+    pub channels: u32,
+}
+
+#[derive(Clone, Debug)]
+pub enum VoiceState {
+    Idle,
+    Recording { start_time: std::time::Instant },
+    Processing,
+}
+
+#[derive(Clone, Debug)]
+pub struct PlaybackState {
+    pub recording_id: String,
+    pub start_time: std::time::Instant,
+    pub duration: Duration,
+    pub original_duration: Duration,
+    pub is_playing: bool,
+}
 
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
@@ -74,6 +104,14 @@ pub struct MessageEditor {
     last_estimated_token_count: Option<usize>,
     update_token_count_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
+    // Voice recording state
+    voice_state: VoiceState,
+    voice_recording_task: Option<Task<()>>,
+    current_recording: Option<VoiceRecording>,
+    voice_recordings: Vec<VoiceRecording>,
+    // Playback state
+    playback_state: Option<PlaybackState>,
+    playback_update_task: Option<Task<()>>,
 }
 
 const MAX_EDITOR_LINES: usize = 8;
@@ -209,7 +247,7 @@ impl MessageEditor {
             )
         });
 
-        Self {
+        let instance = Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
             user_store,
@@ -229,7 +267,15 @@ impl MessageEditor {
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
-        }
+            voice_state: VoiceState::Idle,
+            voice_recording_task: None,
+            current_recording: None,
+            voice_recordings: Vec::new(),
+            playback_state: None,
+            playback_update_task: None,
+        };
+        
+        instance
     }
 
     pub fn context_store(&self) -> &Entity<ContextStore> {
@@ -576,6 +622,9 @@ impl MessageEditor {
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::expand_message_editor))
+            .on_action(cx.listener(|this, _: &ToggleVoiceInput, _window, cx| {
+                this.toggle_voice_input(cx);
+            }))
             .capture_action(cx.listener(Self::paste))
             .gap_2()
             .p_2()
@@ -587,6 +636,7 @@ impl MessageEditor {
                     .items_start()
                     .justify_between()
                     .child(self.context_strip.clone())
+                    .children(self.render_voice_indicator(cx))
                     .child(
                         h_flex()
                             .gap_1()
@@ -618,7 +668,8 @@ impl MessageEditor {
                                                 .dispatch_action(Box::new(ExpandMessageEditor), cx);
                                         })),
                                 )
-                            }),
+                            })
+                            .children(self.render_voice_recordings(cx)),
                     ),
             )
             .child(
@@ -696,6 +747,7 @@ impl MessageEditor {
                                     })
                                     .child(self.profile_selector.clone())
                                     .child(self.model_selector.clone())
+                                    .children(self.render_voice_button(cx))
                                     .map({
                                         let focus_handle = focus_handle.clone();
                                         move |parent| {
@@ -1275,6 +1327,665 @@ impl MessageEditor {
             })
             .ok();
         }));
+    }
+
+    fn render_voice_indicator(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if !matches!(self.voice_state, VoiceState::Recording { .. }) {
+            return None;
+        }
+
+        Some(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .p_2()
+                .bg(cx.theme().colors().editor_background)
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_md()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            Icon::new(IconName::Mic)
+                                .size(IconSize::Small)
+                                .color(Color::Success)
+                                .with_animation(
+                                    "pulsating-mic",
+                                    Animation::new(Duration::from_secs(1))
+                                        .repeat()
+                                        .with_easing(pulsating_between(0.4, 1.0)),
+                                    |icon, _delta| icon.color(Color::Success),
+                                )
+                        )
+                        .child(
+                            Label::new("Recording...")
+                                .size(LabelSize::Small)
+                                .color(Color::Success)
+                        )
+                )
+        )
+    }
+
+    fn render_voice_recordings(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if self.voice_recordings.is_empty() {
+            return None;
+        }
+
+        Some(
+            v_flex()
+                .gap_2()
+                .p_2()
+                .bg(cx.theme().colors().editor_background)
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .rounded_md()
+                .child(
+                    Label::new("Voice Recordings")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                )
+                .children(
+                    self.voice_recordings.iter().map(|recording| {
+                        let recording_id = recording.id.clone();
+                        let is_playing = self.playback_state.as_ref()
+                            .map(|state| state.recording_id == recording_id && state.is_playing)
+                            .unwrap_or(false);
+                        
+                        let is_paused = self.playback_state.as_ref()
+                            .map(|state| state.recording_id == recording_id && !state.is_playing)
+                            .unwrap_or(false);
+                        
+                        let (progress, current_time) = if let Some(playback_state) = &self.playback_state {
+                            if playback_state.recording_id == recording_id {
+                                if playback_state.is_playing {
+                                    let elapsed = playback_state.start_time.elapsed();
+                                    let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed;
+                                    let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
+                                    (progress, played_duration)
+                                } else {
+                                    // Paused state - calculate progress based on remaining duration
+                                    let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration);
+                                    let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
+                                    (progress, played_duration)
+                                }
+                            } else {
+                                (0.0, Duration::ZERO)
+                            }
+                        } else {
+                            (0.0, Duration::ZERO)
+                        };
+                        
+                        let icon_name = if is_playing {
+                            IconName::Stop
+                        } else if is_paused {
+                            IconName::Play
+                        } else {
+                            IconName::Play
+                        };
+                        
+                        let icon_color = if is_playing {
+                            Color::Warning
+                        } else if is_paused {
+                            Color::Success
+                        } else {
+                            Color::Accent
+                        };
+                        
+                        v_flex()
+                            .gap_1()
+                            .p_2()
+                            .rounded_sm()
+                            .hover(|style| style.bg(cx.theme().colors().element_hover))
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(
+                                        // Separate play/pause button
+                                        div()
+                                            .cursor_pointer()
+                                            .child(
+                                                Icon::new(icon_name)
+                                                    .size(IconSize::XSmall)
+                                                    .color(icon_color)
+                                            )
+                                            .on_mouse_down(gpui::MouseButton::Left, {
+                                                let recording_id = recording_id.clone();
+                                                cx.listener(move |this, _event, _window, cx| {
+                                                    this.toggle_voice_playback(recording_id.clone(), cx);
+                                                })
+                                            })
+                                    )
+                                    .child(
+                                        Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Default)
+                                    )
+                                    .child(
+                                        Label::new(&recording.id)
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                    )
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        // Progress bar - separate from play button
+                                        div()
+                                            .h_1p5()
+                                            .w_full()
+                                            .bg(cx.theme().colors().element_background)
+                                            .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                            .rounded_sm()
+                                            .cursor_pointer()
+                                            .relative()
+                                            .child(
+                                                div()
+                                                    .h_full()
+                                                    .w(relative(progress))
+                                                    .bg(if is_playing { cx.theme().colors().text_accent } else { cx.theme().colors().element_disabled })
+                                                    .rounded_sm()
+                                            )
+                                            .on_mouse_down(gpui::MouseButton::Left, {
+                                                let recording_id = recording_id.clone();
+                                                cx.listener(move |this, event, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.start_seek_voice_playback(recording_id.clone(), event, window, cx);
+                                                })
+                                            })
+                                    )
+                            )
+                            .child(
+                                h_flex()
+                                    .justify_between()
+                                    .child(
+                                        Label::new(format!("{:.1}s", current_time.as_secs_f32()))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                    )
+                                    .child(
+                                        Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                    )
+                            )
+                    })
+                )
+        )
+    }
+
+    fn toggle_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
+        // Check if this recording is currently playing
+        if let Some(playback_state) = &self.playback_state {
+            if playback_state.recording_id == recording_id {
+                if playback_state.is_playing {
+                    // Pause current playback
+                    self.pause_voice_playback(cx);
+                } else {
+                    // Resume paused playback
+                    self.resume_voice_playback(recording_id, cx);
+                }
+                return;
+            } else {
+                // Different recording is playing, stop it and start new one
+                self.stop_voice_playback(cx);
+            }
+        }
+        
+        // Start playback for new recording
+        self.start_voice_playback(recording_id, cx);
+    }
+
+    fn start_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
+        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
+            log::info!("Starting playback of voice recording: {} ({}s)", recording.id, recording.duration.as_secs_f32());
+            
+            // Stop any existing playback
+            self.stop_voice_playback(cx);
+            
+            // Clone recording_id for use in async closures
+            let recording_id_for_update = recording_id.clone();
+            
+            // Set up new playback state
+            self.playback_state = Some(PlaybackState {
+                recording_id: recording_id.clone(),
+                start_time: std::time::Instant::now(),
+                duration: recording.duration,
+                original_duration: recording.duration,
+                is_playing: true,
+            });
+            
+            // Start playback update task
+            self.playback_update_task = Some(cx.spawn(async move |this, cx| {
+                let update_interval = Duration::from_millis(50); // Update every 50ms for smooth progress
+                
+                loop {
+                    smol::Timer::after(update_interval).await;
+                    
+                    let should_continue = this.update(cx, |this, cx| {
+                        if let Some(playback_state) = &this.playback_state {
+                            if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
+                                let elapsed = playback_state.start_time.elapsed();
+                                
+                                if elapsed >= playback_state.duration {
+                                    // Playback finished
+                                    log::info!("Playback completed for recording: {}", recording_id_for_update);
+                                    this.stop_voice_playback(cx);
+                                    return false;
+                                }
+                                
+                                // Update UI
+                                cx.notify();
+                                return true;
+                            }
+                        }
+                        false
+                    }).unwrap_or(false);
+                    
+                    if !should_continue {
+                        break;
+                    }
+                }
+            }));
+            
+            cx.notify();
+        }
+    }
+
+    fn stop_voice_playback(&mut self, cx: &mut Context<Self>) {
+        if let Some(playback_state) = &self.playback_state {
+            log::info!("Stopping playback of voice recording: {}", playback_state.recording_id);
+        }
+        
+        self.playback_state = None;
+        self.playback_update_task.take();
+        cx.notify();
+    }
+
+    fn pause_voice_playback(&mut self, cx: &mut Context<Self>) {
+        if let Some(playback_state) = &mut self.playback_state {
+            if playback_state.is_playing {
+                log::info!("Pausing playback of voice recording: {}", playback_state.recording_id);
+                playback_state.is_playing = false;
+                
+                // Calculate how much time has elapsed and adjust the start time
+                let elapsed = playback_state.start_time.elapsed();
+                playback_state.duration = playback_state.duration.saturating_sub(elapsed);
+                
+                // Stop the update task
+                self.playback_update_task.take();
+                
+                cx.notify();
+            }
+        }
+    }
+
+    fn resume_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
+        if let Some(playback_state) = &mut self.playback_state {
+            if playback_state.recording_id == recording_id && !playback_state.is_playing {
+                log::info!("Resuming playback of voice recording: {}", playback_state.recording_id);
+                
+                // Reset start time for remaining duration
+                playback_state.start_time = std::time::Instant::now();
+                playback_state.is_playing = true;
+                
+                // Restart the update task
+                let recording_id_for_update = recording_id.clone();
+                self.playback_update_task = Some(cx.spawn(async move |this, cx| {
+                    let update_interval = Duration::from_millis(50);
+                    
+                    loop {
+                        smol::Timer::after(update_interval).await;
+                        
+                        let should_continue = this.update(cx, |this, cx| {
+                            if let Some(playback_state) = &this.playback_state {
+                                if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
+                                    let elapsed = playback_state.start_time.elapsed();
+                                    
+                                    if elapsed >= playback_state.duration {
+                                        // Playback finished
+                                        log::info!("Playback completed for recording: {}", recording_id_for_update);
+                                        this.stop_voice_playback(cx);
+                                        return false;
+                                    }
+                                    
+                                    // Update UI
+                                    cx.notify();
+                                    return true;
+                                }
+                            }
+                            false
+                        }).unwrap_or(false);
+                        
+                        if !should_continue {
+                            break;
+                        }
+                    }
+                }));
+                
+                cx.notify();
+            }
+        }
+    }
+
+    fn start_seek_voice_playback(&mut self, recording_id: String, _event: &gpui::MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
+            // For now, we'll use a simplified approach since element_bounds is not available
+            // In a real implementation, you'd want to get the actual bounds of the progress bar element
+            // We'll calculate a relative position based on a reasonable assumption
+            
+            // Assume the progress bar is roughly in the center area and use a simple calculation
+            // This is a placeholder - in practice you'd want more precise bounds calculation
+            
+            let relative_position = 0.5f32; // Default to middle for now
+            
+            // You could enhance this by using the mouse position relative to the window
+            // and making assumptions about the layout, but for now we'll use a simple approach
+            
+            let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
+            
+            log::info!("Seeking to position {:.1}s ({:.1}%) in recording: {}", 
+                target_time.as_secs_f32(), relative_position * 100.0, recording_id);
+            
+            // Store the state before seeking (was it playing?)
+            let was_playing = self.playback_state.as_ref()
+                .map(|state| state.recording_id == recording_id && state.is_playing)
+                .unwrap_or(false);
+            
+            // Pause playback during seek
+            if was_playing {
+                self.pause_voice_playback(cx);
+            }
+            
+            // Update or create playback state at the new position
+            if let Some(playback_state) = &mut self.playback_state {
+                if playback_state.recording_id == recording_id {
+                    // Update existing playback state
+                    let remaining_duration = recording.duration.saturating_sub(target_time);
+                    playback_state.duration = remaining_duration;
+                    playback_state.start_time = std::time::Instant::now();
+                    playback_state.is_playing = false; // Paused during seek
+                } else {
+                    // Different recording, create new playback state
+                    self.stop_voice_playback(cx);
+                    let remaining_duration = recording.duration.saturating_sub(target_time);
+                    self.playback_state = Some(PlaybackState {
+                        recording_id: recording_id.clone(),
+                        start_time: std::time::Instant::now(),
+                        duration: remaining_duration,
+                        original_duration: recording.duration,
+                        is_playing: false,
+                    });
+                }
+            } else {
+                // No current playback, create new state at seek position
+                let remaining_duration = recording.duration.saturating_sub(target_time);
+                self.playback_state = Some(PlaybackState {
+                    recording_id: recording_id.clone(),
+                    start_time: std::time::Instant::now(),
+                    duration: remaining_duration,
+                    original_duration: recording.duration,
+                    is_playing: false,
+                });
+            }
+            
+            // Resume playback if it was playing before
+            if was_playing {
+                self.resume_voice_playback(recording_id, cx);
+            }
+            
+            cx.notify();
+        }
+    }
+
+    fn start_voice_playback_at_position(&mut self, recording_id: String, start_position: Duration, cx: &mut Context<Self>) {
+        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
+            log::info!("Starting playback of voice recording: {} at position {:.1}s", recording.id, start_position.as_secs_f32());
+            
+            // Stop any existing playback
+            self.stop_voice_playback(cx);
+            
+            // Calculate remaining duration from start position
+            let remaining_duration = recording.duration.saturating_sub(start_position);
+            
+            // Clone recording_id for use in async closures
+            let recording_id_for_update = recording_id.clone();
+            
+            // Set up new playback state
+            self.playback_state = Some(PlaybackState {
+                recording_id: recording_id.clone(),
+                start_time: std::time::Instant::now(),
+                duration: remaining_duration,
+                original_duration: recording.duration,
+                is_playing: true,
+            });
+            
+            // Start playback update task
+            self.playback_update_task = Some(cx.spawn(async move |this, cx| {
+                let update_interval = Duration::from_millis(50);
+                
+                loop {
+                    smol::Timer::after(update_interval).await;
+                    
+                    let should_continue = this.update(cx, |this, cx| {
+                        if let Some(playback_state) = &this.playback_state {
+                            if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
+                                let elapsed = playback_state.start_time.elapsed();
+                                
+                                if elapsed >= playback_state.duration {
+                                    log::info!("Playback completed for recording: {}", recording_id_for_update);
+                                    this.stop_voice_playback(cx);
+                                    return false;
+                                }
+                                
+                                cx.notify();
+                                return true;
+                            }
+                        }
+                        false
+                    }).unwrap_or(false);
+                    
+                    if !should_continue {
+                        break;
+                    }
+                }
+            }));
+            
+            cx.notify();
+        }
+    }
+
+    fn seek_voice_playback(&mut self, recording_id: String, _event: &gpui::MouseDownEvent, cx: &mut Context<Self>) {
+        // This method is kept for compatibility but now just calls the fallback
+        self.seek_voice_playback_fallback(recording_id, 0.5, cx);
+    }
+
+    fn render_voice_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        let is_recording = matches!(self.voice_state, VoiceState::Recording { .. });
+        
+        Some(
+            IconButton::new("voice-toggle", IconName::Mic)
+                .icon_size(IconSize::Small)
+                .icon_color(if is_recording { Color::Success } else { Color::Muted })
+                .style(if is_recording { 
+                    ButtonStyle::Tinted(ui::TintColor::Success) 
+                } else { 
+                    ButtonStyle::Subtle 
+                })
+                .tooltip(move |_window, _cx| {
+                    Tooltip::text(if is_recording { 
+                        "Stop Recording" 
+                    } else { 
+                        "Start Recording" 
+                    })(_window, _cx)
+                })
+                .on_click(cx.listener(move |this, _, _window, cx| {
+                    this.toggle_voice_input(cx);
+                }))
+        )
+    }
+
+    fn toggle_voice_input(&mut self, cx: &mut Context<Self>) {
+        match self.voice_state {
+            VoiceState::Idle => {
+                self.start_voice_recording(cx);
+            }
+            VoiceState::Recording { start_time } => {
+                self.stop_voice_recording(start_time, cx);
+            }
+            VoiceState::Processing => {
+                // Do nothing while processing
+            }
+        }
+    }
+
+    fn start_voice_recording(&mut self, cx: &mut Context<Self>) {
+        self.voice_state = VoiceState::Recording { 
+            start_time: std::time::Instant::now() 
+        };
+        
+        log::info!("Started voice recording");
+        
+        // Start recording task
+        self.voice_recording_task = Some(cx.spawn(async move |this, cx| {
+            // Simulate recording for now - in a real implementation this would:
+            // 1. Use livekit_client::AudioStack to capture microphone
+            // 2. Stream audio data to a buffer
+            // 3. Handle audio processing
+            
+            // For now, just wait and simulate recording
+            smol::Timer::after(Duration::from_millis(100)).await;
+            
+            this.update(cx, |_this, cx| {
+                // Update UI to show recording is active
+                cx.notify();
+            }).ok();
+        }));
+        
+        cx.notify();
+    }
+
+    fn stop_voice_recording(&mut self, start_time: std::time::Instant, cx: &mut Context<Self>) {
+        let duration = std::time::Instant::now() - start_time;
+        self.voice_state = VoiceState::Processing;
+        
+        log::info!("Stopped voice recording, duration: {:?}", duration);
+        
+        // Cancel the recording task
+        self.voice_recording_task.take();
+        
+        // Create a voice recording
+        let recording = VoiceRecording {
+            id: format!("recording_{}", std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()),
+            duration,
+            data: vec![0u8; (duration.as_secs_f32() * 44100.0 * 2.0) as usize], // Simulate audio data
+            sample_rate: 44100,
+            channels: 1,
+        };
+        
+        // Add to recordings list
+        self.voice_recordings.push(recording.clone());
+        self.current_recording = Some(recording.clone());
+        
+        // Insert voice recording into the chat
+        self.insert_voice_recording(recording, cx);
+        
+        // Reset state
+        self.voice_state = VoiceState::Idle;
+        self.current_recording = None;
+        
+        cx.notify();
+    }
+
+    fn insert_voice_recording(&mut self, recording: VoiceRecording, cx: &mut Context<Self>) {
+        // Insert a voice message representation into the editor
+        let voice_text = format!(
+            "🎤 Voice Recording ({:.1}s) [{}]\n", 
+            recording.duration.as_secs_f32(),
+            recording.id
+        );
+        
+        self.editor.update(cx, |editor, cx| {
+            let cursor_position = editor.selections.newest::<usize>(cx).head();
+            
+            editor.buffer().update(cx, |buffer, cx| {
+                buffer.edit([(cursor_position..cursor_position, voice_text.as_str())], None, cx);
+            });
+        });
+        
+        log::info!("Inserted voice recording: {} ({}s)", recording.id, recording.duration.as_secs_f32());
+    }
+
+    fn seek_voice_playback_fallback(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
+        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
+            let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
+            
+            log::info!("Seeking to position {:.1}s (fallback) in recording: {}", target_time.as_secs_f32(), recording_id);
+            
+            // Update playback state to new position
+            if let Some(playback_state) = &mut self.playback_state {
+                if playback_state.recording_id == recording_id {
+                    // Calculate remaining duration from seek position
+                    let remaining_duration = recording.duration.saturating_sub(target_time);
+                    
+                    playback_state.duration = remaining_duration;
+                    playback_state.start_time = std::time::Instant::now();
+                    
+                    // If not currently playing, start playback from seek position
+                    if !playback_state.is_playing {
+                        self.resume_voice_playback(recording_id, cx);
+                    } else {
+                        // If playing, restart the update task with new position
+                        self.playback_update_task.take();
+                        let recording_id_for_update = recording_id.clone();
+                        self.playback_update_task = Some(cx.spawn(async move |this, cx| {
+                            let update_interval = Duration::from_millis(50);
+                            
+                            loop {
+                                smol::Timer::after(update_interval).await;
+                                
+                                let should_continue = this.update(cx, |this, cx| {
+                                    if let Some(playback_state) = &this.playback_state {
+                                        if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
+                                            let elapsed = playback_state.start_time.elapsed();
+                                            
+                                            if elapsed >= playback_state.duration {
+                                                log::info!("Playback completed for recording: {}", recording_id_for_update);
+                                                this.stop_voice_playback(cx);
+                                                return false;
+                                            }
+                                            
+                                            cx.notify();
+                                            return true;
+                                        }
+                                    }
+                                    false
+                                }).unwrap_or(false);
+                                
+                                if !should_continue {
+                                    break;
+                                }
+                            }
+                        }));
+                    }
+                } else {
+                    // Different recording, start new playback at seek position
+                    self.stop_voice_playback(cx);
+                    self.start_voice_playback_at_position(recording_id, target_time, cx);
+                }
+            } else {
+                // No current playback, start at seek position
+                self.start_voice_playback_at_position(recording_id, target_time, cx);
+            }
+            
+            cx.notify();
+        }
     }
 }
 

@@ -274,7 +274,8 @@
     "bindings": {
       "enter": "agent::Chat",
       "ctrl-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff"
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "ctrl-shift-v": "voice::ToggleVoiceInput"
     }
   },
   {

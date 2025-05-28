@@ -52,6 +52,7 @@ jsonschema.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_model_selector.workspace = true
+language_models.workspace = true
 linkme.workspace = true
 log.workspace = true
 lsp.workspace = true

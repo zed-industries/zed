@@ -322,7 +322,8 @@
     "bindings": {
       "enter": "agent::Chat",
       "cmd-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff"
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "cmd-shift-v": "voice::ToggleVoiceInput"
     }
   },
   {
