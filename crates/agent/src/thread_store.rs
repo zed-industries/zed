@@ -10,6 +10,8 @@ use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
+use db::sqlez::bindable::Column;
+use db::sqlez::statement::Statement;
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
 use futures::channel::{mpsc, oneshot};
@@ -19,8 +21,7 @@ use gpui::{
     App, BackgroundExecutor, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString,
     Subscription, Task, prelude::*,
 };
-use heed::Database;
-use heed::types::SerdeBincode;
+use heed;
 use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Role, TokenUsage};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -37,6 +38,32 @@ use crate::context_server_tool::ContextServerTool;
 use crate::thread::{
     DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
 };
+
+// Implement Bind trait for ThreadId to use in SQL queries
+// impl db::sqlez::bindable::Bind for ThreadId {
+//     fn bind(&self, statement: &Statement, start_index: i32) -> anyhow::Result<i32> {
+//         self.to_string().bind(statement, start_index)
+//     }
+// }
+
+// Implement Column trait for SerializedThreadMetadata
+impl Column for SerializedThreadMetadata {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (id_str, next_index): (String, i32) = Column::column(statement, start_index)?;
+        let (summary, next_index): (String, i32) = Column::column(statement, next_index)?;
+        let (updated_at_timestamp, next_index): (i64, i32) = Column::column(statement, next_index)?;
+
+        Ok((
+            Self {
+                id: ThreadId::from(id_str.as_str()),
+                summary: summary.into(),
+                updated_at: DateTime::from_timestamp(updated_at_timestamp, 0)
+                    .unwrap_or_else(|| DateTime::default()),
+            },
+            next_index,
+        ))
+    }
+}
 
 const RULES_FILE_NAMES: [&'static str; 6] = [
     ".rules",
@@ -868,26 +895,6 @@ impl Global for GlobalThreadsDatabase {}
 
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
-    env: heed::Env,
-    threads: Database<SerdeBincode<ThreadId>, SerializedThread>,
-}
-
-impl heed::BytesEncode<'_> for SerializedThread {
-    type EItem = SerializedThread;
-
-    fn bytes_encode(item: &Self::EItem) -> Result<Cow<[u8]>, heed::BoxedError> {
-        serde_json::to_vec(item).map(Cow::Owned).map_err(Into::into)
-    }
-}
-
-impl<'a> heed::BytesDecode<'a> for SerializedThread {
-    type DItem = SerializedThread;
-
-    fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
-        // We implement this type manually because we want to call `SerializedThread::from_json`,
-        // instead of the Deserialize trait implementation for `SerializedThread`.
-        SerializedThread::from_json(bytes).map_err(Into::into)
-    }
 }
 
 impl ThreadsDatabase {
@@ -902,8 +909,7 @@ impl ThreadsDatabase {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                let database_path = paths::data_dir().join("threads/threads-db.1.mdb");
-                async move { ThreadsDatabase::new(database_path, executor) }
+                async move { ThreadsDatabase::new(executor).await }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
             .boxed()
@@ -912,81 +918,80 @@ impl ThreadsDatabase {
         cx.set_global(GlobalThreadsDatabase(database_future));
     }
 
-    pub fn new(path: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
-        std::fs::create_dir_all(&path)?;
-
-        const ONE_GB_IN_BYTES: usize = 1024 * 1024 * 1024;
-        let env = unsafe {
-            heed::EnvOpenOptions::new()
-                .map_size(ONE_GB_IN_BYTES)
-                .max_dbs(1)
-                .open(path)?
-        };
-
-        let mut txn = env.write_txn()?;
-        let threads = env.create_database(&mut txn, Some("threads"))?;
-        txn.commit()?;
-
-        Ok(Self {
-            executor,
-            env,
-            threads,
-        })
+    pub async fn new(executor: BackgroundExecutor) -> Result<Self> {
+        Ok(Self { executor })
     }
 
     pub fn list_threads(&self) -> Task<Result<Vec<SerializedThreadMetadata>>> {
-        let env = self.env.clone();
-        let threads = self.threads;
-
-        self.executor.spawn(async move {
-            let txn = env.read_txn()?;
-            let mut iter = threads.iter(&txn)?;
-            let mut threads = Vec::new();
-            while let Some((key, value)) = iter.next().transpose()? {
-                threads.push(SerializedThreadMetadata {
-                    id: key,
-                    summary: value.summary,
-                    updated_at: value.updated_at,
-                });
-            }
-
-            Ok(threads)
-        })
+        self.executor
+            .spawn(async move { AGENT_THREADS.all_threads().await })
     }
 
     pub fn try_find_thread(&self, id: ThreadId) -> Task<Result<Option<SerializedThread>>> {
-        let env = self.env.clone();
-        let threads = self.threads;
-
-        self.executor.spawn(async move {
-            let txn = env.read_txn()?;
-            let thread = threads.get(&txn, &id)?;
-            Ok(thread)
-        })
+        self.executor
+            .spawn(async move { AGENT_THREADS.get_thread(id).await })
     }
 
     pub fn save_thread(&self, id: ThreadId, thread: SerializedThread) -> Task<Result<()>> {
-        let env = self.env.clone();
-        let threads = self.threads;
-
-        self.executor.spawn(async move {
-            let mut txn = env.write_txn()?;
-            threads.put(&mut txn, &id, &thread)?;
-            txn.commit()?;
-            Ok(())
-        })
+        self.executor
+            .spawn(async move { AGENT_THREADS.save_thread(id, thread).await })
     }
 
     pub fn delete_thread(&self, id: ThreadId) -> Task<Result<()>> {
-        let env = self.env.clone();
-        let threads = self.threads;
+        self.executor
+            .spawn(async move { AGENT_THREADS.delete_thread_by_id(id).await })
+    }
 
-        self.executor.spawn(async move {
-            let mut txn = env.write_txn()?;
-            threads.delete(&mut txn, &id)?;
-            txn.commit()?;
-            Ok(())
-        })
+    /// Migrate a legacy `heed` LMDB database to SQLite
+    async fn migrate_from_heed() -> Result<()> {
+        let heed_path = paths::data_dir().join("threads/threads-db.1.mdb");
+
+        if !heed_path.exists() {
+            return Ok(()); // No migration needed
+        }
+
+        // Open the old heed database
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .map_size(1024 * 1024 * 1024) // 1GB
+                .max_dbs(1)
+                .open(&heed_path)?
+        };
+
+        let txn = env.read_txn()?;
+        let old_threads: heed::Database<heed::types::SerdeBincode<ThreadId>, SerializedThread> =
+            env.open_database(&txn, Some("threads"))?
+                .ok_or_else(|| anyhow!("threads database not found"))?;
+
+        // Migrate all threads
+        for result in old_threads.iter(&txn)? {
+            if let Some((id, thread)) = result.log_err() {
+                AGENT_THREADS.save_thread(id, thread).await.log_err();
+            }
+        }
+
+        drop(txn);
+        drop(env);
+
+        // TODO: delete the old heed db
+        Ok(())
+    }
+}
+
+// Heed serialization helpers for migration
+impl heed::BytesEncode<'_> for SerializedThread {
+    type EItem = SerializedThread;
+
+    fn bytes_encode(item: &Self::EItem) -> Result<Cow<[u8]>, heed::BoxedError> {
+        serde_json::to_vec(item).map(Cow::Owned).map_err(Into::into)
+    }
+}
+
+impl<'a> heed::BytesDecode<'a> for SerializedThread {
+    type DItem = SerializedThread;
+
+    fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
+        SerializedThread::from_json(bytes).map_err(Into::into)
     }
 }
 
@@ -996,25 +1001,64 @@ define_connection!(pub static ref AGENT_THREADS: ThreadStoreDB<()> =
             id TEXT PRIMARY KEY,
             summary TEXT NOT NULL,
             updated_at INTEGER NOT NULL,
-            data TEXT NOT NULL,
+            data TEXT NOT NULL
         ) STRICT;
     )];
 );
 
 impl ThreadStoreDB {
     query! {
-        fn all_threads(thread_id: ThreadId) -> Result<SerializedThreadMetadata> {
+        pub async fn all_threads() -> Result<Vec<SerializedThreadMetadata>> {
             SELECT id, summary, updated_at
             FROM agent_threads
-            WHERE id = ?
+            ORDER BY updated_at DESC
         }
     }
 
     query! {
-        fn get_thread(thread_id: ThreadId) -> Result<Option<SerializedThread>> {
-            SELECT data
-            FROM agent_threads
-            WHERE id = ?
+        async fn get_thread_data(id: String) -> Result<Option<String>> {
+            SELECT data FROM agent_threads WHERE id = (?)
         }
+    }
+
+    query! {
+        async fn save_thread_data(id: String, summary: String, updated_at: i64, data: String) -> Result<()> {
+            INSERT OR REPLACE INTO agent_threads (id, summary, updated_at, data)
+            VALUES ((?), (?), (?), (?))
+        }
+    }
+
+    query! {
+        async fn delete_thread_data(id: String) -> Result<()> {
+            DELETE FROM agent_threads WHERE id = (?)
+        }
+    }
+
+    pub async fn get_thread(&self, id: ThreadId) -> Result<Option<SerializedThread>> {
+        let id_str = id.to_string();
+        let result = self.get_thread_data(id_str).await?;
+
+        match result {
+            Some(json_str) => {
+                let thread = SerializedThread::from_json(json_str.as_bytes())?;
+                Ok(Some(thread))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub async fn save_thread(&self, id: ThreadId, thread: SerializedThread) -> Result<()> {
+        let thread_json = serde_json::to_string(&thread)?;
+        let updated_at = thread.updated_at.timestamp();
+        let id_str = id.to_string();
+        let summary = thread.summary.clone();
+
+        self.save_thread_data(id_str, summary.to_string(), updated_at, thread_json)
+            .await
+    }
+
+    pub async fn delete_thread_by_id(&self, id: ThreadId) -> Result<()> {
+        let id_str = id.to_string();
+        self.delete_thread_data(id_str).await
     }
 }
