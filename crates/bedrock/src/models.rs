@@ -126,6 +126,60 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
+            Model::ClaudeSonnet4 => "claude-4-sonnet",
+            Model::ClaudeSonnet4Thinking => "claude-4-sonnet-thinking",
+            Model::ClaudeOpus4 => "claude-4-opus",
+            Model::ClaudeOpus4Thinking => "claude-4-opus-thinking",
+            Model::Claude3_5SonnetV2 => "claude-3-5-sonnet-v2",
+            Model::Claude3_5Sonnet => "claude-3-5-sonnet",
+            Model::Claude3Opus => "claude-3-opus",
+            Model::Claude3Sonnet => "claude-3-sonnet",
+            Model::Claude3Haiku => "claude-3-haiku",
+            Model::Claude3_5Haiku => "claude-3-5-haiku",
+            Model::Claude3_7Sonnet => "claude-3-7-sonnet",
+            Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking",
+            Model::AmazonNovaLite => "amazon-nova-lite",
+            Model::AmazonNovaMicro => "amazon-nova-micro",
+            Model::AmazonNovaPro => "amazon-nova-pro",
+            Model::AmazonNovaPremier => "amazon-nova-premier",
+            Model::DeepSeekR1 => "deepseek-r1",
+            Model::AI21J2GrandeInstruct => "ai21-j2-grande-instruct",
+            Model::AI21J2JumboInstruct => "ai21-j2-jumbo-instruct",
+            Model::AI21J2Mid => "ai21-j2-mid",
+            Model::AI21J2MidV1 => "ai21-j2-mid-v1",
+            Model::AI21J2Ultra => "ai21-j2-ultra",
+            Model::AI21J2UltraV1_8k => "ai21-j2-ultra-v1-8k",
+            Model::AI21J2UltraV1 => "ai21-j2-ultra-v1",
+            Model::AI21JambaInstructV1 => "ai21-jamba-instruct-v1",
+            Model::AI21Jamba15LargeV1 => "ai21-jamba-1-5-large-v1",
+            Model::AI21Jamba15MiniV1 => "ai21-jamba-1-5-mini-v1",
+            Model::CohereCommandTextV14_4k => "cohere-command-text-v14-4k",
+            Model::CohereCommandRV1 => "cohere-command-r-v1",
+            Model::CohereCommandRPlusV1 => "cohere-command-r-plus-v1",
+            Model::CohereCommandLightTextV14_4k => "cohere-command-light-text-v14-4k",
+            Model::MetaLlama38BInstructV1 => "meta-llama3-8b-instruct-v1",
+            Model::MetaLlama370BInstructV1 => "meta-llama3-70b-instruct-v1",
+            Model::MetaLlama318BInstructV1_128k => "meta-llama3-1-8b-instruct-v1-128k",
+            Model::MetaLlama318BInstructV1 => "meta-llama3-1-8b-instruct-v1",
+            Model::MetaLlama3170BInstructV1_128k => "meta-llama3-1-70b-instruct-v1-128k",
+            Model::MetaLlama3170BInstructV1 => "meta-llama3-1-70b-instruct-v1",
+            Model::MetaLlama3211BInstructV1 => "meta-llama3-2-11b-instruct-v1",
+            Model::MetaLlama3290BInstructV1 => "meta-llama3-2-90b-instruct-v1",
+            Model::MetaLlama321BInstructV1 => "meta-llama3-2-1b-instruct-v1",
+            Model::MetaLlama323BInstructV1 => "meta-llama3-2-3b-instruct-v1",
+            Model::MistralMistral7BInstructV0 => "mistral-7b-instruct-v0",
+            Model::MistralMixtral8x7BInstructV0 => "mistral-mixtral-8x7b-instruct-v0",
+            Model::MistralMistralLarge2402V1 => "mistral-large-2402-v1",
+            Model::MistralMistralSmall2402V1 => "mistral-small-2402-v1",
+            Model::MistralPixtralLarge2502V1 => "mistral-pixtral-large-2502-v1",
+            Model::PalmyraWriterX4 => "palmyra-writer-x4",
+            Model::PalmyraWriterX5 => "palmyra-writer-x5",
+            Self::Custom { name, .. } => name,
+        }
+    }
+
+    pub fn request_id(&self) -> &str {
+        match self {
             Model::ClaudeSonnet4 | Model::ClaudeSonnet4Thinking => {
                 "anthropic.claude-sonnet-4-20250514-v1:0"
             }
@@ -588,14 +642,14 @@ mod tests {
         );
 
         // Test thinking models have different friendly IDs but same request IDs
-        assert_eq!(Model::Claude4Sonnet.id(), "claude-4-sonnet");
+        assert_eq!(Model::ClaudeSonnet4.id(), "claude-4-sonnet");
         assert_eq!(
-            Model::Claude4SonnetThinking.id(),
+            Model::ClaudeSonnet4Thinking.id(),
             "claude-4-sonnet-thinking"
         );
         assert_eq!(
-            Model::Claude4Sonnet.request_id(),
-            Model::Claude4SonnetThinking.request_id()
+            Model::ClaudeSonnet4.request_id(),
+            Model::ClaudeSonnet4Thinking.request_id()
         );
     }
 }
