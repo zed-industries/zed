@@ -41,7 +41,6 @@ use std::{
 use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::ResultExt;
-
 use workspace::Workspace;
 
 pub struct EditFileTool;
