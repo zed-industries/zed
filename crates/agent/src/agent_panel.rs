@@ -67,8 +67,8 @@ use crate::{
     AddContextServer, AgentDiffPane, ContextStore, ContinueThread, ContinueWithBurnMode,
     DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
     NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
-    ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu,
-    ToggleOptionsMenu,
+    ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleBurnMode, ToggleContextPicker,
+    ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -1302,6 +1302,24 @@ impl AgentPanel {
         } else {
             log::warn!("No configured model available for continuation");
         }
+    }
+
+    fn toggle_burn_mode(
+        &mut self,
+        _: &ToggleBurnMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.thread.update(cx, |active_thread, cx| {
+            active_thread.thread().update(cx, |thread, _cx| {
+                let current_mode = thread.completion_mode();
+
+                thread.set_completion_mode(match current_mode {
+                    CompletionMode::Max => CompletionMode::Normal,
+                    CompletionMode::Normal => CompletionMode::Max,
+                });
+            });
+        });
     }
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
@@ -3065,6 +3083,7 @@ impl Render for AgentPanel {
                 });
                 this.continue_conversation(window, cx);
             }))
+            .on_action(cx.listener(Self::toggle_burn_mode))
             .child(self.render_toolbar(window, cx))
             .children(self.render_upsell(window, cx))
             .children(self.render_trial_end_upsell(window, cx))
