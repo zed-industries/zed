@@ -386,6 +386,7 @@ impl SignatureHelpPopover {
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
                                     border: false,
+                                    copy_button_on_hover: false,
                                 })
                                 .on_url_click(open_markdown_url),
                         )
