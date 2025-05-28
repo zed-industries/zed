@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
@@ -44,12 +42,13 @@ impl DapLocator for NodeLocator {
 
         // npx --node-options="--inspect-brk" jest --testNamePattern foobar folder/file.ts
         let program_path = "$ZED_WORKTREE_ROOT/node_modules/.bin/jest";
-        let mut config = serde_json::json!({
+        let config = serde_json::json!({
             "request": "launch",
             "program": program_path,
             "args": args,
             "cwd": build_config.cwd.clone(),
-            "runtimeArgs": ["--inspect-brk"]
+            "runtimeArgs": ["--inspect-brk"],
+            "console": "integratedTerminal",
         });
 
         Some(DebugScenario {

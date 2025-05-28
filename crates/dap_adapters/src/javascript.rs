@@ -71,7 +71,7 @@ impl JsDebugAdapter {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        Ok(DebugAdapterBinary {
+        let ret = DebugAdapterBinary {
             command: delegate
                 .node_runtime()
                 .binary_path()
@@ -97,7 +97,8 @@ impl JsDebugAdapter {
                 configuration: task_definition.config.clone(),
                 request: self.validate_config(&task_definition.config)?,
             },
-        })
+        };
+        Ok(dbg!(ret))
     }
 }
 
@@ -449,6 +450,8 @@ impl DebugAdapter for JsDebugAdapter {
                     delegate.as_ref(),
                 )
                 .await?;
+            } else {
+                delegate.output_to_console(format!("{} debug adapter is up to date", self.name()));
             }
         }
 

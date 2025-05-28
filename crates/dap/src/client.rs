@@ -173,6 +173,7 @@ impl DebugAdapterClient {
             command,
             sequence_id
         );
+        dbg!(&response);
         match response.success {
             true => {
                 if let Some(json) = response.body {
