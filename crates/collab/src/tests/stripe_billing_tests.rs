@@ -28,7 +28,7 @@ async fn test_find_or_create_customer_by_email() {
         let customer = stripe_client
             .customers
             .lock()
-            .get(&customer_id.into())
+            .get(&customer_id)
             .unwrap()
             .clone();
         assert_eq!(customer.email.as_deref(), Some(email));
@@ -52,7 +52,7 @@ async fn test_find_or_create_customer_by_email() {
         let customer = stripe_client
             .customers
             .lock()
-            .get(&customer_id.into())
+            .get(&customer_id)
             .unwrap()
             .clone();
         assert_eq!(customer.email.as_deref(), Some(email));
