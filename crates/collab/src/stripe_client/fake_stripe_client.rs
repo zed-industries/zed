@@ -6,16 +6,23 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use uuid::Uuid;
 
-use crate::stripe_client::{CreateCustomerParams, StripeClient, StripeCustomer, StripeCustomerId};
+use crate::stripe_client::{
+    CreateCustomerParams, StripeClient, StripeCustomer, StripeCustomerId, StripeMeter,
+    StripeMeterId, StripePrice, StripePriceId,
+};
 
 pub struct FakeStripeClient {
     pub customers: Arc<Mutex<HashMap<StripeCustomerId, StripeCustomer>>>,
+    pub prices: Arc<Mutex<HashMap<StripePriceId, StripePrice>>>,
+    pub meters: Arc<Mutex<HashMap<StripeMeterId, StripeMeter>>>,
 }
 
 impl FakeStripeClient {
     pub fn new() -> Self {
         Self {
             customers: Arc::new(Mutex::new(HashMap::default())),
+            prices: Arc::new(Mutex::new(HashMap::default())),
+            meters: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 }
@@ -43,5 +50,17 @@ impl StripeClient for FakeStripeClient {
             .insert(customer.id.clone(), customer.clone());
 
         Ok(customer)
+    }
+
+    async fn list_prices(&self) -> Result<Vec<StripePrice>> {
+        let prices = self.prices.lock().values().cloned().collect();
+
+        Ok(prices)
+    }
+
+    async fn list_meters(&self) -> Result<Vec<StripeMeter>> {
+        let meters = self.meters.lock().values().cloned().collect();
+
+        Ok(meters)
     }
 }
