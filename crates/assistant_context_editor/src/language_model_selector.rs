@@ -4,8 +4,7 @@ use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    Action, AnyElement, AnyView, App, BackgroundExecutor, Corner, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
+    Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task,
     action_with_deprecated_aliases,
 };
 use language_model::{
@@ -15,7 +14,7 @@ use language_model::{
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
-use ui::{ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger, prelude::*};
+use ui::{ListItem, ListItemSpacing, prelude::*};
 
 action_with_deprecated_aliases!(
     agent,
@@ -31,77 +30,146 @@ const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
 
-pub struct LanguageModelSelector {
-    picker: Entity<Picker<LanguageModelPickerDelegate>>,
+pub type LanguageModelSelector = Picker<LanguageModelPickerDelegate>;
+
+pub fn language_model_selector(
+    get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
+    on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
+    window: &mut Window,
+    cx: &mut Context<LanguageModelSelector>,
+) -> LanguageModelSelector {
+    let delegate = LanguageModelPickerDelegate::new(get_active_model, on_model_changed, window, cx);
+    Picker::list(delegate, window, cx)
+        .show_scrollbar(true)
+        .width(rems(20.))
+        .max_height(Some(rems(20.).into()))
+}
+
+fn all_models(cx: &App) -> GroupedModels {
+    let mut recommended = Vec::new();
+    let mut recommended_set = HashSet::default();
+    for provider in LanguageModelRegistry::global(cx)
+        .read(cx)
+        .providers()
+        .iter()
+    {
+        let models = provider.recommended_models(cx);
+        recommended_set.extend(models.iter().map(|model| (model.provider_id(), model.id())));
+        recommended.extend(
+            provider
+                .recommended_models(cx)
+                .into_iter()
+                .map(move |model| ModelInfo {
+                    model: model.clone(),
+                    icon: provider.icon(),
+                }),
+        );
+    }
+
+    let other_models = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .providers()
+        .iter()
+        .map(|provider| {
+            (
+                provider.id(),
+                provider
+                    .provided_models(cx)
+                    .into_iter()
+                    .filter_map(|model| {
+                        let not_included =
+                            !recommended_set.contains(&(model.provider_id(), model.id()));
+                        not_included.then(|| ModelInfo {
+                            model: model.clone(),
+                            icon: provider.icon(),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<IndexMap<_, _>>();
+
+    GroupedModels {
+        recommended,
+        other: other_models,
+    }
+}
+
+#[derive(Clone)]
+struct ModelInfo {
+    model: Arc<dyn LanguageModel>,
+    icon: IconName,
+}
+
+pub struct LanguageModelPickerDelegate {
+    on_model_changed: OnModelChanged,
+    get_active_model: GetActiveModel,
+    all_models: Arc<GroupedModels>,
+    filtered_entries: Vec<LanguageModelPickerEntry>,
+    selected_index: usize,
     _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
-impl LanguageModelSelector {
-    pub fn new(
+impl LanguageModelPickerDelegate {
+    fn new(
         get_active_model: impl Fn(&App) -> Option<ConfiguredModel> + 'static,
         on_model_changed: impl Fn(Arc<dyn LanguageModel>, &mut App) + 'static,
         window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Self {
         let on_model_changed = Arc::new(on_model_changed);
+        let models = all_models(cx);
+        let entries = models.entries();
 
-        let all_models = Self::all_models(cx);
-        let entries = all_models.entries();
-
-        let delegate = LanguageModelPickerDelegate {
-            language_model_selector: cx.entity().downgrade(),
+        Self {
             on_model_changed: on_model_changed.clone(),
-            all_models: Arc::new(all_models),
+            all_models: Arc::new(models),
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
-        };
-
-        let picker = cx.new(|cx| {
-            Picker::list(delegate, window, cx)
-                .show_scrollbar(true)
-                .width(rems(20.))
-                .max_height(Some(rems(20.).into()))
-        });
-
-        let subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
-
-        LanguageModelSelector {
-            picker,
             _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
-            _subscriptions: vec![
-                cx.subscribe_in(
-                    &LanguageModelRegistry::global(cx),
-                    window,
-                    Self::handle_language_model_registry_event,
-                ),
-                subscription,
-            ],
+            _subscriptions: vec![cx.subscribe_in(
+                &LanguageModelRegistry::global(cx),
+                window,
+                |picker, _, event, window, cx| {
+                    match event {
+                        language_model::Event::ProviderStateChanged
+                        | language_model::Event::AddedProvider(_)
+                        | language_model::Event::RemovedProvider(_) => {
+                            let query = picker.query(cx);
+                            picker.delegate.all_models = Arc::new(all_models(cx));
+                            // Update matches will automatically drop the previous task
+                            // if we get a provider event again
+                            picker.update_matches(query, window, cx)
+                        }
+                        _ => {}
+                    }
+                },
+            )],
         }
     }
 
-    fn handle_language_model_registry_event(
-        &mut self,
-        _registry: &Entity<LanguageModelRegistry>,
-        event: &language_model::Event,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            language_model::Event::ProviderStateChanged
-            | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
-                self.picker.update(cx, |this, cx| {
-                    let query = this.query(cx);
-                    this.delegate.all_models = Arc::new(Self::all_models(cx));
-                    // Update matches will automatically drop the previous task
-                    // if we get a provider event again
-                    this.update_matches(query, window, cx)
-                });
-            }
-            _ => {}
-        }
+    fn get_active_model_index(
+        entries: &[LanguageModelPickerEntry],
+        active_model: Option<ConfiguredModel>,
+    ) -> usize {
+        entries
+            .iter()
+            .position(|entry| {
+                if let LanguageModelPickerEntry::Model(model) = entry {
+                    active_model
+                        .as_ref()
+                        .map(|active_model| {
+                            active_model.model.id() == model.model.id()
+                                && active_model.provider.id() == model.model.provider_id()
+                        })
+                        .unwrap_or_default()
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(0)
     }
 
     /// Authenticates all providers in the [`LanguageModelRegistry`].
@@ -154,169 +222,9 @@ impl LanguageModelSelector {
         })
     }
 
-    fn all_models(cx: &App) -> GroupedModels {
-        let mut recommended = Vec::new();
-        let mut recommended_set = HashSet::default();
-        for provider in LanguageModelRegistry::global(cx)
-            .read(cx)
-            .providers()
-            .iter()
-        {
-            let models = provider.recommended_models(cx);
-            recommended_set.extend(models.iter().map(|model| (model.provider_id(), model.id())));
-            recommended.extend(
-                provider
-                    .recommended_models(cx)
-                    .into_iter()
-                    .map(move |model| ModelInfo {
-                        model: model.clone(),
-                        icon: provider.icon(),
-                    }),
-            );
-        }
-
-        let other_models = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .providers()
-            .iter()
-            .map(|provider| {
-                (
-                    provider.id(),
-                    provider
-                        .provided_models(cx)
-                        .into_iter()
-                        .filter_map(|model| {
-                            let not_included =
-                                !recommended_set.contains(&(model.provider_id(), model.id()));
-                            not_included.then(|| ModelInfo {
-                                model: model.clone(),
-                                icon: provider.icon(),
-                            })
-                        })
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect::<IndexMap<_, _>>();
-
-        GroupedModels {
-            recommended,
-            other: other_models,
-        }
-    }
-
     pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
-        (self.picker.read(cx).delegate.get_active_model)(cx)
+        (self.get_active_model)(cx)
     }
-
-    fn get_active_model_index(
-        entries: &[LanguageModelPickerEntry],
-        active_model: Option<ConfiguredModel>,
-    ) -> usize {
-        entries
-            .iter()
-            .position(|entry| {
-                if let LanguageModelPickerEntry::Model(model) = entry {
-                    active_model
-                        .as_ref()
-                        .map(|active_model| {
-                            active_model.model.id() == model.model.id()
-                                && active_model.provider.id() == model.model.provider_id()
-                        })
-                        .unwrap_or_default()
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(0)
-    }
-}
-
-impl EventEmitter<DismissEvent> for LanguageModelSelector {}
-
-impl Focusable for LanguageModelSelector {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker.focus_handle(cx)
-    }
-}
-
-impl Render for LanguageModelSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        self.picker.clone()
-    }
-}
-
-#[derive(IntoElement)]
-pub struct LanguageModelSelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    language_model_selector: Entity<LanguageModelSelector>,
-    trigger: T,
-    tooltip: TT,
-    handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
-    anchor: Corner,
-}
-
-impl<T, TT> LanguageModelSelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    pub fn new(
-        language_model_selector: Entity<LanguageModelSelector>,
-        trigger: T,
-        tooltip: TT,
-        anchor: Corner,
-    ) -> Self {
-        Self {
-            language_model_selector,
-            trigger,
-            tooltip,
-            handle: None,
-            anchor,
-        }
-    }
-
-    pub fn with_handle(mut self, handle: PopoverMenuHandle<LanguageModelSelector>) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-}
-
-impl<T, TT> RenderOnce for LanguageModelSelectorPopoverMenu<T, TT>
-where
-    T: PopoverTrigger + ButtonCommon,
-    TT: Fn(&mut Window, &mut App) -> AnyView + 'static,
-{
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        let language_model_selector = self.language_model_selector.clone();
-
-        PopoverMenu::new("model-switcher")
-            .menu(move |_window, _cx| Some(language_model_selector.clone()))
-            .trigger_with_tooltip(self.trigger, self.tooltip)
-            .anchor(self.anchor)
-            .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
-            .offset(gpui::Point {
-                x: px(0.0),
-                y: px(-2.0),
-            })
-    }
-}
-
-#[derive(Clone)]
-struct ModelInfo {
-    model: Arc<dyn LanguageModel>,
-    icon: IconName,
-}
-
-pub struct LanguageModelPickerDelegate {
-    language_model_selector: WeakEntity<LanguageModelSelector>,
-    on_model_changed: OnModelChanged,
-    get_active_model: GetActiveModel,
-    all_models: Arc<GroupedModels>,
-    filtered_entries: Vec<LanguageModelPickerEntry>,
-    selected_index: usize,
 }
 
 struct GroupedModels {
@@ -577,9 +485,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.language_model_selector
-            .update(cx, |_this, cx| cx.emit(DismissEvent))
-            .ok();
+        cx.emit(DismissEvent);
     }
 
     fn render_match(
