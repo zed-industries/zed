@@ -117,6 +117,7 @@ dependencies = [
  "streaming_diff",
  "telemetry",
  "telemetry_events",
+ "tempfile",
  "terminal",
  "terminal_view",
  "text",

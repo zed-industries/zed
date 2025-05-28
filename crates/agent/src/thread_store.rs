@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::cell::{Ref, RefCell};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -58,7 +58,7 @@ impl Column for SerializedThreadMetadata {
                 id: ThreadId::from(id_str.as_str()),
                 summary: summary.into(),
                 updated_at: DateTime::from_timestamp(updated_at_timestamp, 0)
-                    .unwrap_or_else(|| DateTime::default()),
+                    .unwrap_or_else(DateTime::default),
             },
             next_index,
         ))
@@ -685,7 +685,7 @@ pub struct SerializedThreadMetadata {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SerializedThread {
     pub version: String,
     pub summary: SharedString,
@@ -709,7 +709,7 @@ pub struct SerializedThread {
     pub tool_use_limit_reached: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SerializedLanguageModel {
     pub provider: String,
     pub model: String,
@@ -774,7 +774,7 @@ impl SerializedThreadV0_1_0 {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SerializedMessage {
     pub id: MessageId,
     pub role: Role,
@@ -792,7 +792,7 @@ pub struct SerializedMessage {
     pub is_hidden: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(tag = "type")]
 pub enum SerializedMessageSegment {
     #[serde(rename = "text")]
@@ -810,14 +810,14 @@ pub enum SerializedMessageSegment {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SerializedToolUse {
     pub id: LanguageModelToolUseId,
     pub name: SharedString,
     pub input: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SerializedToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
@@ -879,7 +879,7 @@ impl LegacySerializedMessage {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SerializedCrease {
     pub start: usize,
     pub end: usize,
@@ -943,9 +943,12 @@ impl ThreadsDatabase {
     }
 
     /// Migrate a legacy `heed` LMDB database to SQLite
-    async fn migrate_from_heed() -> Result<()> {
-        let heed_path = paths::data_dir().join("threads/threads-db.1.mdb");
+    pub async fn migrate_from_heed(heed_path: &Path) -> Result<()> {
+        Self::migrate_from_heed_to_db(heed_path, &AGENT_THREADS).await
+    }
 
+    /// Migrate a legacy `heed` LMDB database to a specific SQLite database
+    pub async fn migrate_from_heed_to_db(heed_path: &Path, db: &ThreadStoreDB) -> Result<()> {
         if !heed_path.exists() {
             return Ok(()); // No migration needed
         }
@@ -966,7 +969,7 @@ impl ThreadsDatabase {
         // Migrate all threads
         for result in old_threads.iter(&txn)? {
             if let Some((id, thread)) = result.log_err() {
-                AGENT_THREADS.save_thread(id, thread).await.log_err();
+                db.save_thread(id, thread).await.log_err();
             }
         }
 
@@ -1060,5 +1063,348 @@ impl ThreadStoreDB {
     pub async fn delete_thread_by_id(&self, id: ThreadId) -> Result<()> {
         let id_str = id.to_string();
         self.delete_thread_data(id_str).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use gpui::TestAppContext;
+    use std::sync::Arc;
+    use tempfile::TempDir;
+
+    #[gpui::test]
+    async fn test_save_load_delete_threads(_cx: &mut TestAppContext) {
+        let db = ThreadStoreDB::open_test_db("test_save_load_delete_threads").await;
+
+        // Test that no threads exist initially
+        let threads = db.all_threads().await.unwrap();
+        assert_eq!(threads.len(), 0);
+
+        // Create test thread data
+        let thread_id = ThreadId::from("test-thread-1");
+        let thread = SerializedThread {
+            version: SerializedThread::VERSION.to_string(),
+            summary: SharedString::from("Test thread summary"),
+            updated_at: Utc::now(),
+            messages: vec![],
+            initial_project_snapshot: None,
+            cumulative_token_usage: TokenUsage::default(),
+            request_token_usage: vec![],
+            detailed_summary_state: DetailedSummaryState::NotGenerated,
+            exceeded_window_error: None,
+            model: None,
+            completion_mode: Some(CompletionMode::Normal),
+            tool_use_limit_reached: false,
+        };
+
+        // Save thread
+        db.save_thread(thread_id.clone(), thread.clone())
+            .await
+            .unwrap();
+
+        // Load all threads
+        let threads = db.all_threads().await.unwrap();
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].id, thread_id);
+        assert_eq!(threads[0].summary, thread.summary);
+
+        // Load specific thread
+        let loaded_thread = db.get_thread(thread_id.clone()).await.unwrap();
+        assert!(loaded_thread.is_some());
+        let loaded_thread = loaded_thread.unwrap();
+        assert_eq!(loaded_thread.summary, thread.summary);
+        assert_eq!(loaded_thread.version, thread.version);
+
+        // Update thread
+        let updated_thread = SerializedThread {
+            summary: SharedString::from("Updated summary"),
+            updated_at: Utc::now(),
+            ..thread
+        };
+        db.save_thread(thread_id.clone(), updated_thread.clone())
+            .await
+            .unwrap();
+
+        // Verify update
+        let loaded_thread = db.get_thread(thread_id.clone()).await.unwrap().unwrap();
+        assert_eq!(loaded_thread.summary, SharedString::from("Updated summary"));
+
+        // Delete thread
+        db.delete_thread_by_id(thread_id.clone()).await.unwrap();
+
+        // Verify deletion
+        let loaded_thread = db.get_thread(thread_id.clone()).await.unwrap();
+        assert!(loaded_thread.is_none());
+
+        let threads = db.all_threads().await.unwrap();
+        assert_eq!(threads.len(), 0);
+    }
+
+    #[gpui::test]
+    async fn test_multiple_threads(_cx: &mut TestAppContext) {
+        let db = ThreadStoreDB::open_test_db("test_multiple_threads").await;
+
+        // Create multiple threads
+        let thread_ids = [
+            ThreadId::from("thread-1"),
+            ThreadId::from("thread-2"),
+            ThreadId::from("thread-3"),
+        ];
+
+        for (i, thread_id) in thread_ids.iter().enumerate() {
+            let thread = SerializedThread {
+                version: SerializedThread::VERSION.to_string(),
+                summary: SharedString::from(format!("Thread {}", i + 1)),
+                updated_at: Utc::now() - chrono::Duration::hours(i as i64),
+                messages: vec![],
+                initial_project_snapshot: None,
+                cumulative_token_usage: TokenUsage::default(),
+                request_token_usage: vec![],
+                detailed_summary_state: DetailedSummaryState::NotGenerated,
+                exceeded_window_error: None,
+                model: None,
+                completion_mode: Some(CompletionMode::Normal),
+                tool_use_limit_reached: false,
+            };
+            db.save_thread(thread_id.clone(), thread).await.unwrap();
+        }
+
+        // Load all threads - should be ordered by updated_at DESC
+        let threads = db.all_threads().await.unwrap();
+        assert_eq!(threads.len(), 3);
+        assert_eq!(threads[0].summary.as_ref(), "Thread 1");
+        assert_eq!(threads[1].summary.as_ref(), "Thread 2");
+        assert_eq!(threads[2].summary.as_ref(), "Thread 3");
+
+        // Delete middle thread
+        db.delete_thread_by_id(thread_ids[1].clone()).await.unwrap();
+
+        let threads = db.all_threads().await.unwrap();
+        assert_eq!(threads.len(), 2);
+        assert_eq!(threads[0].summary.as_ref(), "Thread 1");
+        assert_eq!(threads[1].summary.as_ref(), "Thread 3");
+    }
+
+    #[gpui::test]
+    async fn test_heed_to_sqlite_migration(_cx: &mut TestAppContext) {
+        use heed::types::SerdeBincode;
+
+        // Create a temporary directory for the heed database
+        let temp_dir = TempDir::new().unwrap();
+        let heed_path = temp_dir.path().join("test-heed-db");
+
+        // Create and populate heed database
+        {
+            std::fs::create_dir_all(&heed_path).unwrap();
+            let env = unsafe {
+                heed::EnvOpenOptions::new()
+                    .map_size(1024 * 1024 * 1024)
+                    .max_dbs(1)
+                    .open(&heed_path)
+                    .unwrap()
+            };
+
+            let mut txn = env.write_txn().unwrap();
+            let threads: heed::Database<SerdeBincode<ThreadId>, SerializedThread> =
+                env.create_database(&mut txn, Some("threads")).unwrap();
+
+            // Insert test data
+            let thread_ids = [
+                ThreadId::from("legacy-thread-1"),
+                ThreadId::from("legacy-thread-2"),
+                ThreadId::from("legacy-thread-3"),
+            ];
+
+            for (i, thread_id) in thread_ids.iter().enumerate() {
+                let thread = SerializedThread {
+                    version: SerializedThread::VERSION.to_string(),
+                    summary: SharedString::from(format!("Legacy Thread {}", i + 1)),
+                    updated_at: Utc::now() - chrono::Duration::days(i as i64),
+                    messages: vec![SerializedMessage {
+                        id: MessageId(i),
+                        role: Role::User,
+                        segments: vec![SerializedMessageSegment::Text {
+                            text: format!("Test message {}", i),
+                        }],
+                        tool_uses: vec![],
+                        tool_results: vec![],
+                        context: String::new(),
+                        creases: vec![],
+                        is_hidden: false,
+                    }],
+                    initial_project_snapshot: None,
+                    cumulative_token_usage: TokenUsage {
+                        input_tokens: ((i + 1) * 100) as u32,
+                        output_tokens: ((i + 1) * 50) as u32,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    },
+                    request_token_usage: vec![],
+                    detailed_summary_state: DetailedSummaryState::NotGenerated,
+                    exceeded_window_error: None,
+                    model: None,
+                    completion_mode: Some(CompletionMode::Normal),
+                    tool_use_limit_reached: false,
+                };
+                threads.put(&mut txn, thread_id, &thread).unwrap();
+            }
+
+            txn.commit().unwrap();
+        }
+
+        // Clear any existing SQLite data
+        let db = ThreadStoreDB::open_test_db("test_heed_to_sqlite_migration").await;
+
+        // Verify SQLite is empty
+        let threads_before = db.all_threads().await.unwrap();
+        assert_eq!(threads_before.len(), 0);
+
+        // Run migration
+        ThreadsDatabase::migrate_from_heed_to_db(&heed_path, &db)
+            .await
+            .unwrap();
+
+        // Verify all threads were migrated
+        let threads_after = db.all_threads().await.unwrap();
+        assert_eq!(threads_after.len(), 3);
+
+        // Verify thread metadata
+        let thread_summaries: Vec<_> = threads_after.iter().map(|t| t.summary.as_ref()).collect();
+        assert!(thread_summaries.contains(&"Legacy Thread 1"));
+        assert!(thread_summaries.contains(&"Legacy Thread 2"));
+        assert!(thread_summaries.contains(&"Legacy Thread 3"));
+
+        // Verify full thread data
+        for i in 1..=3 {
+            let thread_id = ThreadId::from(&format!("legacy-thread-{}", i) as &str);
+            let thread = db.get_thread(thread_id).await.unwrap().unwrap();
+            assert_eq!(thread.summary.as_ref(), format!("Legacy Thread {}", i));
+            assert_eq!(thread.messages.len(), 1);
+            assert_eq!(
+                thread.messages[0].segments[0],
+                SerializedMessageSegment::Text {
+                    text: format!("Test message {}", i - 1)
+                }
+            );
+            assert_eq!(thread.cumulative_token_usage.input_tokens, (i * 100) as u32);
+            assert_eq!(thread.cumulative_token_usage.output_tokens, (i * 50) as u32);
+        }
+
+        // Verify heed database still exists
+        assert!(heed_path.exists());
+    }
+
+    #[gpui::test]
+    async fn test_thread_serialization_deserialization(_cx: &mut TestAppContext) {
+        let db = ThreadStoreDB::open_test_db("test_thread_serialization_deserialization").await;
+
+        let thread_id = ThreadId::from("serialization-test");
+        let original_thread = SerializedThread {
+            version: SerializedThread::VERSION.to_string(),
+            summary: SharedString::from("Serialization test thread"),
+            updated_at: Utc::now(),
+            messages: vec![
+                SerializedMessage {
+                    id: MessageId(1),
+                    role: Role::User,
+                    segments: vec![
+                        SerializedMessageSegment::Text {
+                            text: "Hello".to_string(),
+                        },
+                        SerializedMessageSegment::Thinking {
+                            text: "Thinking about the response".to_string(),
+                            signature: Some("sig123".to_string()),
+                        },
+                    ],
+                    tool_uses: vec![SerializedToolUse {
+                        id: LanguageModelToolUseId::from("tool-1"),
+                        name: SharedString::from("test_tool"),
+                        input: serde_json::json!({"key": "value"}),
+                    }],
+                    tool_results: vec![SerializedToolResult {
+                        tool_use_id: LanguageModelToolUseId::from("tool-1"),
+                        is_error: false,
+                        content: LanguageModelToolResultContent::Text("Result".into()),
+                        output: None,
+                    }],
+                    context: String::new(),
+                    creases: vec![SerializedCrease {
+                        start: 0,
+                        end: 5,
+                        icon_path: SharedString::from("icon.png"),
+                        label: SharedString::from("test-crease"),
+                    }],
+                    is_hidden: false,
+                },
+                SerializedMessage {
+                    id: MessageId(2),
+                    role: Role::Assistant,
+                    segments: vec![SerializedMessageSegment::RedactedThinking {
+                        data: vec![1, 2, 3, 4, 5],
+                    }],
+                    tool_uses: vec![],
+                    tool_results: vec![],
+                    context: String::new(),
+                    creases: vec![],
+                    is_hidden: true,
+                },
+            ],
+            initial_project_snapshot: Some(Arc::new(ProjectSnapshot {
+                worktree_snapshots: vec![],
+                unsaved_buffer_paths: vec![],
+                timestamp: Utc::now(),
+            })),
+            cumulative_token_usage: TokenUsage {
+                input_tokens: 1000,
+                output_tokens: 500,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            },
+            request_token_usage: vec![TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            }],
+            detailed_summary_state: DetailedSummaryState::Generated {
+                text: SharedString::from("Detailed summary"),
+                message_id: MessageId(1),
+            },
+            exceeded_window_error: None,
+            model: Some(SerializedLanguageModel {
+                provider: "test-provider".to_string(),
+                model: "test-model".to_string(),
+            }),
+            completion_mode: Some(CompletionMode::Normal),
+            tool_use_limit_reached: true,
+        };
+
+        // Save thread
+        db.save_thread(thread_id.clone(), original_thread.clone())
+            .await
+            .unwrap();
+
+        // Load thread
+        let loaded_thread = db.get_thread(thread_id).await.unwrap().unwrap();
+
+        // Verify all fields
+        assert_eq!(loaded_thread.version, original_thread.version);
+        assert_eq!(loaded_thread.summary, original_thread.summary);
+        assert_eq!(loaded_thread.messages.len(), original_thread.messages.len());
+        assert_eq!(loaded_thread.messages[0].segments.len(), 2);
+        assert_eq!(loaded_thread.messages[0].tool_uses.len(), 1);
+        assert_eq!(loaded_thread.messages[0].tool_results.len(), 1);
+        assert_eq!(loaded_thread.messages[0].creases.len(), 1);
+        assert_eq!(loaded_thread.messages[1].is_hidden, true);
+        assert!(loaded_thread.initial_project_snapshot.is_some());
+        assert_eq!(
+            loaded_thread.cumulative_token_usage.input_tokens,
+            original_thread.cumulative_token_usage.input_tokens
+        );
+        assert_eq!(loaded_thread.exceeded_window_error.is_none(), original_thread.exceeded_window_error.is_none());
+        assert!(loaded_thread.model.is_some());
+        assert_eq!(loaded_thread.tool_use_limit_reached, true);
     }
 }
