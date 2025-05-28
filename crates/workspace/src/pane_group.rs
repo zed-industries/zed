@@ -150,64 +150,50 @@ impl PaneGroup {
         self.root.last_pane()
     }
 
+    /// Helper function to check if two bounds have vertical overlap
+    fn vertical_overlap(bounds1: Bounds<Pixels>, bounds2: Bounds<Pixels>) -> bool {
+        !(bounds1.bottom() <= bounds2.top() || bounds1.top() >= bounds2.bottom())
+    }
+
+    /// Helper function to check if two bounds have horizontal overlap
+    fn horizontal_overlap(bounds1: Bounds<Pixels>, bounds2: Bounds<Pixels>) -> bool {
+        !(bounds1.right() <= bounds2.left() || bounds1.left() >= bounds2.right())
+    }
+
     pub fn find_pane_in_direction(
         &mut self,
         active_pane: &Entity<Pane>,
         direction: SplitDirection,
         cx: &App,
     ) -> Option<&Entity<Pane>> {
-        // Same probe point that the old algorithm used.
         let active_bounds = self.bounding_box_for_pane(active_pane)?;
-        let cursor = active_pane.read(cx).pixel_position_of_cursor(cx);
-        let center = match cursor {
-            Some(c) if active_bounds.contains(&c) => c,
-            _ => active_bounds.center(),
-        };
-
-        let distance_to_next = crate::HANDLE_HITBOX_SIZE;
-        let probe = match direction {
-            SplitDirection::Left => {
-                Point::new(active_bounds.left() - distance_to_next.into(), center.y)
-            }
-            SplitDirection::Right => {
-                Point::new(active_bounds.right() + distance_to_next.into(), center.y)
-            }
-            SplitDirection::Up => {
-                Point::new(center.x, active_bounds.top() - distance_to_next.into())
-            }
-            SplitDirection::Down => {
-                Point::new(center.x, active_bounds.bottom() + distance_to_next.into())
-            }
-        };
-
-        // Collect every pane whose bounding box contains the probe point.
         let mut best: Option<&Entity<Pane>> = None;
-        let mut best_ts: usize = 0;
-
-        // Debug: Print info for all panes first
-        dbg!("=== All panes info ===");
-        for (i, pane) in self.panes().iter().enumerate() {
-            let bounds = self.bounding_box_for_pane(pane);
-            let ts = pane.read(cx).last_visit_ts;
-            dbg!(format!("Pane {}: ID={:?}, bounds={:?}, last_visit_ts={}", 
-                         i, pane.entity_id(), bounds, ts));
-        }
-        dbg!(format!("Probe point: {:?}", probe));
+        let mut best_dist = f32::MAX;
+        let mut best_ts = 0;
 
         for pane in self.panes() {
-            if let Some(bounds) = self.bounding_box_for_pane(pane) {
-                let ts = pane.read(cx).last_visit_ts;
-                let contains_probe = bounds.contains(&probe);
-                dbg!(format!("Checking pane {:?}: bounds={:?}, contains_probe={}, ts={}, current_best_ts={}", 
-                             pane.entity_id(), bounds, contains_probe, ts, best_ts));
-                
-                if contains_probe {
-                    if best.is_none() || ts > best_ts {
-                        dbg!(format!("New best pane: {:?} (ts={})", pane.entity_id(), ts));
-                        best = Some(pane);
-                        best_ts = ts;
-                    }
-                }
+            if pane == active_pane { continue; }
+            let bounds = match self.bounding_box_for_pane(pane) { Some(b) => b, None => continue };
+
+            let (overlaps, dist) = match direction {
+                SplitDirection::Right if bounds.left() >= active_bounds.right() =>
+                    (Self::vertical_overlap(bounds, active_bounds), (bounds.left() - active_bounds.right()).0),
+                SplitDirection::Left if bounds.right() <= active_bounds.left()  =>
+                    (Self::vertical_overlap(bounds, active_bounds), (active_bounds.left() - bounds.right()).0),
+                SplitDirection::Down if bounds.top()  >= active_bounds.bottom() =>
+                    (Self::horizontal_overlap(bounds, active_bounds), (bounds.top()  - active_bounds.bottom()).0),
+                SplitDirection::Up   if bounds.bottom() <= active_bounds.top()  =>
+                    (Self::horizontal_overlap(bounds, active_bounds), (active_bounds.top() - bounds.bottom()).0),
+                _ => (false, 0.0),
+            };
+
+            if !overlaps { continue; }
+
+            let ts = pane.read(cx).last_visit_ts;
+            if dist < best_dist || (dist == best_dist && ts > best_ts) {
+                best = Some(pane);
+                best_dist = dist;
+                best_ts = ts;
             }
         }
         best
