@@ -203,11 +203,6 @@ pub trait Tool: 'static + Send + Sync {
     /// Returns the name of the tool.
     fn name(&self) -> String;
 
-    /// Returns the name to be displayed in the UI for this tool.
-    fn ui_name(&self) -> String {
-        self.name()
-    }
-
     /// Returns the description of the tool.
     fn description(&self) -> String;
 
