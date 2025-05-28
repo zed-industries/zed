@@ -2011,17 +2011,17 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        ButtonLike::new("send_button")
+        Button::new("send_button", "Send")
+            .label_size(LabelSize::Small)
             .disabled(self.sending_disabled(cx))
             .style(style)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Send"))
-            .children(
+            .key_binding(
                 KeyBinding::for_action_in(&Assist, &focus_handle, window, cx)
-                    .map(|binding| binding.into_any_element()),
+                    .map(|kb| kb.size(rems_from_px(12.))),
             )
             .on_click(move |_event, window, cx| {
                 focus_handle.dispatch_action(&Assist, window, cx);
@@ -2545,6 +2545,7 @@ impl Render for ContextEditor {
         let provider = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.provider);
+
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
@@ -2555,6 +2556,7 @@ impl Render for ContextEditor {
 
         let language_model_selector = self.language_model_selector_menu_handle.clone();
         let max_mode_toggle = self.render_max_mode_toggle(cx);
+
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -2594,34 +2596,28 @@ impl Render for ContextEditor {
             })
             .children(self.render_last_error(cx))
             .child(
-                h_flex().w_full().relative().child(
-                    h_flex()
-                        .p_2()
-                        .w_full()
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(self.render_inject_context_menu(cx))
-                                .child(ui::Divider::vertical())
-                                .child(
-                                    div()
-                                        .pl_0p5()
-                                        .child(self.render_language_model_selector(cx)),
-                                )
-                                .when_some(max_mode_toggle, |this, element| {
-                                    this.child(ui::Divider::vertical()).child(element)
-                                }),
-                        )
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_end()
-                                .child(self.render_send_button(window, cx)),
-                        ),
-                ),
+                h_flex()
+                    .relative()
+                    .py_2()
+                    .pl_1p5()
+                    .pr_2()
+                    .w_full()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(self.render_inject_context_menu(cx))
+                            .when_some(max_mode_toggle, |this, element| this.child(element)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(self.render_language_model_selector(cx))
+                            .child(self.render_send_button(window, cx)),
+                    ),
             )
     }
 }
