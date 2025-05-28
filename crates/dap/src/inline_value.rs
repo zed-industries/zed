@@ -122,116 +122,157 @@ impl InlineValueProvider for RustInlineValueProvider {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tree_sitter::Parser;
+pub struct PythonInlineValueProvider;
 
-    #[test]
-    fn test_go_inline_value_provider() {
-        let provider = GoInlineValueProvider;
-        let source = r#"
-package main
+impl InlineValueProvider for PythonInlineValueProvider {
+    fn provide(
+        &self,
+        mut node: language::Node,
+        source: &str,
+        max_row: usize,
+    ) -> Vec<InlineValueLocation> {
+        let mut variables = Vec::new();
+        let mut variable_names = HashSet::new();
+        let mut scope = VariableScope::Local;
 
-func main() {
-    items := []int{1, 2, 3, 4, 5}
-    for i, v := range items {
-        println(i, v)
-    }
-    for j := 0; j < 10; j++ {
-        println(j)
-    }
-}
-"#;
+        loop {
+            let mut variable_names_in_scope = HashMap::new();
+            for child in node.named_children(&mut node.walk()) {
+                if child.start_position().row >= max_row {
+                    break;
+                }
 
-        let mut parser = Parser::new();
-        if parser
-            .set_language(&tree_sitter_go::LANGUAGE.into())
-            .is_err()
-        {
-            return;
-        }
-        let Some(tree) = parser.parse(source, None) else {
-            return;
-        };
-        let root_node = tree.root_node();
+                if scope == VariableScope::Local {
+                    match child.kind() {
+                        "expression_statement" => {
+                            if let Some(expr) = child.child(0) {
+                                if expr.kind() == "assignment" {
+                                    if let Some(param) = expr.child(0) {
+                                        let param_identifier = if param.kind() == "identifier" {
+                                            Some(param)
+                                        } else if param.kind() == "typed_parameter" {
+                                            param.child(0)
+                                        } else {
+                                            None
+                                        };
 
-        let mut main_body = None;
-        for child in root_node.named_children(&mut root_node.walk()) {
-            if child.kind() == "function_declaration" {
-                if let Some(name) = child.child_by_field_name("name") {
-                    if &source[name.byte_range()] == "main" {
-                        if let Some(body) = child.child_by_field_name("body") {
-                            main_body = Some(body);
-                            break;
+                                        if let Some(identifier) = param_identifier {
+                                            if identifier.kind() == "identifier" {
+                                                let variable_name =
+                                                    source[identifier.byte_range()].to_string();
+
+                                                if variable_names.contains(&variable_name) {
+                                                    continue;
+                                                }
+
+                                                if let Some(index) =
+                                                    variable_names_in_scope.get(&variable_name)
+                                                {
+                                                    variables.remove(*index);
+                                                }
+
+                                                variable_names_in_scope
+                                                    .insert(variable_name.clone(), variables.len());
+                                                variables.push(InlineValueLocation {
+                                                    variable_name,
+                                                    scope: VariableScope::Local,
+                                                    lookup: VariableLookupKind::Variable,
+                                                    row: identifier.end_position().row,
+                                                    column: identifier.end_position().column,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
+                        "function_definition" => {
+                            if let Some(params) = child.child_by_field_name("parameters") {
+                                for param in params.named_children(&mut params.walk()) {
+                                    let param_identifier = if param.kind() == "identifier" {
+                                        Some(param)
+                                    } else if param.kind() == "typed_parameter" {
+                                        param.child(0)
+                                    } else {
+                                        None
+                                    };
+
+                                    if let Some(identifier) = param_identifier {
+                                        if identifier.kind() == "identifier" {
+                                            let variable_name =
+                                                source[identifier.byte_range()].to_string();
+
+                                            if variable_names.contains(&variable_name) {
+                                                continue;
+                                            }
+
+                                            if let Some(index) =
+                                                variable_names_in_scope.get(&variable_name)
+                                            {
+                                                variables.remove(*index);
+                                            }
+
+                                            variable_names_in_scope
+                                                .insert(variable_name.clone(), variables.len());
+                                            variables.push(InlineValueLocation {
+                                                variable_name,
+                                                scope: VariableScope::Local,
+                                                lookup: VariableLookupKind::Variable,
+                                                row: identifier.end_position().row,
+                                                column: identifier.end_position().column,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "for_statement" => {
+                            if let Some(target) = child.child_by_field_name("left") {
+                                if target.kind() == "identifier" {
+                                    let variable_name = source[target.byte_range()].to_string();
+
+                                    if variable_names.contains(&variable_name) {
+                                        continue;
+                                    }
+
+                                    if let Some(index) = variable_names_in_scope.get(&variable_name)
+                                    {
+                                        variables.remove(*index);
+                                    }
+
+                                    variable_names_in_scope
+                                        .insert(variable_name.clone(), variables.len());
+                                    variables.push(InlineValueLocation {
+                                        variable_name,
+                                        scope: VariableScope::Local,
+                                        lookup: VariableLookupKind::Variable,
+                                        row: target.end_position().row,
+                                        column: target.end_position().column,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
-        }
 
-        let Some(main_body) = main_body else {
-            return;
-        };
+            variable_names.extend(variable_names_in_scope.keys().cloned());
 
-        let variables = provider.provide(main_body, source, 100);
-        assert!(variables.len() >= 2);
+            if matches!(node.kind(), "function_definition" | "module")
+                && node.range().end_point.row < max_row
+            {
+                scope = VariableScope::Global;
+            }
 
-        let variable_names: Vec<&str> =
-            variables.iter().map(|v| v.variable_name.as_str()).collect();
-        assert!(variable_names.contains(&"items"));
-        assert!(variable_names.contains(&"j"));
-    }
-
-    #[test]
-    fn test_go_inline_value_provider_counter_pattern() {
-        let provider = GoInlineValueProvider;
-        let source = r#"
-package main
-
-func main() {
-    N := 10
-    for i := range N {
-        println(i)
-    }
-}
-"#;
-
-        let mut parser = Parser::new();
-        if parser
-            .set_language(&tree_sitter_go::LANGUAGE.into())
-            .is_err()
-        {
-            return;
-        }
-        let Some(tree) = parser.parse(source, None) else {
-            return;
-        };
-        let root_node = tree.root_node();
-
-        let mut main_body = None;
-        for child in root_node.named_children(&mut root_node.walk()) {
-            if child.kind() == "function_declaration" {
-                if let Some(name) = child.child_by_field_name("name") {
-                    if &source[name.byte_range()] == "main" {
-                        if let Some(body) = child.child_by_field_name("body") {
-                            main_body = Some(body);
-                            break;
-                        }
-                    }
-                }
+            if let Some(parent) = node.parent() {
+                node = parent;
+            } else {
+                break;
             }
         }
 
-        let Some(main_body) = main_body else {
-            return;
-        };
-        let variables = provider.provide(main_body, source, 100);
-
-        let variable_names: Vec<&str> =
-            variables.iter().map(|v| v.variable_name.as_str()).collect();
-        assert!(variable_names.contains(&"N"));
-        assert!(variable_names.contains(&"i"));
+        variables
     }
 }
 
@@ -505,157 +546,115 @@ impl InlineValueProvider for GoInlineValueProvider {
         variables
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tree_sitter::Parser;
 
-pub struct PythonInlineValueProvider;
+    #[test]
+    fn test_go_inline_value_provider() {
+        let provider = GoInlineValueProvider;
+        let source = r#"
+package main
 
-impl InlineValueProvider for PythonInlineValueProvider {
-    fn provide(
-        &self,
-        mut node: language::Node,
-        source: &str,
-        max_row: usize,
-    ) -> Vec<InlineValueLocation> {
-        let mut variables = Vec::new();
-        let mut variable_names = HashSet::new();
-        let mut scope = VariableScope::Local;
+func main() {
+    items := []int{1, 2, 3, 4, 5}
+    for i, v := range items {
+        println(i, v)
+    }
+    for j := 0; j < 10; j++ {
+        println(j)
+    }
+}
+"#;
 
-        loop {
-            let mut variable_names_in_scope = HashMap::new();
-            for child in node.named_children(&mut node.walk()) {
-                if child.start_position().row >= max_row {
-                    break;
-                }
+        let mut parser = Parser::new();
+        if parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .is_err()
+        {
+            return;
+        }
+        let Some(tree) = parser.parse(source, None) else {
+            return;
+        };
+        let root_node = tree.root_node();
 
-                if scope == VariableScope::Local {
-                    match child.kind() {
-                        "expression_statement" => {
-                            if let Some(expr) = child.child(0) {
-                                if expr.kind() == "assignment" {
-                                    if let Some(param) = expr.child(0) {
-                                        let param_identifier = if param.kind() == "identifier" {
-                                            Some(param)
-                                        } else if param.kind() == "typed_parameter" {
-                                            param.child(0)
-                                        } else {
-                                            None
-                                        };
-
-                                        if let Some(identifier) = param_identifier {
-                                            if identifier.kind() == "identifier" {
-                                                let variable_name =
-                                                    source[identifier.byte_range()].to_string();
-
-                                                if variable_names.contains(&variable_name) {
-                                                    continue;
-                                                }
-
-                                                if let Some(index) =
-                                                    variable_names_in_scope.get(&variable_name)
-                                                {
-                                                    variables.remove(*index);
-                                                }
-
-                                                variable_names_in_scope
-                                                    .insert(variable_name.clone(), variables.len());
-                                                variables.push(InlineValueLocation {
-                                                    variable_name,
-                                                    scope: VariableScope::Local,
-                                                    lookup: VariableLookupKind::Variable,
-                                                    row: identifier.end_position().row,
-                                                    column: identifier.end_position().column,
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+        let mut main_body = None;
+        for child in root_node.named_children(&mut root_node.walk()) {
+            if child.kind() == "function_declaration" {
+                if let Some(name) = child.child_by_field_name("name") {
+                    if &source[name.byte_range()] == "main" {
+                        if let Some(body) = child.child_by_field_name("body") {
+                            main_body = Some(body);
+                            break;
                         }
-                        "function_definition" => {
-                            if let Some(params) = child.child_by_field_name("parameters") {
-                                for param in params.named_children(&mut params.walk()) {
-                                    let param_identifier = if param.kind() == "identifier" {
-                                        Some(param)
-                                    } else if param.kind() == "typed_parameter" {
-                                        param.child(0)
-                                    } else {
-                                        None
-                                    };
-
-                                    if let Some(identifier) = param_identifier {
-                                        if identifier.kind() == "identifier" {
-                                            let variable_name =
-                                                source[identifier.byte_range()].to_string();
-
-                                            if variable_names.contains(&variable_name) {
-                                                continue;
-                                            }
-
-                                            if let Some(index) =
-                                                variable_names_in_scope.get(&variable_name)
-                                            {
-                                                variables.remove(*index);
-                                            }
-
-                                            variable_names_in_scope
-                                                .insert(variable_name.clone(), variables.len());
-                                            variables.push(InlineValueLocation {
-                                                variable_name,
-                                                scope: VariableScope::Local,
-                                                lookup: VariableLookupKind::Variable,
-                                                row: identifier.end_position().row,
-                                                column: identifier.end_position().column,
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        "for_statement" => {
-                            if let Some(target) = child.child_by_field_name("left") {
-                                if target.kind() == "identifier" {
-                                    let variable_name = source[target.byte_range()].to_string();
-
-                                    if variable_names.contains(&variable_name) {
-                                        continue;
-                                    }
-
-                                    if let Some(index) = variable_names_in_scope.get(&variable_name)
-                                    {
-                                        variables.remove(*index);
-                                    }
-
-                                    variable_names_in_scope
-                                        .insert(variable_name.clone(), variables.len());
-                                    variables.push(InlineValueLocation {
-                                        variable_name,
-                                        scope: VariableScope::Local,
-                                        lookup: VariableLookupKind::Variable,
-                                        row: target.end_position().row,
-                                        column: target.end_position().column,
-                                    });
-                                }
-                            }
-                        }
-                        _ => {}
                     }
                 }
             }
+        }
 
-            variable_names.extend(variable_names_in_scope.keys().cloned());
+        let Some(main_body) = main_body else {
+            return;
+        };
 
-            if matches!(node.kind(), "function_definition" | "module")
-                && node.range().end_point.row < max_row
-            {
-                scope = VariableScope::Global;
-            }
+        let variables = provider.provide(main_body, source, 100);
+        assert!(variables.len() >= 2);
 
-            if let Some(parent) = node.parent() {
-                node = parent;
-            } else {
-                break;
+        let variable_names: Vec<&str> =
+            variables.iter().map(|v| v.variable_name.as_str()).collect();
+        assert!(variable_names.contains(&"items"));
+        assert!(variable_names.contains(&"j"));
+    }
+
+    #[test]
+    fn test_go_inline_value_provider_counter_pattern() {
+        let provider = GoInlineValueProvider;
+        let source = r#"
+package main
+
+func main() {
+    N := 10
+    for i := range N {
+        println(i)
+    }
+}
+"#;
+
+        let mut parser = Parser::new();
+        if parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .is_err()
+        {
+            return;
+        }
+        let Some(tree) = parser.parse(source, None) else {
+            return;
+        };
+        let root_node = tree.root_node();
+
+        let mut main_body = None;
+        for child in root_node.named_children(&mut root_node.walk()) {
+            if child.kind() == "function_declaration" {
+                if let Some(name) = child.child_by_field_name("name") {
+                    if &source[name.byte_range()] == "main" {
+                        if let Some(body) = child.child_by_field_name("body") {
+                            main_body = Some(body);
+                            break;
+                        }
+                    }
+                }
             }
         }
 
-        variables
+        let Some(main_body) = main_body else {
+            return;
+        };
+        let variables = provider.provide(main_body, source, 100);
+
+        let variable_names: Vec<&str> =
+            variables.iter().map(|v| v.variable_name.as_str()).collect();
+        assert!(variable_names.contains(&"N"));
+        assert!(variable_names.contains(&"i"));
     }
 }
