@@ -16,9 +16,9 @@ eval = []
 
 [dependencies]
 agent_settings.workspace = true
-aho-corasick.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
+async-watch.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true

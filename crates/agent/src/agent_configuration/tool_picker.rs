@@ -117,7 +117,7 @@ impl ToolPickerDelegate {
                 ToolSource::Native => {
                     if mode == ToolPickerMode::BuiltinTools {
                         items.extend(tools.into_iter().map(|tool| PickerItem::Tool {
-                            name: tool.ui_name().into(),
+                            name: tool.name().into(),
                             server_id: None,
                         }));
                     }
@@ -129,7 +129,7 @@ impl ToolPickerDelegate {
                             server_id: server_id.clone(),
                         });
                         items.extend(tools.into_iter().map(|tool| PickerItem::Tool {
-                            name: tool.ui_name().into(),
+                            name: tool.name().into(),
                             server_id: Some(server_id.clone()),
                         }));
                     }

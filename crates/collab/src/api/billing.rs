@@ -344,6 +344,7 @@ async fn create_billing_subscription(
         stripe_billing
             .find_or_create_customer_by_email(user.email_address.as_deref())
             .await?
+            .try_into()?
     };
 
     let success_url = format!(
@@ -498,8 +499,10 @@ async fn manage_billing_subscription(
     let flow = match body.intent {
         ManageSubscriptionIntent::ManageSubscription => None,
         ManageSubscriptionIntent::UpgradeToPro => {
-            let zed_pro_price_id = stripe_billing.zed_pro_price_id().await?;
-            let zed_free_price_id = stripe_billing.zed_free_price_id().await?;
+            let zed_pro_price_id: stripe::PriceId =
+                stripe_billing.zed_pro_price_id().await?.try_into()?;
+            let zed_free_price_id: stripe::PriceId =
+                stripe_billing.zed_free_price_id().await?.try_into()?;
 
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
@@ -1575,7 +1578,7 @@ async fn sync_model_request_usage_with_stripe(
             };
 
             stripe_billing
-                .subscribe_to_price(&stripe_subscription_id, price)
+                .subscribe_to_price(&stripe_subscription_id.into(), price)
                 .await?;
             stripe_billing
                 .bill_model_request_usage(

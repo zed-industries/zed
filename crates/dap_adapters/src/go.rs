@@ -312,14 +312,22 @@ impl DebugAdapter for GoDebugAdapter {
                     "processId": attach_config.process_id,
                 })
             }
-            dap::DebugRequest::Launch(launch_config) => json!({
-                "request": "launch",
-                "mode": "debug",
-                "program": launch_config.program,
-                "cwd": launch_config.cwd,
-                "args": launch_config.args,
-                "env": launch_config.env_json()
-            }),
+            dap::DebugRequest::Launch(launch_config) => {
+                let mode = if launch_config.program != "." {
+                    "exec"
+                } else {
+                    "debug"
+                };
+
+                json!({
+                    "request": "launch",
+                    "mode": mode,
+                    "program": launch_config.program,
+                    "cwd": launch_config.cwd,
+                    "args": launch_config.args,
+                    "env": launch_config.env_json()
+                })
+            }
         };
 
         let map = args.as_object_mut().unwrap();

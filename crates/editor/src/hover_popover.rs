@@ -583,13 +583,6 @@ async fn parse_blocks(
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
-    let fallback_language_name = if let Some(ref l) = language {
-        let l = Arc::clone(l);
-        Some(l.lsp_id().clone())
-    } else {
-        None
-    };
-
     let combined_text = blocks
         .iter()
         .map(|block| match &block.kind {
@@ -607,7 +600,7 @@ async fn parse_blocks(
             Markdown::new(
                 combined_text.into(),
                 Some(language_registry.clone()),
-                fallback_language_name,
+                language.map(|language| language.name()),
                 cx,
             )
         })
@@ -1057,7 +1050,9 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     match event {
-                        MarkdownEvent::SubstitutedText(parsed) => rendered_text.push_str(parsed),
+                        MarkdownEvent::SubstitutedText(parsed) => {
+                            rendered_text.push_str(parsed.as_str())
+                        }
                         MarkdownEvent::Text | MarkdownEvent::Code => {
                             rendered_text.push_str(&text[range.clone()])
                         }
