@@ -1512,6 +1512,14 @@ impl EditorElement {
             ShowScrollbar::Never => return None,
         };
 
+        let content_offset = self
+            .editor
+            .read(cx)
+            .show_indent_guides
+            .is_none_or(|should_show| should_show)
+            .then_some(content_offset)
+            .unwrap_or_default();
+
         Some(EditorScrollbars::from_scrollbar_axes(
             ScrollbarAxes {
                 horizontal: scrollbar_settings.axes.horizontal
