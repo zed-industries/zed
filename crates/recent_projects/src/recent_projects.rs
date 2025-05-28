@@ -33,7 +33,7 @@ use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
-
+    cx.observe_new(RecentProjects::register).detach();
     cx.observe_new(DisconnectedOverlay::register).detach();
 
     remote_servers::init(cx);
@@ -96,7 +96,24 @@ impl RecentProjects {
         }
     }
 
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _cx: &mut Context<Workspace>,
+    ) {
+        workspace.register_action(|workspace, open_recent: &OpenRecent, window, cx| {
+            let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
+                Self::open(workspace, open_recent.create_new_window, window, cx);
+                return;
+            };
 
+            recent_projects.update(cx, |recent_projects, cx| {
+                recent_projects
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
+            });
+        });
+    }
 
     pub fn open(
         workspace: &mut Workspace,
