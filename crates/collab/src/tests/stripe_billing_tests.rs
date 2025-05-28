@@ -5,6 +5,8 @@ use pretty_assertions::assert_eq;
 use crate::stripe_billing::StripeBilling;
 use crate::stripe_client::{
     FakeStripeClient, StripeMeter, StripeMeterId, StripePrice, StripePriceId, StripePriceRecurring,
+    StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
+    UpdateSubscriptionItems,
 };
 
 fn make_stripe_billing() -> (StripeBilling, Arc<FakeStripeClient>) {
@@ -139,5 +141,72 @@ async fn test_find_or_create_customer_by_email() {
             .unwrap()
             .clone();
         assert_eq!(customer.email.as_deref(), Some(email));
+    }
+}
+
+#[gpui::test]
+async fn test_subscribe_to_price() {
+    let (stripe_billing, stripe_client) = make_stripe_billing();
+
+    let price = StripePrice {
+        id: StripePriceId("price_test".into()),
+        unit_amount: Some(2000),
+        lookup_key: Some("test-price".to_string()),
+        recurring: None,
+    };
+    stripe_client
+        .prices
+        .lock()
+        .insert(price.id.clone(), price.clone());
+
+    let subscription = StripeSubscription {
+        id: StripeSubscriptionId("sub_test".into()),
+        items: vec![],
+    };
+    stripe_client
+        .subscriptions
+        .lock()
+        .insert(subscription.id.clone(), subscription.clone());
+
+    stripe_billing
+        .subscribe_to_price(&subscription.id, &price)
+        .await
+        .unwrap();
+
+    let update_subscription_calls = stripe_client
+        .update_subscription_calls
+        .lock()
+        .iter()
+        .map(|(id, params)| (id.clone(), params.clone()))
+        .collect::<Vec<_>>();
+    assert_eq!(update_subscription_calls.len(), 1);
+    assert_eq!(update_subscription_calls[0].0, subscription.id);
+    assert_eq!(
+        update_subscription_calls[0].1.items,
+        Some(vec![UpdateSubscriptionItems {
+            price: Some(price.id.clone())
+        }])
+    );
+
+    // Subscribing to a price that is already on the subscription is a no-op.
+    {
+        let subscription = StripeSubscription {
+            id: StripeSubscriptionId("sub_test".into()),
+            items: vec![StripeSubscriptionItem {
+                id: StripeSubscriptionItemId("si_test".into()),
+                price: Some(price.clone()),
+            }],
+        };
+        stripe_client
+            .subscriptions
+            .lock()
+            .insert(subscription.id.clone(), subscription.clone());
+
+        stripe_billing
+            .subscribe_to_price(&subscription.id, &price)
+            .await
+            .unwrap();
+
+        assert_eq!(stripe_client.update_subscription_calls.lock().len(), 1);
     }
 }
