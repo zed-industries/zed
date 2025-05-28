@@ -1289,49 +1289,39 @@ impl PickerDelegate for FileFinderDelegate {
                     match &m {
                         Match::CreateNew(filename) => {
                             // Create a new file with the given filename
-                            // let worktree = workspace.project().read(cx).default_worktree(cx);
-                            // if let Some(worktree) = worktree {
-                            //     let worktree_id = worktree.read(cx).id();
-                            //     let path = Path::new(filename);
-                            //     let project_path = ProjectPath {
-                            //         worktree_id,
-                            //         path: Arc::from(path),
-                            //     };
+                            let worktree = self.project.read(cx).visible_worktrees(cx).next();
+                            if let Some(tree) = worktree {
+                                let worktree = tree.read(cx);
+                                let worktree_id = worktree.id();
+                                let path = Path::new(filename);
+                                let project_path = ProjectPath {
+                                    worktree_id,
+                                    path: Arc::from(path),
+                                };
 
-                            //     // Create parent directories if needed
-                            //     if let Some(parent) = path.parent() {
-                            //         if !parent.as_os_str().is_empty() {
-                            //             let parent_path = ProjectPath {
-                            //                 worktree_id,
-                            //                 path: Arc::from(parent),
-                            //             };
-                            //             workspace.create_directory(parent_path, window, cx);
-                            //         }
-                            //     }
-
-                            //     if secondary {
-                            //         workspace.split_path_preview(
-                            //             project_path,
-                            //             false,
-                            //             None,
-                            //             window,
-                            //             cx,
-                            //         )
-                            //     } else {
-                            //         workspace.open_path_preview(
-                            //             project_path,
-                            //             None,
-                            //             true,
-                            //             false,
-                            //             true,
-                            //             window,
-                            //             cx,
-                            //         )
-                            //     }
-                            // } else {
-                            //     Task::ready(None)
-                            // }
-                            todo!("Implement this")
+                                if secondary {
+                                    workspace.split_path_preview(
+                                        project_path,
+                                        false,
+                                        None,
+                                        window,
+                                        cx,
+                                    )
+                                } else {
+                                    workspace.open_path_preview(
+                                        project_path,
+                                        None,
+                                        true,
+                                        false,
+                                        true,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            } else {
+                                // Not quite sure what to do here
+                                panic!("Worktree not found");
+                            }
                         }
 
                         Match::History { path, .. } => {
