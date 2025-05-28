@@ -1074,7 +1074,7 @@ async fn build_buffer_diff(
         .update(|cx| {
             BufferDiffSnapshot::new_with_base_buffer(
                 buffer.text.clone(),
-                Some(old_text.into()),
+                Some(old_text),
                 base_buffer,
                 cx,
             )
