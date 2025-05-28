@@ -91,6 +91,7 @@ dependencies = [
  "log",
  "lsp",
  "markdown",
+ "media_player",
  "menu",
  "multi_buffer",
  "notifications",
@@ -8840,6 +8841,16 @@ dependencies = [
  "metal",
  "objc",
  "workspace-hack",
+]
+
+[[package]]
+name = "media_player"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "serde",
+ "smol",
 ]
 
 [[package]]

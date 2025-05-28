@@ -57,6 +57,7 @@ linkme.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true
+media_player = { path = "../media_player" }
 menu.workspace = true
 multi_buffer.workspace = true
 notifications.workspace = true

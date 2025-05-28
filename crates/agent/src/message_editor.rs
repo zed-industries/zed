@@ -44,6 +44,7 @@ use language_model::{
     ZED_CLOUD_PROVIDER_ID,
 };
 use language_model_selector::ToggleModelSelector;
+use media_player::{VoicePlayer, VoiceRecorder, VoiceRecording, VoicePlayerEvent};
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
@@ -56,39 +57,6 @@ use workspace::{CollaboratorId, Workspace};
 
 // Voice actions
 actions!(voice, [ToggleVoiceInput]);
-
-// Voice recording state
-#[derive(Clone, Debug)]
-pub struct VoiceRecording {
-    pub id: String,
-    pub duration: Duration,
-    pub data: Vec<u8>, // Raw audio data
-    pub sample_rate: u32,
-    pub channels: u32,
-}
-
-#[derive(Clone, Debug)]
-pub enum VoiceState {
-    Idle,
-    Recording { start_time: std::time::Instant },
-    Processing,
-}
-
-#[derive(Clone, Debug)]
-pub struct PlaybackState {
-    pub recording_id: String,
-    pub start_time: std::time::Instant,
-    pub duration: Duration,
-    pub original_duration: Duration,
-    pub is_playing: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct SeekingState {
-    pub recording_id: String,
-    pub was_playing_before_seek: bool,
-    pub seek_position: f32, // 0.0 to 1.0
-}
 
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
@@ -111,16 +79,11 @@ pub struct MessageEditor {
     last_estimated_token_count: Option<usize>,
     update_token_count_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
-    // Voice recording state
-    voice_state: VoiceState,
+    // Voice recording and playback using media_player
+    voice_player: VoicePlayer,
+    voice_recorder: VoiceRecorder,
     voice_recording_task: Option<Task<()>>,
-    current_recording: Option<VoiceRecording>,
-    voice_recordings: Vec<VoiceRecording>,
-    // Playback state
-    playback_state: Option<PlaybackState>,
     playback_update_task: Option<Task<()>>,
-    // Seeking state
-    seeking_state: Option<SeekingState>,
 }
 
 const MAX_EDITOR_LINES: usize = 8;
@@ -276,13 +239,10 @@ impl MessageEditor {
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
-            voice_state: VoiceState::Idle,
+            voice_player: VoicePlayer::new(),
+            voice_recorder: VoiceRecorder::new(),
             voice_recording_task: None,
-            current_recording: None,
-            voice_recordings: Vec::new(),
-            playback_state: None,
             playback_update_task: None,
-            seeking_state: None,
         };
         
         instance
@@ -381,9 +341,9 @@ impl MessageEditor {
 
         let (user_message, user_message_creases) = self.editor.update(cx, |editor, cx| {
             let creases = extract_message_creases(editor, cx);
-            let text = editor.text(cx);
+            let message_text = editor.text(cx);
             editor.clear(window, cx);
-            (text, creases)
+            (message_text, creases)
         });
 
         self.last_estimated_token_count.take();
@@ -1334,52 +1294,52 @@ impl MessageEditor {
                     cx.emit(MessageEditorEvent::EstimatedTokenCount);
                 }
                 this.update_token_count_task.take();
-            })
-            .ok();
+            }).ok();
         }));
     }
 
-    fn render_voice_indicator(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if !matches!(self.voice_state, VoiceState::Recording { .. }) {
+    fn render_voice_indicator(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if !self.voice_recorder.is_recording() {
             return None;
         }
 
+        let duration = self.voice_recorder.get_recording_duration().unwrap_or(Duration::ZERO);
+        
         Some(
-            h_flex()
-                .gap_2()
+            div()
+                .flex()
                 .items_center()
+                .gap_2()
                 .p_2()
-                .bg(cx.theme().colors().editor_background)
+                .bg(gpui::red().alpha(0.1))
                 .border_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(gpui::red())
                 .rounded_md()
                 .child(
-                    h_flex()
-                        .gap_1()
-                        .items_center()
-                        .child(
-                            Icon::new(IconName::Mic)
-                                .size(IconSize::Small)
-                                .color(Color::Success)
-                                .with_animation(
-                                    "pulsating-mic",
-                                    Animation::new(Duration::from_secs(1))
-                                        .repeat()
-                                        .with_easing(pulsating_between(0.4, 1.0)),
-                                    |icon, _delta| icon.color(Color::Success),
-                                )
+                    div()
+                        .size_2()
+                        .bg(gpui::red())
+                        .rounded_full()
+                        .with_animation(
+                            "pulse",
+                            Animation::new(Duration::from_millis(1000))
+                                .repeat()
+                                .with_easing(pulsating_between(0.4, 1.0)),
+                            |div, delta| div.opacity(delta),
                         )
-                        .child(
-                            Label::new("Recording...")
-                                .size(LabelSize::Small)
-                                .color(Color::Success)
-                        )
+                )
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(gpui::red())
+                        .child(format!("Recording... {:.1}s", duration.as_secs_f32()))
                 )
         )
     }
 
     fn render_voice_recordings(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        if self.voice_recordings.is_empty() {
+        let recordings = self.voice_player.get_recordings();
+        if recordings.is_empty() {
             return None;
         }
 
@@ -1397,58 +1357,24 @@ impl MessageEditor {
                         .color(Color::Muted)
                 )
                 .children(
-                    self.voice_recordings.iter().map(|recording| {
+                    recordings.iter().map(|(_recording_id, recording)| {
                         let recording_id = recording.id.clone();
-                        let is_playing = self.playback_state.as_ref()
-                            .map(|state| state.recording_id == recording_id && state.is_playing)
-                            .unwrap_or(false);
+                        let is_playing = self.voice_player.is_playing(&recording_id);
+                        let is_paused = self.voice_player.is_paused(&recording_id);
                         
-                        let is_paused = self.playback_state.as_ref()
-                            .map(|state| state.recording_id == recording_id && !state.is_playing)
-                            .unwrap_or(false);
+                        let (progress, current_time) = self.voice_player.get_progress(&recording_id)
+                            .unwrap_or((0.0, Duration::ZERO));
                         
-                        let (progress, current_time) = if let Some(playback_state) = &self.playback_state {
-                            if playback_state.recording_id == recording_id {
-                                // Check if we're currently seeking this recording
-                                if let Some(seeking_state) = &self.seeking_state {
-                                    if seeking_state.recording_id == recording_id {
-                                        // Show seeking position
-                                        let seek_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * seeking_state.seek_position);
-                                        (seeking_state.seek_position, seek_time)
-                                    } else {
-                                        // Not seeking this recording, show normal playback progress
-                                        if playback_state.is_playing {
-                                            let elapsed = playback_state.start_time.elapsed();
-                                            let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed;
-                                            let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
-                                            (progress, played_duration)
-                                        } else {
-                                            // Paused state - calculate progress based on remaining duration
-                                            let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration);
-                                            let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
-                                            (progress, played_duration)
-                                        }
-                                    }
-                                } else {
-                                    // Not seeking, show normal playback progress
-                                    if playback_state.is_playing {
-                                        let elapsed = playback_state.start_time.elapsed();
-                                        let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed;
-                                        let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
-                                        (progress, played_duration)
-                                    } else {
-                                        // Paused state - calculate progress based on remaining duration
-                                        let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration);
-                                        let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
-                                        (progress, played_duration)
-                                    }
-                                }
-                            } else {
-                                (0.0, Duration::ZERO)
-                            }
-                        } else {
-                            (0.0, Duration::ZERO)
-                        };
+                        // Debug: Log progress for each recording
+                        log::debug!("📊 Recording {} progress: {:.1}% ({:.1}s/{:.1}s) - playing: {}, paused: {}, seeking: {}", 
+                            recording_id, 
+                            progress * 100.0, 
+                            current_time.as_secs_f32(), 
+                            recording.duration.as_secs_f32(),
+                            is_playing,
+                            is_paused,
+                            self.voice_player.is_seeking(&recording_id)
+                        );
                         
                         let icon_name = if is_playing {
                             IconName::Stop
@@ -1492,14 +1418,18 @@ impl MessageEditor {
                                             })
                                     )
                                     .child(
-                                        Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Default)
-                                    )
-                                    .child(
-                                        Label::new(&recording.id)
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted)
+                                        h_flex()
+                                            .justify_between()
+                                            .child(
+                                                Label::new(format!("{:.1}s", current_time.as_secs_f32()))
+                                                    .size(LabelSize::XSmall)
+                                                    .color(Color::Muted)
+                                            )
+                                            .child(
+                                                Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
+                                                    .size(LabelSize::XSmall)
+                                                    .color(Color::Muted)
+                                            )
                                     )
                             )
                             .child(
@@ -1552,7 +1482,10 @@ impl MessageEditor {
                                                                 let relative_x = event.position.x - bounds.origin.x;
                                                                 let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
                                                                 
-                                                                // Update the MessageEditor entity - pause and seek
+                                                                log::info!("🖱️ Mouse down on progress bar: recording={}, position={:.1}%, bounds={:?}", 
+                                                                    recording_id, relative_position * 100.0, bounds);
+                                                                
+                                                                // Update the MessageEditor entity - start seeking
                                                                 entity.update(cx, |this, cx| {
                                                                     this.start_seek_voice_playback(recording_id.clone(), relative_position, cx);
                                                                 });
@@ -1567,16 +1500,16 @@ impl MessageEditor {
                                                         move |event: &gpui::MouseMoveEvent, _phase, _window, cx| {
                                                             // Only seek if we're currently seeking this recording and mouse is pressed
                                                             if event.pressed_button == Some(gpui::MouseButton::Left) {
+                                                                // Calculate relative position, clamping to bounds even if mouse is outside
+                                                                let relative_x = event.position.x - bounds.origin.x;
+                                                                let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
+                                                                
                                                                 entity.update(cx, |this, cx| {
                                                                     // Only update if we're actually seeking this recording
-                                                                    if let Some(seeking_state) = &this.seeking_state {
-                                                                        if seeking_state.recording_id == recording_id {
-                                                                            // Calculate relative position, clamping to bounds even if mouse is outside
-                                                                            let relative_x = event.position.x - bounds.origin.x;
-                                                                            let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
-                                                                            
-                                                                            this.update_seek_position(recording_id.clone(), relative_position, cx);
-                                                                        }
+                                                                    if this.voice_player.is_seeking(&recording_id) {
+                                                                        log::debug!("🖱️ Mouse drag seek: recording={}, position={:.1}%", 
+                                                                            recording_id, relative_position * 100.0);
+                                                                        this.update_seek_position(recording_id.clone(), relative_position, cx);
                                                                     }
                                                                 });
                                                             }
@@ -1591,11 +1524,9 @@ impl MessageEditor {
                                                             // Resume playback after seeking - don't check bounds since user might drag outside and release
                                                             entity.update(cx, |this, cx| {
                                                                 // Only end seeking if we're actually seeking this recording
-                                                                if let Some(seeking_state) = &this.seeking_state {
-                                                                    if seeking_state.recording_id == recording_id {
-                                                                        log::info!("🖱️ Mouse up detected for recording: {}", recording_id);
-                                                                        this.end_seek_voice_playback(recording_id.clone(), cx);
-                                                                    }
+                                                                if this.voice_player.is_seeking(&recording_id) {
+                                                                    log::info!("🖱️ Mouse up - ending seek for recording: {}", recording_id);
+                                                                    this.end_seek_voice_playback(recording_id.clone(), cx);
                                                                 } else {
                                                                     log::debug!("🖱️ Mouse up but no seeking state for recording: {}", recording_id);
                                                                 }
@@ -1609,21 +1540,7 @@ impl MessageEditor {
                                         .w_full()
                                         .rounded_sm()
                                         .cursor_pointer()
-                                    )
                             )
-                            .child(
-                                h_flex()
-                                    .justify_between()
-                                    .child(
-                                        Label::new(format!("{:.1}s", current_time.as_secs_f32()))
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted)
-                                    )
-                                    .child(
-                                        Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted)
-                                    )
                             )
                     })
                 )
@@ -1631,513 +1548,253 @@ impl MessageEditor {
     }
 
     fn toggle_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
-        // Check if this recording is currently playing
-        if let Some(playback_state) = &self.playback_state {
-            if playback_state.recording_id == recording_id {
-                if playback_state.is_playing {
-                    // Pause current playback
-                    self.pause_voice_playback(cx);
-                } else {
-                    // Resume paused playback
-                    self.resume_voice_playback(recording_id, cx);
-                }
-                return;
-            } else {
-                // Different recording is playing, stop it and start new one
-                self.stop_voice_playback(cx);
-            }
+        log::info!("🎵 Toggling playback for recording: {}", recording_id);
+        
+        if let Err(e) = self.voice_player.toggle_playback(recording_id.clone()) {
+            log::error!("Failed to toggle voice playback: {}", e);
+            return;
         }
         
-        // Start playback for new recording
-        self.start_voice_playback(recording_id, cx);
-    }
-
-    fn start_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
-        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
-            log::info!("Starting playback of voice recording: {} ({}s)", recording.id, recording.duration.as_secs_f32());
-            
-            // Stop any existing playback
-            self.stop_voice_playback(cx);
-            
-            // Clone recording_id for use in async closures
-            let recording_id_for_update = recording_id.clone();
-            
-            // Set up new playback state
-            self.playback_state = Some(PlaybackState {
-                recording_id: recording_id.clone(),
-                start_time: std::time::Instant::now(),
-                duration: recording.duration,
-                original_duration: recording.duration,
-                is_playing: true,
+        // Always ensure the update task is running if any recording is active
+        // (playing, paused, or seeking)
+        let has_any_active_recording = self.voice_player.get_recordings()
+            .iter()
+            .any(|(_, recording)| {
+                self.voice_player.is_playing(&recording.id) || 
+                self.voice_player.is_paused(&recording.id) ||
+                self.voice_player.is_seeking(&recording.id)
             });
-            
-            // Start playback update task
-            self.playback_update_task = Some(cx.spawn(async move |this, cx| {
-                let update_interval = Duration::from_millis(50); // Update every 50ms for smooth progress
-                
-                loop {
-                    smol::Timer::after(update_interval).await;
-                    
-                    let should_continue = this.update(cx, |this, cx| {
-                        if let Some(playback_state) = &this.playback_state {
-                            if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
-                                let elapsed = playback_state.start_time.elapsed();
-                                
-                                if elapsed >= playback_state.duration {
-                                    // Playback finished
-                                    log::info!("Playback completed for recording: {}", recording_id_for_update);
-                                    this.stop_voice_playback(cx);
-                                    return false;
-                                }
-                                
-                                // Update UI
-                                cx.notify();
-                                return true;
-                            }
-                        }
-                        false
-                    }).unwrap_or(false);
-                    
-                    if !should_continue {
-                        break;
-                    }
-                }
-            }));
-            
-            cx.notify();
-        }
-    }
-
-    fn stop_voice_playback(&mut self, cx: &mut Context<Self>) {
-        if let Some(playback_state) = &self.playback_state {
-            log::info!("Stopping playback of voice recording: {}", playback_state.recording_id);
+        
+        if has_any_active_recording {
+            // Start or ensure update task is running
+            if self.playback_update_task.is_none() {
+                log::info!("🔄 Starting playback update task for active recordings");
+                self.start_playback_update_task(cx);
+            }
+        } else {
+            // No active recordings, stop the update task
+            log::info!("⏹️ No active recordings, stopping update task");
+            self.playback_update_task.take();
         }
         
-        self.playback_state = None;
-        self.playback_update_task.take();
         cx.notify();
     }
 
-    fn pause_voice_playback(&mut self, cx: &mut Context<Self>) {
-        if let Some(playback_state) = &mut self.playback_state {
-            if playback_state.is_playing {
-                log::info!("Pausing playback of voice recording: {}", playback_state.recording_id);
-                playback_state.is_playing = false;
-                
-                // Calculate how much time has elapsed and adjust the start time
-                let elapsed = playback_state.start_time.elapsed();
-                playback_state.duration = playback_state.duration.saturating_sub(elapsed);
-                
-                // Stop the update task
-                self.playback_update_task.take();
-                
-                cx.notify();
+    fn start_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
+        // Set up event callback for the voice player if not already set
+        let weak_entity = cx.entity().downgrade();
+        self.voice_player.set_event_callback(move |event| {
+            if let Some(_entity) = weak_entity.upgrade() {
+                // Handle voice player events here if needed
+                log::info!("Voice player event: {:?}", event);
             }
-        }
-    }
+        });
 
-    fn resume_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
-        if let Some(playback_state) = &mut self.playback_state {
-            if playback_state.recording_id == recording_id && !playback_state.is_playing {
-                log::info!("Resuming playback of voice recording: {}", playback_state.recording_id);
-                
-                // Reset start time for remaining duration
-                playback_state.start_time = std::time::Instant::now();
-                playback_state.is_playing = true;
-                
-                // Restart the update task
-                let recording_id_for_update = recording_id.clone();
-                self.playback_update_task = Some(cx.spawn(async move |this, cx| {
-                    let update_interval = Duration::from_millis(50);
-                    
-                    loop {
-                        smol::Timer::after(update_interval).await;
-                        
-                        let should_continue = this.update(cx, |this, cx| {
-                            if let Some(playback_state) = &this.playback_state {
-                                if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
-                                    let elapsed = playback_state.start_time.elapsed();
-                                    
-                                    if elapsed >= playback_state.duration {
-                                        // Playback finished
-                                        log::info!("Playback completed for recording: {}", recording_id_for_update);
-                                        this.stop_voice_playback(cx);
-                                        return false;
-                                    }
-                                    
-                                    // Update UI
-                                    cx.notify();
-                                    return true;
-                                }
-                            }
-                            false
-                        }).unwrap_or(false);
-                        
-                        if !should_continue {
-                            break;
-                        }
-                    }
-                }));
-                
-                cx.notify();
-            }
+        if let Err(e) = self.voice_player.start_playback(recording_id.clone()) {
+            log::error!("Failed to start voice playback: {}", e);
+            return;
         }
-    }
-
-    fn seek_voice_playback_with_position(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
-        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
-            let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
-            
-            log::info!("Seeking to position {:.1}s in recording: {}", target_time.as_secs_f32(), recording.id);
-            
-            // Update playback state to new position
-            if let Some(playback_state) = &mut self.playback_state {
-                if playback_state.recording_id == recording_id {
-                    playback_state.duration = recording.duration.saturating_sub(target_time);
-                    playback_state.start_time = std::time::Instant::now();
-                    
-                    // If not currently playing, start playback from seek position
-                    if !playback_state.is_playing {
-                        self.resume_voice_playback(recording_id, cx);
-                    } else {
-                        // If playing, restart the update task with new position
-                        self.playback_update_task.take();
-                        let recording_id_for_update = recording_id.clone();
-                        self.playback_update_task = Some(cx.spawn(async move |this, cx| {
-                            let update_interval = Duration::from_millis(50);
-                            
-                            loop {
-                                smol::Timer::after(update_interval).await;
-                                
-                                let should_continue = this.update(cx, |this, cx| {
-                                    if let Some(playback_state) = &this.playback_state {
-                                        if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
-                                            let elapsed = playback_state.start_time.elapsed();
-                                            
-                                            if elapsed >= playback_state.duration {
-                                                log::info!("Playback completed for recording: {}", recording_id_for_update);
-                                                this.stop_voice_playback(cx);
-                                                return false;
-                                            }
-                                            
-                                            cx.notify();
-                                            return true;
-                                        }
-                                    }
-                                    false
-                                }).unwrap_or(false);
-                                
-                                if !should_continue {
-                                    break;
-                                }
-                            }
-                        }));
-                    }
-                } else {
-                    // Different recording, start new playback at seek position
-                    self.stop_voice_playback(cx);
-                    self.start_voice_playback_at_position(recording_id, target_time, cx);
-                }
-            } else {
-                // No current playback, start at seek position
-                self.start_voice_playback_at_position(recording_id, target_time, cx);
-            }
-            
-            cx.notify();
-        }
-    }
-
-    fn start_seek_voice_playback(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
-        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
-            // Guard: Don't start seeking if we're already seeking this recording
-            if let Some(existing_seeking_state) = &self.seeking_state {
-                if existing_seeking_state.recording_id == recording_id {
-                    log::debug!("🎯 Already seeking recording: {}, ignoring duplicate start_seek call", recording_id);
-                    return;
-                }
-            }
-            
-            // Check if this recording is currently playing
-            let was_playing = self.playback_state.as_ref()
-                .map(|state| state.recording_id == recording_id && state.is_playing)
-                .unwrap_or(false);
-            
-            // Pause playback if it was playing
-            if was_playing {
-                log::info!("🔇 Pausing playback for seeking: {}", recording_id);
-                self.pause_voice_playback(cx);
-            }
-            
-            // Set seeking state
-            self.seeking_state = Some(SeekingState {
-                recording_id: recording_id.clone(),
-                was_playing_before_seek: was_playing,
-                seek_position: relative_position,
-            });
-            
-            // Update playback position
-            let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
-            
-            if let Some(playback_state) = &mut self.playback_state {
-                if playback_state.recording_id == recording_id {
-                    // Update existing playback state to new position
-                    playback_state.duration = recording.duration.saturating_sub(target_time);
-                    playback_state.start_time = std::time::Instant::now();
-                    playback_state.is_playing = false; // Paused during seek
-                } else {
-                    // Different recording, create new playback state
-                    self.stop_voice_playback(cx);
-                    self.playback_state = Some(PlaybackState {
-                        recording_id: recording_id.clone(),
-                        start_time: std::time::Instant::now(),
-                        duration: recording.duration.saturating_sub(target_time),
-                        original_duration: recording.duration,
-                        is_playing: false,
-                    });
-                }
-            } else {
-                // No current playback, create new state at seek position
-                self.playback_state = Some(PlaybackState {
-                    recording_id: recording_id.clone(),
-                    start_time: std::time::Instant::now(),
-                    duration: recording.duration.saturating_sub(target_time),
-                    original_duration: recording.duration,
-                    is_playing: false,
-                });
-            }
-            
-            log::info!("🎯 Started seeking to position {:.1}s in recording: {} (was_playing: {})", 
-                target_time.as_secs_f32(), recording_id, was_playing);
-            
-            cx.notify();
-        }
+        
+        // Start real-time progress tracking
+        self.start_playback_update_task(cx);
+        cx.notify();
     }
 
     fn end_seek_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
-        if let Some(seeking_state) = self.seeking_state.take() {
-            if seeking_state.recording_id == recording_id {
-                log::info!("🎯 Ended seeking for recording: {} (was_playing: {})", 
-                    recording_id, seeking_state.was_playing_before_seek);
-                
-                // Resume playback if it was playing before seeking
-                if seeking_state.was_playing_before_seek {
-                    log::info!("▶️ Resuming playback after seeking: {}", recording_id);
-                    self.resume_voice_playback(recording_id, cx);
-                } else {
-                    log::info!("⏸️ Staying paused after seeking: {}", recording_id);
-                }
-                
-                cx.notify();
-            } else {
-                // Put the seeking state back if it's for a different recording
-                self.seeking_state = Some(seeking_state);
+        log::info!("🎯 Ending seek for recording: {}", recording_id);
+        if let Err(e) = self.voice_player.end_seeking(recording_id.clone()) {
+            log::error!("Failed to end seeking: {}", e);
+        } else {
+            log::info!("✅ Successfully ended seeking for recording: {}", recording_id);
+            
+            // Ensure the update task is running for any active recordings
+            let has_any_active_recording = self.voice_player.get_recordings()
+                .iter()
+                .any(|(_, recording)| {
+                    self.voice_player.is_playing(&recording.id) || 
+                    self.voice_player.is_paused(&recording.id) ||
+                    self.voice_player.is_seeking(&recording.id)
+                });
+            
+            if has_any_active_recording && self.playback_update_task.is_none() {
+                log::info!("🔄 Restarting update task after seeking ended");
+                self.start_playback_update_task(cx);
             }
         }
+        cx.notify();
     }
 
     fn update_seek_position(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
-        // Only update if we're currently seeking this recording
-        if let Some(seeking_state) = &mut self.seeking_state {
-            if seeking_state.recording_id == recording_id {
-                // Update the seek position
-                seeking_state.seek_position = relative_position;
-                
-                // Update the playback state to reflect the new position
-                if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
-                    let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
-                    
-                    if let Some(playback_state) = &mut self.playback_state {
-                        if playback_state.recording_id == recording_id {
-                            // Update playback position
-                            playback_state.duration = recording.duration.saturating_sub(target_time);
-                            playback_state.start_time = std::time::Instant::now();
-                            // Keep is_playing as false during seeking
-                        }
-                    }
-                    
-                    log::debug!("🎯 Continuous seek to {:.1}s ({:.1}%)", target_time.as_secs_f32(), relative_position * 100.0);
-                }
-                
-                // Notify for UI update
-                cx.notify();
-            }
+        log::debug!("🎯 Updating seek position for recording: {} to {:.1}%", recording_id, relative_position * 100.0);
+        if let Err(e) = self.voice_player.update_seek_position(recording_id.clone(), relative_position) {
+            log::error!("Failed to update seek position: {}", e);
         }
+        cx.notify();
+    }
+
+    fn start_seek_voice_playback(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
+        log::info!("🎯 Starting seek for recording: {} at position {:.1}%", recording_id, relative_position * 100.0);
+        if let Err(e) = self.voice_player.start_seeking(recording_id.clone(), relative_position) {
+            log::error!("Failed to start seeking: {}", e);
+        } else {
+            log::info!("✅ Successfully started seeking for recording: {}", recording_id);
+        }
+        cx.notify();
     }
 
     fn render_voice_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let is_recording = matches!(self.voice_state, VoiceState::Recording { .. });
+        let is_recording = self.voice_recorder.is_recording();
         
         Some(
-            IconButton::new("voice-toggle", IconName::Mic)
-                .icon_size(IconSize::Small)
-                .icon_color(if is_recording { Color::Success } else { Color::Muted })
+            IconButton::new("voice_input", IconName::Mic)
+                .size(ButtonSize::Large)
                 .style(if is_recording { 
-                    ButtonStyle::Tinted(ui::TintColor::Success) 
+                    ButtonStyle::Filled 
                 } else { 
                     ButtonStyle::Subtle 
                 })
-                .tooltip(move |_window, _cx| {
-                    Tooltip::text(if is_recording { 
-                        "Stop Recording" 
-                    } else { 
-                        "Start Recording" 
-                    })(_window, _cx)
+                .icon_color(if is_recording { 
+                    Color::Error 
+                } else { 
+                    Color::Muted 
                 })
-                .on_click(cx.listener(move |this, _, _window, cx| {
+                .tooltip(move |window, cx| {
+                    Tooltip::text(
+                        if is_recording { "Stop Recording" } else { "Start Voice Recording" }
+                    )(window, cx)
+                })
+                .on_click(cx.listener(|this, _event, _window, cx| {
                     this.toggle_voice_input(cx);
                 }))
         )
     }
 
     fn toggle_voice_input(&mut self, cx: &mut Context<Self>) {
-        match self.voice_state {
-            VoiceState::Idle => {
-                self.start_voice_recording(cx);
+        // Set up event callback for the voice recorder if not already set
+        let weak_entity = cx.entity().downgrade();
+        self.voice_recorder.set_event_callback(move |event| {
+            if let Some(_entity) = weak_entity.upgrade() {
+                // Handle voice recorder events here if needed
+                log::info!("Voice recorder event: {:?}", event);
             }
-            VoiceState::Recording { start_time } => {
-                self.stop_voice_recording(start_time, cx);
-            }
-            VoiceState::Processing => {
-                // Do nothing while processing
+        });
+
+        if let Ok(recording) = self.voice_recorder.toggle_recording() {
+            if let Some(recording) = recording {
+                // Recording was completed
+                self.voice_player.add_recording(recording.clone());
+                self.insert_voice_recording(recording, cx);
             }
         }
-    }
-
-    fn start_voice_recording(&mut self, cx: &mut Context<Self>) {
-        self.voice_state = VoiceState::Recording { 
-            start_time: std::time::Instant::now() 
-        };
-        
-        log::info!("Started voice recording");
-        
-        // Start recording task
-        self.voice_recording_task = Some(cx.spawn(async move |this, cx| {
-            // Simulate recording for now - in a real implementation this would:
-            // 1. Use livekit_client::AudioStack to capture microphone
-            // 2. Stream audio data to a buffer
-            // 3. Handle audio processing
-            
-            // For now, just wait and simulate recording
-            smol::Timer::after(Duration::from_millis(100)).await;
-            
-            this.update(cx, |_this, cx| {
-                // Update UI to show recording is active
-                cx.notify();
-            }).ok();
-        }));
-        
-        cx.notify();
-    }
-
-    fn stop_voice_recording(&mut self, start_time: std::time::Instant, cx: &mut Context<Self>) {
-        let duration = std::time::Instant::now() - start_time;
-        self.voice_state = VoiceState::Processing;
-        
-        log::info!("Stopped voice recording, duration: {:?}", duration);
-        
-        // Cancel the recording task
-        self.voice_recording_task.take();
-        
-        // Create a voice recording
-        let recording = VoiceRecording {
-            id: format!("recording_{}", std::time::SystemTime::now()
-                .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()),
-            duration,
-            data: vec![0u8; (duration.as_secs_f32() * 44100.0 * 2.0) as usize], // Simulate audio data
-            sample_rate: 44100,
-            channels: 1,
-        };
-        
-        // Add to recordings list
-        self.voice_recordings.push(recording.clone());
-        self.current_recording = Some(recording.clone());
-        
-        // Insert voice recording into the chat
-        self.insert_voice_recording(recording, cx);
-        
-        // Reset state
-        self.voice_state = VoiceState::Idle;
-        self.current_recording = None;
-        
         cx.notify();
     }
 
     fn insert_voice_recording(&mut self, recording: VoiceRecording, cx: &mut Context<Self>) {
-        // Insert a voice message representation into the editor
-        let voice_text = format!(
-            "🎤 Voice Recording ({:.1}s) [{}]\n", 
-            recording.duration.as_secs_f32(),
-            recording.id
-        );
+        // Insert a voice recording marker into the editor
+        let text = format!("[Voice Recording: {} ({:.1}s)]", recording.id, recording.duration.as_secs_f32());
         
         self.editor.update(cx, |editor, cx| {
             let cursor_position = editor.selections.newest::<usize>(cx).head();
             
+            // Use buffer.edit() to insert text at cursor position
             editor.buffer().update(cx, |buffer, cx| {
-                buffer.edit([(cursor_position..cursor_position, voice_text.as_str())], None, cx);
+                buffer.edit([(cursor_position..cursor_position, text.as_str())], None, cx);
             });
+            
+            // Note: We skip changing selections to avoid needing window access
+            // The cursor will automatically be positioned after the inserted text
         });
         
-        log::info!("Inserted voice recording: {} ({}s)", recording.id, recording.duration.as_secs_f32());
+        cx.notify();
     }
 
-    fn start_voice_playback_at_position(&mut self, recording_id: String, start_position: Duration, cx: &mut Context<Self>) {
-        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
-            log::info!("Starting playback of voice recording: {} at position {:.1}s", recording.id, start_position.as_secs_f32());
+    fn start_playback_update_task(&mut self, cx: &mut Context<Self>) {
+        // Stop any existing update task
+        self.playback_update_task.take();
+        
+        log::info!("🔄 Starting playback update task for real-time progress tracking");
+        
+        self.playback_update_task = Some(cx.spawn(async move |this, cx| {
+            let update_interval = Duration::from_millis(50); // Update every 50ms for smooth progress
             
-            // Stop any existing playback
-            self.stop_voice_playback(cx);
-            
-            // Calculate remaining duration from start position
-            let remaining_duration = recording.duration.saturating_sub(start_position);
-            
-            // Clone recording_id for use in async closures
-            let recording_id_for_update = recording_id.clone();
-            
-            // Set up new playback state
-            self.playback_state = Some(PlaybackState {
-                recording_id: recording_id.clone(),
-                start_time: std::time::Instant::now(),
-                duration: remaining_duration,
-                original_duration: recording.duration,
-                is_playing: true,
-            });
-            
-            // Start playback update task
-            self.playback_update_task = Some(cx.spawn(async move |this, cx| {
-                let update_interval = Duration::from_millis(50);
+            loop {
+                smol::Timer::after(update_interval).await;
                 
-                loop {
-                    smol::Timer::after(update_interval).await;
+                let should_continue = this.update(cx, |this, cx| {
+                    // Don't update playback if any recording is currently being seeked
+                    let has_seeking = this.voice_player.get_recordings()
+                        .iter()
+                        .any(|(_, recording)| this.voice_player.is_seeking(&recording.id));
                     
-                    let should_continue = this.update(cx, |this, cx| {
-                        if let Some(playback_state) = &this.playback_state {
-                            if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
-                                let elapsed = playback_state.start_time.elapsed();
-                                
-                                if elapsed >= playback_state.duration {
-                                    log::info!("Playback completed for recording: {}", recording_id_for_update);
-                                    this.stop_voice_playback(cx);
-                                    return false;
+                    if !has_seeking {
+                        // Update the voice player's internal state only if not seeking
+                        if let Some(event) = this.voice_player.update_playback() {
+                            match event {
+                                VoicePlayerEvent::PlaybackCompleted { recording_id } => {
+                                    log::info!("✅ Playback completed for recording: {}", recording_id);
+                                    // Don't stop the task here - other recordings might still be active
                                 }
-                                
-                                cx.notify();
-                                return true;
+                                _ => {}
                             }
                         }
-                        false
-                    }).unwrap_or(false);
-                    
-                    if !should_continue {
-                        break;
                     }
+                    
+                    // Check if any recording is still active (playing, paused, or seeking)
+                    let has_active_recordings = this.voice_player.get_recordings()
+                        .iter()
+                        .any(|(_, recording)| {
+                            this.voice_player.is_playing(&recording.id) || 
+                            this.voice_player.is_paused(&recording.id) ||
+                            this.voice_player.is_seeking(&recording.id)
+                        });
+                    
+                    if !has_active_recordings {
+                        // No active recordings, stop the update task
+                        log::info!("⏹️ No more active recordings, stopping update task");
+                        return false;
+                    }
+                    
+                    // Update UI for real-time progress of all recordings
+                    cx.notify();
+                    true
+                }).unwrap_or(false);
+                
+                if !should_continue {
+                    break;
                 }
-            }));
+            }
             
-            cx.notify();
+            // Clean up the task when it finishes
+            this.update(cx, |this, _cx| {
+                this.playback_update_task.take();
+                log::info!("🧹 Playback update task cleaned up");
+            }).ok();
+        }));
+    }
+
+    fn stop_voice_playback(&mut self, cx: &mut Context<Self>) {
+        self.voice_player.stop_playback();
+        self.playback_update_task.take();
+        cx.notify();
+    }
+
+    fn pause_voice_playback(&mut self, cx: &mut Context<Self>) {
+        if let Err(e) = self.voice_player.pause_playback() {
+            log::error!("Failed to pause voice playback: {}", e);
         }
+        self.playback_update_task.take();
+        cx.notify();
+    }
+
+    fn resume_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
+        if let Err(e) = self.voice_player.resume_playback(recording_id.clone()) {
+            log::error!("Failed to resume voice playback: {}", e);
+            return;
+        }
+        
+        // Restart real-time progress tracking
+        self.start_playback_update_task(cx);
+        cx.notify();
     }
 }
 
@@ -2272,6 +1929,7 @@ pub fn insert_message_creases(
         }
     }
 }
+
 impl Component for MessageEditor {
     fn scope() -> ComponentScope {
         ComponentScope::Agent

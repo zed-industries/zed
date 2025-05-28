@@ -7,6 +7,8 @@ pub struct VoicePlayer {
     recordings: HashMap<String, VoiceRecording>,
     playback_state: Option<PlaybackState>,
     seeking_state: Option<SeekingState>,
+    // Store paused recordings' progress separately
+    paused_progress: HashMap<String, (f32, Duration)>, // recording_id -> (progress, current_time)
     event_callback: Option<Box<dyn Fn(VoicePlayerEvent) + Send + Sync>>,
 }
 
@@ -16,6 +18,7 @@ impl VoicePlayer {
             recordings: HashMap::new(),
             playback_state: None,
             seeking_state: None,
+            paused_progress: HashMap::new(),
             event_callback: None,
         }
     }
@@ -44,6 +47,9 @@ impl VoicePlayer {
                 self.stop_playback();
             }
         }
+        
+        // Also remove any saved progress
+        self.paused_progress.remove(recording_id);
         self.recordings.remove(recording_id);
     }
 
@@ -71,10 +77,15 @@ impl VoicePlayer {
     }
 
     pub fn is_paused(&self, recording_id: &str) -> bool {
-        self.playback_state
-            .as_ref()
-            .map(|state| state.recording_id == recording_id && !state.is_playing)
-            .unwrap_or(false)
+        // Check if it's the current recording and paused
+        if let Some(playback_state) = &self.playback_state {
+            if playback_state.recording_id == recording_id && !playback_state.is_playing {
+                return true;
+            }
+        }
+        
+        // Check if it has saved progress (meaning it was paused when switching)
+        self.paused_progress.contains_key(recording_id)
     }
 
     pub fn is_seeking(&self, recording_id: &str) -> bool {
@@ -111,10 +122,20 @@ impl VoicePlayer {
                     Some((progress, played_duration))
                 }
             } else {
-                Some((0.0, Duration::ZERO))
+                // Check if this recording has saved progress from being paused
+                if let Some(&(progress, current_time)) = self.paused_progress.get(recording_id) {
+                    Some((progress, current_time))
+                } else {
+                    Some((0.0, Duration::ZERO))
+                }
             }
         } else {
-            Some((0.0, Duration::ZERO))
+            // Check if this recording has saved progress from being paused
+            if let Some(&(progress, current_time)) = self.paused_progress.get(recording_id) {
+                Some((progress, current_time))
+            } else {
+                Some((0.0, Duration::ZERO))
+            }
         }
     }
 
@@ -129,13 +150,17 @@ impl VoicePlayer {
                 }
                 return Ok(());
             } else {
-                // Different recording is playing, stop it and start new one
-                self.stop_playback();
+                // Different recording is playing, save its progress and pause it
+                self.save_current_progress_and_pause()?;
             }
         }
         
-        // Start playback for new recording
-        self.start_playback(recording_id)
+        // Start playback for new recording (or resume if it has saved progress)
+        if self.paused_progress.contains_key(&recording_id) {
+            self.resume_from_saved_progress(recording_id)
+        } else {
+            self.start_playback(recording_id)
+        }
     }
 
     pub fn start_playback(&mut self, recording_id: String) -> Result<()> {
@@ -405,6 +430,71 @@ impl VoicePlayer {
             }
         }
         None
+    }
+
+    /// Save the current playback progress and pause it
+    fn save_current_progress_and_pause(&mut self) -> Result<()> {
+        if let Some(playback_state) = &self.playback_state {
+            let recording_id = playback_state.recording_id.clone();
+            
+            // Calculate current progress
+            let played_duration = if playback_state.is_playing {
+                let elapsed = playback_state.start_time.elapsed();
+                playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed
+            } else {
+                playback_state.original_duration.saturating_sub(playback_state.duration)
+            };
+            
+            let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
+            
+            // Save the progress
+            self.paused_progress.insert(recording_id.clone(), (progress, played_duration));
+            
+            log::info!("💾 Saved progress for recording {}: {:.1}% ({:.1}s)", 
+                recording_id, progress * 100.0, played_duration.as_secs_f32());
+            
+            // Emit pause event
+            self.emit_event(VoicePlayerEvent::PlaybackPaused { recording_id });
+        }
+        
+        // Clear current playback state
+        self.playback_state = None;
+        self.seeking_state = None;
+        
+        Ok(())
+    }
+
+    /// Resume playback from saved progress
+    fn resume_from_saved_progress(&mut self, recording_id: String) -> Result<()> {
+        let recording = self.recordings.get(&recording_id)
+            .ok_or_else(|| anyhow::anyhow!("Recording not found: {}", recording_id))?
+            .clone();
+
+        if let Some(&(progress, played_duration)) = self.paused_progress.get(&recording_id) {
+            log::info!("▶️ Resuming recording {} from saved progress: {:.1}% ({:.1}s)", 
+                recording_id, progress * 100.0, played_duration.as_secs_f32());
+            
+            // Calculate remaining duration
+            let remaining_duration = recording.duration.saturating_sub(played_duration);
+            
+            // Set up playback state from saved progress
+            self.playback_state = Some(PlaybackState {
+                recording_id: recording_id.clone(),
+                start_time: std::time::Instant::now(),
+                duration: remaining_duration,
+                original_duration: recording.duration,
+                is_playing: true,
+            });
+
+            // Remove from paused progress since it's now active
+            self.paused_progress.remove(&recording_id);
+
+            self.emit_event(VoicePlayerEvent::PlaybackResumed { recording_id });
+            Ok(())
+        } else {
+            // No saved progress, start from beginning
+            self.start_playback(recording_id)
+        }
     }
 }
 
