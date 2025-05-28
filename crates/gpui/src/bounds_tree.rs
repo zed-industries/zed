@@ -8,7 +8,7 @@ use std::{
 #[derive(Debug)]
 pub(crate) struct BoundsTree<U>
 where
-    U: Default + Clone + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     root: Option<usize>,
     nodes: Vec<Node<U>>,
@@ -17,7 +17,14 @@ where
 
 impl<U> BoundsTree<U>
 where
-    U: Clone + Debug + PartialOrd + Add<U, Output = U> + Sub<Output = U> + Half + Default,
+    U: Clone
+        + Debug
+        + PartialEq
+        + PartialOrd
+        + Add<U, Output = U>
+        + Sub<Output = U>
+        + Half
+        + Default,
 {
     pub fn clear(&mut self) {
         self.root = None;
@@ -174,7 +181,7 @@ where
 
 impl<U> Default for BoundsTree<U>
 where
-    U: Default + Clone + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     fn default() -> Self {
         BoundsTree {
@@ -188,7 +195,7 @@ where
 #[derive(Debug, Clone)]
 enum Node<U>
 where
-    U: Clone + Default + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     Leaf {
         bounds: Bounds<U>,
@@ -204,7 +211,7 @@ where
 
 impl<U> Node<U>
 where
-    U: Clone + Default + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     fn bounds(&self) -> &Bounds<U> {
         match self {

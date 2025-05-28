@@ -51,7 +51,7 @@ pub trait ToolchainLister: Send + Sync {
 }
 
 #[async_trait(?Send)]
-pub trait LanguageToolchainStore {
+pub trait LanguageToolchainStore: Send + Sync + 'static {
     async fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,

@@ -2,8 +2,10 @@ mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 pub mod terminal_scrollbar;
+mod terminal_slash_command;
 pub mod terminal_tab_tooltip;
 
+use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
     AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
@@ -29,6 +31,7 @@ use terminal::{
 use terminal_element::{TerminalElement, is_blank};
 use terminal_panel::TerminalPanel;
 use terminal_scrollbar::TerminalScrollHandle;
+use terminal_slash_command::TerminalSlashCommand;
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{
     ContextMenu, Icon, IconName, Label, Scrollbar, ScrollbarState, Tooltip, h_flex, prelude::*,
@@ -78,6 +81,7 @@ actions!(terminal, [RerunTask]);
 impl_actions!(terminal, [SendText, SendKeystroke]);
 
 pub fn init(cx: &mut App) {
+    assistant_slash_command::init(cx);
     terminal_panel::init(cx);
     terminal::init(cx);
 
@@ -87,6 +91,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
+    SlashCommandRegistry::global(cx).register_command(TerminalSlashCommand, true);
 }
 
 pub struct BlockProperties {
@@ -384,11 +389,9 @@ impl TerminalView {
     fn rerun_task(&mut self, _: &RerunTask, window: &mut Window, cx: &mut Context<Self>) {
         let task = self
             .terminal
-            .update(cx, |terminal, _| {
-                terminal
-                    .task()
-                    .map(|task| terminal_rerun_override(&task.id))
-            })
+            .read(cx)
+            .task()
+            .map(|task| terminal_rerun_override(&task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
     }
@@ -1668,7 +1671,7 @@ impl SerializableItem for TerminalView {
         alive_items: Vec<workspace::ItemId>,
         _window: &mut Window,
         cx: &mut App,
-    ) -> Task<gpui::Result<()>> {
+    ) -> Task<anyhow::Result<()>> {
         delete_unloaded_items(alive_items, workspace_id, "terminals", &TERMINAL_DB, cx)
     }
 
@@ -1679,7 +1682,7 @@ impl SerializableItem for TerminalView {
         _closing: bool,
         _: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<gpui::Result<()>>> {
+    ) -> Option<Task<anyhow::Result<()>>> {
         let terminal = self.terminal().read(cx);
         if terminal.task().is_some() {
             return None;

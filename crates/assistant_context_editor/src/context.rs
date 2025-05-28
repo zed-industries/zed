@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod context_tests;
 
-use anyhow::{Context as _, Result, anyhow, bail};
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
+use anyhow::{Context as _, Result, bail};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -29,6 +29,7 @@ use paths::contexts_dir;
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     cmp::{Ordering, max},
@@ -682,6 +683,7 @@ pub struct AssistantContext {
     language_registry: Arc<LanguageRegistry>,
     project: Option<Entity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
+    completion_mode: agent_settings::CompletionMode,
 }
 
 trait ContextAnnotation {
@@ -716,6 +718,14 @@ impl AssistantContext {
             telemetry,
             cx,
         )
+    }
+
+    pub fn completion_mode(&self) -> agent_settings::CompletionMode {
+        self.completion_mode
+    }
+
+    pub fn set_completion_mode(&mut self, completion_mode: agent_settings::CompletionMode) {
+        self.completion_mode = completion_mode;
     }
 
     pub fn new(
@@ -764,6 +774,7 @@ impl AssistantContext {
             pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
             telemetry,
@@ -1730,9 +1741,8 @@ impl AssistantContext {
                                 merge_same_roles,
                             } => {
                                 if !merge_same_roles && Some(role) != last_role {
-                                    let offset = this.buffer.read_with(cx, |buffer, _cx| {
-                                        insert_position.to_offset(buffer)
-                                    });
+                                    let buffer = this.buffer.read(cx);
+                                    let offset = insert_position.to_offset(buffer);
                                     this.insert_message_at_offset(
                                         offset,
                                         role,
@@ -2204,6 +2214,7 @@ impl AssistantContext {
                             StopReason::ToolUse => {}
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
+                            StopReason::Refusal => {}
                         }
                     }
                 })
@@ -2266,8 +2277,7 @@ impl AssistantContext {
             tools: Vec::new(),
             tool_choice: None,
             stop: Vec::new(),
-            temperature: model
-                .and_then(|model| AssistantSettings::temperature_for_model(model, cx)),
+            temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {
@@ -2322,7 +2332,15 @@ impl AssistantContext {
                 completion_request.messages.push(request_message);
             }
         }
+        let supports_max_mode = if let Some(model) = model {
+            model.supports_max_mode()
+        } else {
+            false
+        };
 
+        if supports_max_mode {
+            completion_request.mode = Some(self.completion_mode.into());
+        }
         completion_request
     }
 
@@ -3011,7 +3029,7 @@ impl SavedContext {
         let saved_context_json = serde_json::from_str::<serde_json::Value>(json)?;
         match saved_context_json
             .get("version")
-            .ok_or_else(|| anyhow!("version not found"))?
+            .context("version not found")?
         {
             serde_json::Value::String(version) => match version.as_str() {
                 SavedContext::VERSION => {
@@ -3032,9 +3050,9 @@ impl SavedContext {
                         serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
                     Ok(saved_context.upgrade())
                 }
-                _ => Err(anyhow!("unrecognized saved context version: {}", version)),
+                _ => anyhow::bail!("unrecognized saved context version: {version:?}"),
             },
-            _ => Err(anyhow!("version not found on saved context")),
+            _ => anyhow::bail!("version not found on saved context"),
         }
     }
 

@@ -30,7 +30,7 @@ impl BladeContext {
                     ..Default::default()
                 })
             }
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?,
         );
         Ok(Self { gpu })
     }
@@ -49,8 +49,7 @@ fn parse_pci_id(id: &str) -> anyhow::Result<u32> {
         "Expected a 4 digit PCI ID in hexadecimal format"
     );
 
-    return u32::from_str_radix(id, 16)
-        .map_err(|_| anyhow::anyhow!("Failed to parse PCI ID as hex"));
+    return u32::from_str_radix(id, 16).context("parsing PCI ID as hex");
 }
 
 #[cfg(test)]

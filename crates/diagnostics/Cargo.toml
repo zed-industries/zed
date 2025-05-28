@@ -18,7 +18,6 @@ collections.workspace = true
 component.workspace = true
 ctor.workspace = true
 editor.workspace = true
-env_logger.workspace = true
 futures.workspace = true
 gpui.workspace = true
 indoc.workspace = true
@@ -44,9 +43,10 @@ editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 markdown = { workspace = true, features = ["test-support"] }
-lsp = { workspace = true, features = ["test-support"] }
+lsp = { workspace = true, features=["test-support"] }
 serde_json.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+zlog.workspace = true

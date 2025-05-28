@@ -11,7 +11,7 @@ mod tests;
 mod undo_map;
 
 pub use anchor::*;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use clock::LOCAL_BRANCH_REPLICA_ID;
 pub use clock::ReplicaId;
 use collections::{HashMap, HashSet};
@@ -677,7 +677,8 @@ impl FromIterator<char> for LineIndent {
 }
 
 impl Buffer {
-    pub fn new(replica_id: u16, remote_id: BufferId, mut base_text: String) -> Buffer {
+    pub fn new(replica_id: u16, remote_id: BufferId, base_text: impl Into<String>) -> Buffer {
+        let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
         Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(base_text))
@@ -1586,7 +1587,7 @@ impl Buffer {
         async move {
             for mut future in futures {
                 if future.recv().await.is_none() {
-                    Err(anyhow!("gave up waiting for edits"))?;
+                    anyhow::bail!("gave up waiting for edits");
                 }
             }
             Ok(())
@@ -1615,7 +1616,7 @@ impl Buffer {
         async move {
             for mut future in futures {
                 if future.recv().await.is_none() {
-                    Err(anyhow!("gave up waiting for anchors"))?;
+                    anyhow::bail!("gave up waiting for anchors");
                 }
             }
             Ok(())
@@ -1635,7 +1636,7 @@ impl Buffer {
         async move {
             if let Some(mut rx) = rx {
                 if rx.recv().await.is_none() {
-                    Err(anyhow!("gave up waiting for version"))?;
+                    anyhow::bail!("gave up waiting for version");
                 }
             }
             Ok(())

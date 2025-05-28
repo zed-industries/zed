@@ -49,7 +49,6 @@ text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http = "0.8"
-tokio-native-tls = "0.3"
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
 url.workspace = true
 util.workspace = true
@@ -72,3 +71,10 @@ windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa.workspace = true
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tokio-native-tls = "0.3"
+
+[target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
+rustls-pki-types = "1.12"
+tokio-rustls = { version = "0.26", features = ["tls12", "ring"], default-features = false }

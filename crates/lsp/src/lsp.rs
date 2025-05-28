@@ -352,7 +352,7 @@ impl LanguageServer {
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
         let root_uri = Url::from_file_path(&working_dir)
-            .map_err(|_| anyhow!("{} is not a valid URI", working_dir.display()))?;
+            .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
         let server = Self::new_internal(
             server_id,
             server_name,
@@ -1668,9 +1668,7 @@ mod tests {
 
     #[ctor::ctor]
     fn init_logger() {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::init();
-        }
+        zlog::init_test();
     }
 
     #[gpui::test]

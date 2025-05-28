@@ -33,7 +33,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
         .unwrap();
 
     let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
-    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    let client = session.read_with(cx, |session, _| session.adapter_client().unwrap());
 
     client.on_request::<StackTrace, _>(move |_, _| {
         Ok(dap::StackTraceResponse {
