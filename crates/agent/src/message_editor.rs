@@ -1499,20 +1499,41 @@ impl MessageEditor {
                                                     )
                                             )
                                             .child(
-                                                // Remove button
-                                                IconButton::new(("remove", index), IconName::Trash)
-                                                    .size(ButtonSize::Compact)
-                                                    .style(ButtonStyle::Subtle)
-                                                    .icon_color(Color::Error)
-                                                    .tooltip(move |window, cx| {
-                                                        Tooltip::text("Remove recording")(window, cx)
-                                                    })
-                                                    .on_click({
-                                                        let recording_id = recording_id.clone();
-                                                        cx.listener(move |this, _event, _window, cx| {
-                                                            this.remove_voice_recording(recording_id.clone(), cx);
-                                                        })
-                                                    })
+                                                h_flex()
+                                                    .gap_1()
+                                                    .items_center()
+                                                    .child(
+                                                        // Transcribe button
+                                                        IconButton::new(("transcribe", index), IconName::FileText)
+                                                            .size(ButtonSize::Compact)
+                                                            .style(ButtonStyle::Subtle)
+                                                            .icon_color(Color::Accent)
+                                                            .tooltip(move |window, cx| {
+                                                                Tooltip::text("Transcribe recording")(window, cx)
+                                                            })
+                                                            .on_click({
+                                                                let recording_id = recording_id.clone();
+                                                                cx.listener(move |this, _event, _window, cx| {
+                                                                    this.transcribe_voice_recording(recording_id.clone(), cx);
+                                                                })
+                                                            })
+                                                    )
+                                                    .child(
+                                                        // Remove button
+                                                        IconButton::new(("remove", index), IconName::Trash)
+                                                            .size(ButtonSize::Compact)
+                                                            .style(ButtonStyle::Subtle)
+                                                            .icon_color(Color::Error)
+                                                            .tooltip(move |window, cx| {
+                                                                Tooltip::text("Remove recording")(window, cx)
+                                                            })
+                                                            .on_click({
+                                                                let recording_id = recording_id.clone();
+                                                                cx.listener(move |this, _event, _window, cx| {
+                                                                    this.remove_voice_recording(recording_id.clone(), cx);
+                                                                })
+                                                            })
+                                                    )
                                             )
                                     )
                                     .child(
@@ -1842,6 +1863,36 @@ impl MessageEditor {
     fn set_playback_speed(&mut self, speed: f32, cx: &mut Context<Self>) {
         log::info!("Setting playback speed to {:.2}x", speed);
         self.voice_player.set_playback_speed(speed);
+        cx.notify();
+    }
+
+    fn transcribe_voice_recording(&mut self, recording_id: String, cx: &mut Context<Self>) {
+        log::info!("🎤 Transcribing recording: {}", recording_id);
+        
+        if let Some(recording) = self.voice_player.get_recording(&recording_id) {
+            log::info!("📝 Starting transcription for recording {} ({:.1}s)", 
+                recording.id, recording.duration.as_secs_f32());
+            
+            // For now, insert a placeholder text indicating transcription
+            // In the future, this could integrate with a transcription service
+            let placeholder_text = format!(
+                "[Transcription of voice recording {} ({:.1}s) - transcription service not yet implemented]",
+                recording.id,
+                recording.duration.as_secs_f32()
+            );
+            
+            // Insert the placeholder text into the editor
+            self.editor.update(cx, |editor, cx| {
+                let cursor_position = editor.selections.newest::<usize>(cx).head();
+                
+                editor.edit([(cursor_position..cursor_position, placeholder_text)], cx);
+            });
+            
+            log::info!("✅ Transcription placeholder inserted for recording: {}", recording_id);
+        } else {
+            log::error!("❌ Recording not found for transcription: {}", recording_id);
+        }
+        
         cx.notify();
     }
 }
