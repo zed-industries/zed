@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod context_tests;
 
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, bail};
-use assistant_settings::AssistantSettings;
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -1730,9 +1730,8 @@ impl AssistantContext {
                                 merge_same_roles,
                             } => {
                                 if !merge_same_roles && Some(role) != last_role {
-                                    let offset = this.buffer.read_with(cx, |buffer, _cx| {
-                                        insert_position.to_offset(buffer)
-                                    });
+                                    let buffer = this.buffer.read(cx);
+                                    let offset = insert_position.to_offset(buffer);
                                     this.insert_message_at_offset(
                                         offset,
                                         role,
@@ -2204,6 +2203,7 @@ impl AssistantContext {
                             StopReason::ToolUse => {}
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
+                            StopReason::Refusal => {}
                         }
                     }
                 })
@@ -2266,8 +2266,7 @@ impl AssistantContext {
             tools: Vec::new(),
             tool_choice: None,
             stop: Vec::new(),
-            temperature: model
-                .and_then(|model| AssistantSettings::temperature_for_model(model, cx)),
+            temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

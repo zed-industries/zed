@@ -24,7 +24,7 @@ pub struct GroupedAgentProfiles {
 }
 
 impl GroupedAgentProfiles {
-    pub fn from_settings(settings: &crate::AssistantSettings) -> Self {
+    pub fn from_settings(settings: &crate::AgentSettings) -> Self {
         let mut builtin = IndexMap::default();
         let mut custom = IndexMap::default();
 

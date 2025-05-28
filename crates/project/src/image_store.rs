@@ -376,12 +376,6 @@ impl ImageStore {
                 entry.insert(rx.clone());
 
                 let project_path = project_path.clone();
-                // TODO kb this is causing another error, and we also pass a worktree nearby — seems ok to pass "" here?
-                // let image_path = worktree
-                //     .read(cx)
-                //     .absolutize(&project_path.path)
-                //     .map(Arc::from)
-                //     .unwrap_or_else(|_| project_path.path.clone());
                 let load_image = self
                     .state
                     .open_image(project_path.path.clone(), worktree, cx);
@@ -745,9 +739,7 @@ mod tests {
     use std::path::PathBuf;
 
     pub fn init_test(cx: &mut TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);

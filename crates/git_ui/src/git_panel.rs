@@ -9,9 +9,9 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
+use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
 
 use editor::{
@@ -54,6 +54,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::future::Future;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -62,7 +63,7 @@ use ui::{
     Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState, SplitButton,
     Tooltip, prelude::*,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, TryFutureExt, maybe, wrap_with_prefix};
 use workspace::AppState;
 
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -198,7 +199,9 @@ impl GitHeaderEntry {
         let this = &self.header;
         let status = status_entry.status;
         match this {
-            Section::Conflict => repo.has_conflict(&status_entry.repo_path),
+            Section::Conflict => {
+                repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path)
+            }
             Section::Tracked => !status.is_created(),
             Section::New => status.is_created(),
         }
@@ -382,7 +385,6 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_hard_wrap(Some(72), cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
@@ -481,10 +483,10 @@ impl GitPanel {
             hide_task: None,
         };
 
-        let mut assistant_enabled = AssistantSettings::get_global(cx).enabled;
+        let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
         let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-            if assistant_enabled != AssistantSettings::get_global(cx).enabled {
-                assistant_enabled = AssistantSettings::get_global(cx).enabled;
+            if assistant_enabled != AgentSettings::get_global(cx).enabled {
+                assistant_enabled = AgentSettings::get_global(cx).enabled;
                 cx.notify();
             }
         });
@@ -1484,8 +1486,22 @@ impl GitPanel {
 
     fn custom_or_suggested_commit_message(&self, cx: &mut Context<Self>) -> Option<String> {
         let message = self.commit_editor.read(cx).text(cx);
+        let width = self
+            .commit_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .language_settings(cx)
+            .preferred_line_length as usize;
 
         if !message.trim().is_empty() {
+            let message = wrap_with_prefix(
+                String::new(),
+                message,
+                width,
+                NonZeroU32::new(8).unwrap(), // tab size doesn't matter when prefix is empty
+                false,
+            );
             return Some(message);
         }
 
@@ -1733,7 +1749,7 @@ impl GitPanel {
             }
         });
 
-        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
@@ -2331,7 +2347,7 @@ impl GitPanel {
         let repo = repo.read(cx);
 
         for entry in repo.cached_status() {
-            let is_conflict = repo.has_conflict(&entry.repo_path);
+            let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
 
@@ -2502,7 +2518,7 @@ impl GitPanel {
                 continue;
             };
             self.entry_count += 1;
-            if repo.has_conflict(&status_entry.repo_path) {
+            if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
                 if self.entry_staging(status_entry).has_staged() {
                     self.conflicted_staged_count += 1;
@@ -4047,7 +4063,7 @@ impl GitPanel {
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    assistant_settings::AssistantSettings::get_global(cx)
+    agent_settings::AgentSettings::get_global(cx)
         .enabled
         .then(|| {
             let ConfiguredModel { provider, model } =
@@ -4765,14 +4781,12 @@ mod tests {
     use super::*;
 
     fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
             WorktreeSettings::register(cx);
             workspace::init_settings(cx);
             theme::init(LoadThemes::JustBase, cx);
@@ -4839,7 +4853,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let app_state = workspace.update(cx, |workspace, _| workspace.app_state().clone());
+        let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
         let panel = cx.new_window_entity(|window, cx| {
             GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
         });
@@ -4850,7 +4864,7 @@ mod tests {
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
 
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [
@@ -4925,7 +4939,7 @@ mod tests {
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [

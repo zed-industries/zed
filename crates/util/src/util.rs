@@ -14,6 +14,7 @@ use anyhow::Result;
 use futures::Future;
 use itertools::Either;
 use regex::Regex;
+use std::num::NonZeroU32;
 use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
@@ -183,29 +184,208 @@ pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
     truncate_to_byte_limit(s, max_bytes)
 }
 
-#[test]
-fn test_truncate_lines_to_byte_limit() {
-    let text = "Line 1\nLine 2\nLine 3\nLine 4";
+fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
+    let tab_size = tab_size.get() as usize;
+    let mut width = offset;
 
-    // Limit that includes all lines
-    assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+    for ch in text.chars() {
+        width += if ch == '\t' {
+            tab_size - (width % tab_size)
+        } else {
+            1
+        };
+    }
 
-    // Exactly the first line
-    assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+    width - offset
+}
 
-    // Limit between lines
-    assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
-    assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+/// Tokenizes a string into runs of text that should stick together, or that is whitespace.
+struct WordBreakingTokenizer<'a> {
+    input: &'a str,
+}
 
-    // Limit before first newline
-    assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+impl<'a> WordBreakingTokenizer<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input }
+    }
+}
 
-    // Test with non-ASCII characters
-    let text_utf8 = "Line 1\nLíne 2\nLine 3";
-    assert_eq!(
-        truncate_lines_to_byte_limit(text_utf8, 15),
-        "Line 1\nLíne 2\n"
-    );
+fn is_char_ideographic(ch: char) -> bool {
+    use unicode_script::Script::*;
+    use unicode_script::UnicodeScript;
+    matches!(ch.script(), Han | Tangut | Yi)
+}
+
+fn is_grapheme_ideographic(text: &str) -> bool {
+    text.chars().any(is_char_ideographic)
+}
+
+fn is_grapheme_whitespace(text: &str) -> bool {
+    text.chars().any(|x| x.is_whitespace())
+}
+
+fn should_stay_with_preceding_ideograph(text: &str) -> bool {
+    text.chars().next().map_or(false, |ch| {
+        matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…')
+    })
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+enum WordBreakToken<'a> {
+    Word { token: &'a str, grapheme_len: usize },
+    InlineWhitespace { token: &'a str, grapheme_len: usize },
+    Newline,
+}
+
+impl<'a> Iterator for WordBreakingTokenizer<'a> {
+    /// Yields a span, the count of graphemes in the token, and whether it was
+    /// whitespace. Note that it also breaks at word boundaries.
+    type Item = WordBreakToken<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use unicode_segmentation::UnicodeSegmentation;
+        if self.input.is_empty() {
+            return None;
+        }
+
+        let mut iter = self.input.graphemes(true).peekable();
+        let mut offset = 0;
+        let mut grapheme_len = 0;
+        if let Some(first_grapheme) = iter.next() {
+            let is_newline = first_grapheme == "\n";
+            let is_whitespace = is_grapheme_whitespace(first_grapheme);
+            offset += first_grapheme.len();
+            grapheme_len += 1;
+            if is_grapheme_ideographic(first_grapheme) && !is_whitespace {
+                if let Some(grapheme) = iter.peek().copied() {
+                    if should_stay_with_preceding_ideograph(grapheme) {
+                        offset += grapheme.len();
+                        grapheme_len += 1;
+                    }
+                }
+            } else {
+                let mut words = self.input[offset..].split_word_bound_indices().peekable();
+                let mut next_word_bound = words.peek().copied();
+                if next_word_bound.map_or(false, |(i, _)| i == 0) {
+                    next_word_bound = words.next();
+                }
+                while let Some(grapheme) = iter.peek().copied() {
+                    if next_word_bound.map_or(false, |(i, _)| i == offset) {
+                        break;
+                    };
+                    if is_grapheme_whitespace(grapheme) != is_whitespace
+                        || (grapheme == "\n") != is_newline
+                    {
+                        break;
+                    };
+                    offset += grapheme.len();
+                    grapheme_len += 1;
+                    iter.next();
+                }
+            }
+            let token = &self.input[..offset];
+            self.input = &self.input[offset..];
+            if token == "\n" {
+                Some(WordBreakToken::Newline)
+            } else if is_whitespace {
+                Some(WordBreakToken::InlineWhitespace {
+                    token,
+                    grapheme_len,
+                })
+            } else {
+                Some(WordBreakToken::Word {
+                    token,
+                    grapheme_len,
+                })
+            }
+        } else {
+            None
+        }
+    }
+}
+
+pub fn wrap_with_prefix(
+    line_prefix: String,
+    unwrapped_text: String,
+    wrap_column: usize,
+    tab_size: NonZeroU32,
+    preserve_existing_whitespace: bool,
+) -> String {
+    let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
+    let mut wrapped_text = String::new();
+    let mut current_line = line_prefix.clone();
+
+    let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
+    let mut current_line_len = line_prefix_len;
+    let mut in_whitespace = false;
+    for token in tokenizer {
+        let have_preceding_whitespace = in_whitespace;
+        match token {
+            WordBreakToken::Word {
+                token,
+                grapheme_len,
+            } => {
+                in_whitespace = false;
+                if current_line_len + grapheme_len > wrap_column
+                    && current_line_len != line_prefix_len
+                {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                }
+                current_line.push_str(token);
+                current_line_len += grapheme_len;
+            }
+            WordBreakToken::InlineWhitespace {
+                mut token,
+                mut grapheme_len,
+            } => {
+                in_whitespace = true;
+                if have_preceding_whitespace && !preserve_existing_whitespace {
+                    continue;
+                }
+                if !preserve_existing_whitespace {
+                    token = " ";
+                    grapheme_len = 1;
+                }
+                if current_line_len + grapheme_len > wrap_column {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if current_line_len != line_prefix_len || preserve_existing_whitespace {
+                    current_line.push_str(token);
+                    current_line_len += grapheme_len;
+                }
+            }
+            WordBreakToken::Newline => {
+                in_whitespace = true;
+                if preserve_existing_whitespace {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if have_preceding_whitespace {
+                    continue;
+                } else if current_line_len + 1 > wrap_column && current_line_len != line_prefix_len
+                {
+                    wrapped_text.push_str(current_line.trim_end());
+                    wrapped_text.push('\n');
+                    current_line.truncate(line_prefix.len());
+                    current_line_len = line_prefix_len;
+                } else if current_line_len != line_prefix_len {
+                    current_line.push(' ');
+                    current_line_len += 1;
+                }
+            }
+        }
+    }
+
+    if !current_line.is_empty() {
+        wrapped_text.push_str(&current_line);
+    }
+    wrapped_text
 }
 
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
@@ -401,6 +581,31 @@ pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
     }
 }
 
+pub fn merge_json_lenient_value_into(
+    source: serde_json_lenient::Value,
+    target: &mut serde_json_lenient::Value,
+) {
+    match (source, target) {
+        (serde_json_lenient::Value::Object(source), serde_json_lenient::Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_lenient_value_into(value, target);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+
+        (serde_json_lenient::Value::Array(source), serde_json_lenient::Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
+        }
+
+        (source, target) => *target = source,
+    }
+}
+
 pub fn merge_json_value_into(source: serde_json::Value, target: &mut serde_json::Value) {
     use serde_json::Value;
 
@@ -465,7 +670,7 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
     }
 }
 
-pub fn iterate_expanded_and_wrapped_usize_range(
+pub fn expanded_and_wrapped_usize_range(
     range: Range<usize>,
     additional_before: usize,
     additional_after: usize,
@@ -492,6 +697,43 @@ pub fn iterate_expanded_and_wrapped_usize_range(
     } else {
         Either::Left((range.start - additional_before)..(range.end + additional_after))
     }
+}
+
+/// Yields `[i, i + 1, i - 1, i + 2, ..]`, each modulo `wrap_length` and bounded by
+/// `additional_before` and `additional_after`. If the wrapping causes overlap, duplicates are not
+/// emitted. If wrap_length is 0, nothing is yielded.
+pub fn wrapped_usize_outward_from(
+    start: usize,
+    additional_before: usize,
+    additional_after: usize,
+    wrap_length: usize,
+) -> impl Iterator<Item = usize> {
+    let mut count = 0;
+    let mut after_offset = 1;
+    let mut before_offset = 1;
+
+    std::iter::from_fn(move || {
+        count += 1;
+        if count > wrap_length {
+            None
+        } else if count == 1 {
+            Some(start % wrap_length)
+        } else if after_offset <= additional_after && after_offset <= before_offset {
+            let value = (start + after_offset) % wrap_length;
+            after_offset += 1;
+            Some(value)
+        } else if before_offset <= additional_before {
+            let value = (start + wrap_length - before_offset) % wrap_length;
+            before_offset += 1;
+            Some(value)
+        } else if after_offset <= additional_after {
+            let value = (start + after_offset) % wrap_length;
+            after_offset += 1;
+            Some(value)
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -1008,6 +1250,28 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
     prev_end == s.len()
 }
 
+/// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
+/// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
+pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<usize>, &str)> {
+    let mut result = Vec::new();
+    let mut start = 0;
+
+    for (i, ch) in s.char_indices() {
+        if pat(ch) {
+            if i > start {
+                result.push((start..i, &s[start..i]));
+            }
+            start = i + ch.len_utf8();
+        }
+    }
+
+    if s.len() > start {
+        result.push((start..s.len(), &s[start..s.len()]));
+    }
+
+    result
+}
+
 pub fn default<D: Default>() -> D {
     Default::default()
 }
@@ -1235,46 +1499,258 @@ Line 3"#
     }
 
     #[test]
-    fn test_iterate_expanded_and_wrapped_usize_range() {
+    fn test_expanded_and_wrapped_usize_range() {
         // Neither wrap
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
             (1..5).collect::<Vec<usize>>()
         );
         // Start wraps
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
             ((0..5).chain(7..8)).collect::<Vec<usize>>()
         );
         // Start wraps all the way around
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // Start wraps all the way around and past 0
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // End wraps
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
             (0..1).chain(2..8).collect::<Vec<usize>>()
         );
         // End wraps all the way around
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // End wraps all the way around and past the end
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // Both start and end wrap
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
+    }
+
+    #[test]
+    fn test_wrapped_usize_outward_from() {
+        // No wrapping
+        assert_eq!(
+            wrapped_usize_outward_from(4, 2, 2, 10).collect::<Vec<usize>>(),
+            vec![4, 5, 3, 6, 2]
+        );
+        // Wrapping at end
+        assert_eq!(
+            wrapped_usize_outward_from(8, 2, 3, 10).collect::<Vec<usize>>(),
+            vec![8, 9, 7, 0, 6, 1]
+        );
+        // Wrapping at start
+        assert_eq!(
+            wrapped_usize_outward_from(1, 3, 2, 10).collect::<Vec<usize>>(),
+            vec![1, 2, 0, 3, 9, 8]
+        );
+        // All values wrap around
+        assert_eq!(
+            wrapped_usize_outward_from(5, 10, 10, 8).collect::<Vec<usize>>(),
+            vec![5, 6, 4, 7, 3, 0, 2, 1]
+        );
+        // None before / after
+        assert_eq!(
+            wrapped_usize_outward_from(3, 0, 0, 8).collect::<Vec<usize>>(),
+            vec![3]
+        );
+        // Starting point already wrapped
+        assert_eq!(
+            wrapped_usize_outward_from(15, 2, 2, 10).collect::<Vec<usize>>(),
+            vec![5, 6, 4, 7, 3]
+        );
+        // wrap_length of 0
+        assert_eq!(
+            wrapped_usize_outward_from(4, 2, 2, 0).collect::<Vec<usize>>(),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn test_truncate_lines_to_byte_limit() {
+        let text = "Line 1\nLine 2\nLine 3\nLine 4";
+
+        // Limit that includes all lines
+        assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+
+        // Exactly the first line
+        assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+
+        // Limit between lines
+        assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
+        assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+
+        // Limit before first newline
+        assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+
+        // Test with non-ASCII characters
+        let text_utf8 = "Line 1\nLíne 2\nLine 3";
+        assert_eq!(
+            truncate_lines_to_byte_limit(text_utf8, 15),
+            "Line 1\nLíne 2\n"
+        );
+    }
+
+    #[test]
+    fn test_string_size_with_expanded_tabs() {
+        let nz = |val| NonZeroU32::new(val).unwrap();
+        assert_eq!(char_len_with_expanded_tabs(0, "", nz(4)), 0);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello", nz(4)), 5);
+        assert_eq!(char_len_with_expanded_tabs(0, "\thello", nz(4)), 9);
+        assert_eq!(char_len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
+        assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
+        assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
+        assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+    }
+
+    #[test]
+    fn test_word_breaking_tokenizer() {
+        let tests: &[(&str, &[WordBreakToken<'static>])] = &[
+            ("", &[]),
+            ("  ", &[whitespace("  ", 2)]),
+            ("Ʒ", &[word("Ʒ", 1)]),
+            ("Ǽ", &[word("Ǽ", 1)]),
+            ("⋑", &[word("⋑", 1)]),
+            ("⋑⋑", &[word("⋑⋑", 2)]),
+            (
+                "原理，进而",
+                &[word("原", 1), word("理，", 2), word("进", 1), word("而", 1)],
+            ),
+            (
+                "hello world",
+                &[word("hello", 5), whitespace(" ", 1), word("world", 5)],
+            ),
+            (
+                "hello, world",
+                &[word("hello,", 6), whitespace(" ", 1), word("world", 5)],
+            ),
+            (
+                "  hello world",
+                &[
+                    whitespace("  ", 2),
+                    word("hello", 5),
+                    whitespace(" ", 1),
+                    word("world", 5),
+                ],
+            ),
+            (
+                "这是什么 \n 钢笔",
+                &[
+                    word("这", 1),
+                    word("是", 1),
+                    word("什", 1),
+                    word("么", 1),
+                    whitespace(" ", 1),
+                    newline(),
+                    whitespace(" ", 1),
+                    word("钢", 1),
+                    word("笔", 1),
+                ],
+            ),
+            (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
+        ];
+
+        fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+            WordBreakToken::Word {
+                token,
+                grapheme_len,
+            }
+        }
+
+        fn whitespace(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
+            WordBreakToken::InlineWhitespace {
+                token,
+                grapheme_len,
+            }
+        }
+
+        fn newline() -> WordBreakToken<'static> {
+            WordBreakToken::Newline
+        }
+
+        for (input, result) in tests {
+            assert_eq!(
+                WordBreakingTokenizer::new(input)
+                    .collect::<Vec<_>>()
+                    .as_slice(),
+                *result,
+            );
+        }
+    }
+
+    #[test]
+    fn test_wrap_with_prefix() {
+        assert_eq!(
+            wrap_with_prefix(
+                "# ".to_string(),
+                "abcdefg".to_string(),
+                4,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "# abcdefg"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                "".to_string(),
+                "\thello world".to_string(),
+                8,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "hello\nworld"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                "// ".to_string(),
+                "xx \nyy zz aa bb cc".to_string(),
+                12,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "// xx yy zz\n// aa bb cc"
+        );
+        assert_eq!(
+            wrap_with_prefix(
+                String::new(),
+                "这是什么 \n 钢笔".to_string(),
+                3,
+                NonZeroU32::new(4).unwrap(),
+                false,
+            ),
+            "这是什\n么 钢\n笔"
+        );
+    }
+
+    #[test]
+    fn test_split_with_ranges() {
+        let input = "hi";
+        let result = split_str_with_ranges(input, |c| c == ' ');
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (0..2, "hi"));
+
+        let input = "héllo🦀world";
+        let result = split_str_with_ranges(input, |c| c == '🦀');
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
+        assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
     }
 }

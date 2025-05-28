@@ -163,6 +163,15 @@ fn eval_delete_run_git_blame() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_translate_doc_comments() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
     let edit_description = "Translate all doc comments to Italian";
@@ -216,6 +225,15 @@ fn eval_translate_doc_comments() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  0.98
+    //  gemini-2.5-pro-preview-03-25   |  0.99
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/lib.rs";
     let input_file_content =
         include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs");
@@ -332,6 +350,15 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_disable_cursor_blinking() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
@@ -406,6 +433,15 @@ fn eval_disable_cursor_blinking() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_from_pixels_constructor() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  0.94
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
     let edit_description = "Implement from_pixels constructor and add tests.";
@@ -597,11 +633,20 @@ fn eval_from_pixels_constructor() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_zode() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  1.0
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |  1.0
+    //  gpt-4.1                        |  1.0
     let input_file_path = "root/zode.py";
     let input_content = None;
     let edit_description = "Create the main Zode CLI script";
     eval(
-        200,
+        50,
         1.,
         EvalInput::from_conversation(
             vec![
@@ -694,6 +739,15 @@ fn eval_zode() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_add_overwrite_test() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  0.16
+    //  gemini-2.5-pro-preview-03-25   |  0.35
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/action_log.rs";
     let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
     let edit_description = "Add a new test for overwriting a file in action_log.rs";
@@ -920,13 +974,10 @@ fn eval_create_empty_file() {
     // thoughts into it. This issue is not specific to empty files, but
     // it's easier to reproduce with them.
     //
+    // Results for 2025-05-21:
     //
     //  Model                          | Pass rate
     // ============================================
-    //
-    // --------------------------------------------
-    //           Prompt version: 2025-05-21
-    // --------------------------------------------
     //
     //  claude-3.7-sonnet              |  1.00
     //  gemini-2.5-pro-preview-03-25   |  1.00
@@ -1430,7 +1481,7 @@ impl EditAgentTest {
                     model.provider_id() == selected_model.provider
                         && model.id() == selected_model.model
                 })
-                .unwrap();
+                .expect("Model not found");
             let provider = models.provider(&model.provider_id()).unwrap();
             (provider, model)
         })?;

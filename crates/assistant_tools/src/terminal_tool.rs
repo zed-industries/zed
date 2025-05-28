@@ -275,7 +275,7 @@ impl Tool for TerminalTool {
                 let exit_status = terminal
                     .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
-                let (content, content_line_count) = terminal.update(cx, |terminal, _| {
+                let (content, content_line_count) = terminal.read_with(cx, |terminal, _| {
                     (terminal.get_content(), terminal.total_lines())
                 })?;
 
@@ -673,8 +673,7 @@ mod tests {
     use super::*;
 
     fn init_test(executor: &BackgroundExecutor, cx: &mut TestAppContext) {
-        zlog::init();
-        zlog::init_output_stdout();
+        zlog::init_test();
 
         executor.allow_parking();
         cx.update(|cx| {
