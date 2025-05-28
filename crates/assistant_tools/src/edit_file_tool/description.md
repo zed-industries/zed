@@ -2,7 +2,7 @@ This is a tool for creating a new file or editing an existing file. For moving o
 
 Before using this tool:
 
-1. Use the `read_file` tool to understand the file's contents and context
+1. ALWAYS use the `read_file` tool and verify the literal text you plan to edit. If calling `read_file` gives you an outline, call it again to get literal text BEFORE you edit.
 
 2. Verify the directory path is correct (only applicable when creating new files):
    - Use the `list_directory` tool to verify the parent directory exists and is the correct location

@@ -59,6 +59,11 @@ pub struct EditFileToolInput {
 
     /// The full path of the file to create or modify in the project.
     ///
+    /// You MUST read the actual text that you intend to edit from a file at this path
+    /// with the read_file tool before calling the edit_file tool. If the read_file tool
+    /// returned an outline, you MUST call read_file again to get literal text before
+    /// calling edit_file.
+    ///
     /// WARNING: When specifying which file path need changing, you MUST
     /// start each path with one of the project's root directories.
     ///

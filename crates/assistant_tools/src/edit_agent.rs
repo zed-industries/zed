@@ -617,10 +617,10 @@ impl EditAgent {
                     conversation.messages.pop();
                 }
             } else {
-                debug_panic!(
-                    "Last message must be an Assistant tool calling! Got {:?}",
-                    last_message.content
-                );
+                // debug_panic!(
+                //     "Last message must be an Assistant tool calling! Got {:?}",
+                //     last_message.content
+                // );
             }
         }
 
@@ -651,7 +651,7 @@ impl EditAgent {
             tool_choice,
             tools,
             stop: Vec::new(),
-            temperature: None,
+            temperature: Some(0.2),
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)

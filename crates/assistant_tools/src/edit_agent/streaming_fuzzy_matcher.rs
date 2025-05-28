@@ -167,7 +167,7 @@ impl StreamingFuzzyMatcher {
         let matched_buffer_row_count = buffer_row_end - buffer_row_start;
         let matched_ratio = matched_lines as f32
             / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
-        if matched_ratio >= 0.8 {
+        if matched_ratio >= 0.9 {
             let buffer_start_ix = self
                 .snapshot
                 .point_to_offset(Point::new(buffer_row_start, 0));
