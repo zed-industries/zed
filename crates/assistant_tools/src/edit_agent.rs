@@ -134,8 +134,6 @@ impl EditAgent {
                 .update(cx, |log, cx| log.buffer_created(buffer.clone(), cx))?;
             this.overwrite_with_chunks_internal(buffer, parse_rx, output_events_tx, cx)
                 .await?;
-            this.project
-                .update(cx, |project, cx| project.set_agent_location(None, cx))?;
             parse_task.await
         });
         (task, output_events_rx)
@@ -204,6 +202,7 @@ impl EditAgent {
         Task<Result<EditAgentOutput>>,
         mpsc::UnboundedReceiver<EditAgentOutputEvent>,
     ) {
+        // todo!("don't reset agent location if we're already on that buffer").
         self.project
             .update(cx, |project, cx| {
                 project.set_agent_location(
@@ -228,47 +227,22 @@ impl EditAgent {
             }
             .render(&this.templates)?;
             let edit_chunks = this.request(conversation, prompt, cx).await?;
-
-            let (output, mut inner_events) = this.apply_edit_chunks(buffer, edit_chunks, cx);
-            while let Some(event) = inner_events.next().await {
-                events_tx.unbounded_send(event).ok();
-            }
-            output.await
+            this.apply_edit_chunks(buffer, edit_chunks, events_tx, cx)
+                .await
         });
         (output, events_rx)
     }
 
-    fn apply_edit_chunks(
-        &self,
-        buffer: Entity<Buffer>,
-        edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
-        cx: &mut AsyncApp,
-    ) -> (
-        Task<Result<EditAgentOutput>>,
-        mpsc::UnboundedReceiver<EditAgentOutputEvent>,
-    ) {
-        let (output_events_tx, output_events_rx) = mpsc::unbounded();
-        let this = self.clone();
-        let task = cx.spawn(async move |mut cx| {
-            this.action_log
-                .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
-            let output = this
-                .apply_edit_chunks_internal(buffer, edit_chunks, output_events_tx, &mut cx)
-                .await;
-            this.project
-                .update(cx, |project, cx| project.set_agent_location(None, cx))?;
-            output
-        });
-        (task, output_events_rx)
-    }
-
-    async fn apply_edit_chunks_internal(
+    async fn apply_edit_chunks(
         &self,
         buffer: Entity<Buffer>,
         edit_chunks: impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>>,
         output_events: mpsc::UnboundedSender<EditAgentOutputEvent>,
         cx: &mut AsyncApp,
     ) -> Result<EditAgentOutput> {
+        self.action_log
+            .update(cx, |log, cx| log.buffer_read(buffer.clone(), cx))?;
+
         let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
         let mut edit_events = edit_events.peekable();
         while let Some(edit_event) = Pin::new(&mut edit_events).peek().await {
@@ -280,6 +254,8 @@ impl EditAgent {
 
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
+            // Resolve the old text in the background, updating the agent
+            // location as we keep refining which range it corresponds to.
             let (resolve_old_text, mut old_range) =
                 Self::resolve_old_text(snapshot.text.clone(), edit_events, cx);
             while let Ok(old_range) = old_range.recv().await {
@@ -304,6 +280,8 @@ impl EditAgent {
             let (edit_events_, resolved_old_text) = resolve_old_text.await?;
             edit_events = edit_events_;
 
+            // If we can't resolve the old text, restart the loop waiting for a
+            // new edit (or for the stream to end).
             let Some(resolved_old_text) = resolved_old_text else {
                 output_events
                     .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
@@ -311,6 +289,8 @@ impl EditAgent {
                 continue;
             };
 
+            // Compute edits in the background and apply them as they become
+            // available.
             let (compute_edits, edits) =
                 Self::compute_edits(snapshot, resolved_old_text, edit_events, cx);
             let mut edits = edits.ready_chunks(32);
@@ -440,40 +420,37 @@ impl EditAgent {
         T: 'static + Send + Unpin + Stream<Item = Result<EditParserEvent>>,
     {
         let (old_range_tx, old_range_rx) = async_watch::channel(None);
-        let resolve_old_range = cx.background_spawn({
-            let snapshot = snapshot.clone();
-            async move {
-                let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
-                while let Some(edit_event) = edit_events.next().await {
-                    let EditParserEvent::OldTextChunk { chunk, done } = edit_event? else {
-                        break;
-                    };
+        let task = cx.background_spawn(async move {
+            let mut matcher = StreamingFuzzyMatcher::new(snapshot);
+            while let Some(edit_event) = edit_events.next().await {
+                let EditParserEvent::OldTextChunk { chunk, done } = edit_event? else {
+                    break;
+                };
 
-                    old_range_tx.send(matcher.push(&chunk))?;
-                    if done {
-                        break;
-                    }
+                old_range_tx.send(matcher.push(&chunk))?;
+                if done {
+                    break;
                 }
+            }
 
-                let old_range = matcher.finish();
-                old_range_tx.send(old_range.clone())?;
-                if let Some(old_range) = old_range {
-                    let line_indent =
-                        LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
-                    Ok((
-                        edit_events,
-                        Some(ResolvedOldText {
-                            range: old_range,
-                            indent: line_indent,
-                        }),
-                    ))
-                } else {
-                    Ok((edit_events, None))
-                }
+            let old_range = matcher.finish();
+            old_range_tx.send(old_range.clone())?;
+            if let Some(old_range) = old_range {
+                let line_indent =
+                    LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
+                Ok((
+                    edit_events,
+                    Some(ResolvedOldText {
+                        range: old_range,
+                        indent: line_indent,
+                    }),
+                ))
+            } else {
+                Ok((edit_events, None))
             }
         });
 
-        (resolve_old_range, old_range_rx)
+        (task, old_range_rx)
     }
 
     fn compute_edits<T>(
@@ -747,6 +724,10 @@ mod tests {
                 cx,
             )
         });
+        agent
+            .model
+            .as_fake()
+            .stream_completion_response(request, chunk);
         let raw_edits = simulate_llm_output(
             indoc! {"
                 <old_text></old_text>
