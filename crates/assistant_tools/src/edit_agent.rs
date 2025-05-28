@@ -272,12 +272,12 @@ impl EditAgent {
         let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
         let mut edit_events = edit_events.peekable();
         while let Some(edit_event) = Pin::new(&mut edit_events).peek().await {
-            if let Ok(EditParserEvent::OldTextChunk { .. }) = edit_event {
-                // We're at the start of a new edit.
-            } else {
+            // Skip events until we're at the start of a new edit.
+            let Ok(EditParserEvent::OldTextChunk { .. }) = edit_event else {
                 edit_events.next().await.unwrap()?;
                 continue;
             };
+
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
             let (resolve_old_text, mut old_range) =
