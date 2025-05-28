@@ -1217,6 +1217,7 @@ where
     state.suppress_next_char_msg = false;
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
+    let capslock = current_capslock();
 
     match virtual_key {
         VK_PROCESSKEY => {
@@ -1233,6 +1234,7 @@ where
             state.last_reported_modifiers = Some(modifiers);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
+                capslock,
             }))
         }
         vkey => {
