@@ -88,6 +88,12 @@ impl Upstream {
             .and_then(|stripped| stripped.split("/").next())
     }
 
+    pub fn branch_name(&self) -> Option<&str> {
+        self.ref_name
+            .strip_prefix("refs/remotes/")
+            .and_then(|stripped| stripped.split('/').nth(1))
+    }
+
     pub fn stripped_ref_name(&self) -> Option<&str> {
         self.ref_name.strip_prefix("refs/remotes/")
     }
