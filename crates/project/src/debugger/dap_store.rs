@@ -105,7 +105,6 @@ impl DapStore {
             registry.add_locator(Arc::new(locators::cargo::CargoLocator {}));
             registry.add_locator(Arc::new(locators::python::PythonLocator));
             registry.add_locator(Arc::new(locators::go::GoLocator {}));
-
         });
         client.add_entity_request_handler(Self::handle_run_debug_locator);
         client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
