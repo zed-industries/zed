@@ -364,7 +364,6 @@ async fn test_complex_path(cx: &mut TestAppContext) {
             vec![PathBuf::from("其他/S数据表格/task.xlsx")],
         )
     });
-    // cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
@@ -1591,7 +1590,7 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
-        assert_match_at_position(finder, 0, "3.txt");
+        assert_match_selection(finder, 0, "3.txt");
         assert_match_at_position(finder, 1, "2.txt");
         assert_match_at_position(finder, 2, "1.txt");
     });
@@ -1613,11 +1612,10 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 4);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_selection(finder, 0, "1.txt");
         assert_match_at_position(finder, 1, "2.txt");
         assert_match_at_position(finder, 2, "3.txt");
-        assert_match_at_position(finder, 3, "");
     });
 }
 
