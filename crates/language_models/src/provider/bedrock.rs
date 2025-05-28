@@ -37,7 +37,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    TokenUsage,
+    TokenUsage, WrappedTextContent,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -639,7 +639,8 @@ pub fn into_bedrock(
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
                                 .content(match tool_result.content {
-                                    LanguageModelToolResultContent::Text(text) => {
+                                    LanguageModelToolResultContent::Text(text)
+                                    | LanguageModelToolResultContent::WrappedText(WrappedTextContent { text, .. }) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
                                     LanguageModelToolResultContent::Image(_) => {
@@ -774,7 +775,11 @@ pub fn get_bedrock_tokens(
                             // TODO: Estimate token usage from tool uses.
                         }
                         MessageContent::ToolResult(tool_result) => match tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
+                            LanguageModelToolResultContent::Text(text)
+                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                                text,
+                                ..
+                            }) => {
                                 string_contents.push_str(&text);
                             }
                             LanguageModelToolResultContent::Image(image) => {

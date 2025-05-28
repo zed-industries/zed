@@ -426,7 +426,10 @@ pub fn into_google(
                 }
                 language_model::MessageContent::ToolResult(tool_result) => {
                     match tool_result.content {
-                        language_model::LanguageModelToolResultContent::Text(text) => {
+                        language_model::LanguageModelToolResultContent::Text(text)
+                        | language_model::LanguageModelToolResultContent::WrappedText(
+                            language_model::WrappedTextContent { text, .. },
+                        ) => {
                             vec![Part::FunctionResponsePart(
                                 google_ai::FunctionResponsePart {
                                     function_response: google_ai::FunctionResponse {
