@@ -139,7 +139,9 @@ impl VoicePlayer {
             if playback_state.recording_id == recording_id {
                 if playback_state.is_playing {
                     let elapsed = playback_state.start_time.elapsed();
-                    let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed;
+                    // Account for playback speed: faster speeds progress through audio faster
+                    let speed_adjusted_elapsed = Duration::from_secs_f32(elapsed.as_secs_f32() * self.playback_speed);
+                    let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration) + speed_adjusted_elapsed;
                     let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
                     Some((progress, played_duration))
                 } else {
@@ -247,7 +249,9 @@ impl VoicePlayer {
                 
                 // Update the remaining duration based on elapsed time
                 let elapsed = playback_state.start_time.elapsed();
-                playback_state.duration = playback_state.duration.saturating_sub(elapsed);
+                // Account for playback speed: faster speeds progress through audio faster
+                let speed_adjusted_elapsed = Duration::from_secs_f32(elapsed.as_secs_f32() * self.playback_speed);
+                playback_state.duration = playback_state.duration.saturating_sub(speed_adjusted_elapsed);
                 playback_state.is_playing = false;
                 
                 // Stop audio playback
@@ -498,8 +502,10 @@ impl VoicePlayer {
         if let Some(playback_state) = &self.playback_state {
             if playback_state.is_playing {
                 let elapsed = playback_state.start_time.elapsed();
+                // Account for playback speed: faster speeds progress through audio faster
+                let speed_adjusted_elapsed = Duration::from_secs_f32(elapsed.as_secs_f32() * self.playback_speed);
                 
-                if elapsed >= playback_state.duration {
+                if speed_adjusted_elapsed >= playback_state.duration {
                     // Playback finished
                     let recording_id = playback_state.recording_id.clone();
                     log::info!("Playback completed for recording: {}", recording_id);
@@ -519,7 +525,9 @@ impl VoicePlayer {
             // Calculate current progress
             let played_duration = if playback_state.is_playing {
                 let elapsed = playback_state.start_time.elapsed();
-                playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed
+                // Account for playback speed: faster speeds progress through audio faster
+                let speed_adjusted_elapsed = Duration::from_secs_f32(elapsed.as_secs_f32() * self.playback_speed);
+                playback_state.original_duration.saturating_sub(playback_state.duration) + speed_adjusted_elapsed
             } else {
                 playback_state.original_duration.saturating_sub(playback_state.duration)
             };
