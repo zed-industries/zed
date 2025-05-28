@@ -265,7 +265,6 @@ async fn test_unicode_paths(cx: &mut TestAppContext) {
         assert_eq!(picker.delegate.matches.len(), 2);
         assert_match_at_position(picker, 1, "g");
     });
-    cx.dispatch_action(SelectNext);
     cx.dispatch_action(Confirm);
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
@@ -410,7 +409,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_match_selection(finder, 1, &query_inside_file.to_string());
+        assert_match_at_position(finder, 1, &query_inside_file.to_string());
         let finder = &finder.delegate;
         assert_eq!(finder.matches.len(), 2);
         let latest_search_query = finder
@@ -486,7 +485,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_match_selection(finder, 1, &query_outside_file.to_string());
+        assert_match_at_position(finder, 1, &query_outside_file.to_string());
         let delegate = &finder.delegate;
         assert_eq!(delegate.matches.len(), 2);
         let latest_search_query = delegate
@@ -557,8 +556,8 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
         .await;
 
     picker.update(cx, |picker, _cx| {
-        assert_eq!(picker.delegate.matches.len(), 6);
-        assert_match_at_position(picker, 5, "hi");
+        // CreateNew option not shown in this case since file already exists
+        assert_eq!(picker.delegate.matches.len(), 5);
     });
 
     picker.update_in(cx, |picker, window, cx| {
@@ -648,7 +647,8 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
                 .spawn_search(test_path_position("hi"), window, cx)
         })
         .await;
-    picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 8));
+    // CreateNew option not shown in this case since file already exists
+    picker.update(cx, |picker, _| assert_eq!(picker.delegate.matches.len(), 7));
 }
 
 #[gpui::test]
@@ -787,7 +787,8 @@ async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
         .await;
     cx.read(|cx| {
         let finder = picker.read(cx);
-        assert_eq!(finder.delegate.matches.len(), 0);
+        assert_eq!(finder.delegate.matches.len(), 1);
+        assert_match_at_position(finder, 0, "dir");
     });
 }
 
@@ -1389,11 +1390,10 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 4);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "bar.rs");
-        assert_match_at_position(finder, 4, "");
     });
 }
 
@@ -1455,12 +1455,13 @@ async fn test_setting_auto_select_first_and_select_active_file(cx: &mut TestAppC
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 5);
+        assert_eq!(finder.delegate.matches.len(), 6);
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "bar.rs");
         assert_match_at_position(finder, 2, "lib.rs");
         assert_match_at_position(finder, 3, "moo.rs");
         assert_match_at_position(finder, 4, "maaa.rs");
+        assert_match_at_position(finder, 5, ".rs");
     });
 }
 
@@ -1496,11 +1497,10 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
     let picker = active_file_picker(&workspace, cx);
     // main.rs is on top, previously used is selected
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 4);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "bar.rs");
-        assert_match_at_position(finder, 3, "");
     });
 
     // all files match, main.rs is still on top, but the second item is selected
@@ -1555,11 +1555,10 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
         })
         .await;
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 4);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_selection(finder, 0, "main.rs");
         assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "bar.rs");
-        assert_match_at_position(finder, 3, "");
     });
 }
 
@@ -1593,7 +1592,7 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "3.txt");
-        assert_match_selection(finder, 1, "2.txt");
+        assert_match_at_position(finder, 1, "2.txt");
         assert_match_at_position(finder, 2, "1.txt");
     });
 
@@ -1602,11 +1601,10 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 4);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_selection(finder, 0, "2.txt");
         assert_match_at_position(finder, 1, "3.txt");
         assert_match_at_position(finder, 2, "1.txt");
-        assert_match_at_position(finder, 3, "");
     });
 
     cx.dispatch_action(SelectNext);
@@ -1676,11 +1674,10 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
     cx.executor().advance_clock(FS_WATCH_LATENCY);
 
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 4);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "3.txt");
         assert_match_selection(finder, 1, "2.txt");
         assert_match_at_position(finder, 2, "1.txt");
-        assert_match_at_position(finder, 3, "");
     });
 }
 
@@ -1808,7 +1805,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "lib.rs");
         assert_match_at_position(finder, 1, "main.rs");
-        assert_match_at_position(finder, 2, "");
+        assert_match_at_position(finder, 2, "rs");
     });
 
     // Delete main.rs
@@ -1823,7 +1820,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 2);
         assert_match_at_position(finder, 0, "lib.rs");
-        assert_match_at_position(finder, 1, "");
+        assert_match_at_position(finder, 1, "rs");
     });
 
     // Create util.rs
@@ -1839,7 +1836,7 @@ async fn test_search_results_refreshed_on_worktree_updates(cx: &mut gpui::TestAp
         assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "lib.rs");
         assert_match_at_position(finder, 1, "util.rs");
-        assert_match_at_position(finder, 2, "");
+        assert_match_at_position(finder, 2, "rs");
     });
 }
 
@@ -1902,7 +1899,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
         assert_match_at_position(finder, 0, "bar.rs");
         assert_match_at_position(finder, 1, "lib.rs");
         assert_match_at_position(finder, 2, "main.rs");
-        assert_match_at_position(finder, 3, "");
+        assert_match_at_position(finder, 3, "rs");
     });
 
     // Remove the first worktree
@@ -1915,7 +1912,7 @@ async fn test_search_results_refreshed_on_adding_and_removing_worktrees(
     picker.update(cx, |finder, _| {
         assert_eq!(finder.delegate.matches.len(), 2);
         assert_match_at_position(finder, 0, "main.rs");
-        assert_match_at_position(finder, 1, "");
+        assert_match_at_position(finder, 1, "rs");
     });
 }
 
@@ -2184,11 +2181,10 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
     cx.dispatch_action(menu::SelectPrevious);
     cx.simulate_modifiers_change(Modifiers::none());
     picker.update(cx, |finder, _| {
-        assert_eq!(finder.delegate.matches.len(), 4);
+        assert_eq!(finder.delegate.matches.len(), 3);
         assert_match_at_position(finder, 0, "3.txt");
         assert_match_at_position(finder, 1, "2.txt");
         assert_match_selection(finder, 2, "1.txt");
-        assert_match_selection(finder, 3, "");
     });
 
     // Back to navigation with initial shortcut
@@ -2464,7 +2460,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                     .push(Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path));
                 search_entries.search_matches.push(path_match.0.clone());
             }
-            Match::CreateNew(project_path) => {}
+            Match::CreateNew(_) => {}
         }
     }
     search_entries

@@ -866,8 +866,8 @@ impl FileFinderDelegate {
             // add option of creating new file only if path is relative
             if let Some(worktree) = worktree {
                 let worktree = worktree.read(cx);
-                if worktree.entry_for_path(&path).is_none()
-                    && path.is_relative()
+                if path.is_relative()
+                    && worktree.entry_for_path(&path).is_none()
                     && !filename.ends_with("/")
                 {
                     self.matches.matches.push(Match::CreateNew(ProjectPath {
