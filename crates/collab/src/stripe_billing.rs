@@ -1,9 +1,5 @@
 use std::sync::Arc;
 
-use crate::Result;
-use crate::db::billing_subscription::SubscriptionKind;
-use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
-use crate::stripe_client::{RealStripeClient, StripeClient, StripeCustomerId};
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
@@ -11,6 +7,11 @@ use serde::{Deserialize, Serialize};
 use stripe::{PriceId, SubscriptionStatus};
 use tokio::sync::RwLock;
 use uuid::Uuid;
+
+use crate::Result;
+use crate::db::billing_subscription::SubscriptionKind;
+use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
+use crate::stripe_client::{RealStripeClient, StripeClient, StripeCustomerId};
 
 pub struct StripeBilling {
     state: RwLock<StripeBillingState>,
@@ -37,6 +38,7 @@ impl StripeBilling {
     #[cfg(test)]
     pub fn test(client: Arc<crate::stripe_client::FakeStripeClient>) -> Self {
         Self {
+            // This is just temporary until we can remove all usages of the real Stripe client.
             real_client: Arc::new(stripe::Client::new("sk_test")),
             client,
             state: RwLock::default(),
