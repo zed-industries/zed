@@ -21,7 +21,7 @@ use crate::{
     worktree_store::WorktreeStore,
 };
 
-#[allow(clippy::large_enum_variant)] // platform-dependent warning
+// platform-dependent warning
 pub enum TaskStore {
     Functional(StoreState),
     Noop,
@@ -70,7 +70,7 @@ impl TaskStore {
             .payload
             .location
             .context("no location given for task context handling")?;
-        let (buffer_store, is_remote) = store.update(&mut cx, |store, _| {
+        let (buffer_store, is_remote) = store.read_with(&mut cx, |store, _| {
             Ok(match store {
                 TaskStore::Functional(state) => (
                     state.buffer_store.clone(),

@@ -1,11 +1,12 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, BackgroundExecutor, Entity, Focusable, FontWeight, ListSizingBehavior,
-    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, UniformListScrollHandle,
-    div, px, uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
+    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, div, px, uniform_list,
 };
-use language::Buffer;
+use gpui::{AsyncWindowContext, WeakEntity};
+use itertools::Itertools;
 use language::CodeLabel;
+use language::{Buffer, LanguageName, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
@@ -15,6 +16,8 @@ use project::{CodeAction, Completion, TaskSourceKind};
 use task::DebugScenario;
 use task::TaskContext;
 
+use std::collections::VecDeque;
+use std::sync::Arc;
 use std::{
     cell::RefCell,
     cmp::{Reverse, min},
@@ -26,6 +29,7 @@ use task::ResolvedTask;
 use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
 use util::ResultExt;
 
+use crate::CodeActionSource;
 use crate::editor_settings::SnippetSortOrder;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
@@ -40,7 +44,25 @@ pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
 pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
 pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
 
-#[allow(clippy::large_enum_variant)]
+// Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
+// documentation not yet being parsed.
+//
+// The size of the cache is set to the number of items fetched around the current selection plus one
+// for the current selection and another to avoid cases where and adjacent selection exits the
+// cache. The only current benefit of a larger cache would be doing less markdown parsing when the
+// selection revisits items.
+//
+// One future benefit of a larger cache would be reducing flicker on backspace. This would require
+// not recreating the menu on every change, by not re-querying the language server when
+// `is_incomplete = false`.
+const MARKDOWN_CACHE_MAX_SIZE: usize = MARKDOWN_CACHE_BEFORE_ITEMS + MARKDOWN_CACHE_AFTER_ITEMS + 2;
+const MARKDOWN_CACHE_BEFORE_ITEMS: usize = 2;
+const MARKDOWN_CACHE_AFTER_ITEMS: usize = 2;
+
+// Number of items beyond the visible items to resolve documentation.
+const RESOLVE_BEFORE_ITEMS: usize = 4;
+const RESOLVE_AFTER_ITEMS: usize = 4;
+
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
     CodeActions(CodeActionsMenu),
@@ -50,11 +72,12 @@ impl CodeContextMenu {
     pub fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_first(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_first(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_first(cx),
             }
             true
@@ -66,11 +89,12 @@ impl CodeContextMenu {
     pub fn select_prev(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_prev(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_prev(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_prev(cx),
             }
             true
@@ -82,11 +106,12 @@ impl CodeContextMenu {
     pub fn select_next(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_next(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_next(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_next(cx),
             }
             true
@@ -98,11 +123,12 @@ impl CodeContextMenu {
     pub fn select_last(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> bool {
         if self.visible() {
             match self {
-                CodeContextMenu::Completions(menu) => menu.select_last(provider, cx),
+                CodeContextMenu::Completions(menu) => menu.select_last(provider, window, cx),
                 CodeContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
@@ -144,13 +170,12 @@ impl CodeContextMenu {
 
     pub fn render_aside(
         &mut self,
-        editor: &Editor,
         max_size: Size<Pixels>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         match self {
-            CodeContextMenu::Completions(menu) => menu.render_aside(editor, max_size, window, cx),
+            CodeContextMenu::Completions(menu) => menu.render_aside(max_size, window, cx),
             CodeContextMenu::CodeActions(_) => None,
         }
     }
@@ -158,7 +183,7 @@ impl CodeContextMenu {
     pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
         match self {
             CodeContextMenu::Completions(completions_menu) => completions_menu
-                .markdown_element
+                .get_or_create_entry_markdown(completions_menu.selected_item, cx)
                 .as_ref()
                 .is_some_and(|markdown| markdown.focus_handle(cx).contains_focused(window, cx)),
             CodeContextMenu::CodeActions(_) => false,
@@ -169,9 +194,10 @@ impl CodeContextMenu {
 pub enum ContextMenuOrigin {
     Cursor,
     GutterIndicator(DisplayRow),
+    QuickActionBar,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct CompletionsMenu {
     pub id: CompletionId,
     sort_completions: bool,
@@ -186,7 +212,9 @@ pub struct CompletionsMenu {
     show_completion_documentation: bool,
     pub(super) ignore_completion_provider: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
-    markdown_element: Option<Entity<Markdown>>,
+    markdown_cache: Rc<RefCell<VecDeque<(usize, Entity<Markdown>)>>>,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    language: Option<LanguageName>,
     snippet_sort_order: SnippetSortOrder,
 }
 
@@ -200,6 +228,9 @@ impl CompletionsMenu {
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
         snippet_sort_order: SnippetSortOrder,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        language: Option<LanguageName>,
+        cx: &mut Context<Editor>,
     ) -> Self {
         let match_candidates = completions
             .iter()
@@ -207,7 +238,7 @@ impl CompletionsMenu {
             .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
             .collect();
 
-        Self {
+        let completions_menu = Self {
             id,
             sort_completions,
             initial_position,
@@ -221,9 +252,15 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
-            markdown_element: None,
+            markdown_cache: RefCell::new(VecDeque::with_capacity(MARKDOWN_CACHE_MAX_SIZE)).into(),
+            language_registry,
+            language,
             snippet_sort_order,
-        }
+        };
+
+        completions_menu.start_markdown_parse_for_nearby_entries(cx);
+
+        completions_menu
     }
 
     pub fn new_snippet_choices(
@@ -281,7 +318,9 @@ impl CompletionsMenu {
             show_completion_documentation: false,
             ignore_completion_provider: false,
             last_rendered_range: RefCell::new(None).into(),
-            markdown_element: None,
+            markdown_cache: RefCell::new(VecDeque::new()).into(),
+            language_registry: None,
+            language: None,
             snippet_sort_order,
         }
     }
@@ -289,6 +328,7 @@ impl CompletionsMenu {
     fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         let index = if self.scroll_handle.y_flipped() {
@@ -296,40 +336,56 @@ impl CompletionsMenu {
         } else {
             0
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_last(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_last(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             0
         } else {
             self.entries.borrow().len() - 1
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_prev(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_prev(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             self.next_match_index()
         } else {
             self.prev_match_index()
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
-    fn select_next(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_next(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
         let index = if self.scroll_handle.y_flipped() {
             self.prev_match_index()
         } else {
             self.next_match_index()
         };
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
     fn update_selection_index(
         &mut self,
         match_index: usize,
         provider: Option<&dyn CompletionProvider>,
+        window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         if self.selected_item != match_index {
@@ -337,6 +393,10 @@ impl CompletionsMenu {
             self.scroll_handle
                 .scroll_to_item(self.selected_item, ScrollStrategy::Top);
             self.resolve_visible_completions(provider, cx);
+            self.start_markdown_parse_for_nearby_entries(cx);
+            if let Some(provider) = provider {
+                self.handle_selection_changed(provider, window, cx);
+            }
             cx.notify();
         }
     }
@@ -355,6 +415,21 @@ impl CompletionsMenu {
         } else {
             0
         }
+    }
+
+    fn handle_selection_changed(
+        &self,
+        provider: &dyn CompletionProvider,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let entries = self.entries.borrow();
+        let entry = if self.selected_item < entries.len() {
+            Some(&entries[self.selected_item])
+        } else {
+            None
+        };
+        provider.selection_changed(entry, window, cx);
     }
 
     pub fn resolve_visible_completions(
@@ -393,11 +468,10 @@ impl CompletionsMenu {
 
         // Expand the range to resolve more completions than are predicted to be visible, to reduce
         // jank on navigation.
-        const EXTRA_TO_RESOLVE: usize = 4;
-        let entry_indices = util::iterate_expanded_and_wrapped_usize_range(
+        let entry_indices = util::expanded_and_wrapped_usize_range(
             entry_range.clone(),
-            EXTRA_TO_RESOLVE,
-            EXTRA_TO_RESOLVE,
+            RESOLVE_BEFORE_ITEMS,
+            RESOLVE_AFTER_ITEMS,
             entries.len(),
         );
 
@@ -427,12 +501,118 @@ impl CompletionsMenu {
             cx,
         );
 
+        let completion_id = self.id;
         cx.spawn(async move |editor, cx| {
             if let Some(true) = resolve_task.await.log_err() {
-                editor.update(cx, |_, cx| cx.notify()).ok();
+                editor
+                    .update(cx, |editor, cx| {
+                        // `resolve_completions` modified state affecting display.
+                        cx.notify();
+                        editor.with_completions_menu_matching_id(
+                            completion_id,
+                            || (),
+                            |this| this.start_markdown_parse_for_nearby_entries(cx),
+                        );
+                    })
+                    .ok();
             }
         })
         .detach();
+    }
+
+    fn start_markdown_parse_for_nearby_entries(&self, cx: &mut Context<Editor>) {
+        // Enqueue parse tasks of nearer items first.
+        //
+        // TODO: This means that the nearer items will actually be further back in the cache, which
+        // is not ideal. In practice this is fine because `get_or_create_markdown` moves the current
+        // selection to the front (when `is_render = true`).
+        let entry_indices = util::wrapped_usize_outward_from(
+            self.selected_item,
+            MARKDOWN_CACHE_BEFORE_ITEMS,
+            MARKDOWN_CACHE_AFTER_ITEMS,
+            self.entries.borrow().len(),
+        );
+
+        for index in entry_indices {
+            self.get_or_create_entry_markdown(index, cx);
+        }
+    }
+
+    fn get_or_create_entry_markdown(
+        &self,
+        index: usize,
+        cx: &mut Context<Editor>,
+    ) -> Option<Entity<Markdown>> {
+        let entries = self.entries.borrow();
+        if index >= entries.len() {
+            return None;
+        }
+        let candidate_id = entries[index].candidate_id;
+        match &self.completions.borrow()[candidate_id].documentation {
+            Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => Some(
+                self.get_or_create_markdown(candidate_id, source.clone(), false, cx)
+                    .1,
+            ),
+            Some(_) => None,
+            _ => None,
+        }
+    }
+
+    fn get_or_create_markdown(
+        &self,
+        candidate_id: usize,
+        source: SharedString,
+        is_render: bool,
+        cx: &mut Context<Editor>,
+    ) -> (bool, Entity<Markdown>) {
+        let mut markdown_cache = self.markdown_cache.borrow_mut();
+        if let Some((cache_index, (_, markdown))) = markdown_cache
+            .iter()
+            .find_position(|(id, _)| *id == candidate_id)
+        {
+            let markdown = if is_render && cache_index != 0 {
+                // Move the current selection's cache entry to the front.
+                markdown_cache.rotate_right(1);
+                let cache_len = markdown_cache.len();
+                markdown_cache.swap(0, (cache_index + 1) % cache_len);
+                &markdown_cache[0].1
+            } else {
+                markdown
+            };
+
+            let is_parsing = markdown.update(cx, |markdown, cx| {
+                // `reset` is called as it's possible for documentation to change due to resolve
+                // requests. It does nothing if `source` is unchanged.
+                markdown.reset(source, cx);
+                markdown.is_parsing()
+            });
+            return (is_parsing, markdown.clone());
+        }
+
+        if markdown_cache.len() < MARKDOWN_CACHE_MAX_SIZE {
+            let markdown = cx.new(|cx| {
+                Markdown::new(
+                    source,
+                    self.language_registry.clone(),
+                    self.language.clone(),
+                    cx,
+                )
+            });
+            // Handles redraw when the markdown is done parsing. The current render is for a
+            // deferred draw, and so without this did not redraw when `markdown` notified.
+            cx.observe(&markdown, |_, _, cx| cx.notify()).detach();
+            markdown_cache.push_front((candidate_id, markdown.clone()));
+            (true, markdown)
+        } else {
+            debug_assert_eq!(markdown_cache.capacity(), MARKDOWN_CACHE_MAX_SIZE);
+            // Moves the last cache entry to the start. The ring buffer is full, so this does no
+            // copying and just shifts indexes.
+            markdown_cache.rotate_right(1);
+            markdown_cache[0].0 = candidate_id;
+            let markdown = &markdown_cache[0].1;
+            markdown.update(cx, |markdown, cx| markdown.reset(source, cx));
+            (true, markdown.clone())
+        }
     }
 
     pub fn visible(&self) -> bool {
@@ -450,29 +630,7 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> AnyElement {
-        let completions = self.completions.borrow_mut();
         let show_completion_documentation = self.show_completion_documentation;
-        let widest_completion_ix = self
-            .entries
-            .borrow()
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, mat)| {
-                let completion = &completions[mat.candidate_id];
-                let documentation = &completion.documentation;
-
-                let mut len = completion.label.text.chars().count();
-                if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
-                    if show_completion_documentation {
-                        len += text.chars().count();
-                    }
-                }
-
-                len
-            })
-            .map(|(ix, _)| ix);
-        drop(completions);
-
         let selected_item = self.selected_item;
         let completions = self.completions.clone();
         let entries = self.entries.clone();
@@ -532,22 +690,25 @@ impl CompletionsMenu {
 
                         let completion_label = StyledText::new(completion.label.text.clone())
                             .with_default_highlights(&style.text, highlights);
-                        let documentation_label = if let Some(
-                            CompletionDocumentation::SingleLine(text),
-                        ) = documentation
-                        {
-                            if text.trim().is_empty() {
-                                None
-                            } else {
-                                Some(
-                                    Label::new(text.clone())
-                                        .ml_4()
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
+
+                        let documentation_label = match documentation {
+                            Some(CompletionDocumentation::SingleLine(text))
+                            | Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                single_line: text,
+                                ..
+                            }) => {
+                                if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        Label::new(text.clone())
+                                            .ml_4()
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }
                             }
-                        } else {
-                            None
+                            _ => None,
                         };
 
                         let start_slot = completion
@@ -596,15 +757,14 @@ impl CompletionsMenu {
         .occlude()
         .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(self.scroll_handle.clone())
-        .with_width_from_item(widest_completion_ix)
-        .with_sizing_behavior(ListSizingBehavior::Infer);
+        .with_sizing_behavior(ListSizingBehavior::Infer)
+        .w(rems(34.));
 
         Popover::new().child(list).into_any_element()
     }
 
     fn render_aside(
         &mut self,
-        editor: &Editor,
         max_size: Size<Pixels>,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -619,27 +779,21 @@ impl CompletionsMenu {
             .as_ref()?
         {
             CompletionDocumentation::MultiLinePlainText(text) => div().child(text.clone()),
-            CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.is_empty() => {
-                let markdown = self.markdown_element.get_or_insert_with(|| {
-                    cx.new(|cx| {
-                        let languages = editor
-                            .workspace
-                            .as_ref()
-                            .and_then(|(workspace, _)| workspace.upgrade())
-                            .map(|workspace| workspace.read(cx).app_state().languages.clone());
-                        let language = editor
-                            .language_at(self.initial_position, cx)
-                            .map(|l| l.name().to_proto());
-                        Markdown::new(SharedString::default(), languages, language, cx)
-                    })
-                });
-                markdown.update(cx, |markdown, cx| {
-                    markdown.reset(parsed.clone(), cx);
-                });
+            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: Some(text),
+                ..
+            } => div().child(text.clone()),
+            CompletionDocumentation::MultiLineMarkdown(source) if !source.is_empty() => {
+                let (is_parsing, markdown) =
+                    self.get_or_create_markdown(mat.candidate_id, source.clone(), true, cx);
+                if is_parsing {
+                    return None;
+                }
                 div().child(
-                    MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
+                    MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                         .code_block_renderer(markdown::CodeBlockRenderer::Default {
                             copy_button: false,
+                            copy_button_on_hover: false,
                             border: false,
                         })
                         .on_url_click(open_markdown_url),
@@ -648,6 +802,11 @@ impl CompletionsMenu {
             CompletionDocumentation::MultiLineMarkdown(_) => return None,
             CompletionDocumentation::SingleLine(_) => return None,
             CompletionDocumentation::Undocumented => return None,
+            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: None, ..
+            } => {
+                return None;
+            }
         };
 
         Some(
@@ -673,12 +832,13 @@ impl CompletionsMenu {
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
-                sort_prefix: Reverse<usize>,
-                sort_fuzzy_bracket: Reverse<usize>,
+                sort_mixed_case_prefix_length: Reverse<usize>,
                 sort_snippet: Reverse<i32>,
+                sort_kind: usize,
+                sort_fuzzy_bracket: Reverse<usize>,
                 sort_text: Option<&'a str>,
                 sort_score: Reverse<OrderedFloat<f64>>,
-                sort_key: (usize, &'a str),
+                sort_label: &'a str,
             },
             OtherMatch {
                 sort_score: Reverse<OrderedFloat<f64>>,
@@ -689,12 +849,12 @@ impl CompletionsMenu {
         // balance the raw fuzzy match score with hints from the language server
 
         // In a fuzzy bracket, matches with a score of 1.0 are prioritized.
-        // The remaining matches are partitioned into two groups at 2/3 of the max_score.
+        // The remaining matches are partitioned into two groups at 3/5 of the max_score.
         let max_score = matches
             .iter()
             .map(|mat| mat.string_match.score)
             .fold(0.0, f64::max);
-        let second_bracket_threshold = max_score * (2.0 / 3.0);
+        let fuzzy_bracket_threshold = max_score * (3.0 / 5.0);
 
         let query_start_lower = query
             .and_then(|q| q.chars().next())
@@ -718,9 +878,7 @@ impl CompletionsMenu {
             if query_start_doesnt_match_split_words {
                 MatchTier::OtherMatch { sort_score }
             } else {
-                let sort_fuzzy_bracket = Reverse(if score == 1.0 {
-                    2
-                } else if score >= second_bracket_threshold {
+                let sort_fuzzy_bracket = Reverse(if score >= fuzzy_bracket_threshold {
                     1
                 } else {
                     0
@@ -730,7 +888,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::Bottom => Reverse(if mat.is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
                 };
-                let mixed_case_prefix_length = Reverse(
+                let sort_mixed_case_prefix_length = Reverse(
                     query
                         .map(|q| {
                             q.chars()
@@ -750,18 +908,25 @@ impl CompletionsMenu {
                         .unwrap_or(0),
                 );
                 MatchTier::WordStartMatch {
-                    sort_prefix: mixed_case_prefix_length,
-                    sort_fuzzy_bracket,
+                    sort_mixed_case_prefix_length,
                     sort_snippet,
+                    sort_kind: mat.sort_kind,
+                    sort_fuzzy_bracket,
                     sort_text: mat.sort_text,
                     sort_score,
-                    sort_key: mat.sort_key,
+                    sort_label: mat.sort_label,
                 }
             }
         });
     }
 
-    pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
+    pub async fn filter(
+        &mut self,
+        query: Option<&str>,
+        provider: Option<Rc<dyn CompletionProvider>>,
+        editor: WeakEntity<Editor>,
+        cx: &mut AsyncWindowContext,
+    ) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
                 &self.match_candidates,
@@ -769,7 +934,7 @@ impl CompletionsMenu {
                 query.chars().any(|c| c.is_uppercase()),
                 100,
                 &Default::default(),
-                executor,
+                cx.background_executor().clone(),
             )
             .await
         } else {
@@ -806,13 +971,14 @@ impl CompletionsMenu {
                             None
                         };
 
-                    let sort_key = completion.sort_key();
+                    let (sort_kind, sort_label) = completion.sort_key();
 
                     SortableMatch {
                         string_match,
                         is_snippet,
                         sort_text,
-                        sort_key,
+                        sort_kind,
+                        sort_label,
                     }
                 })
                 .collect();
@@ -829,6 +995,22 @@ impl CompletionsMenu {
         self.selected_item = 0;
         // This keeps the display consistent when y_flipped.
         self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+
+        if let Some(provider) = provider {
+            cx.update(|window, cx| {
+                // Since this is async, it's possible the menu has been closed and possibly even
+                // another opened. `provider.selection_changed` should not be called in this case.
+                let this_menu_still_active = editor
+                    .read_with(cx, |editor, _cx| {
+                        editor.with_completions_menu_matching_id(self.id, || false, |_| true)
+                    })
+                    .unwrap_or(false);
+                if this_menu_still_active {
+                    self.handle_selection_changed(&*provider, window, cx);
+                }
+            })
+            .ok();
+        }
     }
 }
 
@@ -837,7 +1019,8 @@ pub struct SortableMatch<'a> {
     pub string_match: StringMatch,
     pub is_snippet: bool,
     pub sort_text: Option<&'a str>,
-    pub sort_key: (usize, &'a str),
+    pub sort_kind: usize,
+    pub sort_label: &'a str,
 }
 
 #[derive(Clone)]
@@ -848,7 +1031,7 @@ pub struct AvailableCodeAction {
 }
 
 #[derive(Clone)]
-pub(crate) struct CodeActionContents {
+pub struct CodeActionContents {
     tasks: Option<Rc<ResolvedTasks>>,
     actions: Option<Rc<[AvailableCodeAction]>>,
     debug_scenarios: Vec<DebugScenario>,
@@ -935,7 +1118,6 @@ impl CodeActionContents {
     }
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum CodeActionsItem {
     Task(TaskSourceKind, ResolvedTask),
@@ -977,12 +1159,12 @@ impl CodeActionsItem {
     }
 }
 
-pub(crate) struct CodeActionsMenu {
+pub struct CodeActionsMenu {
     pub actions: CodeActionContents,
     pub buffer: Entity<Buffer>,
     pub selected_item: usize,
     pub scroll_handle: UniformListScrollHandle,
-    pub deployed_from_indicator: Option<DisplayRow>,
+    pub deployed_from: Option<CodeActionSource>,
 }
 
 impl CodeActionsMenu {
@@ -1051,10 +1233,10 @@ impl CodeActionsMenu {
     }
 
     fn origin(&self) -> ContextMenuOrigin {
-        if let Some(row) = self.deployed_from_indicator {
-            ContextMenuOrigin::GutterIndicator(row)
-        } else {
-            ContextMenuOrigin::Cursor
+        match &self.deployed_from {
+            Some(CodeActionSource::Indicator(row)) => ContextMenuOrigin::GutterIndicator(*row),
+            Some(CodeActionSource::QuickActionBar) => ContextMenuOrigin::QuickActionBar,
+            None => ContextMenuOrigin::Cursor,
         }
     }
 
@@ -1112,6 +1294,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .child("debug: ")
                                             .child(scenario.label.clone())
                                             .when(selected, |this| {
                                                 this.text_color(colors.text_accent)
@@ -1147,7 +1330,9 @@ impl CodeActionsMenu {
                     CodeActionsItem::CodeAction { action, .. } => {
                         action.lsp_action.title().chars().count()
                     }
-                    CodeActionsItem::DebugScenario(scenario) => scenario.label.chars().count(),
+                    CodeActionsItem::DebugScenario(scenario) => {
+                        format!("debug: {}", scenario.label).chars().count()
+                    }
                 })
                 .map(|(ix, _)| ix),
         )

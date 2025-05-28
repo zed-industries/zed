@@ -36,7 +36,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    TokenUsage, WrappedTextContent,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -76,8 +77,6 @@ pub struct AmazonBedrockSettings {
 pub enum BedrockAuthMethod {
     #[serde(rename = "named_profile")]
     NamedProfile,
-    #[serde(rename = "static_credentials")]
-    StaticCredentials,
     #[serde(rename = "sso")]
     SingleSignOn,
     /// IMDSv2, PodIdentity, env vars, etc.
@@ -186,47 +185,18 @@ impl State {
         })
     }
 
-    fn is_authenticated(&self) -> Option<String> {
-        match self
+    fn is_authenticated(&self) -> bool {
+        let derived = self
             .settings
             .as_ref()
-            .and_then(|s| s.authentication_method.as_ref())
-        {
-            Some(BedrockAuthMethod::StaticCredentials) => Some(String::from(
-                "You are authenticated using Static Credentials.",
-            )),
-            Some(BedrockAuthMethod::NamedProfile) | Some(BedrockAuthMethod::SingleSignOn) => {
-                match self.settings.as_ref() {
-                    None => Some(String::from(
-                        "You are authenticated using a Named Profile, but no profile is set.",
-                    )),
-                    Some(settings) => match settings.clone().profile_name {
-                        None => Some(String::from(
-                            "You are authenticated using a Named Profile, but no profile is set.",
-                        )),
-                        Some(profile_name) => Some(format!(
-                            "You are authenticated using a Named Profile: {profile_name}",
-                        )),
-                    },
-                }
-            }
-            Some(BedrockAuthMethod::Automatic) => Some(String::from(
-                "You are authenticated using Automatic Credentials.",
-            )),
-            None => {
-                if self.credentials.is_some() {
-                    Some(String::from(
-                        "You are authenticated using Static Credentials.",
-                    ))
-                } else {
-                    None
-                }
-            }
-        }
+            .and_then(|s| s.authentication_method.as_ref());
+        let creds = self.credentials.as_ref();
+
+        derived.is_some() || creds.is_some()
     }
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated().is_some() {
+        if self.is_authenticated() {
             return Task::ready(Ok(()));
         }
 
@@ -328,6 +298,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
         for model in bedrock::Model::iter() {
             if !matches!(model, bedrock::Model::Custom { .. }) {
+                // TODO: Sonnet 3.7 vs. 3.7 Thinking bug is here.
                 models.insert(model.id().to_string(), model);
             }
         }
@@ -357,7 +328,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated().is_some()
+        self.state.read(cx).is_authenticated()
     }
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
@@ -394,16 +365,15 @@ struct BedrockModel {
 }
 
 impl BedrockModel {
-    fn get_or_init_client(&self, cx: &AsyncApp) -> Result<&BedrockClient, anyhow::Error> {
+    fn get_or_init_client(&self, cx: &AsyncApp) -> anyhow::Result<&BedrockClient> {
         self.client
             .get_or_try_init_blocking(|| {
-                let Ok((auth_method, credentials, endpoint, region, settings)) =
+                let (auth_method, credentials, endpoint, region, settings) =
                     cx.read_entity(&self.state, |state, _cx| {
                         let auth_method = state
                             .settings
                             .as_ref()
-                            .and_then(|s| s.authentication_method.clone())
-                            .unwrap_or(BedrockAuthMethod::Automatic);
+                            .and_then(|s| s.authentication_method.clone());
 
                         let endpoint = state.settings.as_ref().and_then(|s| s.endpoint.clone());
 
@@ -420,10 +390,7 @@ impl BedrockModel {
                             region,
                             state.settings.clone(),
                         )
-                    })
-                else {
-                    return Err(anyhow!("App state dropped"));
-                };
+                    })?;
 
                 let mut config_builder = aws_config::defaults(BehaviorVersion::latest())
                     .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
@@ -438,7 +405,7 @@ impl BedrockModel {
                 }
 
                 match auth_method {
-                    BedrockAuthMethod::StaticCredentials => {
+                    None => {
                         if let Some(creds) = credentials {
                             let aws_creds = Credentials::new(
                                 creds.access_key_id,
@@ -450,7 +417,8 @@ impl BedrockModel {
                             config_builder = config_builder.credentials_provider(aws_creds);
                         }
                     }
-                    BedrockAuthMethod::NamedProfile | BedrockAuthMethod::SingleSignOn => {
+                    Some(BedrockAuthMethod::NamedProfile)
+                    | Some(BedrockAuthMethod::SingleSignOn) => {
                         // Currently NamedProfile and SSO behave the same way but only the instructions change
                         // Until we support BearerAuth through SSO, this will not change.
                         let profile_name = settings
@@ -461,19 +429,17 @@ impl BedrockModel {
                             config_builder = config_builder.profile_name(profile_name);
                         }
                     }
-                    BedrockAuthMethod::Automatic => {
+                    Some(BedrockAuthMethod::Automatic) => {
                         // Use default credential provider chain
                     }
                 }
 
                 let config = self.handler.block_on(config_builder.load());
-                Ok(BedrockClient::new(&config))
+                anyhow::Ok(BedrockClient::new(&config))
             })
-            .map_err(|err| anyhow!("Failed to initialize Bedrock client: {err}"))?;
+            .context("initializing Bedrock client")?;
 
-        self.client
-            .get()
-            .ok_or_else(|| anyhow!("Bedrock client not initialized"))
+        self.client.get().context("Bedrock client not initialized")
     }
 
     fn stream_completion(
@@ -518,6 +484,10 @@ impl LanguageModel for BedrockModel {
 
     fn supports_tools(&self) -> bool {
         self.model.supports_tool_use()
+    }
+
+    fn supports_images(&self) -> bool {
+        false
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -569,7 +539,10 @@ impl LanguageModel for BedrockModel {
 
             region
         }) else {
-            return async move { Err(anyhow!("App State Dropped")) }.boxed();
+            return async move {
+                anyhow::bail!("App State Dropped");
+            }
+            .boxed();
         };
 
         let model_id = match self.model.cross_region_inference_id(&region) {
@@ -665,9 +638,18 @@ pub fn into_bedrock(
                         MessageContent::ToolResult(tool_result) => {
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
-                                .content(BedrockToolResultContentBlock::Text(
-                                    tool_result.content.to_string(),
-                                ))
+                                .content(match tool_result.content {
+                                    LanguageModelToolResultContent::Text(text)
+                                    | LanguageModelToolResultContent::WrappedText(WrappedTextContent { text, .. }) => {
+                                        BedrockToolResultContentBlock::Text(text.to_string())
+                                    }
+                                    LanguageModelToolResultContent::Image(_) => {
+                                        BedrockToolResultContentBlock::Text(
+                                            // TODO: Bedrock image support
+                                            "[Tool responded with an image, but Zed doesn't support these in Bedrock models yet]".to_string()
+                                        )
+                                    }
+                                })
                                 .status({
                                     if tool_result.is_error {
                                         BedrockToolResultStatus::Error
@@ -736,7 +718,7 @@ pub fn into_bedrock(
             BedrockToolChoice::Any(BedrockAnyToolChoice::builder().build())
         }
         Some(LanguageModelToolChoice::None) => {
-            return Err(anyhow!("LanguageModelToolChoice::None is not supported"));
+            anyhow::bail!("LanguageModelToolChoice::None is not supported");
         }
     };
     let tool_config: BedrockToolConfig = BedrockToolConfig::builder()
@@ -792,9 +774,18 @@ pub fn get_bedrock_tokens(
                         MessageContent::ToolUse(_tool_use) => {
                             // TODO: Estimate token usage from tool uses.
                         }
-                        MessageContent::ToolResult(tool_result) => {
-                            string_contents.push_str(&tool_result.content);
-                        }
+                        MessageContent::ToolResult(tool_result) => match tool_result.content {
+                            LanguageModelToolResultContent::Text(text)
+                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                                text,
+                                ..
+                            }) => {
+                                string_contents.push_str(&text);
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                tokens_from_images += image.estimate_tokens();
+                            }
+                        },
                     }
                 }
 
@@ -1211,7 +1202,7 @@ impl ConfigurationView {
             .rounded_sm()
     }
 
-    fn should_render_editor(&self, cx: &mut Context<Self>) -> Option<String> {
+    fn should_render_editor(&self, cx: &Context<Self>) -> bool {
         self.state.read(cx).is_authenticated()
     }
 }
@@ -1219,13 +1210,16 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).credentials_from_env;
-        let creds_type = self.should_render_editor(cx).is_some();
+        let bedrock_settings = self.state.read(cx).settings.as_ref();
+        let bedrock_method = bedrock_settings
+            .as_ref()
+            .and_then(|s| s.authentication_method.clone());
 
         if self.load_credentials_task.is_some() {
             return div().child(Label::new("Loading credentials...")).into_any();
         }
 
-        if let Some(auth) = self.should_render_editor(cx) {
+        if self.should_render_editor(cx) {
             return h_flex()
                 .mt_1()
                 .p_1()
@@ -1241,7 +1235,14 @@ impl Render for ConfigurationView {
                         .child(Label::new(if env_var_set {
                             format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
                         } else {
-                            auth.clone()
+                            match bedrock_method {
+                                Some(BedrockAuthMethod::Automatic) => "You are using automatic credentials".into(),
+                                Some(BedrockAuthMethod::NamedProfile) => {
+                                    "You are using named profile".into()
+                                },
+                                Some(BedrockAuthMethod::SingleSignOn) => "You are using a single sign on profile".into(),
+                                None => "You are using static credentials".into(),
+                            }
                         })),
                 )
                 .child(
@@ -1249,12 +1250,12 @@ impl Render for ConfigurationView {
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
-                        // .disabled(env_var_set || creds_type)
+                        .disabled(env_var_set || bedrock_method.is_some())
                         .when(env_var_set, |this| {
                             this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
                         })
-                        .when(creds_type, |this| {
-                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how."))
+                        .when(bedrock_method.is_some(), |this| {
+                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how"))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
                 )

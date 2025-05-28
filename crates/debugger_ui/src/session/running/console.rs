@@ -5,7 +5,7 @@ use super::{
 use anyhow::Result;
 use collections::HashMap;
 use dap::OutputEvent;
-use editor::{CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
+use editor::{Bias, CompletionProvider, Editor, EditorElement, EditorStyle, ExcerptId};
 use fuzzy::StringMatchCandidate;
 use gpui::{
     Context, Entity, FocusHandle, Focusable, Render, Subscription, Task, TextStyle, WeakEntity,
@@ -14,7 +14,7 @@ use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
 use project::{
     Completion,
-    debugger::session::{CompletionsQuery, OutputToken, Session},
+    debugger::session::{CompletionsQuery, OutputToken, Session, SessionEvent},
 };
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
@@ -45,6 +45,7 @@ impl Console {
             let mut editor = Editor::multi_line(window, cx);
             editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
             editor.set_read_only(true);
+            editor.disable_scrollbars_and_minimap(window, cx);
             editor.set_show_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_breakpoints(false, cx);
@@ -71,13 +72,24 @@ impl Console {
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Some(Box::new(ConsoleQueryBarCompletionProvider(this))));
+            editor.set_completion_provider(Some(Rc::new(ConsoleQueryBarCompletionProvider(this))));
 
             editor
         });
 
-        let _subscriptions =
-            vec![cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events)];
+        let _subscriptions = vec![
+            cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
+            cx.subscribe_in(&session, window, |this, _, event, window, cx| {
+                if let SessionEvent::ConsoleOutput = event {
+                    this.update_output(window, cx)
+                }
+            }),
+            cx.on_focus(&focus_handle, window, |console, window, cx| {
+                if console.is_running(cx) {
+                    console.query_bar.focus_handle(cx).focus(window);
+                }
+            }),
+        ];
 
         Self {
             session,
@@ -97,7 +109,7 @@ impl Console {
         &self.console
     }
 
-    fn is_local(&self, cx: &Context<Self>) -> bool {
+    fn is_running(&self, cx: &Context<Self>) -> bool {
         self.session.read(cx).is_local()
     }
 
@@ -109,6 +121,7 @@ impl Console {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged(_) => cx.notify(),
+            StackFrameListEvent::BuiltEntries => {}
         }
     }
 
@@ -142,8 +155,9 @@ impl Console {
     pub fn evaluate(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
         let expression = self.query_bar.update(cx, |editor, cx| {
             let expression = editor.text(cx);
-
-            editor.clear(window, cx);
+            cx.defer_in(window, |editor, window, cx| {
+                editor.clear(window, cx);
+            });
 
             expression
         });
@@ -153,7 +167,7 @@ impl Console {
                 .evaluate(
                     expression,
                     Some(dap::EvaluateArgumentsContext::Repl),
-                    self.stack_frame_list.read(cx).selected_stack_frame_id(),
+                    self.stack_frame_list.read(cx).opened_stack_frame_id(),
                     None,
                     cx,
                 )
@@ -191,12 +205,11 @@ impl Console {
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         EditorElement::new(&self.query_bar, self.editor_style(cx))
     }
-}
 
-impl Render for Console {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn update_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let session = self.session.clone();
         let token = self.last_token;
+
         self.update_output_task = cx.spawn_in(window, async move |this, cx| {
             _ = session.update_in(cx, move |session, window, cx| {
                 let (output, last_processed_token) = session.output(token);
@@ -211,14 +224,18 @@ impl Render for Console {
                 });
             });
         });
+    }
+}
 
+impl Render for Console {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
             .on_action(cx.listener(Self::evaluate))
             .size_full()
             .child(self.render_console(cx))
-            .when(self.is_local(cx), |this| {
+            .when(self.is_running(cx), |this| {
                 this.child(Divider::horizontal())
                     .child(self.render_query_bar(cx))
             })
@@ -269,7 +286,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         _completion_indices: Vec<usize>,
         _completions: Rc<RefCell<Box<[Completion]>>>,
         _cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<bool>> {
+    ) -> gpui::Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))
     }
 
@@ -280,7 +297,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         _completion_index: usize,
         _push_to_history: bool,
         _cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<Option<language::Transaction>>> {
+    ) -> gpui::Task<anyhow::Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
 
@@ -356,7 +373,7 @@ impl ConsoleQueryBarCompletionProvider {
                             new_text: string_match.string.clone(),
                             label: CodeLabel {
                                 filter_range: 0..string_match.string.len(),
-                                text: format!("{} {}", string_match.string.clone(), variable_value),
+                                text: format!("{} {}", string_match.string, variable_value),
                                 runs: Vec::new(),
                             },
                             icon_path: None,
@@ -380,7 +397,7 @@ impl ConsoleQueryBarCompletionProvider {
     ) -> Task<Result<Option<Vec<Completion>>>> {
         let completion_task = console.update(cx, |console, cx| {
             console.session.update(cx, |state, cx| {
-                let frame_id = console.stack_frame_list.read(cx).selected_stack_frame_id();
+                let frame_id = console.stack_frame_list.read(cx).opened_stack_frame_id();
 
                 state.completions(
                     CompletionsQuery::new(buffer.read(cx), buffer_position, frame_id),
@@ -401,28 +418,21 @@ impl ConsoleQueryBarCompletionProvider {
                             .as_ref()
                             .unwrap_or(&completion.label)
                             .to_owned();
-                        let mut word_bytes_length = 0;
-                        for chunk in snapshot
-                            .reversed_chunks_in_range(language::Anchor::MIN..buffer_position)
-                        {
-                            let mut processed_bytes = 0;
-                            if let Some(_) = chunk.chars().rfind(|c| {
-                                let is_whitespace = c.is_whitespace();
-                                if !is_whitespace {
-                                    processed_bytes += c.len_utf8();
-                                }
+                        let buffer_text = snapshot.text();
+                        let buffer_bytes = buffer_text.as_bytes();
+                        let new_bytes = new_text.as_bytes();
 
-                                is_whitespace
-                            }) {
-                                word_bytes_length += processed_bytes;
+                        let mut prefix_len = 0;
+                        for i in (0..new_bytes.len()).rev() {
+                            if buffer_bytes.ends_with(&new_bytes[0..i]) {
+                                prefix_len = i;
                                 break;
-                            } else {
-                                word_bytes_length += chunk.len();
                             }
                         }
 
                         let buffer_offset = buffer_position.to_offset(&snapshot);
-                        let start = buffer_offset - word_bytes_length;
+                        let start = buffer_offset - prefix_len;
+                        let start = snapshot.clip_offset(start, Bias::Left);
                         let start = snapshot.anchor_before(start);
                         let replace_range = start..buffer_position;
 

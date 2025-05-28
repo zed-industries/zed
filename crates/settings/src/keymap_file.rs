@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
@@ -154,12 +154,12 @@ impl KeymapFile {
     pub fn load_asset(asset_path: &str, cx: &App) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
             KeymapFileLoadResult::Success { key_bindings } => Ok(key_bindings),
-            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => Err(anyhow!(
-                "Error loading built-in keymap \"{asset_path}\": {error_message}",
-            )),
-            KeymapFileLoadResult::JsonParseFailure { error } => Err(anyhow!(
-                "JSON parse error in built-in keymap \"{asset_path}\": {error}"
-            )),
+            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
+                anyhow::bail!("Error loading built-in keymap \"{asset_path}\": {error_message}",)
+            }
+            KeymapFileLoadResult::JsonParseFailure { error } => {
+                anyhow::bail!("JSON parse error in built-in keymap \"{asset_path}\": {error}")
+            }
         }
     }
 
@@ -173,14 +173,14 @@ impl KeymapFile {
                 key_bindings,
                 error_message,
                 ..
-            } if key_bindings.is_empty() => Err(anyhow!(
-                "Error loading built-in keymap \"{asset_path}\": {error_message}",
-            )),
+            } if key_bindings.is_empty() => {
+                anyhow::bail!("Error loading built-in keymap \"{asset_path}\": {error_message}",)
+            }
             KeymapFileLoadResult::Success { key_bindings, .. }
             | KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => Ok(key_bindings),
-            KeymapFileLoadResult::JsonParseFailure { error } => Err(anyhow!(
-                "JSON parse error in built-in keymap \"{asset_path}\": {error}"
-            )),
+            KeymapFileLoadResult::JsonParseFailure { error } => {
+                anyhow::bail!("JSON parse error in built-in keymap \"{asset_path}\": {error}")
+            }
         }
     }
 
@@ -584,7 +584,7 @@ impl KeymapFile {
             .definitions
             .insert(KeymapAction::schema_name(), action_schema);
 
-        // This and other json schemas can be viewed via `debug: open language server logs` ->
+        // This and other json schemas can be viewed via `dev: open language server logs` ->
         // `json-language-server` -> `Server Info`.
         serde_json::to_value(root_schema).unwrap()
     }

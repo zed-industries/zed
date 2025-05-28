@@ -113,8 +113,8 @@
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
-  // Time to wait before showing the informational hover box
-  "hover_popover_delay": 350,
+  // Time to wait in milliseconds before showing the informational hover box.
+  "hover_popover_delay": 300,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
@@ -213,11 +213,30 @@
   // Whether to show the signature help after completion or a bracket pair inserted.
   // If `auto_signature_help` is enabled, this setting will be treated as enabled also.
   "show_signature_help_after_edits": false,
+  // Whether to show code action button at start of buffer line.
+  "inline_code_actions": true,
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
   // 2. Find references for the same symbol: `find_all_references` (default)
   "go_to_definition_fallback": "find_all_references",
+  // Which level to use to filter out diagnostics displayed in the editor.
+  //
+  // Affects the editor rendering only, and does not interrupt
+  // the functionality of diagnostics fetching and project diagnostics editor.
+  // Which files containing diagnostic errors/warnings to mark in the tabs.
+  // Diagnostics are only shown when file icons are also active.
+  // This setting only works when can take the following three values:
+  //
+  // Which diagnostic indicators to show in the scrollbar, their level should be more or equal to the specified severity level.
+  // Possible values:
+  //  - "off" — no diagnostics are allowed
+  //  - "error"
+  //  - "warning"
+  //  - "info"
+  //  - "hint"
+  //  - null — allow all diagnostics (default)
+  "diagnostics_max_severity": null,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -305,16 +324,24 @@
     // Whether to show the Selections menu in the editor toolbar.
     "selections_menu": true,
     // Whether to show agent review buttons in the editor toolbar.
-    "agent_review": true
+    "agent_review": true,
+    // Whether to show code action buttons in the editor toolbar.
+    "code_actions": false
   },
   // Titlebar related settings
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
+    // Whether to show the branch name button in the titlebar.
+    "show_branch_name": true,
+    // Whether to show the project host and name in the titlebar.
+    "show_project_items": true,
     // Whether to show onboarding banners in the titlebar.
     "show_onboarding_banner": true,
     // Whether to show user picture in the titlebar.
-    "show_user_picture": true
+    "show_user_picture": true,
+    // Whether to show the sign in button in the titlebar.
+    "show_sign_in": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -448,11 +475,17 @@
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
+  // Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
+  // to both the horizontal and vertical delta values while scrolling. Fast scrolling
+  // happens when a user holds the alt or option key while scrolling.
+  "fast_scroll_sensitivity": 4.0,
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
   // Search options to enable by default when opening new project and buffer searches.
   "search": {
+    // Whether to show the project search button in the status bar.
+    "button": true,
     "whole_word": false,
     "case_sensitive": false,
     "include_ignored": false,
@@ -696,14 +729,14 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "claude-sonnet-4"
     },
     // The model to use when applying edits from the agent.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "claude-sonnet-4"
     },
     // Additional parameters for language model requests. When making a request to a model, parameters will be taken
     // from the last entry in this list that matches the model's provider and name. In each entry, both provider
@@ -723,7 +756,7 @@
       // To set parameters for a specific provider and model:
       // {
       //   "provider": "zed.dev",
-      //   "model": "claude-3-7-sonnet-latest",
+      //   "model": "claude-sonnet-4",
       //   "temperature": 1.0
       // }
     ],
@@ -733,6 +766,8 @@
     "stream_edits": false,
     // When enabled, agent edits will be displayed in single-file editors for review
     "single_file_review": true,
+    // When enabled, show voting thumbs for feedback on agent edits.
+    "enable_feedback": true,
     "default_profile": "write",
     "profiles": {
       "write": {
@@ -787,7 +822,12 @@
     // "primary_screen" - Show the notification only on your primary screen (default)
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
-    "notify_when_agent_waiting": "primary_screen"
+    "notify_when_agent_waiting": "primary_screen",
+    // Whether to play a sound when the agent has either completed
+    // its response, or needs user input.
+
+    // Default: false
+    "play_sound_when_agent_done": false
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -919,7 +959,17 @@
     //    "skip_focus_for_active_in_search": false
     //
     // Default: true
-    "skip_focus_for_active_in_search": true
+    "skip_focus_for_active_in_search": true,
+    // Whether to show the git status in the file finder.
+    "git_status": true,
+    // Whether to use gitignored files when searching.
+    // Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    //
+    // Can accept 3 values:
+    //   * `true`: Use all gitignored files
+    //   * `false`: Use only the files Zed had indexed
+    //   * `null`: Be smart and search for ignored when called from a gitignored worktree
+    "include_ignored": null
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -985,6 +1035,8 @@
   "auto_update": true,
   // Diagnostics configuration.
   "diagnostics": {
+    // Whether to show the project diagnostics button in the status bar.
+    "button": true,
     // Whether to show warnings or not by default.
     "include_warnings": true,
     // Settings for inline diagnostics
@@ -1002,7 +1054,7 @@
       // longer than this value will still push diagnostics further to the right.
       "min_column": 0,
       // The minimum severity of the diagnostics to show inline.
-      // Shows all diagnostics when not specified.
+      // Inherits editor's diagnostics' max severity settings when `null`.
       "max_severity": null
     },
     "cargo": {
@@ -1280,21 +1332,22 @@
     "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
-  // By default use a recent system version of node, or install our own.
-  // You can override this to use a version of node that is not in $PATH with:
-  // {
-  //   "node": {
-  //     "path": "/path/to/node"
-  //     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
-  //   }
-  // }
-  // or to ensure Zed always downloads and installs an isolated version of node:
-  // {
-  //   "node": {
-  //     "ignore_system_version": true,
-  //   }
-  // NOTE: changing this setting currently requires restarting Zed.
-  "node": {},
+  // Settings for which version of Node.js and NPM to use when installing
+  // language servers and Copilot.
+  //
+  // Note: changing this setting currently requires restarting Zed.
+  "node": {
+    // By default, Zed will look for `node` and `npm` on your `$PATH`, and use the
+    // existing executables if their version is recent enough. Set this to `true`
+    // to prevent this, and force Zed to always download and install its own
+    // version of Node.
+    "ignore_system_version": false,
+    // You can also specify alternative paths to Node and NPM. If you specify
+    // `path`, but not `npm_path`, Zed will assume that `npm` is located at
+    // `${path}/../npm`.
+    "path": null,
+    "npm_path": null
+  },
   // The extensions that Zed should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings
@@ -1399,7 +1452,9 @@
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
     "Git Commit": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "preferred_line_length": 72,
+      "soft_wrap": "bounded"
     },
     "Go": {
       "code_actions_on_format": {
@@ -1685,6 +1740,8 @@
   //   }
   // ]
   "ssh_connections": [],
+  // Whether to read ~/.ssh/config for ssh connection sources.
+  "read_ssh_config": true,
   // Configures context servers for use by the agent.
   "context_servers": {},
   "debugger": {
