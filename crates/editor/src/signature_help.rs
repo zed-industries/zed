@@ -357,15 +357,10 @@ impl SignatureHelpPopover {
             .clone()
             .when(signature.label.is_empty(), |_| "<No Parameters>".into());
         let signature_count = self.signature.len();
-        let signature_label = div()
-            .max_w(max_size.width)
-            .px_2()
-            .py_0p5()
-            .child(
-                StyledText::new(label)
-                    .with_default_highlights(&self.style, signature.highlights.iter().cloned()),
-            )
-            .into_any_element();
+        let signature_label = div().max_w(max_size.width).px_2().py_0p5().child(
+            StyledText::new(label)
+                .with_default_highlights(&self.style, signature.highlights.iter().cloned()),
+        );
         let signature = div()
             .id("signature_help_documentation")
             .overflow_y_scroll()
@@ -471,21 +466,10 @@ impl SignatureHelpPopover {
                 cx.notify();
                 cx.stop_propagation()
             }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
+            .on_hover(|_, _, cx| cx.stop_propagation())
+            .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
             .h_full()
             .absolute()
             .right_1()

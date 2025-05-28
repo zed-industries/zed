@@ -4721,6 +4721,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if !self.editor.focus_handle(cx).is_focused(window) {
+            return;
+        }
         let Some(newest_selection_head) = newest_selection_head else {
             return;
         };
