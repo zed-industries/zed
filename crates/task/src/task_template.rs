@@ -715,6 +715,7 @@ mod tests {
             label: "My task".into(),
             command: "echo".into(),
             args: vec!["$PATH".into()],
+            env: HashMap::from_iter([("PATH".to_owned(), "non-empty".to_owned())]),
             ..TaskTemplate::default()
         };
         let resolved_task = task
@@ -725,6 +726,32 @@ mod tests {
         assert_eq!(resolved.label, task.label);
         assert_eq!(resolved.command, task.command);
         assert_eq!(resolved.args, task.args);
+    }
+
+    #[test]
+    fn test_empty_env_variables_excluded_from_args() {
+        let task = TaskTemplate {
+            label: "My task".into(),
+            command: "echo".into(),
+            args: vec![
+                "$EMPTY_VAR".into(),
+                "hello".into(),
+                "$WHITESPACE_VAR".into(),
+                "$UNDEFINED_VAR".into(),
+                "$WORLD".into(),
+            ],
+            env: HashMap::from_iter([
+                ("EMPTY_VAR".to_owned(), "".to_owned()),
+                ("WHITESPACE_VAR".to_owned(), "   ".to_owned()),
+                ("WORLD".to_owned(), "non-empty".to_owned()),
+            ]),
+            ..TaskTemplate::default()
+        };
+        let resolved_task = task
+            .resolve_task(TEST_ID_BASE, &TaskContext::default())
+            .unwrap();
+        let resolved = resolved_task.resolved;
+        assert_eq!(resolved.args, vec!["hello", "$WORLD"]);
     }
 
     #[test]
