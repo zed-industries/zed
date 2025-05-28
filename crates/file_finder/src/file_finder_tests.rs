@@ -229,7 +229,12 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         picker.update(cx, |picker, _| {
             assert_eq!(
                 picker.delegate.matches.len(),
-                2,
+                // existence of CreateNew option depends on whether path already exists
+                if bandana_query == util::separator!("a/bandana") {
+                    1
+                } else {
+                    2
+                },
                 "Wrong number of matches for bandana query '{bandana_query}'. Matches: {:?}",
                 picker.delegate.matches
             );
