@@ -5774,8 +5774,7 @@ impl MultiBufferSnapshot {
                     )
                 })
                 .1;
-
-            let tab_size = settings.tab_size.get() as u32;
+            let tab_size = settings.tab_size.get();
 
             // When encountering empty, continue until found useful line indent
             // then add to the indent stack with the depth found
