@@ -3,8 +3,8 @@ pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
 use crate::{
-    CodeAction, Completion, CompletionSource, CoreCompletion, Hover, InlayHint, LspAction,
-    ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    CodeAction, Completion, CompletionResponse, CompletionSource, CoreCompletion, Hover, InlayHint,
+    LspAction, ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -997,7 +997,7 @@ impl LocalLspStore {
             .collect::<Vec<_>>();
 
         async move {
-            futures::future::join_all(shutdown_futures).await;
+            join_all(shutdown_futures).await;
         }
     }
 
@@ -5075,7 +5075,7 @@ impl LspStore {
         position: PointUtf16,
         context: CompletionContext,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let language_registry = self.languages.clone();
 
         if let Some((upstream_client, project_id)) = self.upstream_client() {
@@ -5099,11 +5099,17 @@ impl LspStore {
             });
 
             cx.foreground_executor().spawn(async move {
-                let completions = task.await?;
-                let mut result = Vec::new();
-                populate_labels_for_completions(completions, language, lsp_adapter, &mut result)
-                    .await;
-                Ok(Some(result))
+                let completion_response = task.await?;
+                let completions = populate_labels_for_completions(
+                    completion_response.completions,
+                    language,
+                    lsp_adapter,
+                )
+                .await;
+                Ok(vec![CompletionResponse {
+                    completions,
+                    is_incomplete: completion_response.is_incomplete,
+                }])
             })
         } else if let Some(local) = self.as_local() {
             let snapshot = buffer.read(cx).snapshot();
@@ -5117,7 +5123,7 @@ impl LspStore {
             )
             .completions;
             if !completion_settings.lsp {
-                return Task::ready(Ok(None));
+                return Task::ready(Ok(Vec::new()));
             }
 
             let server_ids: Vec<_> = buffer.update(cx, |buffer, cx| {
@@ -5184,25 +5190,23 @@ impl LspStore {
                     }
                 })?;
 
-                let mut has_completions_returned = false;
-                let mut completions = Vec::new();
-                for (lsp_adapter, task) in tasks {
-                    if let Ok(Some(new_completions)) = task.await {
-                        has_completions_returned = true;
-                        populate_labels_for_completions(
-                            new_completions,
+                let futures = tasks.into_iter().map(async |(lsp_adapter, task)| {
+                    let completion_response = task.await.ok()??;
+                    let completions = populate_labels_for_completions(
+                            completion_response.completions,
                             language.clone(),
                             lsp_adapter,
-                            &mut completions,
                         )
                         .await;
-                    }
-                }
-                if has_completions_returned {
-                    Ok(Some(completions))
-                } else {
-                    Ok(None)
-                }
+                    Some(CompletionResponse {
+                        completions,
+                        is_incomplete: completion_response.is_incomplete,
+                    })
+                });
+
+                let responses: Vec<Option<CompletionResponse>> = join_all(futures).await;
+
+                Ok(responses.into_iter().flatten().collect())
             })
         } else {
             Task::ready(Err(anyhow!("No upstream client or local language server")))
@@ -9541,8 +9545,7 @@ async fn populate_labels_for_completions(
     new_completions: Vec<CoreCompletion>,
     language: Option<Arc<Language>>,
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
-    completions: &mut Vec<Completion>,
-) {
+) -> Vec<Completion> {
     let lsp_completions = new_completions
         .iter()
         .filter_map(|new_completion| {
@@ -9566,6 +9569,7 @@ async fn populate_labels_for_completions(
     .into_iter()
     .fuse();
 
+    let mut completions = Vec::new();
     for completion in new_completions {
         match completion.source.lsp_completion(true) {
             Some(lsp_completion) => {
@@ -9606,6 +9610,7 @@ async fn populate_labels_for_completions(
             }
         }
     }
+    completions
 }
 
 #[derive(Debug)]
