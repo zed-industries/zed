@@ -863,11 +863,13 @@ impl FileFinderDelegate {
             let filename = query.raw_query.to_string();
             let path = Path::new(&filename);
 
-            // add option of creating new file
-            self.matches.matches.push(Match::CreateNew(ProjectPath {
-                worktree_id: worktree.unwrap().read(cx).id(),
-                path: Arc::from(path),
-            }));
+            // add option of creating new file only if path is relative
+            if path.is_relative() && !filename.ends_with("/") {
+                self.matches.matches.push(Match::CreateNew(ProjectPath {
+                    worktree_id: worktree.unwrap().read(cx).id(),
+                    path: Arc::from(path),
+                }));
+            }
 
             self.selected_index = selected_match.map_or_else(
                 || self.calculate_selected_index(cx),
