@@ -74,9 +74,8 @@ use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
-    theme_selector, icon_theme_selector,
+    icon_theme_selector, theme_selector,
 };
-
 
 actions!(
     zed,
@@ -142,6 +141,19 @@ pub fn init(cx: &mut App) {
                 workspace,
                 settings::default_settings(),
                 "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
+
+    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx: &mut App| {
+        with_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_keymap(),
+                "Default Key Bindings",
                 "JSON",
                 window,
                 cx,
@@ -752,7 +764,6 @@ fn register_actions(
                 open_telemetry_log_file(workspace, window, cx);
             },
         )
-
         .register_action(
             |_: &mut Workspace, _: &OpenAccountSettings, _: &mut Window, cx| {
                 cx.open_url(&zed_urls::account_url(cx));
@@ -789,7 +800,6 @@ fn register_actions(
                 );
             },
         )
-
         .register_action(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,

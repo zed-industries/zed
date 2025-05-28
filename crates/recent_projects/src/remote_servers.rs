@@ -46,8 +46,8 @@ use workspace::OpenOptions;
 use workspace::Toast;
 use workspace::notifications::NotificationId;
 use workspace::{
-    ModalView, Workspace, notifications::DetachAndPromptErr, with_workspace,
-    open_ssh_project_with_existing_connection,
+    ModalView, Workspace, notifications::DetachAndPromptErr,
+    open_ssh_project_with_existing_connection, with_workspace,
 };
 
 use crate::OpenRemote;
