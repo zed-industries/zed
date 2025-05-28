@@ -658,9 +658,9 @@ name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
- "aho-corasick",
  "anyhow",
  "assistant_tool",
+ "async-watch",
  "buffer_diff",
  "chrono",
  "client",
