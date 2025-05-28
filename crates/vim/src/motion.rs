@@ -1701,7 +1701,9 @@ fn previous_word_end(
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        point.column += 1;
+        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+            point.column += ch.len_utf8() as u32;
+        }
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
@@ -1874,7 +1876,9 @@ fn previous_subword_end(
     let mut point = point.to_point(map);
 
     if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        point.column += 1;
+        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+            point.column += ch.len_utf8() as u32;
+        }
     }
     for _ in 0..times {
         let new_point = movement::find_preceding_boundary_point(
