@@ -1519,7 +1519,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let focus_handle = panel.panel_focus_handle(cx);
-        let dock_for_ts = panel.position(window, cx);       // capture
+        let dock_for_ts = panel.position(window, cx); // capture
         cx.on_focus_in(&focus_handle, window, move |this, window, cx| {
             // update dock timestamp
             let ts = this
@@ -1530,7 +1530,7 @@ impl Workspace {
 
             Self::handle_panel_focused(this, window, cx);
         })
-            .detach();
+        .detach();
 
         let dock_position = panel.position(window, cx);
         let dock = self.dock_at_position(dock_position);
@@ -3385,160 +3385,161 @@ impl Workspace {
         }
     }
 
+    /// Move focus to the nearest pane / open dock in `direction`,
+    /// using MRU when multiple lie at the same distance.
     pub fn activate_pane_in_direction(
         &mut self,
         direction: SplitDirection,
         window: &mut Window,
         cx: &mut App,
     ) {
-        use ActivateInDirectionTarget as Target;
-        enum Origin {
-            LeftDock,
-            RightDock,
-            BottomDock,
-            Center,
-        }
+        // Find the origin bounds based on what's currently focused
+        let origin_bounds = {
+            // First check if any dock is focused
+            let all_docks = self.all_docks();
+            let focused_dock = all_docks
+                .iter()
+                .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
 
-        let origin: Origin = [
-            (&self.left_dock, Origin::LeftDock),
-            (&self.right_dock, Origin::RightDock),
-            (&self.bottom_dock, Origin::BottomDock),
-        ]
-        .into_iter()
-        .find_map(|(dock, origin)| {
-            if dock.focus_handle(cx).contains_focused(window, cx) && dock.read(cx).is_open() {
-                Some(origin)
+            if let Some(dock) = focused_dock {
+                if let Some(bounds) = self.bounding_box_for_dock(dock, window, cx) {
+                    bounds
+                } else {
+                    // Dock is focused but not open or no bounds available, use active pane
+                    match self.bounding_box_for_pane(&self.active_pane) {
+                        Some(bounds) => bounds,
+                        None => return,
+                    }
+                }
             } else {
-                None
+                // Otherwise, use the active pane
+                match self.bounding_box_for_pane(&self.active_pane) {
+                    Some(bounds) => bounds,
+                    None => return,
+                }
             }
-        })
-        .unwrap_or(Origin::Center);
-
-        let get_last_active_pane = || {
-            let pane = self
-                .last_active_center_pane
-                .clone()
-                .unwrap_or_else(|| {
-                    self.panes
-                        .first()
-                        .expect("There must be an active pane")
-                        .downgrade()
-                })
-                .upgrade()?;
-            (pane.read(cx).items_len() != 0).then_some(pane)
         };
 
-        let try_dock =
-            |dock: &Entity<Dock>| dock.read(cx).is_open().then(|| Target::Dock(dock.clone()));
-
-        let target = match (origin, direction) {
-            // We're in the center, so we first try to go to a different pane,
-            // otherwise try to go to a dock.
-            (Origin::Center, direction) => {
-                // 1. Check for a pane in the requested direction.
-                if let Some(pane) = self.find_pane_in_direction(direction, cx) {
-                    Some(Target::Pane(pane))
-                } else {
-                    // 2. Check for a dock on the same side.
-                    let primary_dock = match direction {
-                        SplitDirection::Left => &self.left_dock,
-                        SplitDirection::Right => &self.right_dock,
-                        SplitDirection::Up | SplitDirection::Down => &self.bottom_dock,
-                    };
-                    if let Some(dock) = try_dock(primary_dock) {
-                        Some(dock)
-                    } else {
-                        // 3. Wrap-around: try the opposite side dock.
-                        match direction {
-                            SplitDirection::Left => {
-                                if let Some(dock) = try_dock(&self.right_dock) {
-                                    Some(dock)
-                                } else {
-                                    // 4. Finally, wrap to the opposite edge pane.
-                                    Some(Target::Pane(self.center.last_pane()))
-                                }
-                            }
-                            SplitDirection::Right => {
-                                if let Some(dock) = try_dock(&self.left_dock) {
-                                    Some(dock)
-                                } else {
-                                    // 4. Finally, wrap to the opposite edge pane.
-                                    Some(Target::Pane(self.center.first_pane()))
-                                }
-                            }
-                            _ => {
-                                // For up/down directions, no secondary dock to try
-                                None
-                            }
-                        }
-                    }
+        if let Some(target) =
+            self.find_focus_target_in_direction(origin_bounds, direction, cx, window)
+        {
+            match target {
+                FocusTarget::Pane(p, _, _) => {
+                    window.focus(&p.focus_handle(cx));
                 }
-            }
-
-            (Origin::LeftDock, SplitDirection::Left) => {
-                if let Some(dock_target) = try_dock(&self.right_dock) {
-                    Some(dock_target)
-                } else if !self.panes.is_empty() {
-                    // Safe: we’ve established the center has at least one pane
-                    Some(Target::Pane(self.center.last_pane()))
-                } else {
-                    None
-                }
-            }
-
-            (Origin::LeftDock, SplitDirection::Right) => {
-                if let Some(last_active_pane) = get_last_active_pane() {
-                    Some(Target::Pane(last_active_pane))
-                } else {
-                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.right_dock))
-                }
-            }
-
-            (Origin::LeftDock, SplitDirection::Down)
-            | (Origin::RightDock, SplitDirection::Down) => try_dock(&self.bottom_dock),
-
-            (Origin::BottomDock, SplitDirection::Up) => get_last_active_pane().map(Target::Pane),
-            (Origin::BottomDock, SplitDirection::Left) => try_dock(&self.left_dock),
-            (Origin::BottomDock, SplitDirection::Right) => try_dock(&self.right_dock),
-
-            (Origin::RightDock, SplitDirection::Left) => {
-                if let Some(last_active_pane) = get_last_active_pane() {
-                    Some(Target::Pane(last_active_pane))
-                } else {
-                    try_dock(&self.bottom_dock).or_else(|| try_dock(&self.left_dock))
-                }
-            }
-
-            (Origin::RightDock, SplitDirection::Right) => {
-                if let Some(dock_target) = try_dock(&self.left_dock) {
-                    Some(dock_target)
-                } else if !self.panes.is_empty() {
-                    Some(Target::Pane(self.center.first_pane()))
-                } else {
-                    None
-                }
-            }
-
-            _ => None,
-        };
-
-        match target {
-            Some(ActivateInDirectionTarget::Pane(pane)) => {
-                window.focus(&pane.focus_handle(cx));
-            }
-            Some(ActivateInDirectionTarget::Dock(dock)) => {
-                // Defer this to avoid a panic when the dock's active panel is already on the stack.
-                window.defer(cx, move |window, cx| {
-                    let dock = dock.read(cx);
-                    if let Some(panel) = dock.active_panel() {
+                FocusTarget::Dock(d, _, _) => {
+                    // Read dock once and get the active panel
+                    let active_panel = d.read(cx).active_panel();
+                    if let Some(panel) = active_panel {
                         panel.panel_focus_handle(cx).focus(window);
-                    } else {
-                        log::error!("Could not find a focus target when in switching focus in {direction} direction for a {:?} dock", dock.position());
                     }
-                })
+                }
             }
-            None => {}
         }
+    }
+
+    /// Helper function to check if two bounds have vertical overlap
+    fn vertical_overlap(bounds1: Bounds<Pixels>, bounds2: Bounds<Pixels>) -> bool {
+        !(bounds1.bottom() <= bounds2.top() || bounds1.top() >= bounds2.bottom())
+    }
+
+    /// Helper function to check if two bounds have horizontal overlap
+    fn horizontal_overlap(bounds1: Bounds<Pixels>, bounds2: Bounds<Pixels>) -> bool {
+        !(bounds1.right() <= bounds2.left() || bounds1.left() >= bounds2.right())
+    }
+
+    /// Returns (is_adjacent, distance) for the target bounds in the given direction from origin
+    fn distance_if_adjacent(
+        origin: &Bounds<Pixels>,
+        target: &Bounds<Pixels>,
+        direction: SplitDirection,
+    ) -> (bool, f32) {
+        match direction {
+            SplitDirection::Right if target.left() >= origin.right() => (
+                Self::vertical_overlap(*target, *origin),
+                (target.left() - origin.right()).0,
+            ),
+            SplitDirection::Left if target.right() <= origin.left() => (
+                Self::vertical_overlap(*target, *origin),
+                (origin.left() - target.right()).0,
+            ),
+            SplitDirection::Down if target.top() >= origin.bottom() => (
+                Self::horizontal_overlap(*target, *origin),
+                (target.top() - origin.bottom()).0,
+            ),
+            SplitDirection::Up if target.bottom() <= origin.top() => (
+                Self::horizontal_overlap(*target, *origin),
+                (origin.top() - target.bottom()).0,
+            ),
+            _ => (false, 0.0),
+        }
+    }
+
+    /// Choose the nearest focus target in `direction`, breaking ties by `last_visit_ts`.
+    fn find_focus_target_in_direction<'a>(
+        &'a self,
+        origin: Bounds<Pixels>,
+        direction: SplitDirection,
+        cx: &'a App,
+        window: &'a Window,
+    ) -> Option<FocusTarget<'a>> {
+        let panes = self.center.panes();
+        let panes_iter = panes.iter().filter_map(|p| {
+            self.bounding_box_for_pane(p)
+                .map(|b| FocusTarget::Pane(p, b, p.read(cx).last_visit_ts))
+        });
+
+        let docks = self.all_docks();
+        let docks_iter = docks.iter().filter_map(|d| {
+            // Read dock state once and extract what we need
+            let (is_open, last_visit_ts) = {
+                let dock_read = d.read(cx);
+                (dock_read.is_open(), dock_read.last_visit_ts)
+            };
+
+            if !is_open {
+                return None;
+            }
+
+            self.bounding_box_for_dock(d, window, cx)
+                .map(|b| FocusTarget::Dock(d, b, last_visit_ts))
+        });
+
+        let mut best: Option<FocusTarget> = None;
+        let mut best_dist = f32::MAX;
+        let mut best_ts = 0;
+
+        for target in panes_iter.chain(docks_iter) {
+            let (bounds, ts) = match &target {
+                FocusTarget::Pane(_, b, ts) | FocusTarget::Dock(_, b, ts) => (*b, *ts),
+            };
+
+            if bounds == origin {
+                continue;
+            }
+
+            let (adjacent, dist) = Self::distance_if_adjacent(&origin, &bounds, direction);
+            if !adjacent {
+                continue;
+            }
+
+            if dist < best_dist || (dist == best_dist && ts > best_ts) {
+                best_dist = dist;
+                best_ts = ts;
+                best = Some(target);
+            }
+        }
+        best
+    }
+
+    pub fn find_pane_in_direction(
+        &mut self,
+        direction: SplitDirection,
+        cx: &App,
+    ) -> Option<Entity<Pane>> {
+        self.center
+            .find_pane_in_direction(&self.active_pane, direction, cx)
+            .cloned()
     }
 
     pub fn move_item_to_pane_in_direction(
@@ -3563,14 +3564,60 @@ impl Workspace {
         self.center.bounding_box_for_pane(pane)
     }
 
-    pub fn find_pane_in_direction(
-        &mut self,
-        direction: SplitDirection,
+    /// Bounding box of a dock's *visible chrome*.
+    pub fn bounding_box_for_dock(
+        &self,
+        dock: &Entity<Dock>,
+        _window: &Window,
         cx: &App,
-    ) -> Option<Entity<Pane>> {
-        self.center
-            .find_pane_in_direction(&self.active_pane, direction, cx)
-            .cloned()
+    ) -> Option<Bounds<Pixels>> {
+        // Get dock info in a scoped read to avoid conflicts
+        let (is_open, position) = {
+            let dock_read = dock.read(cx);
+            (dock_read.is_open(), dock_read.position())
+        };
+
+        if !is_open {
+            return None;
+        }
+
+        // For navigation purposes, use a reasonable default size to avoid entity read conflicts
+        // during action handling. The exact size isn't critical for adjacency detection.
+        let panel_size = match position {
+            DockPosition::Left | DockPosition::Right => px(300.0), // Typical sidebar width
+            DockPosition::Bottom => px(250.0),                     // Typical bottom panel height
+        };
+
+        // Calculate dock bounds based on position and panel size
+        match position {
+            DockPosition::Left => Some(Bounds {
+                origin: self.bounds.origin,
+                size: Size {
+                    width: panel_size,
+                    height: self.bounds.size.height,
+                },
+            }),
+            DockPosition::Right => Some(Bounds {
+                origin: Point {
+                    x: self.bounds.origin.x + self.bounds.size.width - panel_size,
+                    y: self.bounds.origin.y,
+                },
+                size: Size {
+                    width: panel_size,
+                    height: self.bounds.size.height,
+                },
+            }),
+            DockPosition::Bottom => Some(Bounds {
+                origin: Point {
+                    x: self.bounds.origin.x,
+                    y: self.bounds.origin.y + self.bounds.size.height - panel_size,
+                },
+                size: Size {
+                    width: self.bounds.size.width,
+                    height: panel_size,
+                },
+            }),
+        }
     }
 
     pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
@@ -5755,9 +5802,10 @@ fn open_items(
     })
 }
 
-enum ActivateInDirectionTarget {
-    Pane(Entity<Pane>),
-    Dock(Entity<Dock>),
+/// A focusable rectangle plus its visit-timestamp.
+enum FocusTarget<'a> {
+    Pane(&'a Entity<Pane>, Bounds<Pixels>, usize),
+    Dock(&'a Entity<Dock>, Bounds<Pixels>, usize),
 }
 
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncApp) {
