@@ -373,50 +373,6 @@ impl Model {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
-            // Models available only in US
-            (Model::Claude3Opus, "us")
-            | (Model::Claude3_5Haiku, "us")
-            | (Model::Claude3_7Sonnet, "us")
-            | (Model::ClaudeSonnet4, "us")
-            | (Model::ClaudeOpus4, "us")
-            | (Model::ClaudeSonnet4Thinking, "us")
-            | (Model::ClaudeOpus4Thinking, "us")
-            | (Model::Claude3_7SonnetThinking, "us")
-            | (Model::AmazonNovaPremier, "us")
-            | (Model::MistralPixtralLarge2502V1, "us") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
-
-            // Models available in US, EU, and APAC
-            (Model::Claude3_5SonnetV2, "us")
-            | (Model::Claude3_5SonnetV2, "apac")
-            | (Model::Claude3_5Sonnet, _)
-            | (Model::Claude3Haiku, _)
-            | (Model::Claude3Sonnet, _)
-            | (Model::AmazonNovaLite, _)
-            | (Model::AmazonNovaMicro, _)
-            | (Model::AmazonNovaPro, _) => Ok(format!("{}.{}", region_group, model_id)),
-
-            // Models with limited EU availability
-            (Model::MetaLlama321BInstructV1, "us")
-            | (Model::MetaLlama321BInstructV1, "eu")
-            | (Model::MetaLlama323BInstructV1, "us")
-            | (Model::MetaLlama323BInstructV1, "eu") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
-
-            // US-only models (all remaining Meta models)
-            (Model::MetaLlama38BInstructV1, "us")
-            | (Model::MetaLlama370BInstructV1, "us")
-            | (Model::MetaLlama318BInstructV1, "us")
-            | (Model::MetaLlama318BInstructV1_128k, "us")
-            | (Model::MetaLlama3170BInstructV1, "us")
-            | (Model::MetaLlama3170BInstructV1_128k, "us")
-            | (Model::MetaLlama3211BInstructV1, "us")
-            | (Model::MetaLlama3290BInstructV1, "us") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
-
             // Available everywhere
             (Model::AmazonNovaLite | Model::AmazonNovaMicro | Model::AmazonNovaPro, _) => {
                 Ok(format!("{}.{}", region_group, model_id))
