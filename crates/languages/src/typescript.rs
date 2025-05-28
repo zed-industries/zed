@@ -168,7 +168,7 @@ impl ContextProvider for TypeScriptContextProvider {
             command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
             args: vec![
                 TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
-                VariableName::File.template_value(),
+                VariableName::RelativeFile.template_value(),
             ],
             ..TaskTemplate::default()
         });
@@ -183,7 +183,7 @@ impl ContextProvider for TypeScriptContextProvider {
                 TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
                 "--testNamePattern".to_owned(),
                 format!("\"{}\"", VariableName::Symbol.template_value()),
-                VariableName::File.template_value(),
+                VariableName::RelativeFile.template_value(),
             ],
             tags: vec![
                 "ts-test".to_owned(),
@@ -203,7 +203,7 @@ impl ContextProvider for TypeScriptContextProvider {
             args: vec![
                 TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
                 "run".to_owned(),
-                VariableName::File.template_value(),
+                VariableName::RelativeFile.template_value(),
             ],
             ..TaskTemplate::default()
         });
@@ -219,7 +219,7 @@ impl ContextProvider for TypeScriptContextProvider {
                 "run".to_owned(),
                 "--testNamePattern".to_owned(),
                 format!("\"{}\"", VariableName::Symbol.template_value()),
-                VariableName::File.template_value(),
+                VariableName::RelativeFile.template_value(),
             ],
             tags: vec![
                 "ts-test".to_owned(),
@@ -238,7 +238,7 @@ impl ContextProvider for TypeScriptContextProvider {
             command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
             args: vec![
                 TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
-                VariableName::File.template_value(),
+                VariableName::RelativeFile.template_value(),
             ],
             ..TaskTemplate::default()
         });
@@ -253,7 +253,7 @@ impl ContextProvider for TypeScriptContextProvider {
                 TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
                 "--grep".to_owned(),
                 format!("\"{}\"", VariableName::Symbol.template_value()),
-                VariableName::File.template_value(),
+                VariableName::RelativeFile.template_value(),
             ],
             tags: vec![
                 "ts-test".to_owned(),
@@ -272,7 +272,7 @@ impl ContextProvider for TypeScriptContextProvider {
             command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
             args: vec![
                 TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
-                VariableName::File.template_value(),
+                VariableName::RelativeFile.template_value(),
             ],
             ..TaskTemplate::default()
         });
@@ -286,13 +286,14 @@ impl ContextProvider for TypeScriptContextProvider {
             args: vec![
                 TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
                 format!("--filter={}", VariableName::Symbol.template_value()),
-                VariableName::File.template_value(),
+                VariableName::RelativeFile.template_value(),
             ],
             tags: vec![
                 "ts-test".to_owned(),
                 "js-test".to_owned(),
                 "tsx-test".to_owned(),
             ],
+            cwd: Some(VariableName::WorktreeRoot.template_value()),
             ..TaskTemplate::default()
         });
 
