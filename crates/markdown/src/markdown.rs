@@ -3,6 +3,7 @@ mod path_range;
 
 use base64::Engine as _;
 use futures::FutureExt as _;
+use gpui::HitboxFlags;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
@@ -1211,7 +1212,7 @@ impl Element for MarkdownElement {
         window.set_focus_handle(&focus_handle, cx);
         window.set_view_id(self.markdown.entity_id());
 
-        let hitbox = window.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, HitboxFlags::empty());
         rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
         hitbox

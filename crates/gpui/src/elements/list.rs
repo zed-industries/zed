@@ -9,8 +9,8 @@
 
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, InspectorElementId, IntoElement, Overflow, Pixels, Point,
-    ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point, px, size,
+    FocusHandle, GlobalElementId, Hitbox, HitboxFlags, InspectorElementId, IntoElement, Overflow,
+    Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -906,7 +906,7 @@ impl Element for List {
         let mut style = Style::default();
         style.refine(&self.style);
 
-        let hitbox = window.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, HitboxFlags::empty());
 
         // If the width of the list has changed, invalidate all cached item heights
         if state.last_layout_bounds.map_or(true, |last_bounds| {
@@ -962,7 +962,7 @@ impl Element for List {
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(window) {
+            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered_and_can_scroll(window) {
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,

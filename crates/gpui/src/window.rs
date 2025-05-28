@@ -18,6 +18,7 @@ use crate::{
     point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
+use bitflags::bitflags;
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
@@ -413,14 +414,96 @@ pub(crate) struct CursorStyleRequest {
     pub(crate) style: CursorStyle,
 }
 
-/// An identifier for a [Hitbox].
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
-pub struct HitboxId(usize);
+/// An identifier for a [Hitbox] which also includes [HitboxFlags].
+#[derive(Copy, Clone, Default, Eq, PartialEq, Hash)]
+pub struct HitboxId(u64);
+
+impl Debug for HitboxId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("HitboxId")
+            .field(&self.0)
+            .field(&self.get_flags())
+            .finish()
+    }
+}
+
+bitflags! {
+    /// todo! document
+    #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+    pub struct HitboxFlags: u64 {
+        /// Blocks all mouse events and hover styles for elements **over** a hitbox.
+        const OCCLUDE = 1 << 0;
+        /// Blocks mouse move events and hover styles for elements under a hitbox.
+        const BLOCK_HOVER = 1 << 1;
+        /// Blocks mouse scroll events for elements under a hitbox.
+        const BLOCK_SCROLL = 1 << 2;
+        /// Blocks mouse up/down events for elements under a hitbox.
+        const BLOCK_CLICKS = 1 << 3;
+    }
+}
+
+impl HitboxFlags {
+    /// Blocks all mouse events and hover style changes for elements under a hitbox.
+    pub const BLOCK_MOUSE: HitboxFlags = HitboxFlags::BLOCK_HOVER
+        .union(HitboxFlags::BLOCK_SCROLL)
+        .union(HitboxFlags::BLOCK_CLICKS);
+}
 
 impl HitboxId {
     /// Checks if the hitbox with this id is currently hovered.
-    pub fn is_hovered(&self, window: &Window) -> bool {
-        window.mouse_hit_test.0.contains(self)
+    pub fn is_hovered(self, window: &Window) -> bool {
+        self.check_hitbox(window, HitboxFlags::BLOCK_HOVER)
+    }
+
+    /// todo! document
+    pub fn is_hovered_and_can_scroll(self, window: &Window) -> bool {
+        self.check_hitbox(window, HitboxFlags::BLOCK_SCROLL)
+    }
+
+    /// todo! rename / document
+    pub fn is_hovered_and_can_click(self, window: &Window) -> bool {
+        self.check_hitbox(window, HitboxFlags::BLOCK_CLICKS)
+    }
+
+    fn check_hitbox(self, window: &Window, false_if_under: HitboxFlags) -> bool {
+        for id in window.mouse_hit_test.0.iter() {
+            if self == *id {
+                return true;
+            }
+            if id.has_flags(false_if_under) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    /// todo! document
+    pub fn next(self) -> HitboxId {
+        const INCREMENT: u64 = {
+            let increment = HitboxFlags::all().bits() + 1;
+            assert!(increment.count_ones() == 1);
+            increment
+        };
+        debug_assert_eq!(
+            HitboxFlags::from_bits_truncate(self.0),
+            HitboxFlags::empty()
+        );
+        HitboxId(self.0.wrapping_add(INCREMENT))
+    }
+
+    /// todo! document
+    pub fn set_flags(&mut self, flags: HitboxFlags) {
+        self.0 |= flags.bits();
+    }
+
+    /// todo! document
+    pub fn get_flags(self) -> HitboxFlags {
+        HitboxFlags::from_bits_truncate(self.0)
+    }
+
+    /// todo! document
+    pub fn has_flags(self, flags: HitboxFlags) -> bool {
+        self.get_flags().contains(flags)
     }
 }
 
@@ -435,19 +518,28 @@ pub struct Hitbox {
     pub bounds: Bounds<Pixels>,
     /// The content mask when the hitbox was inserted.
     pub content_mask: ContentMask<Pixels>,
-    /// Whether the hitbox occludes other hitboxes inserted prior.
-    pub opaque: bool,
 }
 
 impl Hitbox {
     /// Checks if the hitbox is currently hovered.
+    /// todo! document more
     pub fn is_hovered(&self, window: &Window) -> bool {
         self.id.is_hovered(window)
+    }
+
+    /// todo! document more
+    pub fn is_hovered_and_can_scroll(&self, window: &Window) -> bool {
+        self.id.is_hovered_and_can_scroll(window)
+    }
+
+    /// todo! document more
+    pub fn is_hovered_and_can_click(&self, window: &Window) -> bool {
+        self.id.is_hovered_and_can_click(window)
     }
 }
 
 #[derive(Default, Eq, PartialEq)]
-pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
+struct HitTest(pub(crate) SmallVec<[HitboxId; 8]>);
 
 /// An identifier for a tooltip.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -577,16 +669,31 @@ impl Frame {
         }
     }
 
-    pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
+    pub(crate) fn hit_test(&self, position: Point<Pixels>, inspector_picking: bool) -> HitTest {
+        let mut cumulative_block_flags = HitboxFlags::empty();
+        let mut first_block_flag_index = None;
         let mut hit_test = HitTest::default();
         for hitbox in self.hitboxes.iter().rev() {
             let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
             if bounds.contains(&position) {
                 hit_test.0.push(hitbox.id);
-                if hitbox.opaque {
-                    break;
+
+                let flags = hitbox.id.get_flags();
+                if !inspector_picking {
+                    let block_flags = flags.intersection(HitboxFlags::BLOCK_MOUSE);
+                    cumulative_block_flags |= block_flags;
+                    if !block_flags.is_empty() && first_block_flag_index.is_none() {
+                        first_block_flag_index = Some(hit_test.0.len() - 1);
+                    }
+                    if flags.contains(HitboxFlags::OCCLUDE) {
+                        break;
+                    }
                 }
             }
+        }
+        // If all mouse block flags occur, can remove all hitboxes under the first block.
+        if cumulative_block_flags == HitboxFlags::BLOCK_MOUSE {
+            hit_test.0.drain(0..first_block_flag_index.unwrap());
         }
         hit_test
     }
@@ -638,7 +745,7 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
-    pub(crate) next_hitbox_id: HitboxId,
+    next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -1728,7 +1835,9 @@ impl Window {
             tooltip_element = self.prepaint_tooltip(cx);
         }
 
-        self.mouse_hit_test = self.next_frame.hit_test(self.mouse_position);
+        self.mouse_hit_test = self
+            .next_frame
+            .hit_test(self.mouse_position, self.is_inspector_picking(cx));
 
         // Now actually paint the elements.
         self.invalidator.set_phase(DrawPhase::Paint);
@@ -2870,17 +2979,17 @@ impl Window {
     /// to determine whether the inserted hitbox was the topmost.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, flags: HitboxFlags) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = self.content_mask();
-        let id = self.next_hitbox_id;
-        self.next_hitbox_id.0 += 1;
+        let mut id = self.next_hitbox_id;
+        self.next_hitbox_id = self.next_hitbox_id.next();
+        id.set_flags(flags);
         let hitbox = Hitbox {
             id,
             bounds,
             content_mask,
-            opaque,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
@@ -3243,7 +3352,9 @@ impl Window {
     }
 
     fn dispatch_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
-        let hit_test = self.rendered_frame.hit_test(self.mouse_position());
+        let hit_test = self
+            .rendered_frame
+            .hit_test(self.mouse_position(), self.is_inspector_picking(cx));
         if hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
             self.reset_cursor_style(cx);

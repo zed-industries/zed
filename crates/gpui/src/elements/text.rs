@@ -1,6 +1,6 @@
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
-    HighlightStyle, Hitbox, InspectorElementId, IntoElement, LayoutId, MouseDownEvent,
+    HighlightStyle, Hitbox, HitboxFlags, InspectorElementId, IntoElement, LayoutId, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow, TextRun,
     TextStyle, TooltipId, WhiteSpace, Window, WrappedLine, WrappedLineLayout,
     register_tooltip_mouse_handlers, set_tooltip_on_window,
@@ -739,7 +739,7 @@ impl Element for InteractiveText {
 
                 self.text
                     .prepaint(None, inspector_id, bounds, state, window, cx);
-                let hitbox = window.insert_hitbox(bounds, false);
+                let hitbox = window.insert_hitbox(bounds, HitboxFlags::empty());
                 (hitbox, interactive_state)
             },
         )

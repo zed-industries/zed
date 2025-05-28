@@ -2155,7 +2155,7 @@ impl ActiveThread {
             .inset_0()
             .bg(panel_bg)
             .opacity(0.8)
-            .stop_mouse_events_except_scroll()
+            .block_mouse_except_scroll()
             .on_click(cx.listener(Self::handle_cancel_click));
 
         v_flex()

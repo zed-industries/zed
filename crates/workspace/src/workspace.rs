@@ -37,10 +37,10 @@ use futures::{
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
-    Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
-    WindowBounds, WindowHandle, WindowId, WindowOptions, action_as, actions, canvas,
-    impl_action_as, impl_actions, point, relative, size, transparent_black,
+    Focusable, Global, HitboxFlags, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
+    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
+    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, action_as, actions,
+    canvas, impl_action_as, impl_actions, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -7344,7 +7344,7 @@ pub fn client_side_decorations(
                                 point(px(0.0), px(0.0)),
                                 window.window_bounds().get_bounds().size,
                             ),
-                            false,
+                            HitboxFlags::empty(),
                         )
                     },
                     move |_bounds, hitbox, window, cx| {
