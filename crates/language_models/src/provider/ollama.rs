@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
@@ -198,7 +198,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: BTreeMap<String, ollama::Model> = BTreeMap::default();
+        let mut models: HashMap<String, ollama::Model> = HashMap::new();
 
         // Add models from the Ollama API
         for model in self.state.read(cx).available_models.iter() {
@@ -223,7 +223,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             );
         }
 
-        models
+        let mut models = models
             .into_values()
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
@@ -233,7 +233,9 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
-            .collect()
+            .collect::<Vec<_>>();
+        models.sort_by_key(|model| model.name());
+        models
     }
 
     fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
