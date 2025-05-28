@@ -1,8 +1,8 @@
-name: Bug Report (Agent Panel)
+name: Bug Report (AI Related)
 description: Zed Agent Panel Bugs
 type: "Bug"
-labels: ["agent", "ai"]
-title: "Agent Panel: <a short description of the Agent Panel bug>"
+labels: ["ai"]
+title: "AI: <a short description of the AI Related bug>"
 body:
   - type: textarea
     attributes:

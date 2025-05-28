@@ -52,11 +52,11 @@ use livekit_client::test::TestServer as LivekitTestServer;
 pub struct TestServer {
     pub app_state: Arc<AppState>,
     pub test_livekit_server: Arc<LivekitTestServer>,
+    pub test_db: TestDb,
     server: Arc<Server>,
     next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
     forbid_connections: Arc<AtomicBool>,
-    _test_db: TestDb,
 }
 
 pub struct TestClient {
@@ -117,7 +117,7 @@ impl TestServer {
             connection_killers: Default::default(),
             forbid_connections: Default::default(),
             next_github_user_id: 0,
-            _test_db: test_db,
+            test_db,
             test_livekit_server: livekit_server,
         }
     }
@@ -241,7 +241,12 @@ impl TestServer {
                         let user = db
                             .get_user_by_id(user_id)
                             .await
-                            .expect("retrieving user failed")
+                            .map_err(|e| {
+                                EstablishConnectionError::Other(anyhow!(
+                                    "retrieving user failed: {}",
+                                    e
+                                ))
+                            })?
                             .unwrap();
                         cx.background_spawn(server.handle_connection(
                             server_conn,
@@ -307,7 +312,7 @@ impl TestServer {
             );
             language_model::LanguageModelRegistry::test(cx);
             assistant_context_editor::init(client.clone(), cx);
-            assistant_settings::init(cx);
+            agent_settings::init(cx);
         });
 
         client

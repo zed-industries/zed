@@ -5268,7 +5268,7 @@ impl project::ProjectItem for TestProjectItem {
         _project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         Some(cx.spawn(async move |cx| cx.new(|_| Self { path })))
     }

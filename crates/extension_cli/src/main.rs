@@ -6,7 +6,7 @@ use std::process::Command;
 use std::sync::Arc;
 
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use clap::Parser;
 use extension::ExtensionManifest;
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
@@ -107,7 +107,7 @@ async fn main() -> Result<()> {
         schema_version: Some(manifest.schema_version.0),
         repository: manifest
             .repository
-            .ok_or_else(|| anyhow!("missing repository in extension manifest"))?,
+            .context("missing repository in extension manifest")?,
         wasm_api_version: manifest.lib.version.map(|version| version.to_string()),
         provides: extension_provides,
     })?;
@@ -196,11 +196,7 @@ async fn copy_extension_resources(
         for theme_path in &manifest.themes {
             fs::copy(
                 extension_path.join(theme_path),
-                output_themes_dir.join(
-                    theme_path
-                        .file_name()
-                        .ok_or_else(|| anyhow!("invalid theme path"))?,
-                ),
+                output_themes_dir.join(theme_path.file_name().context("invalid theme path")?),
             )
             .with_context(|| format!("failed to copy theme '{}'", theme_path.display()))?;
         }
@@ -215,7 +211,7 @@ async fn copy_extension_resources(
                 output_icon_themes_dir.join(
                     icon_theme_path
                         .file_name()
-                        .ok_or_else(|| anyhow!("invalid icon theme path"))?,
+                        .context("invalid icon theme path")?,
                 ),
             )
             .with_context(|| {
@@ -245,11 +241,8 @@ async fn copy_extension_resources(
             copy_recursive(
                 fs.as_ref(),
                 &extension_path.join(language_path),
-                &output_languages_dir.join(
-                    language_path
-                        .file_name()
-                        .ok_or_else(|| anyhow!("invalid language path"))?,
-                ),
+                &output_languages_dir
+                    .join(language_path.file_name().context("invalid language path")?),
                 CopyOptions {
                     overwrite: true,
                     ignore_if_exists: false,
@@ -300,7 +293,7 @@ fn test_languages(
             Some(
                 grammars
                     .get(name.as_ref())
-                    .ok_or_else(|| anyhow!("grammar not found: '{name}'"))?,
+                    .with_context(|| format!("grammar not found: '{name}'"))?,
             )
         } else {
             None
@@ -311,12 +304,12 @@ fn test_languages(
             let entry = entry?;
             let query_path = entry.path();
             if query_path.extension() == Some("scm".as_ref()) {
-                let grammar = grammar.ok_or_else(|| {
-                    anyhow!(
+                let grammar = grammar.with_context(|| {
+                    format! {
                         "language {} provides query {} but no grammar",
                         config.name,
                         query_path.display()
-                    )
+                    }
                 })?;
 
                 let query_source = fs::read_to_string(&query_path)?;

@@ -26,7 +26,7 @@ impl TryFrom<String> for Role {
             "assistant" => Ok(Self::Assistant),
             "system" => Ok(Self::System),
             "tool" => Ok(Self::Tool),
-            _ => Err(anyhow!("invalid role '{value}'")),
+            _ => anyhow::bail!("invalid role '{value}'"),
         }
     }
 }
@@ -58,6 +58,8 @@ pub enum Model {
     OpenMistralNemo,
     #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
     OpenCodestralMamba,
+    #[serde(rename = "devstral-small-latest", alias = "devstral-small-latest")]
+    DevstralSmallLatest,
 
     #[serde(rename = "custom")]
     Custom {
@@ -84,7 +86,7 @@ impl Model {
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
             "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
             "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
-            _ => Err(anyhow!("invalid model id")),
+            invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
 
@@ -96,6 +98,7 @@ impl Model {
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -108,6 +111,7 @@ impl Model {
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -122,6 +126,7 @@ impl Model {
             Self::MistralSmallLatest => 32000,
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,
+            Self::DevstralSmallLatest => 262144,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -142,7 +147,8 @@ impl Model {
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
             | Self::OpenMistralNemo
-            | Self::OpenCodestralMamba => true,
+            | Self::OpenCodestralMamba
+            | Self::DevstralSmallLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }
@@ -363,10 +369,10 @@ pub async fn stream_completion(
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to Mistral API: {} {}",
             response.status(),
             body,
-        ))
+        );
     }
 }
