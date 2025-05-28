@@ -264,34 +264,32 @@ impl_action_as!(file_finder, ToggleFileFinder as Toggle);
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DecreaseActiveDockSizeByOffset {
+pub struct DecreaseActiveDockSize {
     #[serde(default, flatten)]
     pub offset: Offset<f32>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct DecreaseOpenDocksSizeByOffset {
+pub struct DecreaseOpenDocksSize {
     #[serde(default, flatten)]
     pub offset: Offset<f32>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct IncreaseActiveDockSizeByOffset {
+pub struct IncreaseActiveDockSize {
     #[serde(default, flatten)]
     pub offset: Offset<f32>,
 }
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct IncreaseOpenDocksSizeByOffset {
-    // TODO: https://github.com/serde-rs/serde/issues/1626.
-    #[serde(default = "Offset::ZERO", flatten)]
+pub struct IncreaseOpenDocksSize {
+    #[serde(flatten)]
     pub offset: Offset<f32>,
 }
 
-// TODO: All `Default` bound can be removed, after https://github.com/serde-rs/serde/issues/1626.
 #[derive(Clone, Copy, Deserialize, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Offset<T>
@@ -304,9 +302,6 @@ where
     pub y: T,
 }
 impl Offset<f32> {
-    // TODO: https://github.com/serde-rs/serde/issues/1626.
-    // const ZERO: Self = Self { x: 0., y: 0. };
-
     fn unwrap_or_default(mut self, cx: &Context<Workspace>) -> Self {
         if self.x == 0. {
             self.x = ThemeSettings::get_global(cx).ui_font_size(cx).0;
@@ -335,10 +330,10 @@ impl_actions!(
         ActivatePane,
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
-        DecreaseActiveDockSizeByOffset,
-        DecreaseOpenDocksSizeByOffset,
-        IncreaseActiveDockSizeByOffset,
-        IncreaseOpenDocksSizeByOffset,
+        DecreaseActiveDockSize,
+        DecreaseOpenDocksSize,
+        IncreaseActiveDockSize,
+        IncreaseOpenDocksSize,
         MoveItemToPane,
         MoveItemToPaneInDirection,
         OpenTerminal,
@@ -5437,31 +5432,31 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, act: &IncreaseActiveDockSizeByOffset, window, cx| {
-                    let offset = act.offset.unwrap_or_default(cx) * px(1.);
+                |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
+                    let px = act.offset.unwrap_or_default(cx) * px(1.);
 
-                    adjust_active_dock_size_by_offset(offset, workspace, window, cx);
+                    adjust_active_dock_size_by_px(px, workspace, window, cx);
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, act: &DecreaseActiveDockSizeByOffset, window, cx| {
-                    let offset = act.offset.unwrap_or_default(cx) * px(-1.);
+                |workspace: &mut Workspace, act: &DecreaseActiveDockSize, window, cx| {
+                    let px = act.offset.unwrap_or_default(cx) * px(-1.);
 
-                    adjust_active_dock_size_by_offset(offset, workspace, window, cx);
+                    adjust_active_dock_size_by_px(px, workspace, window, cx);
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, act: &IncreaseOpenDocksSizeByOffset, window, cx| {
-                    let offset = act.offset.unwrap_or_default(cx) * px(1.);
+                |workspace: &mut Workspace, act: &IncreaseOpenDocksSize, window, cx| {
+                    let px = act.offset.unwrap_or_default(cx) * px(1.);
 
-                    adjust_open_docks_size_by_offset(offset, workspace, window, cx);
+                    adjust_open_docks_size_by_px(px, workspace, window, cx);
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, act: &DecreaseOpenDocksSizeByOffset, window, cx| {
-                    let offset = act.offset.unwrap_or_default(cx) * px(-1.);
+                |workspace: &mut Workspace, act: &DecreaseOpenDocksSize, window, cx| {
+                    let px = act.offset.unwrap_or_default(cx) * px(-1.);
 
-                    adjust_open_docks_size_by_offset(offset, workspace, window, cx);
+                    adjust_open_docks_size_by_px(px, workspace, window, cx);
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
@@ -5831,8 +5826,8 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
-fn adjust_active_dock_size_by_offset(
-    offset: Offset<Pixels>,
+fn adjust_active_dock_size_by_px(
+    px: Offset<Pixels>,
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -5850,11 +5845,11 @@ fn adjust_active_dock_size_by_offset(
     };
     let dock_pos = dock.position();
 
-    adjust_dock_size(panel_size, dock_pos, offset)(workspace, window, cx);
+    adjust_dock_size_by_px(panel_size, dock_pos, px)(workspace, window, cx);
 }
 
-fn adjust_open_docks_size_by_offset(
-    offset: Offset<Pixels>,
+fn adjust_open_docks_size_by_px(
+    px: Offset<Pixels>,
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -5868,7 +5863,7 @@ fn adjust_open_docks_size_by_offset(
                 let panel_size = dock.active_panel_size(window, cx)?;
                 let dock_pos = dock.position();
 
-                Some((panel_size, dock_pos, offset))
+                Some((panel_size, dock_pos, px))
             } else {
                 None
             }
@@ -5878,19 +5873,19 @@ fn adjust_open_docks_size_by_offset(
     docks
         .into_iter()
         .for_each(|(panel_size, dock_pos, offset)| {
-            adjust_dock_size(panel_size, dock_pos, offset)(workspace, window, cx)
+            adjust_dock_size_by_px(panel_size, dock_pos, offset)(workspace, window, cx)
         });
 }
 
-fn adjust_dock_size(
+fn adjust_dock_size_by_px(
     panel_size: Pixels,
     dock_pos: DockPosition,
-    offset: Offset<Pixels>,
+    px: Offset<Pixels>,
 ) -> impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) {
     move |workspace, window, cx| match dock_pos {
-        DockPosition::Left => resize_left_dock(panel_size + offset.x, workspace, window, cx),
-        DockPosition::Right => resize_right_dock(panel_size + offset.x, workspace, window, cx),
-        DockPosition::Bottom => resize_bottom_dock(panel_size + offset.y, workspace, window, cx),
+        DockPosition::Left => resize_left_dock(panel_size + px.x, workspace, window, cx),
+        DockPosition::Right => resize_right_dock(panel_size + px.x, workspace, window, cx),
+        DockPosition::Bottom => resize_bottom_dock(panel_size + px.y, workspace, window, cx),
     }
 }
 
