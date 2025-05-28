@@ -314,7 +314,7 @@ impl Display for TerminalError {
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
 pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
-const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩()`]+"#;
+const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
 
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
@@ -957,8 +957,19 @@ impl Terminal {
 
                     Some((url, true, url_match))
                 } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
+                    
+                    let url_match = url_match;
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-                    Some((url, true, url_match))
+
+                    if !valid_url_ending(&url) {
+                        let new_end = url_match.end().sub(term, Boundary::Grid, 1);
+                        let new_url_match = Match::new(*url_match.start(), new_end);
+                        let new_url = term.bounds_to_string(*new_url_match.start(), *new_url_match.end());
+                        Some((new_url, true, new_url_match))
+                    } else {
+                        Some((url, true, url_match))
+                    }
+                    
                 } else if let Some(python_match) =
                     regex_match_at(term, point, &mut self.python_file_line_regex)
                 {
@@ -2034,6 +2045,27 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
     visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
 }
 
+// Check if the url ends with a valid delimiter and if the 
+// number of opening and closing delimiters is the 
+pub fn valid_url_ending(url: &str) -> bool {
+    if !(url.ends_with(")") || url.ends_with("]")) {
+        return true;
+    }
+
+    let delimiters = [('(', ')'), ('[', ']')];
+
+    for (open, close) in delimiters {
+        if url.ends_with(close) {
+            let open_count = url.chars().filter(|&ch| ch == open).count();
+            let close_count = url.chars().filter(|&ch| ch == close).count();
+            if open_count == close_count {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Copied from alacritty/src/display/hint.rs:
 /// Iterate over all visible regex matches.
 pub fn visible_regex_match_iter<'a, T>(
@@ -2049,7 +2081,7 @@ pub fn visible_regex_match_iter<'a, T>(
 
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
         .skip_while(move |rm| rm.end().line < viewport_start)
-        .take_while(move |rm| rm.start().line <= viewport_end)
+        .take_while(move |rm| rm.start().line < viewport_end)
 }
 
 fn make_selection(range: &RangeInclusive<AlacPoint>) -> Selection {
@@ -2171,7 +2203,7 @@ mod tests {
 
     use crate::{
         IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse,
-        python_extract_path_and_line, rgb_for_index,
+        python_extract_path_and_line, rgb_for_index, valid_url_ending,
     };
 
     #[test]
@@ -2321,6 +2353,32 @@ mod tests {
             "test http://example.com test mailto:bob@example.com train",
             vec!["http://example.com", "mailto:bob@example.com"],
         );
+    }
+
+    #[test]
+    fn test_valid_url_ending() {
+        let valid_urls = [
+            "http://example.com",
+            "http://example.com/(test)",
+            "[http://example.com]",
+            "(http://example.com)",
+            "(http://example.com(test))",
+            "[http://example.com(test)]",
+
+        ];
+        
+        let invalid_urls = [
+            "http://example.com(test))",
+            "http://example.com/(test)]",
+        ];
+
+        for url in valid_urls {
+            assert!(valid_url_ending(url));
+        }
+
+        for url in invalid_urls {
+            assert!(!valid_url_ending(url));
+        }
     }
     #[test]
     fn test_word_regex() {
