@@ -3574,14 +3574,112 @@ impl Workspace {
                 best = Some(target);
             }
         }
-        if let Some(best) = &best {
-            match best {
+        if let Some(best) = best {
+            match &best {
                 FocusTarget::Pane(p, _, _) => println!("best target pane {:?}", Entity::entity_id(p)),
                 FocusTarget::Dock(d, _, _) => println!("best target dock {:?}", d.read(cx).position()),
             }
-        } else {
-            println!("no focus target found");
+            return Some(best);
         }
+
+        // No target found in the intended direction, try circular navigation
+        println!("no direct target found, trying circular navigation");
+        
+        let mut best: Option<FocusTarget> = None;
+        let mut best_extreme_pos = match direction {
+            SplitDirection::Right => f32::MAX,  // looking for leftmost (minimum x)
+            SplitDirection::Left => f32::MIN,   // looking for rightmost (maximum x)
+            SplitDirection::Down => f32::MAX,   // looking for topmost (minimum y)
+            SplitDirection::Up => f32::MIN,     // looking for bottommost (maximum y)
+        };
+        let mut best_ts = 0;
+
+        // Rebuild the iterator for circular search
+        let panes_iter = panes.iter().filter_map(|p| {
+            self.bounding_box_for_pane(p).map(|b| {
+                println!("circular candidate pane {:?} -> {:?}", Entity::entity_id(p), b);
+                FocusTarget::Pane(p, b, p.read(cx).last_visit_ts)
+            })
+        });
+
+        let docks_iter = docks.iter().filter_map(|d| {
+            let (is_open, last_visit_ts, position) = {
+                let dock_read = d.read(cx);
+                (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position())
+            };
+
+            if !is_open {
+                return None;
+            }
+
+            self.bounding_box_for_dock(d, window, cx).map(|b| {
+                println!("circular candidate dock {:?} -> {:?}", position, b);
+                FocusTarget::Dock(d, b, last_visit_ts)
+            })
+        });
+
+        for target in panes_iter.chain(docks_iter) {
+            let (bounds, ts) = match &target {
+                FocusTarget::Pane(p, b, ts) => {
+                    println!("circular checking pane {:?} bounds {:?}", Entity::entity_id(p), b);
+                    (*b, *ts)
+                }
+                FocusTarget::Dock(d, b, ts) => {
+                    let pos = d.read(cx).position();
+                    println!("circular checking dock {:?} bounds {:?}", pos, b);
+                    (*b, *ts)
+                }
+            };
+
+            if bounds == origin {
+                continue;
+            }
+
+            // For circular navigation, find the most extreme position in the opposite direction
+            let (target_pos, is_better) = match direction {
+                SplitDirection::Right => {
+                    // Going right, wrap to leftmost
+                    let pos = bounds.left().0;
+                    println!("  circular right->left: target pos={}, best_extreme_pos={}", pos, best_extreme_pos);
+                    (pos, pos < best_extreme_pos)
+                },
+                SplitDirection::Left => {
+                    // Going left, wrap to rightmost  
+                    let pos = bounds.right().0;
+                    println!("  circular left->right: target pos={}, best_extreme_pos={}", pos, best_extreme_pos);
+                    (pos, pos > best_extreme_pos)
+                },
+                SplitDirection::Down => {
+                    // Going down, wrap to topmost
+                    let pos = bounds.top().0;
+                    println!("  circular down->up: target pos={}, best_extreme_pos={}", pos, best_extreme_pos);
+                    (pos, pos < best_extreme_pos)
+                },
+                SplitDirection::Up => {
+                    // Going up, wrap to bottommost
+                    let pos = bounds.bottom().0;
+                    println!("  circular up->down: target pos={}, best_extreme_pos={}", pos, best_extreme_pos);
+                    (pos, pos > best_extreme_pos)
+                },
+            };
+
+            if is_better || (target_pos == best_extreme_pos && ts > best_ts) {
+                best_extreme_pos = target_pos;
+                best_ts = ts;
+                best = Some(target);
+                println!("  circular: new best target");
+            }
+        }
+
+        if let Some(best) = &best {
+            match best {
+                FocusTarget::Pane(p, _, _) => println!("circular best target pane {:?}", Entity::entity_id(p)),
+                FocusTarget::Dock(d, _, _) => println!("circular best target dock {:?}", d.read(cx).position()),
+            }
+        } else {
+            println!("no circular target found either");
+        }
+        
         best
     }
 
