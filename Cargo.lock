@@ -4031,6 +4031,8 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
+ "tree-sitter",
+ "tree-sitter-go",
  "util",
  "workspace-hack",
  "zlog",
