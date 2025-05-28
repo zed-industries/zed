@@ -41,6 +41,7 @@ use std::{
 use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::ResultExt;
+
 use workspace::Workspace;
 
 pub struct EditFileTool;
@@ -1723,6 +1724,158 @@ mod tests {
             final_content.replace("\r\n", "\n"),
             CONTENT_WITH_TRAILING_WHITESPACE,
             "Trailing whitespace should remain when remove_trailing_whitespace_on_save is disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_format_on_save_marks_buffer_as_conflicted(cx: &mut TestAppContext) {
+        // This test demonstrates a bug where format-on-save causes the buffer to be
+        // incorrectly marked as stale, leading the agent to think the file has been
+        // modified externally when it was actually just formatted as part of the save.
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root"), json!({"src": {}})).await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        // Set up a Rust language with LSP formatting support
+        let rust_language = Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Rust".into(),
+                matcher: language::LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+        ));
+
+        // Register the language and fake LSP
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_language);
+
+        let mut fake_language_servers = language_registry.register_fake_lsp(
+            "Rust",
+            language::FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Create the file with some initial content
+        fs.save(
+            path!("/root/src/main.rs").as_ref(),
+            &"fn main() { }\n".into(),
+            language::LineEnding::Unix,
+        )
+        .await
+        .unwrap();
+
+        // Open the buffer to trigger LSP initialization
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/src/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Register the buffer with language servers
+        let _handle = project.update(cx, |project, cx| {
+            project.register_buffer_with_language_servers(&buffer, cx)
+        });
+
+        const UNFORMATTED_CONTENT: &str = "fn main() {println!(\"Hello!\");}\n";
+        const FORMATTED_CONTENT: &str = "fn main() {\n    println!(\"Hello!\");\n}\n";
+
+        // Get the fake language server and set up formatting handler
+        let fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>({
+            move |_, _| async move {
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(1, 0)),
+                    new_text: FORMATTED_CONTENT.to_string(),
+                }]))
+            }
+        });
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // Enable format_on_save
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
+                    cx,
+                    |settings| {
+                        settings.defaults.format_on_save = Some(FormatOnSave::On);
+                        settings.defaults.formatter =
+                            Some(language::language_settings::SelectedFormatter::Auto);
+                    },
+                );
+            });
+        });
+
+        // Have the agent edit the file (this should trigger format on save)
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Update main function".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            });
+
+            // Stream the unformatted content
+            cx.executor().run_until_parked();
+            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Read the file to verify it was formatted automatically
+        let new_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
+        assert_eq!(
+            new_content.replace("\r\n", "\n"),
+            FORMATTED_CONTENT,
+            "Code should be formatted when format_on_save is enabled"
+        );
+
+        // Now simulate what would happen if the agent re-reads the buffer
+        // (e.g., because it thinks the file changed externally)
+        let stale_buffer_count = action_log.read_with(cx, |log, cx| log.stale_buffers(cx).count());
+
+        // This assertion demonstrates the bug: the buffer should NOT be considered stale
+        // after format-on-save, but it is incorrectly marked as stale because the
+        // formatting process causes the file's mtime to change, making it appear as if
+        // the file was modified externally. This causes the agent to unnecessarily
+        // re-read the file, thinking it has changed outside of the agent's control.
+        assert_eq!(
+            stale_buffer_count, 0,
+            "BUG: Buffer is incorrectly marked as stale after format-on-save. Found {} stale buffers. \
+             This causes the agent to think the file was modified externally when it was just formatted.",
+            stale_buffer_count
         );
     }
 }
