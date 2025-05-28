@@ -245,7 +245,73 @@ pub struct DebugTaskFile(pub Vec<DebugScenario>);
 impl DebugTaskFile {
     /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json_lenient::Value {
-        schemas.generate_json_schema().unwrap_or_default()
+        // Get the BuildTaskDefinition schema for the build field
+        let build_task_schema = schemars::schema_for!(BuildTaskDefinition);
+        let build_task_value = serde_json_lenient::to_value(&build_task_schema).unwrap_or_default();
+
+        let task_definitions = build_task_value
+            .get("definitions")
+            .cloned()
+            .unwrap_or_default();
+
+        let adapter_conditions = schemas
+            .0
+            .iter()
+            .map(|adapter_schema| {
+                let adapter_name = adapter_schema.adapter.to_string();
+                serde_json::json!({
+                    "if": {
+                        "properties": {
+                            "adapter": { "const": adapter_name }
+                        }
+                    },
+                    "then": adapter_schema.schema
+                })
+            })
+            .collect::<Vec<_>>();
+
+        serde_json_lenient::json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": "Debug Configurations",
+            "description": "Configuration for debug scenarios",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["adapter", "label"],
+                "properties": {
+                    "adapter": {
+                        "type": "string",
+                        "description": "The name of the debug adapter"
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "The name of the debug configuration"
+                    },
+                    "build": build_task_value,
+                    "tcp_connection": {
+                        "type": "object",
+                        "description": "Optional TCP connection information for connecting to an already running debug adapter",
+                        "properties": {
+                            "port": {
+                                "type": "integer",
+                                "description": "The port that the debug adapter is listening on (default: auto-find open port)"
+                            },
+                            "host": {
+                                "type": "string",
+                                "pattern": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
+                                "description": "The host that the debug adapter is listening to (default: 127.0.0.1)"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)"
+                            }
+                        }
+                    }
+                },
+                "allOf": adapter_conditions
+            },
+            "definitions": task_definitions
+        })
     }
 }
 
