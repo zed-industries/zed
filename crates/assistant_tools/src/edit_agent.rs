@@ -202,19 +202,6 @@ impl EditAgent {
         Task<Result<EditAgentOutput>>,
         mpsc::UnboundedReceiver<EditAgentOutputEvent>,
     ) {
-        // todo!("don't reset agent location if we're already on that buffer").
-        self.project
-            .update(cx, |project, cx| {
-                project.set_agent_location(
-                    Some(AgentLocation {
-                        buffer: buffer.downgrade(),
-                        position: language::Anchor::MIN,
-                    }),
-                    cx,
-                );
-            })
-            .ok();
-
         let this = self.clone();
         let (events_tx, events_rx) = mpsc::unbounded();
         let conversation = conversation.clone();
@@ -916,10 +903,7 @@ mod tests {
         );
         assert_eq!(
             project.read_with(cx, |project, _| project.agent_location()),
-            Some(AgentLocation {
-                buffer: buffer.downgrade(),
-                position: Anchor::MIN
-            })
+            None
         );
 
         model.stream_last_completion_response("bc</old_text>");
