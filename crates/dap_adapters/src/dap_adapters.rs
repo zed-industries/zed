@@ -18,7 +18,7 @@ use dap::{
         GithubRepo,
     },
     configure_tcp_connection,
-    inline_value::{PythonInlineValueProvider, RustInlineValueProvider},
+    inline_value::{GoInlineValueProvider, PythonInlineValueProvider, RustInlineValueProvider},
 };
 use gdb::GdbDebugAdapter;
 use go::GoDebugAdapter;
@@ -48,5 +48,6 @@ pub fn init(cx: &mut App) {
         registry.add_inline_value_provider("Rust".to_string(), Arc::from(RustInlineValueProvider));
         registry
             .add_inline_value_provider("Python".to_string(), Arc::from(PythonInlineValueProvider));
+        registry.add_inline_value_provider("Go".to_string(), Arc::from(GoInlineValueProvider));
     })
 }

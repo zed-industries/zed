@@ -658,9 +658,9 @@ name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
- "aho-corasick",
  "anyhow",
  "assistant_tool",
+ "async-watch",
  "buffer_diff",
  "chrono",
  "client",
@@ -4031,6 +4031,8 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
+ "tree-sitter",
+ "tree-sitter-go",
  "util",
  "workspace-hack",
  "zlog",
