@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
-use serde::{Deserialize, Serialize};
 use stripe::SubscriptionStatus;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -12,8 +11,9 @@ use crate::Result;
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_client::{
-    RealStripeClient, StripeClient, StripeCustomerId, StripeMeter, StripePrice, StripePriceId,
-    StripeSubscription, StripeSubscriptionId, UpdateSubscriptionItems, UpdateSubscriptionParams,
+    RealStripeClient, StripeClient, StripeCreateMeterEventParams, StripeCreateMeterEventPayload,
+    StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripeSubscription,
+    StripeSubscriptionId, UpdateSubscriptionItems, UpdateSubscriptionParams,
     UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
     UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 };
@@ -204,16 +204,15 @@ impl StripeBilling {
 
     pub async fn bill_model_request_usage(
         &self,
-        customer_id: &stripe::CustomerId,
+        customer_id: &StripeCustomerId,
         event_name: &str,
         requests: i32,
     ) -> Result<()> {
         let timestamp = Utc::now().timestamp();
         let idempotency_key = Uuid::new_v4();
 
-        StripeMeterEvent::create(
-            &self.real_client,
-            StripeCreateMeterEventParams {
+        self.client
+            .create_meter_event(StripeCreateMeterEventParams {
                 identifier: &format!("model_requests/{}", idempotency_key),
                 event_name,
                 payload: StripeCreateMeterEventPayload {
@@ -221,9 +220,8 @@ impl StripeBilling {
                     stripe_customer_id: customer_id,
                 },
                 timestamp: Some(timestamp),
-            },
-        )
-        .await?;
+            })
+            .await?;
 
         Ok(())
     }
@@ -369,52 +367,6 @@ impl StripeBilling {
         let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
         Ok(session.url.context("no checkout session URL")?)
     }
-}
-
-#[derive(Deserialize)]
-struct StripeMeterEvent {
-    identifier: String,
-}
-
-impl StripeMeterEvent {
-    pub async fn create(
-        client: &stripe::Client,
-        params: StripeCreateMeterEventParams<'_>,
-    ) -> Result<Self, stripe::StripeError> {
-        let identifier = params.identifier;
-        match client.post_form("/billing/meter_events", params).await {
-            Ok(event) => Ok(event),
-            Err(stripe::StripeError::Stripe(error)) => {
-                if error.http_status == 400
-                    && error
-                        .message
-                        .as_ref()
-                        .map_or(false, |message| message.contains(identifier))
-                {
-                    Ok(Self {
-                        identifier: identifier.to_string(),
-                    })
-                } else {
-                    Err(stripe::StripeError::Stripe(error))
-                }
-            }
-            Err(error) => Err(error),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct StripeCreateMeterEventParams<'a> {
-    identifier: &'a str,
-    event_name: &'a str,
-    payload: StripeCreateMeterEventPayload<'a>,
-    timestamp: Option<i64>,
-}
-
-#[derive(Serialize)]
-struct StripeCreateMeterEventPayload<'a> {
-    value: u64,
-    stripe_customer_id: &'a stripe::CustomerId,
 }
 
 fn subscription_contains_price(

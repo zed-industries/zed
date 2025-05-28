@@ -29,6 +29,7 @@ use crate::db::billing_subscription::{
 use crate::llm::db::subscription_usage_meter::CompletionMode;
 use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND};
 use crate::rpc::{ResultExt as _, Server};
+use crate::stripe_client::{StripeCustomerId, StripeSubscriptionId};
 use crate::{AppState, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
 use crate::{
@@ -1545,14 +1546,10 @@ async fn sync_model_request_usage_with_stripe(
                 );
             };
 
-            let stripe_customer_id = billing_customer
-                .stripe_customer_id
-                .parse::<stripe::CustomerId>()
-                .context("failed to parse Stripe customer ID from database")?;
-            let stripe_subscription_id = billing_subscription
-                .stripe_subscription_id
-                .parse::<stripe::SubscriptionId>()
-                .context("failed to parse Stripe subscription ID from database")?;
+            let stripe_customer_id =
+                StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
+            let stripe_subscription_id =
+                StripeSubscriptionId(billing_subscription.stripe_subscription_id.clone().into());
 
             let model = llm_db.model_by_id(usage_meter.model_id)?;
 
@@ -1578,7 +1575,7 @@ async fn sync_model_request_usage_with_stripe(
             };
 
             stripe_billing
-                .subscribe_to_price(&stripe_subscription_id.into(), price)
+                .subscribe_to_price(&stripe_subscription_id, price)
                 .await?;
             stripe_billing
                 .bill_model_request_usage(
