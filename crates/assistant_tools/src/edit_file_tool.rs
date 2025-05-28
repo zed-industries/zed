@@ -12,13 +12,13 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MultiBuffer, PathKey};
 use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, EntityId, Task,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
     TextStyleRefinement, WeakEntity, pulsating_between,
 };
 use indoc::formatdoc;
 use language::{
-    Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
-    language_settings::SoftWrap,
+    Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Point, Rope,
+    TextBuffer, language_settings::SoftWrap,
 };
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -27,6 +27,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
+    cmp::Reverse,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -435,12 +436,12 @@ pub struct EditFileToolCard {
     buffer: Option<Entity<Buffer>>,
     base_text: Option<Arc<String>>,
     buffer_diff: Option<Entity<BufferDiff>>,
+    revealed_ranges: Vec<Range<Anchor>>,
     diff_task: Option<Task<Result<()>>>,
     preview_expanded: bool,
     error_expanded: Option<Entity<Markdown>>,
     full_height_expanded: bool,
     total_lines: Option<u32>,
-    editor_unique_id: EntityId,
 }
 
 impl EditFileToolCard {
@@ -473,7 +474,6 @@ impl EditFileToolCard {
             editor
         });
         Self {
-            editor_unique_id: editor.entity_id(),
             path,
             project,
             editor,
@@ -481,6 +481,7 @@ impl EditFileToolCard {
             buffer: None,
             base_text: None,
             buffer_diff: None,
+            revealed_ranges: Vec::new(),
             diff_task: None,
             preview_expanded: true,
             error_expanded: None,
@@ -516,137 +517,156 @@ impl EditFileToolCard {
             .update(cx, |multibuffer, cx| multibuffer.add_diff(buffer_diff, cx));
     }
 
-    pub fn has_diff(&self) -> bool {
-        self.total_lines.is_some()
+    pub fn is_loading(&self) -> bool {
+        self.total_lines.is_none()
     }
 
     pub fn update_diff(&mut self, cx: &mut Context<Self>) {
-        if let (Some(buffer), Some(buffer_diff)) = (self.buffer.as_ref(), self.buffer_diff.as_ref())
-        {
-            let buffer = buffer.clone();
-            let buffer_diff = buffer_diff.clone();
-            let base_text = self.base_text.clone();
+        let Some(buffer) = self.buffer.as_ref() else {
+            return;
+        };
+        let Some(buffer_diff) = self.buffer_diff.as_ref() else {
+            return;
+        };
 
-            self.diff_task = Some(cx.spawn(async move |this, cx| {
-                let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot())?;
-
-                let diff_snapshot = BufferDiff::update_diff(
-                    buffer_diff.clone(),
-                    text_snapshot.clone(),
-                    base_text,
-                    false,
-                    false,
-                    None,
-                    None,
-                    cx,
-                )
-                .await?;
-                buffer_diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(diff_snapshot, &text_snapshot, cx)
-                })?;
-
-                this.update(cx, |this, cx| {
-                    this.total_lines = this.multibuffer.update(cx, |multibuffer, cx| {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let diff = buffer_diff.read(cx);
-                        let diff_hunk_ranges = diff
-                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-                            .collect::<Vec<_>>();
-                        multibuffer.set_excerpts_for_path(
-                            PathKey::for_buffer(&buffer, cx),
-                            buffer,
-                            diff_hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                            cx,
-                        );
-
-                        let end = multibuffer.len(cx);
-                        Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
-                    });
-                    cx.notify();
-                })?;
-                anyhow::Ok(())
-            }));
-        }
+        let buffer = buffer.clone();
+        let buffer_diff = buffer_diff.clone();
+        let base_text = self.base_text.clone();
+        self.diff_task = Some(cx.spawn(async move |this, cx| {
+            let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot())?;
+            let diff_snapshot = BufferDiff::update_diff(
+                buffer_diff.clone(),
+                text_snapshot.clone(),
+                base_text,
+                false,
+                false,
+                None,
+                None,
+                cx,
+            )
+            .await?;
+            buffer_diff.update(cx, |diff, cx| {
+                diff.set_snapshot(diff_snapshot, &text_snapshot, cx)
+            })?;
+            this.update(cx, |this, cx| this.update_visible_ranges(cx))
+        }));
     }
 
     pub fn reveal_range(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
-        if let Some(buffer) = self.buffer.as_ref() {
-            let range = range.to_point(buffer.read(cx));
-            self.total_lines = self.multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.set_excerpts_for_path(
-                    PathKey::for_buffer(buffer, cx),
-                    buffer.clone(),
-                    [range],
-                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                    cx,
-                );
-                let end = multibuffer.len(cx);
-                Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
-            });
+        self.revealed_ranges.push(range);
+        self.update_visible_ranges(cx);
+    }
+
+    fn update_visible_ranges(&mut self, cx: &mut Context<Self>) {
+        let Some(buffer) = self.buffer.as_ref() else {
+            return;
+        };
+
+        let ranges = self.excerpt_ranges(cx);
+        self.total_lines = self.multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::for_buffer(buffer, cx),
+                buffer.clone(),
+                ranges,
+                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                cx,
+            );
+            let end = multibuffer.len(cx);
+            Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
+        });
+        cx.notify();
+    }
+
+    fn excerpt_ranges(&self, cx: &App) -> Vec<Range<Point>> {
+        let Some(buffer) = self.buffer.as_ref() else {
+            return Vec::new();
+        };
+        let Some(diff) = self.buffer_diff.as_ref() else {
+            return Vec::new();
+        };
+
+        let buffer = buffer.read(cx);
+        let diff = diff.read(cx);
+        let mut ranges = diff
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+            .collect::<Vec<_>>();
+        ranges.extend(
+            self.revealed_ranges
+                .iter()
+                .map(|range| range.to_point(&buffer)),
+        );
+        ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
+
+        // Merge adjacent ranges
+        let mut ranges = ranges.into_iter().peekable();
+        let mut merged_ranges = Vec::new();
+        while let Some(mut range) = ranges.next() {
+            while let Some(next_range) = ranges.peek() {
+                if range.end >= next_range.start {
+                    range.end = range.end.max(next_range.end);
+                    ranges.next();
+                } else {
+                    break;
+                }
+            }
+
+            merged_ranges.push(range);
         }
+        merged_ranges
     }
 
     pub fn finalize(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        if let Some((buffer, base_text)) = self.buffer.take().zip(self.base_text.clone()) {
-            let language_registry = self.project.read(cx).languages().clone();
-            let buffer = cx.new(|cx| {
-                let language = buffer.read(cx).language().cloned();
-                let buffer = TextBuffer::new_normalized(
-                    0,
-                    cx.entity_id().as_non_zero_u64().into(),
-                    buffer.read(cx).line_ending(),
-                    buffer.read(cx).as_rope().clone(),
-                );
-                let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
-                buffer.set_language(language, cx);
-                buffer
-            });
+        let ranges = self.excerpt_ranges(cx);
+        let buffer = self.buffer.take().context("card was already finalized")?;
+        let base_text = self
+            .base_text
+            .take()
+            .context("card was already finalized")?;
+        let language_registry = self.project.read(cx).languages().clone();
 
-            let buffer_diff = cx.spawn({
-                let buffer = buffer.clone();
-                let language_registry = language_registry.clone();
-                async move |_this, cx| {
-                    build_buffer_diff(base_text, &buffer, &language_registry, cx).await
-                }
-            });
+        // Replace the buffer in the multibuffer with the snapshot
+        let buffer = cx.new(|cx| {
+            let language = buffer.read(cx).language().cloned();
+            let buffer = TextBuffer::new_normalized(
+                0,
+                cx.entity_id().as_non_zero_u64().into(),
+                buffer.read(cx).line_ending(),
+                buffer.read(cx).as_rope().clone(),
+            );
+            let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
+            buffer.set_language(language, cx);
+            buffer
+        });
 
-            cx.spawn(async move |this, cx| {
-                let buffer_diff = buffer_diff.await?;
-                this.update(cx, |this, cx| {
-                    // todo!("keep the same ranges as before")
-                    // Replace the buffer in the multibuffer with the snapshot
-                    this.multibuffer.update(cx, |multibuffer, cx| {
-                        // Get the current excerpt ranges
-                        let path_key = PathKey::for_buffer(&buffer, cx);
-                        let snapshot = buffer.read(cx).snapshot();
-                        let diff = buffer_diff.read(cx);
-                        let diff_hunk_ranges = diff
-                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-                            .collect::<Vec<_>>();
+        let buffer_diff = cx.spawn({
+            let buffer = buffer.clone();
+            let language_registry = language_registry.clone();
+            async move |_this, cx| {
+                build_buffer_diff(base_text, &buffer, &language_registry, cx).await
+            }
+        });
 
-                        // Clear and re-add with snapshot buffer
-                        multibuffer.clear(cx);
-                        multibuffer.set_excerpts_for_path(
-                            path_key,
-                            buffer,
-                            diff_hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                            cx,
-                        );
-                        multibuffer.add_diff(buffer_diff.clone(), cx);
-                    });
+        cx.spawn(async move |this, cx| {
+            let buffer_diff = buffer_diff.await?;
+            this.update(cx, |this, cx| {
+                this.multibuffer.update(cx, |multibuffer, cx| {
+                    let path_key = PathKey::for_buffer(&buffer, cx);
+                    multibuffer.clear(cx);
+                    multibuffer.set_excerpts_for_path(
+                        path_key,
+                        buffer,
+                        ranges,
+                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        cx,
+                    );
+                    multibuffer.add_diff(buffer_diff.clone(), cx);
+                });
 
-                    cx.notify();
-                })?;
-
-                anyhow::Ok(())
+                cx.notify();
             })
-            .detach_and_log_err(cx);
-        }
-
+        })
+        .detach_and_log_err(cx);
         Ok(())
     }
 }
@@ -665,7 +685,7 @@ impl ToolCard for EditFileToolCard {
         };
 
         let path_label_button = h_flex()
-            .id(("edit-tool-path-label-button", self.editor_unique_id))
+            .id(("edit-tool-path-label-button", self.editor.entity_id()))
             .w_full()
             .max_w_full()
             .px_1()
@@ -764,7 +784,7 @@ impl ToolCard for EditFileToolCard {
                         )
                         .child(
                             Disclosure::new(
-                                ("edit-file-error-disclosure", self.editor_unique_id),
+                                ("edit-file-error-disclosure", self.editor.entity_id()),
                                 self.error_expanded.is_some(),
                             )
                             .opened_icon(IconName::ChevronUp)
@@ -786,10 +806,10 @@ impl ToolCard for EditFileToolCard {
                         ),
                 )
             })
-            .when(error_message.is_none() && self.has_diff(), |header| {
+            .when(error_message.is_none() && !self.is_loading(), |header| {
                 header.child(
                     Disclosure::new(
-                        ("edit-file-disclosure", self.editor_unique_id),
+                        ("edit-file-disclosure", self.editor.entity_id()),
                         self.preview_expanded,
                     )
                     .opened_icon(IconName::ChevronUp)
@@ -925,10 +945,10 @@ impl ToolCard for EditFileToolCard {
                         ),
                 )
             })
-            .when(!self.has_diff() && error_message.is_none(), |card| {
+            .when(self.is_loading() && error_message.is_none(), |card| {
                 card.child(waiting_for_diff)
             })
-            .when(self.preview_expanded && self.has_diff(), |card| {
+            .when(self.preview_expanded && !self.is_loading(), |card| {
                 card.child(
                     v_flex()
                         .relative()
@@ -950,7 +970,7 @@ impl ToolCard for EditFileToolCard {
                 .when(is_collapsible, |card| {
                     card.child(
                         h_flex()
-                            .id(("expand-button", self.editor_unique_id))
+                            .id(("expand-button", self.editor.entity_id()))
                             .flex_none()
                             .cursor_pointer()
                             .h_5()
