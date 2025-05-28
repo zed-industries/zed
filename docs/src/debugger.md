@@ -60,7 +60,32 @@ While configuration fields are debug adapter dependent, most adapters support th
 
 #### Task Variables
 
-All configuration fields support task variables. See [Tasks](./tasks.md)
+All configuration fields support task variables. See [Tasks](./tasks.md##Variables)
+
+#### Python Examples
+
+##### Python Active File
+
+```json
+[
+  {
+    "label": "Active File",
+    "adapter": "Debugpy",
+    "program": "$ZED_FILE",
+    "request": "launch"
+  }
+]
+
+##### Flask App
+```json
+[
+  {
+    "label": "Flask App",
+    "adapter": "Debugpy",
+    "request": "launch",
+  }
+]
+```
 
 ## Breakpoints
 
