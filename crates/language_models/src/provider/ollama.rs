@@ -6,7 +6,7 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, StopReason,
+    LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -282,10 +282,23 @@ impl OllamaLanguageModel {
                     Role::User => ChatMessage::User {
                         content: msg.string_contents(),
                     },
-                    Role::Assistant => ChatMessage::Assistant {
-                        content: msg.string_contents(),
-                        tool_calls: None,
-                    },
+                    Role::Assistant => {
+                        let mut thinking = None;
+                        for content in msg.content.iter() {
+                            if let MessageContent::Thinking { text, .. } = content {
+                                if !text.is_empty() {
+                                    thinking = Some(text.clone());
+                                    break;
+                                }
+                            }
+                        }
+
+                        ChatMessage::Assistant {
+                            content: msg.string_contents(),
+                            tool_calls: None,
+                            thinking,
+                        }
+                    }
                     Role::System => ChatMessage::System {
                         content: msg.string_contents(),
                     },
@@ -299,6 +312,7 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
+            think: Some(true),
             tools: request.tools.into_iter().map(tool_into_ollama).collect(),
         }
     }
@@ -433,7 +447,16 @@ fn map_to_language_model_completion_events(
                 ChatMessage::Assistant {
                     content,
                     tool_calls,
+                    thinking,
                 } => {
+                    // Handle thinking content if present
+                    if let Some(thinking_text) = thinking {
+                        events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                            text: thinking_text,
+                            signature: None,
+                        }));
+                    }
+
                     // Check for tool calls
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         match tool_call {
@@ -455,7 +478,7 @@ fn map_to_language_model_completion_events(
                                 state.used_tools = true;
                             }
                         }
-                    } else {
+                    } else if !content.is_empty() {
                         events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                     }
                 }
