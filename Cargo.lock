@@ -86,6 +86,7 @@ dependencies = [
  "language",
  "language_model",
  "language_model_selector",
+ "language_models",
  "linkme",
  "log",
  "lsp",
