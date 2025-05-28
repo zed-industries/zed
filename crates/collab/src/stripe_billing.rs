@@ -3,17 +3,19 @@ use std::sync::Arc;
 use crate::Result;
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
+use crate::stripe_client::{RealStripeClient, StripeClient};
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
-use stripe::{CreateCustomer, Customer, CustomerId, PriceId, SubscriptionStatus};
+use stripe::{CustomerId, PriceId, SubscriptionStatus};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
 pub struct StripeBilling {
     state: RwLock<StripeBillingState>,
     client: Arc<stripe::Client>,
+    client2: Arc<dyn StripeClient>,
 }
 
 #[derive(Default)]
@@ -26,7 +28,17 @@ struct StripeBillingState {
 impl StripeBilling {
     pub fn new(client: Arc<stripe::Client>) -> Self {
         Self {
+            client2: Arc::new(RealStripeClient::new(client.clone())),
             client,
+            state: RwLock::default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test(client: Arc<crate::stripe_client::FakeStripeClient>) -> Self {
+        Self {
+            client: Arc::new(stripe::Client::new("sk_test")),
+            client2: client,
             state: RwLock::default(),
         }
     }
@@ -131,16 +143,9 @@ impl StripeBilling {
         email_address: Option<&str>,
     ) -> Result<CustomerId> {
         let existing_customer = if let Some(email) = email_address {
-            let customers = Customer::list(
-                &self.client,
-                &stripe::ListCustomers {
-                    email: Some(email),
-                    ..Default::default()
-                },
-            )
-            .await?;
+            let customers = self.client2.list_customers_by_email(email).await?;
 
-            customers.data.first().cloned()
+            customers.first().cloned()
         } else {
             None
         };
@@ -148,19 +153,17 @@ impl StripeBilling {
         let customer_id = if let Some(existing_customer) = existing_customer {
             existing_customer.id
         } else {
-            let customer = Customer::create(
-                &self.client,
-                CreateCustomer {
+            let customer = self
+                .client2
+                .create_customer(crate::stripe_client::CreateCustomerParams {
                     email: email_address,
-                    ..Default::default()
-                },
-            )
-            .await?;
+                })
+                .await?;
 
             customer.id
         };
 
-        Ok(customer_id)
+        Ok(customer_id.try_into()?)
     }
 
     pub async fn subscribe_to_price(
