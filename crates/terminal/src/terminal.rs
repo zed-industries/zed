@@ -2081,7 +2081,7 @@ pub fn visible_regex_match_iter<'a, T>(
 
     RegexIter::new(start, end, AlacDirection::Right, term, regex)
         .skip_while(move |rm| rm.end().line < viewport_start)
-        .take_while(move |rm| rm.start().line < viewport_end)
+        .take_while(move |rm| rm.start().line <= viewport_end)
 }
 
 fn make_selection(range: &RangeInclusive<AlacPoint>) -> Selection {
