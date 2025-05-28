@@ -195,8 +195,10 @@ impl Tool for EditFileTool {
         });
 
         let card_clone = card.clone();
+        let action_log_clone = action_log.clone();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let edit_agent = EditAgent::new(model, project.clone(), action_log, Templates::new());
+            let edit_agent =
+                EditAgent::new(model, project.clone(), action_log_clone, Templates::new());
 
             let buffer = project
                 .update(cx, |project, cx| {
@@ -250,102 +252,50 @@ impl Tool for EditFileTool {
             }
             let agent_output = output.await?;
 
-            // Check if format_on_save is enabled and get the language if formatting is needed
-            let language_to_format = buffer
+            // Check if format_on_save is enabled
+            let format_on_save_enabled = buffer
                 .read_with(cx, |buffer, cx| {
-                    let language = buffer.language().cloned();
                     let settings = language_settings::language_settings(
-                        language.as_ref().map(|l| l.name()),
+                        buffer.language().map(|l| l.name()),
                         buffer.file(),
                         cx,
                     );
-                    if !matches!(settings.format_on_save, FormatOnSave::Off) {
-                        language
-                    } else {
-                        None
-                    }
+                    !matches!(settings.format_on_save, FormatOnSave::Off)
                 })
-                .log_err()
-                .flatten();
+                .unwrap_or(false);
 
-            let final_text = if let Some(language) = language_to_format {
-                // Format the content in a separate buffer to get the formatted text
-                // without triggering "file changed" events on the actual buffer
-                let unformatted_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-                let unformatted_text = cx
-                    .background_spawn({
-                        let unformatted_snapshot = unformatted_snapshot.clone();
-                        async move { unformatted_snapshot.text() }
-                    })
-                    .await;
-
-                // Create a temporary buffer to apply formatting without triggering file change events
-                let file = buffer.read_with(cx, |buffer, _| buffer.file().cloned())?;
-                let line_ending = buffer.read_with(cx, |buffer, _| buffer.line_ending())?;
-
-                let temp_buffer_entity = cx.new(|cx| {
-                    let text_buffer = TextBuffer::new_normalized(
-                        0,
-                        cx.entity_id().as_non_zero_u64().into(),
-                        line_ending,
-                        unformatted_text.clone().into(),
-                    );
-                    let mut temp_buffer = Buffer::build(text_buffer, file, Capability::ReadWrite);
-                    temp_buffer.set_language(Some(language), cx);
-                    temp_buffer
+            // If format_on_save is enabled, format the buffer before saving
+            if format_on_save_enabled {
+                let format_task = project.update(cx, |project, cx| {
+                    project.format(
+                        HashSet::from_iter([buffer.clone()]),
+                        LspFormatTarget::Buffers,
+                        false, // Don't push to history since the tool did it.
+                        FormatTrigger::Save,
+                        cx,
+                    )
                 })?;
-
-                // Format the temporary buffer
-                if let Some(format_task) = project
-                    .update(cx, move |project, cx| {
-                        project.format(
-                            HashSet::from_iter([temp_buffer_entity.clone()]),
-                            LspFormatTarget::Buffers,
-                            false, // Don't push to history since the tool did it.
-                            FormatTrigger::Save,
-                            cx,
-                        )
-                    })
-                    .log_err()
-                {
-                    format_task.await.log_err();
-                }
-
-                // Get the formatted text
-                let formatted_text = temp_buffer_entity.read_with(cx, |buffer, _| buffer.text())?;
-
-                // Apply the formatted content to the actual buffer
-                buffer.update(cx, |buffer, cx| {
-                    let range = 0..buffer.len();
-                    buffer.edit([(range, formatted_text.clone())], None, cx);
-                })?;
-
-                formatted_text
-            } else {
-                // No formatting needed, just get the current text
-                let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-                cx.background_spawn({
-                    let new_snapshot = new_snapshot.clone();
-                    async move { new_snapshot.text() }
-                })
-                .await
-            };
+                format_task.await.log_err();
+            }
 
             project
                 .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
                 .await?;
 
+            // Notify the action log that we've edited the buffer AFTER save completes
+            // This ensures the tracked version matches the saved version
+            action_log.update(cx, |log, cx| {
+                log.buffer_edited(buffer.clone(), cx);
+            })?;
+
             let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-            let new_text = cx.background_spawn({
-                let new_snapshot = new_snapshot.clone();
-                async move { new_snapshot.text() }
-            });
-            let diff = cx.background_spawn({
-                let old_text = old_text.clone();
-                let final_text = final_text.clone();
-                async move { language::unified_diff(&old_text, &final_text) }
-            });
-            let (new_text, diff) = futures::join!(new_text, diff);
+            let new_text = cx
+                .background_spawn({
+                    let new_snapshot = new_snapshot.clone();
+                    async move { new_snapshot.text() }
+                })
+                .await;
+            let diff = language::unified_diff(&old_text, &new_text);
 
             let output = EditFileToolOutput {
                 original_path: project_path.path.to_path_buf(),
