@@ -23,6 +23,10 @@ impl DapLocator for GoLocator {
         resolved_label: &str,
         adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
+        if build_config.command != "go" {
+            return None;
+        }
+
         let go_action = build_config.args.first()?;
 
         match go_action.as_str() {
