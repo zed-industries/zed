@@ -699,7 +699,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_install_version_tooltip_message() {
+    fn test_version_tooltip_message() {
         let message = ActivityIndicator::version_tooltip_message(&VersionCheckType::Semantic(
             SemanticVersion::new(1, 0, 0),
         ));
