@@ -3617,6 +3617,16 @@ mod test {
           4;5.6 567 678
           789 890 901
         "});
+
+        // With multi byte char
+        cx.set_shared_state(indoc! {r"
+        bar ˇó
+        "})
+            .await;
+        cx.simulate_shared_keystrokes("g e").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        baˇr ó
+        "});
     }
 
     #[gpui::test]
