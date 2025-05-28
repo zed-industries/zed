@@ -3393,28 +3393,44 @@ impl Workspace {
         window: &mut Window,
         cx: &mut App,
     ) {
+        println!("=== activate_pane_in_direction: direction={:?} ===", direction);
         // Find the origin bounds based on what's currently focused
         let origin_bounds = {
             // First check if any dock is focused
             let all_docks = self.all_docks();
             let focused_dock = all_docks
                 .iter()
-                .find(|dock| dock.focus_handle(cx).contains_focused(window, cx));
+                .find(|dock| {
+                    // Check both dock focus and panel focus
+                    let dock_focused = dock.focus_handle(cx).contains_focused(window, cx);
+                    let panel_focused = dock.read(cx).active_panel()
+                        .map(|panel| panel.panel_focus_handle(cx).contains_focused(window, cx))
+                        .unwrap_or(false);
+                    let position = dock.read(cx).position();
+                    println!("dock {:?}: dock_focused={}, panel_focused={}", position, dock_focused, panel_focused);
+                    dock_focused || panel_focused
+                });
 
             if let Some(dock) = focused_dock {
+                let position = dock.read(cx).position();
+                println!("focused dock {:?}", position);
                 if let Some(bounds) = self.bounding_box_for_dock(dock, window, cx) {
+                    println!("origin bounds from dock {:?}: {:?}", position, bounds);
                     bounds
                 } else {
-                    // Dock is focused but not open or no bounds available, use active pane
+                    println!("dock {:?} has no bounds, falling back to active pane", position);
                     match self.bounding_box_for_pane(&self.active_pane) {
                         Some(bounds) => bounds,
                         None => return,
                     }
                 }
             } else {
-                // Otherwise, use the active pane
+                println!("no dock focused, using active pane");
                 match self.bounding_box_for_pane(&self.active_pane) {
-                    Some(bounds) => bounds,
+                    Some(bounds) => {
+                        println!("origin bounds from active pane: {:?}", bounds);
+                        bounds
+                    },
                     None => return,
                 }
             }
@@ -3428,11 +3444,16 @@ impl Workspace {
                     window.focus(&p.focus_handle(cx));
                 }
                 FocusTarget::Dock(d, _, _) => {
+                    let position = d.read(cx).position();
+                    println!("attempting to focus dock {:?}", position);
                     // Get both the active panel and its focus handle in one read operation
                     let focus_handle = d.read(cx).active_panel()
                         .map(|panel| panel.panel_focus_handle(cx));
                     if let Some(handle) = focus_handle {
+                        println!("focusing panel in dock {:?}", position);
                         handle.focus(window);
+                    } else {
+                        println!("dock {:?} has no active panel to focus", position);
                     }
                 }
             }
@@ -3456,13 +3477,21 @@ impl Workspace {
         direction: SplitDirection,
     ) -> (bool, f32) {
         match direction {
-            SplitDirection::Right if target.left() >= origin.right() => (
+            SplitDirection::Right if target.left() >= origin.left() && target.right() > origin.right() => (
                 Self::vertical_overlap(*target, *origin),
-                (target.left() - origin.right()).0,
+                if target.left() >= origin.right() {
+                    (target.left() - origin.right()).0
+                } else {
+                    0.0 // overlapping, but target extends further right
+                }
             ),
-            SplitDirection::Left if target.right() <= origin.left() => (
+            SplitDirection::Left if target.right() <= origin.right() && target.left() < origin.left() => (
                 Self::vertical_overlap(*target, *origin),
-                (origin.left() - target.right()).0,
+                if target.right() <= origin.left() {
+                    (origin.left() - target.right()).0
+                } else {
+                    0.0 // overlapping, but target extends further left
+                }
             ),
             SplitDirection::Down if target.top() >= origin.bottom() => (
                 Self::horizontal_overlap(*target, *origin),
@@ -3486,24 +3515,29 @@ impl Workspace {
     ) -> Option<FocusTarget<'a>> {
         let panes = self.center.panes();
         let panes_iter = panes.iter().filter_map(|p| {
-            self.bounding_box_for_pane(p)
-                .map(|b| FocusTarget::Pane(p, b, p.read(cx).last_visit_ts))
+            self.bounding_box_for_pane(p).map(|b| {
+                println!("candidate pane {:?} -> {:?}", Entity::entity_id(p), b);
+                FocusTarget::Pane(p, b, p.read(cx).last_visit_ts)
+            })
         });
 
         let docks = self.all_docks();
         let docks_iter = docks.iter().filter_map(|d| {
             // Read dock state once and extract what we need
-            let (is_open, last_visit_ts) = {
+            let (is_open, last_visit_ts, position) = {
                 let dock_read = d.read(cx);
-                (dock_read.is_open(), dock_read.last_visit_ts)
+                (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position())
             };
 
             if !is_open {
+                println!("dock {:?} closed", position);
                 return None;
             }
 
-            self.bounding_box_for_dock(d, window, cx)
-                .map(|b| FocusTarget::Dock(d, b, last_visit_ts))
+            self.bounding_box_for_dock(d, window, cx).map(|b| {
+                println!("candidate dock {:?} -> {:?}", position, b);
+                FocusTarget::Dock(d, b, last_visit_ts)
+            })
         });
 
         let mut best: Option<FocusTarget> = None;
@@ -3512,7 +3546,15 @@ impl Workspace {
 
         for target in panes_iter.chain(docks_iter) {
             let (bounds, ts) = match &target {
-                FocusTarget::Pane(_, b, ts) | FocusTarget::Dock(_, b, ts) => (*b, *ts),
+                FocusTarget::Pane(p, b, ts) => {
+                    println!("checking pane {:?} bounds {:?}", Entity::entity_id(p), b);
+                    (*b, *ts)
+                }
+                FocusTarget::Dock(d, b, ts) => {
+                    let pos = d.read(cx).position();
+                    println!("checking dock {:?} bounds {:?}", pos, b);
+                    (*b, *ts)
+                }
             };
 
             if bounds == origin {
@@ -3520,6 +3562,8 @@ impl Workspace {
             }
 
             let (adjacent, dist) = Self::distance_if_adjacent(&origin, &bounds, direction);
+            println!("  origin={:?}, target={:?}, direction={:?}", origin, bounds, direction);
+            println!("  adjacent={} dist={}", adjacent, dist);
             if !adjacent {
                 continue;
             }
@@ -3529,6 +3573,14 @@ impl Workspace {
                 best_ts = ts;
                 best = Some(target);
             }
+        }
+        if let Some(best) = &best {
+            match best {
+                FocusTarget::Pane(p, _, _) => println!("best target pane {:?}", Entity::entity_id(p)),
+                FocusTarget::Dock(d, _, _) => println!("best target dock {:?}", d.read(cx).position()),
+            }
+        } else {
+            println!("no focus target found");
         }
         best
     }
@@ -3578,6 +3630,8 @@ impl Workspace {
             (dock_read.is_open(), dock_read.position())
         };
 
+        log::debug!("bounding box for dock {:?}, open={}", position, is_open);
+
         if !is_open {
             return None;
         }
@@ -3590,7 +3644,7 @@ impl Workspace {
         };
 
         // Calculate dock bounds based on position and panel size
-        match position {
+        let bounds = match position {
             DockPosition::Left => Some(Bounds {
                 origin: self.bounds.origin,
                 size: Size {
@@ -3618,7 +3672,10 @@ impl Workspace {
                     height: panel_size,
                 },
             }),
-        }
+        };
+
+        log::debug!("bounds for dock {:?}: {:?}", position, bounds);
+        bounds
     }
 
     pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
