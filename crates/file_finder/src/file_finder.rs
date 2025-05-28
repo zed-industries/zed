@@ -864,11 +864,17 @@ impl FileFinderDelegate {
             let path = Path::new(&filename);
 
             // add option of creating new file only if path is relative
-            if path.is_relative() && !filename.ends_with("/") {
-                self.matches.matches.push(Match::CreateNew(ProjectPath {
-                    worktree_id: worktree.unwrap().read(cx).id(),
-                    path: Arc::from(path),
-                }));
+            if let Some(worktree) = worktree {
+                let worktree = worktree.read(cx);
+                if worktree.entry_for_path(&path).is_none()
+                    && path.is_relative()
+                    && !filename.ends_with("/")
+                {
+                    self.matches.matches.push(Match::CreateNew(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: Arc::from(path),
+                    }));
+                }
             }
 
             self.selected_index = selected_match.map_or_else(
