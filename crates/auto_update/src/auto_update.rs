@@ -49,8 +49,12 @@ pub enum VersionCheckType {
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
-    Downloading,
-    Installing,
+    Downloading {
+        version: VersionCheckType,
+    },
+    Installing {
+        version: VersionCheckType,
+    },
     Updated {
         binary_path: PathBuf,
         version: VersionCheckType,
@@ -531,7 +535,9 @@ impl AutoUpdater {
         };
 
         this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Downloading;
+            this.status = AutoUpdateStatus::Downloading {
+                version: newer_version.clone(),
+            };
             cx.notify();
         })?;
 
@@ -540,7 +546,9 @@ impl AutoUpdater {
         download_release(&target_path, fetched_release_data, client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Installing;
+            this.status = AutoUpdateStatus::Installing {
+                version: newer_version.clone(),
+            };
             cx.notify();
         })?;
 
