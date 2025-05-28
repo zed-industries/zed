@@ -261,12 +261,12 @@ impl EditAgent {
             while let Ok(old_range) = old_range.recv().await {
                 if let Some(old_range) = old_range {
                     let old_range = snapshot.anchor_before(old_range.start)
-                        ..snapshot.anchor_after(old_range.end);
+                        ..snapshot.anchor_before(old_range.end);
                     self.project.update(cx, |project, cx| {
                         project.set_agent_location(
                             Some(AgentLocation {
                                 buffer: buffer.downgrade(),
-                                position: old_range.start,
+                                position: old_range.end,
                             }),
                             cx,
                         );
@@ -724,10 +724,6 @@ mod tests {
                 cx,
             )
         });
-        agent
-            .model
-            .as_fake()
-            .stream_completion_response(request, chunk);
         let raw_edits = simulate_llm_output(
             indoc! {"
                 <old_text></old_text>
@@ -738,9 +734,16 @@ mod tests {
             &mut rng,
             cx,
         );
-        let (apply, _events) =
-            agent.apply_edit_chunks(buffer.clone(), raw_edits, &mut cx.to_async());
-        apply.await.unwrap();
+        agent
+            .apply_edit_chunks(
+                buffer.clone(),
+                raw_edits,
+                mpsc::unbounded().0,
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
+
         pretty_assertions::assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             indoc! {"
@@ -782,9 +785,15 @@ mod tests {
             &mut rng,
             cx,
         );
-        let (apply, _events) =
-            agent.apply_edit_chunks(buffer.clone(), raw_edits, &mut cx.to_async());
-        apply.await.unwrap();
+        agent
+            .apply_edit_chunks(
+                buffer.clone(),
+                raw_edits,
+                mpsc::unbounded().0,
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
         pretty_assertions::assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             indoc! {"
@@ -820,9 +829,15 @@ mod tests {
             &mut rng,
             cx,
         );
-        let (apply, _events) =
-            agent.apply_edit_chunks(buffer.clone(), raw_edits, &mut cx.to_async());
-        apply.await.unwrap();
+        agent
+            .apply_edit_chunks(
+                buffer.clone(),
+                raw_edits,
+                mpsc::unbounded().0,
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abc\nDeF\nghi"
@@ -852,9 +867,15 @@ mod tests {
             &mut rng,
             cx,
         );
-        let (apply, _events) =
-            agent.apply_edit_chunks(buffer.clone(), raw_edits, &mut cx.to_async());
-        apply.await.unwrap();
+        agent
+            .apply_edit_chunks(
+                buffer.clone(),
+                raw_edits,
+                mpsc::unbounded().0,
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "ABC\ndef\nghi"
@@ -864,18 +885,22 @@ mod tests {
     #[gpui::test]
     async fn test_edit_events(cx: &mut TestAppContext) {
         let agent = init_test(cx).await;
+        let model = agent.model.as_fake();
         let project = agent
             .action_log
             .read_with(cx, |log, _| log.project().clone());
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi\njkl", cx));
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        let (apply, mut events) = agent.apply_edit_chunks(
-            buffer.clone(),
-            chunks_rx.map(|chunk: &str| Ok(chunk.to_string())),
-            &mut cx.to_async(),
-        );
 
-        chunks_tx.unbounded_send("<old_text>a").unwrap();
+        let mut async_cx = cx.to_async();
+        let (apply, mut events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut async_cx,
+        );
+        cx.run_until_parked();
+
+        model.stream_last_completion_response("<old_text>a");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -884,17 +909,20 @@ mod tests {
         );
         assert_eq!(
             project.read_with(cx, |project, _| project.agent_location()),
-            None
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: Anchor::MIN
+            })
         );
 
-        chunks_tx.unbounded_send("bc</old_text>").unwrap();
+        model.stream_last_completion_response("bc</old_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
             vec![EditAgentOutputEvent::ResolvingEditRange(buffer.read_with(
                 cx,
                 |buffer, _| buffer.anchor_before(Point::new(0, 0))
-                    ..buffer.anchor_after(Point::new(0, 3))
+                    ..buffer.anchor_before(Point::new(0, 3))
             ))]
         );
         assert_eq!(
@@ -905,11 +933,11 @@ mod tests {
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 0)))
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(0, 3)))
             })
         );
 
-        chunks_tx.unbounded_send("<new_text>abX").unwrap();
+        model.stream_last_completion_response("<new_text>abX");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
         assert_eq!(
@@ -924,7 +952,7 @@ mod tests {
             })
         );
 
-        chunks_tx.unbounded_send("cY").unwrap();
+        model.stream_last_completion_response("cY");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
         assert_eq!(
@@ -939,8 +967,8 @@ mod tests {
             })
         );
 
-        chunks_tx.unbounded_send("</new_text>").unwrap();
-        chunks_tx.unbounded_send("<old_text>hall").unwrap();
+        model.stream_last_completion_response("</new_text>");
+        model.stream_last_completion_response("<old_text>hall");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -955,8 +983,8 @@ mod tests {
             })
         );
 
-        chunks_tx.unbounded_send("ucinated old</old_text>").unwrap();
-        chunks_tx.unbounded_send("<new_text>").unwrap();
+        model.stream_last_completion_response("ucinated old</old_text>");
+        model.stream_last_completion_response("<new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -974,8 +1002,8 @@ mod tests {
             })
         );
 
-        chunks_tx.unbounded_send("hallucinated new</new_").unwrap();
-        chunks_tx.unbounded_send("text>").unwrap();
+        model.stream_last_completion_response("hallucinated new</new_");
+        model.stream_last_completion_response("text>");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -990,14 +1018,14 @@ mod tests {
             })
         );
 
-        chunks_tx.unbounded_send("<old_text>\nghi\nj").unwrap();
+        model.stream_last_completion_response("<old_text>\nghi\nj");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
             vec![EditAgentOutputEvent::ResolvingEditRange(buffer.read_with(
                 cx,
                 |buffer, _| buffer.anchor_before(Point::new(2, 0))
-                    ..buffer.anchor_after(Point::new(2, 3))
+                    ..buffer.anchor_before(Point::new(2, 3))
             ))]
         );
         assert_eq!(
@@ -1008,19 +1036,19 @@ mod tests {
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 0)))
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 3)))
             })
         );
 
-        chunks_tx.unbounded_send("kl</old_text>").unwrap();
-        chunks_tx.unbounded_send("<new_text>").unwrap();
+        model.stream_last_completion_response("kl</old_text>");
+        model.stream_last_completion_response("<new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
             vec![EditAgentOutputEvent::ResolvingEditRange(buffer.read_with(
                 cx,
                 |buffer, _| buffer.anchor_before(Point::new(2, 0))
-                    ..buffer.anchor_after(Point::new(3, 3))
+                    ..buffer.anchor_before(Point::new(3, 3))
             ))]
         );
         assert_eq!(
@@ -1031,11 +1059,11 @@ mod tests {
             project.read_with(cx, |project, _| project.agent_location()),
             Some(AgentLocation {
                 buffer: buffer.downgrade(),
-                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 0)))
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(3, 3)))
             })
         );
 
-        chunks_tx.unbounded_send("GHI</new_text>").unwrap();
+        model.stream_last_completion_response("GHI</new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1053,7 +1081,7 @@ mod tests {
             })
         );
 
-        drop(chunks_tx);
+        model.end_last_completion_stream();
         apply.await.unwrap();
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -1062,7 +1090,10 @@ mod tests {
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
             project.read_with(cx, |project, _| project.agent_location()),
-            None
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(2, 3)))
+            })
         );
     }
 
@@ -1160,7 +1191,10 @@ mod tests {
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
             project.read_with(cx, |project, _| project.agent_location()),
-            None
+            Some(AgentLocation {
+                buffer: buffer.downgrade(),
+                position: language::Anchor::MAX
+            })
         );
     }
 
