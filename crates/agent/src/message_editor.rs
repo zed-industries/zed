@@ -51,7 +51,8 @@ use prompt_store::PromptStore;
 use proto::Plan;
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{Disclosure, KeyBinding, PopoverMenuHandle, PopoverMenu, Tooltip, prelude::*};
+use ui::ContextMenu;
 use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
 
@@ -82,8 +83,8 @@ pub struct MessageEditor {
     // Voice recording and playback using media_player
     voice_player: VoicePlayer,
     voice_recorder: VoiceRecorder,
-    voice_recording_task: Option<Task<()>>,
     playback_update_task: Option<Task<()>>,
+    playback_speed_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 const MAX_EDITOR_LINES: usize = 8;
@@ -239,10 +240,10 @@ impl MessageEditor {
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
-            voice_player: VoicePlayer::new(),
-            voice_recorder: VoiceRecorder::new(),
-            voice_recording_task: None,
+            voice_player: VoicePlayer::with_executor(cx.background_executor().clone()),
+            voice_recorder: VoiceRecorder::with_executor(cx.background_executor().clone()),
             playback_update_task: None,
+            playback_speed_menu_handle: PopoverMenuHandle::default(),
         };
         
         instance
@@ -1344,247 +1345,298 @@ impl MessageEditor {
         }
 
         Some(
-            v_flex()
-                .gap_2()
-                .w_full()
-                .min_w_0()
-                .p_3()
-                .bg(cx.theme().colors().editor_background)
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_md()
+            div()
                 .child(
-                    h_flex()
-                        .justify_between()
-                        .items_center()
+                    v_flex()
+                        .gap_2()
+                        .w_full()
+                        .min_w_0()
+                        .p_3()
+                        .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .rounded_md()
                         .child(
-                            Label::new("Voice Recordings")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
+                            h_flex()
+                                .justify_between()
+                                .items_center()
+                                .child(
+                                    Label::new("Voice Recordings")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .items_center()
+                                        .child(
+                                            // Playback speed control
+                                            Button::new("playback_speed", format!("{:.1}x", self.voice_player.get_playback_speed()))
+                                                .label_size(LabelSize::XSmall)
+                                                .style(ButtonStyle::Subtle)
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::text("Click to change playback speed")(window, cx)
+                                                })
+                                                .on_click(cx.listener(|this, _event, window, cx| {
+                                                    this.playback_speed_menu_handle.toggle(window, cx);
+                                                }))
+                                        )
+                                        .child(
+                                            Label::new(format!("{} recording{}", recordings.len(), if recordings.len() == 1 { "" } else { "s" }))
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Disabled)
+                                        )
+                                )
                         )
-                        .child(
-                            Label::new(format!("{} recording{}", recordings.len(), if recordings.len() == 1 { "" } else { "s" }))
-                                .size(LabelSize::XSmall)
-                                .color(Color::Disabled)
-                        )
-                )
-                .children(
-                    recordings.iter().enumerate().map(|(index, (_recording_id, recording))| {
-                        let recording_id = recording.id.clone();
-                        let is_playing = self.voice_player.is_playing(&recording_id);
-                        let is_paused = self.voice_player.is_paused(&recording_id);
-                        
-                        let (progress, current_time) = self.voice_player.get_progress(&recording_id)
-                            .unwrap_or((0.0, Duration::ZERO));
-                        
-                        // Debug: Log progress for each recording
-                        log::debug!("📊 Recording {} progress: {:.1}% ({:.1}s/{:.1}s) - playing: {}, paused: {}, seeking: {}", 
-                            recording_id, 
-                            progress * 100.0, 
-                            current_time.as_secs_f32(), 
-                            recording.duration.as_secs_f32(),
-                            is_playing,
-                            is_paused,
-                            self.voice_player.is_seeking(&recording_id)
-                        );
-                        
-                        let icon_name = if is_playing {
-                            IconName::Stop
-                        } else if is_paused {
-                            IconName::Play
-                        } else {
-                            IconName::Play
-                        };
-                        
-                        let icon_color = if is_playing {
-                            Color::Warning
-                        } else if is_paused {
-                            Color::Success
-                        } else {
-                            Color::Accent
-                        };
-                        
-                        v_flex()
-                            .gap_2()
-                            .w_full() // Make each recording flexible
-                            .min_w_0() // Allow shrinking
-                            .p_3()
-                            .rounded_md()
-                            .bg(cx.theme().colors().element_background)
-                            .hover(|style| style.bg(cx.theme().colors().element_hover))
-                            .child(
-                                // Header with controls
-                                h_flex()
+                        .children(
+                            recordings.iter().enumerate().map(|(index, (_recording_id, recording))| {
+                                let recording_id = recording.id.clone();
+                                let is_playing = self.voice_player.is_playing(&recording_id);
+                                let is_paused = self.voice_player.is_paused(&recording_id);
+                                
+                                let (progress, current_time) = self.voice_player.get_progress(&recording_id)
+                                    .unwrap_or((0.0, Duration::ZERO));
+                                
+                                // Debug: Log progress for each recording
+                                log::debug!("📊 Recording {} progress: {:.1}% ({:.1}s/{:.1}s) - playing: {}, paused: {}, seeking: {}", 
+                                    recording_id, 
+                                    progress * 100.0, 
+                                    current_time.as_secs_f32(), 
+                                    recording.duration.as_secs_f32(),
+                                    is_playing,
+                                    is_paused,
+                                    self.voice_player.is_seeking(&recording_id)
+                                );
+                                
+                                let icon_name = if is_playing {
+                                    IconName::Stop
+                                } else if is_paused {
+                                    IconName::Play
+                                } else {
+                                    IconName::Play
+                                };
+                                
+                                let icon_color = if is_playing {
+                                    Color::Warning
+                                } else if is_paused {
+                                    Color::Success
+                                } else {
+                                    Color::Accent
+                                };
+                                
+                                v_flex()
                                     .gap_2()
-                                    .items_center()
-                                    .justify_between()
-                                    .w_full()
+                                    .w_full() // Make each recording flexible
+                                    .min_w_0() // Allow shrinking
+                                    .p_3()
+                                    .rounded_md()
+                                    .bg(cx.theme().colors().element_background)
+                                    .hover(|style| style.bg(cx.theme().colors().element_hover))
                                     .child(
+                                        // Header with controls
                                         h_flex()
                                             .gap_2()
                                             .items_center()
-                                            .flex_1() // Take available space
-                                            .min_w_0() // Allow shrinking
+                                            .justify_between()
+                                            .w_full()
                                             .child(
-                                                // Play/pause button
-                                                IconButton::new(("play", index), icon_name)
+                                                h_flex()
+                                                    .gap_2()
+                                                    .items_center()
+                                                    .flex_1() // Take available space
+                                                    .min_w_0() // Allow shrinking
+                                                    .child(
+                                                        // Play/pause button
+                                                        IconButton::new(("play", index), icon_name)
+                                                            .size(ButtonSize::Compact)
+                                                            .style(ButtonStyle::Subtle)
+                                                            .icon_color(icon_color)
+                                                            .tooltip(move |window, cx| {
+                                                                Tooltip::text(
+                                                                    if is_playing { "Pause" } else { "Play" }
+                                                                )(window, cx)
+                                                            })
+                                                            .on_click({
+                                                                let recording_id = recording_id.clone();
+                                                                cx.listener(move |this, _event, _window, cx| {
+                                                                    this.toggle_voice_playback(recording_id.clone(), cx);
+                                                                })
+                                                            })
+                                                    )
+                                                    .child(
+                                                        v_flex()
+                                                            .gap_1()
+                                                            .flex_1()
+                                                            .min_w_0()
+                                                            .child(
+                                                                // Recording ID (truncated if needed)
+                                                                Label::new(recording.id.clone())
+                                                                    .size(LabelSize::XSmall)
+                                                                    .color(Color::Default)
+                                                                    .single_line()
+                                                            )
+                                                            .child(
+                                                                // Time info
+                                                                h_flex()
+                                                                    .gap_1()
+                                                                    .items_center()
+                                                                    .child(
+                                                                        Label::new(format!("{:.1}s", current_time.as_secs_f32()))
+                                                                            .size(LabelSize::XSmall)
+                                                                            .color(Color::Muted)
+                                                                    )
+                                                                    .child(
+                                                                        Label::new("/")
+                                                                            .size(LabelSize::XSmall)
+                                                                            .color(Color::Disabled)
+                                                                    )
+                                                                    .child(
+                                                                        Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
+                                                                            .size(LabelSize::XSmall)
+                                                                            .color(Color::Muted)
+                                                                    )
+                                                            )
+                                                    )
+                                            )
+                                            .child(
+                                                // Remove button
+                                                IconButton::new(("remove", index), IconName::Trash)
                                                     .size(ButtonSize::Compact)
                                                     .style(ButtonStyle::Subtle)
-                                                    .icon_color(icon_color)
+                                                    .icon_color(Color::Error)
                                                     .tooltip(move |window, cx| {
-                                                        Tooltip::text(
-                                                            if is_playing { "Pause" } else { "Play" }
-                                                        )(window, cx)
+                                                        Tooltip::text("Remove recording")(window, cx)
                                                     })
                                                     .on_click({
                                                         let recording_id = recording_id.clone();
                                                         cx.listener(move |this, _event, _window, cx| {
-                                                            this.toggle_voice_playback(recording_id.clone(), cx);
+                                                            this.remove_voice_recording(recording_id.clone(), cx);
                                                         })
                                                     })
                                             )
-                                            .child(
-                                                v_flex()
-                                                    .gap_1()
-                                                    .flex_1()
-                                                    .min_w_0()
-                                                    .child(
-                                                        // Recording ID (truncated if needed)
-                                                        Label::new(recording.id.clone())
-                                                            .size(LabelSize::XSmall)
-                                                            .color(Color::Default)
-                                                            .single_line()
-                                                    )
-                                                    .child(
-                                                        // Time info
-                                                        h_flex()
-                                                            .gap_1()
-                                                            .items_center()
-                                                            .child(
-                                                                Label::new(format!("{:.1}s", current_time.as_secs_f32()))
-                                                                    .size(LabelSize::XSmall)
-                                                                    .color(Color::Muted)
-                                                            )
-                                                            .child(
-                                                                Label::new("/")
-                                                                    .size(LabelSize::XSmall)
-                                                                    .color(Color::Disabled)
-                                                            )
-                                                            .child(
-                                                                Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
-                                                                    .size(LabelSize::XSmall)
-                                                                    .color(Color::Muted)
-                                                            )
-                                                    )
-                                            )
                                     )
                                     .child(
-                                        // Remove button
-                                        IconButton::new(("remove", index), IconName::Trash)
-                                            .size(ButtonSize::Compact)
-                                            .style(ButtonStyle::Subtle)
-                                            .icon_color(Color::Error)
-                                            .tooltip(move |window, cx| {
-                                                Tooltip::text("Remove recording")(window, cx)
-                                            })
-                                            .on_click({
+                                        // Progress bar
+                                        canvas(
+                                            {
                                                 let recording_id = recording_id.clone();
-                                                cx.listener(move |this, _event, _window, cx| {
-                                                    this.remove_voice_recording(recording_id.clone(), cx);
-                                                })
-                                            })
-                                    )
-                            )
-                            .child(
-                                // Progress bar
-                                canvas(
-                                    {
-                                        let recording_id = recording_id.clone();
-                                        move |bounds, _window, _cx| (bounds, recording_id.clone())
-                                    },
-                                    {
-                                        let recording_id = recording_id.clone();
-                                        let progress = progress;
-                                        let is_playing = is_playing;
-                                        let entity = cx.entity().clone();
-                                        move |bounds, (_bounds_data, _recording_id), window, cx| {
-                                            // Draw simple progress bar background
-                                            window.paint_quad(gpui::fill(
-                                                bounds,
-                                                cx.theme().colors().element_background,
-                                            ));
-                                            
-                                            // Draw simple progress fill
-                                            let progress_width = bounds.size.width * progress;
-                                            let progress_bounds = gpui::Bounds {
-                                                origin: bounds.origin,
-                                                size: gpui::Size {
-                                                    width: progress_width,
-                                                    height: bounds.size.height,
-                                                },
-                                            };
-                                            
-                                            let fill_color = if is_playing { 
-                                                cx.theme().colors().text_accent 
-                                            } else { 
-                                                cx.theme().colors().element_disabled 
-                                            };
-                                            
-                                            window.paint_quad(gpui::fill(progress_bounds, fill_color));
-                                            
-                                            // Handle mouse events
-                                            window.on_mouse_event({
+                                                move |bounds, _window, _cx| (bounds, recording_id.clone())
+                                            },
+                                            {
                                                 let recording_id = recording_id.clone();
-                                                let entity = entity.clone();
-                                                move |event: &gpui::MouseDownEvent, _phase, _window, cx| {
-                                                    if bounds.contains(&event.position) {
-                                                        let relative_x = event.position.x - bounds.origin.x;
-                                                        let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
-                                                        
-                                                        entity.update(cx, |this, cx| {
-                                                            this.start_seek_voice_playback(recording_id.clone(), relative_position, cx);
-                                                        });
-                                                    }
-                                                }
-                                            });
-                                            
-                                            window.on_mouse_event({
-                                                let recording_id = recording_id.clone();
-                                                let entity = entity.clone();
-                                                move |event: &gpui::MouseMoveEvent, _phase, _window, cx| {
-                                                    if event.pressed_button == Some(gpui::MouseButton::Left) {
-                                                        let relative_x = event.position.x - bounds.origin.x;
-                                                        let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
-                                                        
-                                                        entity.update(cx, |this, cx| {
-                                                            if this.voice_player.is_seeking(&recording_id) {
-                                                                this.update_seek_position(recording_id.clone(), relative_position, cx);
+                                                let entity = cx.entity().clone();
+                                                move |bounds, (_bounds_data, _recording_id), window, cx| {
+                                                    // Draw simple progress bar background
+                                                    window.paint_quad(gpui::fill(
+                                                        bounds,
+                                                        cx.theme().colors().element_background,
+                                                    ));
+                                                    
+                                                    // Draw simple progress fill
+                                                    let progress_width = bounds.size.width * progress;
+                                                    let progress_bounds = gpui::Bounds {
+                                                        origin: bounds.origin,
+                                                        size: gpui::Size {
+                                                            width: progress_width,
+                                                            height: bounds.size.height,
+                                                        },
+                                                    };
+                                                    
+                                                    let fill_color = if is_playing { 
+                                                        cx.theme().colors().text_accent 
+                                                    } else { 
+                                                        cx.theme().colors().element_disabled 
+                                                    };
+                                                    
+                                                    window.paint_quad(gpui::fill(progress_bounds, fill_color));
+                                                    
+                                                    // Handle mouse events
+                                                    window.on_mouse_event({
+                                                        let recording_id = recording_id.clone();
+                                                        let entity = entity.clone();
+                                                        move |event: &gpui::MouseDownEvent, _phase, _window, cx| {
+                                                            if bounds.contains(&event.position) {
+                                                                let relative_x = event.position.x - bounds.origin.x;
+                                                                let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
+                                                                
+                                                                entity.update(cx, |this, cx| {
+                                                                    this.start_seek_voice_playback(recording_id.clone(), relative_position, cx);
+                                                                });
                                                             }
-                                                        });
-                                                    }
-                                                }
-                                            });
-                                            
-                                            window.on_mouse_event({
-                                                let recording_id = recording_id.clone();
-                                                let entity = entity.clone();
-                                                move |_event: &gpui::MouseUpEvent, _phase, _window, cx| {
-                                                    entity.update(cx, |this, cx| {
-                                                        if this.voice_player.is_seeking(&recording_id) {
-                                                            this.end_seek_voice_playback(recording_id.clone(), cx);
+                                                        }
+                                                    });
+                                                    
+                                                    window.on_mouse_event({
+                                                        let recording_id = recording_id.clone();
+                                                        let entity = entity.clone();
+                                                        move |event: &gpui::MouseMoveEvent, _phase, _window, cx| {
+                                                            if event.pressed_button == Some(gpui::MouseButton::Left) {
+                                                                let relative_x = event.position.x - bounds.origin.x;
+                                                                let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
+                                                                
+                                                                entity.update(cx, |this, cx| {
+                                                                    if this.voice_player.is_seeking(&recording_id) {
+                                                                        this.update_seek_position(recording_id.clone(), relative_position, cx);
+                                                                    }
+                                                                });
+                                                            }
+                                                        }
+                                                    });
+                                                    
+                                                    window.on_mouse_event({
+                                                        let recording_id = recording_id.clone();
+                                                        let entity = entity.clone();
+                                                        move |_event: &gpui::MouseUpEvent, _phase, _window, cx| {
+                                                            entity.update(cx, |this, cx| {
+                                                                if this.voice_player.is_seeking(&recording_id) {
+                                                                    this.end_seek_voice_playback(recording_id.clone(), cx);
+                                                                }
+                                                            });
                                                         }
                                                     });
                                                 }
-                                            });
-                                        }
+                                            }
+                                        )
+                                        .h_1p5()
+                                        .w_full()
+                                        .rounded_sm()
+                                        .cursor_pointer()
+                                    )
+                            })
+                        )
+                )
+                .child(
+                    PopoverMenu::new("playback-speed-menu")
+                        .trigger(Button::new("playback_speed_trigger", ""))
+                        .with_handle(self.playback_speed_menu_handle.clone())
+                        .menu({
+                            let entity = cx.entity().clone();
+                            let current_speed = self.voice_player.get_playback_speed();
+                            move |window, cx| {
+                                let speeds = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+                                
+                                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                                    for &speed in &speeds {
+                                        let is_current = (speed - current_speed).abs() < 0.01;
+                                        menu = menu.toggleable_entry(
+                                            format!("{:.1}x", speed),
+                                            is_current,
+                                            IconPosition::Start,
+                                            None,
+                                            {
+                                                let entity = entity.clone();
+                                                move |_window, cx| {
+                                                    entity.update(cx, |this, cx| {
+                                                        this.set_playback_speed(speed, cx);
+                                                    });
+                                                }
+                                            }
+                                        );
                                     }
-                                )
-                                .h_1p5()
-                                .w_full()
-                                .rounded_sm()
-                                .cursor_pointer()
-                            )
-                    })
+                                    menu
+                                }))
+                            }
+                        })
                 )
         )
     }
@@ -1616,23 +1668,6 @@ impl MessageEditor {
         }
         
         // Immediately update UI for responsive playback control
-        cx.notify();
-    }
-
-    fn start_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
-        let weak_entity = cx.entity().downgrade();
-        self.voice_player.set_event_callback(move |event| {
-            if let Some(_entity) = weak_entity.upgrade() {
-                log::info!("Voice player event: {:?}", event);
-            }
-        });
-
-        if let Err(e) = self.voice_player.start_playback(recording_id.clone()) {
-            log::error!("Failed to start voice playback: {}", e);
-            return;
-        }
-        
-        self.start_playback_update_task(cx);
         cx.notify();
     }
 
@@ -1797,34 +1832,16 @@ impl MessageEditor {
         }));
     }
 
-    fn stop_voice_playback(&mut self, cx: &mut Context<Self>) {
-        self.voice_player.stop_playback();
-        self.playback_update_task.take();
-        cx.notify();
-    }
-
-    fn pause_voice_playback(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = self.voice_player.pause_playback() {
-            log::error!("Failed to pause voice playback: {}", e);
-        }
-        self.playback_update_task.take();
-        cx.notify();
-    }
-
-    fn resume_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
-        if let Err(e) = self.voice_player.resume_playback(recording_id.clone()) {
-            log::error!("Failed to resume voice playback: {}", e);
-            return;
-        }
-        
-        self.start_playback_update_task(cx);
-        cx.notify();
-    }
-
     fn remove_voice_recording(&mut self, recording_id: String, cx: &mut Context<Self>) {
         log::info!("🗑️ Removing recording: {}", recording_id);
         self.voice_player.remove_recording(&recording_id);
         log::info!("✅ Successfully removed recording: {}", recording_id);
+        cx.notify();
+    }
+
+    fn set_playback_speed(&mut self, speed: f32, cx: &mut Context<Self>) {
+        log::info!("Setting playback speed to {:.2}x", speed);
+        self.voice_player.set_playback_speed(speed);
         cx.notify();
     }
 }
