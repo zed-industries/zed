@@ -147,6 +147,7 @@ zed_actions.workspace = true
 zeta.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
+tree-sitter-python.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

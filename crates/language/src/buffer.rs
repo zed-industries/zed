@@ -2985,6 +2985,7 @@ impl BufferSnapshot {
             },
         );
 
+        dbg!(&indent_change_rows);
         let mut indent_changes = indent_change_rows.into_iter().peekable();
         let mut prev_row = if config.auto_indent_using_last_non_empty_line {
             prev_non_blank_row.unwrap_or(0)
@@ -3021,7 +3022,9 @@ impl BufferSnapshot {
                 indent_changes.next();
             }
 
+            dbg!(&indent_ranges, &row, &prev_row, &row_start, &prev_row_start);
             for range in &indent_ranges {
+                println!("---");
                 if range.start.row >= row {
                     break;
                 }
@@ -3043,27 +3046,37 @@ impl BufferSnapshot {
                 .iter()
                 .any(|e| e.start.row < row && e.end > row_start);
 
+            dbg!(
+                &prev_row,
+                &outdent_to_row,
+                &outdent_from_prev_row,
+                &indent_from_prev_row
+            );
             let suggestion = if outdent_to_row == prev_row
                 || (outdent_from_prev_row && indent_from_prev_row)
             {
+                println!("1");
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
                 })
             } else if indent_from_prev_row {
+                println!("2");
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Greater,
                     within_error: within_error && !from_regex,
                 })
             } else if outdent_to_row < prev_row {
+                println!("3");
                 Some(IndentSuggestion {
                     basis_row: outdent_to_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
                 })
             } else if outdent_from_prev_row {
+                println!("4");
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Less,
@@ -3071,12 +3084,14 @@ impl BufferSnapshot {
                 })
             } else if config.auto_indent_using_last_non_empty_line || !self.is_line_blank(prev_row)
             {
+                println!("5");
                 Some(IndentSuggestion {
                     basis_row: prev_row,
                     delta: Ordering::Equal,
                     within_error: within_error && !from_regex,
                 })
             } else {
+                println!("6");
                 None
             };
 

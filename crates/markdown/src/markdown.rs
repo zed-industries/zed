@@ -225,7 +225,7 @@ impl Markdown {
         self.parse(cx);
     }
 
-    #[cfg(feature = "test-support")]
+    // #[cfg(feature = "test-support")]
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
         &self.parsed_markdown
     }
