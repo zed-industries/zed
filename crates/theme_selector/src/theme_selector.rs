@@ -30,7 +30,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-pub fn toggle_theme_selector(
+fn toggle_theme_selector(
     workspace: &mut Workspace,
     toggle: &zed_actions::theme_selector::Toggle,
     window: &mut Window,
@@ -48,7 +48,7 @@ pub fn toggle_theme_selector(
     });
 }
 
-pub fn toggle_icon_theme_selector(
+fn toggle_icon_theme_selector(
     workspace: &mut Workspace,
     toggle: &zed_actions::icon_theme_selector::Toggle,
     window: &mut Window,
