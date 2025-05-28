@@ -724,7 +724,16 @@ mod tests {
                 cx,
             )
         });
-        let raw_edits = simulate_llm_output(
+        let (apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        simulate_llm_output(
+            &agent,
             indoc! {"
                 <old_text></old_text>
                 <new_text>jkl</new_text>
@@ -734,15 +743,7 @@ mod tests {
             &mut rng,
             cx,
         );
-        agent
-            .apply_edit_chunks(
-                buffer.clone(),
-                raw_edits,
-                mpsc::unbounded().0,
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
+        apply.await.unwrap();
 
         pretty_assertions::assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
@@ -768,7 +769,16 @@ mod tests {
                 cx,
             )
         });
-        let raw_edits = simulate_llm_output(
+        let (apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        simulate_llm_output(
+            &agent,
             indoc! {"
                 <old_text>
                     ipsum
@@ -785,15 +795,8 @@ mod tests {
             &mut rng,
             cx,
         );
-        agent
-            .apply_edit_chunks(
-                buffer.clone(),
-                raw_edits,
-                mpsc::unbounded().0,
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
+        apply.await.unwrap();
+
         pretty_assertions::assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             indoc! {"
@@ -810,7 +813,16 @@ mod tests {
     async fn test_dependent_edits(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
-        let raw_edits = simulate_llm_output(
+        let (apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        simulate_llm_output(
+            &agent,
             indoc! {"
                 <old_text>
                 def
@@ -829,15 +841,8 @@ mod tests {
             &mut rng,
             cx,
         );
-        agent
-            .apply_edit_chunks(
-                buffer.clone(),
-                raw_edits,
-                mpsc::unbounded().0,
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
+        apply.await.unwrap();
+
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "abc\nDeF\nghi"
@@ -848,7 +853,16 @@ mod tests {
     async fn test_old_text_hallucination(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;
         let buffer = cx.new(|cx| Buffer::local("abc\ndef\nghi", cx));
-        let raw_edits = simulate_llm_output(
+        let (apply, _events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        simulate_llm_output(
+            &agent,
             indoc! {"
                 <old_text>
                 jkl
@@ -867,15 +881,8 @@ mod tests {
             &mut rng,
             cx,
         );
-        agent
-            .apply_edit_chunks(
-                buffer.clone(),
-                raw_edits,
-                mpsc::unbounded().0,
-                &mut cx.to_async(),
-            )
-            .await
-            .unwrap();
+        apply.await.unwrap();
+
         assert_eq!(
             buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
             "ABC\ndef\nghi"
@@ -1297,18 +1304,22 @@ mod tests {
     }
 
     fn simulate_llm_output(
+        agent: &EditAgent,
         output: &str,
         rng: &mut StdRng,
         cx: &mut TestAppContext,
-    ) -> impl 'static + Send + Stream<Item = Result<String, LanguageModelCompletionError>> {
+    ) {
         let executor = cx.executor();
-        stream::iter(to_random_chunks(rng, output).into_iter().map(Ok)).then(move |chunk| {
-            let executor = executor.clone();
-            async move {
+        let chunks = to_random_chunks(rng, output);
+        let model = agent.model.clone();
+        cx.background_spawn(async move {
+            for chunk in chunks {
                 executor.simulate_random_delay().await;
-                chunk
+                model.as_fake().stream_last_completion_response(chunk);
             }
+            model.as_fake().end_last_completion_stream();
         })
+        .detach();
     }
 
     async fn init_test(cx: &mut TestAppContext) -> EditAgent {
