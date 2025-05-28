@@ -24,7 +24,7 @@ use language_model::{
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolUseId, MessageContent,
     ModelRequestLimitReachedError, PaymentRequiredError, RequestUsage, Role, SelectedModel,
-    StopReason, TokenUsage, WrappedTextContent,
+    StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::Project;
@@ -891,10 +891,7 @@ impl Thread {
 
     pub fn output_for_tool(&self, id: &LanguageModelToolUseId) -> Option<&Arc<str>> {
         match &self.tool_use.tool_result(id)?.content {
-            LanguageModelToolResultContent::Text(text)
-            | LanguageModelToolResultContent::WrappedText(WrappedTextContent { text, .. }) => {
-                Some(text)
-            }
+            LanguageModelToolResultContent::Text(text) => Some(text),
             LanguageModelToolResultContent::Image(_) => {
                 // TODO: We should display image
                 None
@@ -2593,11 +2590,7 @@ impl Thread {
 
                 writeln!(markdown, "**\n")?;
                 match &tool_result.content {
-                    LanguageModelToolResultContent::Text(text)
-                    | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                        text,
-                        ..
-                    }) => {
+                    LanguageModelToolResultContent::Text(text) => {
                         writeln!(markdown, "{text}")?;
                     }
                     LanguageModelToolResultContent::Image(image) => {
