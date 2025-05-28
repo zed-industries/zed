@@ -36,7 +36,7 @@ use futures::{FutureExt as _, future};
 use gpui::{
     Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
-    actions,
+    actions, canvas,
 };
 use language::{Buffer, Language};
 use language_model::{
@@ -83,6 +83,13 @@ pub struct PlaybackState {
     pub is_playing: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct SeekingState {
+    pub recording_id: String,
+    pub was_playing_before_seek: bool,
+    pub seek_position: f32, // 0.0 to 1.0
+}
+
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
     thread: Entity<Thread>,
@@ -112,6 +119,8 @@ pub struct MessageEditor {
     // Playback state
     playback_state: Option<PlaybackState>,
     playback_update_task: Option<Task<()>>,
+    // Seeking state
+    seeking_state: Option<SeekingState>,
 }
 
 const MAX_EDITOR_LINES: usize = 8;
@@ -273,6 +282,7 @@ impl MessageEditor {
             voice_recordings: Vec::new(),
             playback_state: None,
             playback_update_task: None,
+            seeking_state: None,
         };
         
         instance
@@ -1399,16 +1409,39 @@ impl MessageEditor {
                         
                         let (progress, current_time) = if let Some(playback_state) = &self.playback_state {
                             if playback_state.recording_id == recording_id {
-                                if playback_state.is_playing {
-                                    let elapsed = playback_state.start_time.elapsed();
-                                    let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed;
-                                    let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
-                                    (progress, played_duration)
+                                // Check if we're currently seeking this recording
+                                if let Some(seeking_state) = &self.seeking_state {
+                                    if seeking_state.recording_id == recording_id {
+                                        // Show seeking position
+                                        let seek_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * seeking_state.seek_position);
+                                        (seeking_state.seek_position, seek_time)
+                                    } else {
+                                        // Not seeking this recording, show normal playback progress
+                                        if playback_state.is_playing {
+                                            let elapsed = playback_state.start_time.elapsed();
+                                            let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed;
+                                            let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
+                                            (progress, played_duration)
+                                        } else {
+                                            // Paused state - calculate progress based on remaining duration
+                                            let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration);
+                                            let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
+                                            (progress, played_duration)
+                                        }
+                                    }
                                 } else {
-                                    // Paused state - calculate progress based on remaining duration
-                                    let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration);
-                                    let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
-                                    (progress, played_duration)
+                                    // Not seeking, show normal playback progress
+                                    if playback_state.is_playing {
+                                        let elapsed = playback_state.start_time.elapsed();
+                                        let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration) + elapsed;
+                                        let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
+                                        (progress, played_duration)
+                                    } else {
+                                        // Paused state - calculate progress based on remaining duration
+                                        let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration);
+                                        let progress = (played_duration.as_secs_f32() / playback_state.original_duration.as_secs_f32()).min(1.0);
+                                        (progress, played_duration)
+                                    }
                                 }
                             } else {
                                 (0.0, Duration::ZERO)
@@ -1473,29 +1506,109 @@ impl MessageEditor {
                                 v_flex()
                                     .gap_1()
                                     .child(
-                                        // Progress bar - separate from play button
-                                        div()
-                                            .h_1p5()
-                                            .w_full()
-                                            .bg(cx.theme().colors().element_background)
-                                            .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                            .rounded_sm()
-                                            .cursor_pointer()
-                                            .relative()
-                                            .child(
-                                                div()
-                                                    .h_full()
-                                                    .w(relative(progress))
-                                                    .bg(if is_playing { cx.theme().colors().text_accent } else { cx.theme().colors().element_disabled })
-                                                    .rounded_sm()
-                                            )
-                                            .on_mouse_down(gpui::MouseButton::Left, {
+                                        // Progress bar - separate from play button with exact bounds calculation
+                                        canvas(
+                                            {
                                                 let recording_id = recording_id.clone();
-                                                cx.listener(move |this, event, window, cx| {
-                                                    cx.stop_propagation();
-                                                    this.start_seek_voice_playback(recording_id.clone(), event, window, cx);
-                                                })
-                                            })
+                                                move |bounds, _window, _cx| (bounds, recording_id.clone())
+                                            },
+                                            {
+                                                let recording_id = recording_id.clone();
+                                                let progress = progress;
+                                                let is_playing = is_playing;
+                                                let entity = cx.entity().clone();
+                                                move |bounds, (_bounds_data, _recording_id), window, cx| {
+                                                    // Draw the progress bar background
+                                                    window.paint_quad(gpui::fill(
+                                                        bounds,
+                                                        cx.theme().colors().element_background,
+                                                    ));
+                                                    
+                                                    // Draw the progress fill
+                                                    let progress_width = bounds.size.width * progress;
+                                                    let progress_bounds = gpui::Bounds {
+                                                        origin: bounds.origin,
+                                                        size: gpui::Size {
+                                                            width: progress_width,
+                                                            height: bounds.size.height,
+                                                        },
+                                                    };
+                                                    
+                                                    let fill_color = if is_playing { 
+                                                        cx.theme().colors().text_accent 
+                                                    } else { 
+                                                        cx.theme().colors().element_disabled 
+                                                    };
+                                                    
+                                                    window.paint_quad(gpui::fill(progress_bounds, fill_color));
+                                                    
+                                                    // Handle mouse events with exact bounds
+                                                    window.on_mouse_event({
+                                                        let recording_id = recording_id.clone();
+                                                        let entity = entity.clone();
+                                                        move |event: &gpui::MouseDownEvent, _phase, _window, cx| {
+                                                            if bounds.contains(&event.position) {
+                                                                // Calculate exact relative position within the progress bar
+                                                                let relative_x = event.position.x - bounds.origin.x;
+                                                                let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
+                                                                
+                                                                // Update the MessageEditor entity - pause and seek
+                                                                entity.update(cx, |this, cx| {
+                                                                    this.start_seek_voice_playback(recording_id.clone(), relative_position, cx);
+                                                                });
+                                                            }
+                                                        }
+                                                    });
+                                                    
+                                                    // Handle mouse move for continuous seeking while dragging
+                                                    window.on_mouse_event({
+                                                        let recording_id = recording_id.clone();
+                                                        let entity = entity.clone();
+                                                        move |event: &gpui::MouseMoveEvent, _phase, _window, cx| {
+                                                            // Only seek if we're currently seeking this recording and mouse is pressed
+                                                            if event.pressed_button == Some(gpui::MouseButton::Left) {
+                                                                entity.update(cx, |this, cx| {
+                                                                    // Only update if we're actually seeking this recording
+                                                                    if let Some(seeking_state) = &this.seeking_state {
+                                                                        if seeking_state.recording_id == recording_id {
+                                                                            // Calculate relative position, clamping to bounds even if mouse is outside
+                                                                            let relative_x = event.position.x - bounds.origin.x;
+                                                                            let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
+                                                                            
+                                                                            this.update_seek_position(recording_id.clone(), relative_position, cx);
+                                                                        }
+                                                                    }
+                                                                });
+                                                            }
+                                                        }
+                                                    });
+                                                    
+                                                    // Handle mouse up to resume playback after seeking
+                                                    window.on_mouse_event({
+                                                        let recording_id = recording_id.clone();
+                                                        let entity = entity.clone();
+                                                        move |_event: &gpui::MouseUpEvent, _phase, _window, cx| {
+                                                            // Resume playback after seeking - don't check bounds since user might drag outside and release
+                                                            entity.update(cx, |this, cx| {
+                                                                // Only end seeking if we're actually seeking this recording
+                                                                if let Some(seeking_state) = &this.seeking_state {
+                                                                    if seeking_state.recording_id == recording_id {
+                                                                        log::info!("🖱️ Mouse up detected for recording: {}", recording_id);
+                                                                        this.end_seek_voice_playback(recording_id.clone(), cx);
+                                                                    }
+                                                                } else {
+                                                                    log::debug!("🖱️ Mouse up but no seeking state for recording: {}", recording_id);
+                                                                }
+                                                            });
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        )
+                                        .h_1p5()
+                                        .w_full()
+                                        .rounded_sm()
+                                        .cursor_pointer()
                                     )
                             )
                             .child(
@@ -1671,136 +1784,184 @@ impl MessageEditor {
         }
     }
 
-    fn start_seek_voice_playback(&mut self, recording_id: String, _event: &gpui::MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn seek_voice_playback_with_position(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
         if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
-            // For now, we'll use a simplified approach since element_bounds is not available
-            // In a real implementation, you'd want to get the actual bounds of the progress bar element
-            // We'll calculate a relative position based on a reasonable assumption
-            
-            // Assume the progress bar is roughly in the center area and use a simple calculation
-            // This is a placeholder - in practice you'd want more precise bounds calculation
-            
-            let relative_position = 0.5f32; // Default to middle for now
-            
-            // You could enhance this by using the mouse position relative to the window
-            // and making assumptions about the layout, but for now we'll use a simple approach
-            
             let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
             
-            log::info!("Seeking to position {:.1}s ({:.1}%) in recording: {}", 
-                target_time.as_secs_f32(), relative_position * 100.0, recording_id);
+            log::info!("Seeking to position {:.1}s in recording: {}", target_time.as_secs_f32(), recording.id);
             
-            // Store the state before seeking (was it playing?)
+            // Update playback state to new position
+            if let Some(playback_state) = &mut self.playback_state {
+                if playback_state.recording_id == recording_id {
+                    playback_state.duration = recording.duration.saturating_sub(target_time);
+                    playback_state.start_time = std::time::Instant::now();
+                    
+                    // If not currently playing, start playback from seek position
+                    if !playback_state.is_playing {
+                        self.resume_voice_playback(recording_id, cx);
+                    } else {
+                        // If playing, restart the update task with new position
+                        self.playback_update_task.take();
+                        let recording_id_for_update = recording_id.clone();
+                        self.playback_update_task = Some(cx.spawn(async move |this, cx| {
+                            let update_interval = Duration::from_millis(50);
+                            
+                            loop {
+                                smol::Timer::after(update_interval).await;
+                                
+                                let should_continue = this.update(cx, |this, cx| {
+                                    if let Some(playback_state) = &this.playback_state {
+                                        if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
+                                            let elapsed = playback_state.start_time.elapsed();
+                                            
+                                            if elapsed >= playback_state.duration {
+                                                log::info!("Playback completed for recording: {}", recording_id_for_update);
+                                                this.stop_voice_playback(cx);
+                                                return false;
+                                            }
+                                            
+                                            cx.notify();
+                                            return true;
+                                        }
+                                    }
+                                    false
+                                }).unwrap_or(false);
+                                
+                                if !should_continue {
+                                    break;
+                                }
+                            }
+                        }));
+                    }
+                } else {
+                    // Different recording, start new playback at seek position
+                    self.stop_voice_playback(cx);
+                    self.start_voice_playback_at_position(recording_id, target_time, cx);
+                }
+            } else {
+                // No current playback, start at seek position
+                self.start_voice_playback_at_position(recording_id, target_time, cx);
+            }
+            
+            cx.notify();
+        }
+    }
+
+    fn start_seek_voice_playback(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
+        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
+            // Guard: Don't start seeking if we're already seeking this recording
+            if let Some(existing_seeking_state) = &self.seeking_state {
+                if existing_seeking_state.recording_id == recording_id {
+                    log::debug!("🎯 Already seeking recording: {}, ignoring duplicate start_seek call", recording_id);
+                    return;
+                }
+            }
+            
+            // Check if this recording is currently playing
             let was_playing = self.playback_state.as_ref()
                 .map(|state| state.recording_id == recording_id && state.is_playing)
                 .unwrap_or(false);
             
-            // Pause playback during seek
+            // Pause playback if it was playing
             if was_playing {
+                log::info!("🔇 Pausing playback for seeking: {}", recording_id);
                 self.pause_voice_playback(cx);
             }
             
-            // Update or create playback state at the new position
+            // Set seeking state
+            self.seeking_state = Some(SeekingState {
+                recording_id: recording_id.clone(),
+                was_playing_before_seek: was_playing,
+                seek_position: relative_position,
+            });
+            
+            // Update playback position
+            let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
+            
             if let Some(playback_state) = &mut self.playback_state {
                 if playback_state.recording_id == recording_id {
-                    // Update existing playback state
-                    let remaining_duration = recording.duration.saturating_sub(target_time);
-                    playback_state.duration = remaining_duration;
+                    // Update existing playback state to new position
+                    playback_state.duration = recording.duration.saturating_sub(target_time);
                     playback_state.start_time = std::time::Instant::now();
                     playback_state.is_playing = false; // Paused during seek
                 } else {
                     // Different recording, create new playback state
                     self.stop_voice_playback(cx);
-                    let remaining_duration = recording.duration.saturating_sub(target_time);
                     self.playback_state = Some(PlaybackState {
                         recording_id: recording_id.clone(),
                         start_time: std::time::Instant::now(),
-                        duration: remaining_duration,
+                        duration: recording.duration.saturating_sub(target_time),
                         original_duration: recording.duration,
                         is_playing: false,
                     });
                 }
             } else {
                 // No current playback, create new state at seek position
-                let remaining_duration = recording.duration.saturating_sub(target_time);
                 self.playback_state = Some(PlaybackState {
                     recording_id: recording_id.clone(),
                     start_time: std::time::Instant::now(),
-                    duration: remaining_duration,
+                    duration: recording.duration.saturating_sub(target_time),
                     original_duration: recording.duration,
                     is_playing: false,
                 });
             }
             
-            // Resume playback if it was playing before
-            if was_playing {
-                self.resume_voice_playback(recording_id, cx);
-            }
+            log::info!("🎯 Started seeking to position {:.1}s in recording: {} (was_playing: {})", 
+                target_time.as_secs_f32(), recording_id, was_playing);
             
             cx.notify();
         }
     }
 
-    fn start_voice_playback_at_position(&mut self, recording_id: String, start_position: Duration, cx: &mut Context<Self>) {
-        if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
-            log::info!("Starting playback of voice recording: {} at position {:.1}s", recording.id, start_position.as_secs_f32());
-            
-            // Stop any existing playback
-            self.stop_voice_playback(cx);
-            
-            // Calculate remaining duration from start position
-            let remaining_duration = recording.duration.saturating_sub(start_position);
-            
-            // Clone recording_id for use in async closures
-            let recording_id_for_update = recording_id.clone();
-            
-            // Set up new playback state
-            self.playback_state = Some(PlaybackState {
-                recording_id: recording_id.clone(),
-                start_time: std::time::Instant::now(),
-                duration: remaining_duration,
-                original_duration: recording.duration,
-                is_playing: true,
-            });
-            
-            // Start playback update task
-            self.playback_update_task = Some(cx.spawn(async move |this, cx| {
-                let update_interval = Duration::from_millis(50);
+    fn end_seek_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
+        if let Some(seeking_state) = self.seeking_state.take() {
+            if seeking_state.recording_id == recording_id {
+                log::info!("🎯 Ended seeking for recording: {} (was_playing: {})", 
+                    recording_id, seeking_state.was_playing_before_seek);
                 
-                loop {
-                    smol::Timer::after(update_interval).await;
-                    
-                    let should_continue = this.update(cx, |this, cx| {
-                        if let Some(playback_state) = &this.playback_state {
-                            if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
-                                let elapsed = playback_state.start_time.elapsed();
-                                
-                                if elapsed >= playback_state.duration {
-                                    log::info!("Playback completed for recording: {}", recording_id_for_update);
-                                    this.stop_voice_playback(cx);
-                                    return false;
-                                }
-                                
-                                cx.notify();
-                                return true;
-                            }
-                        }
-                        false
-                    }).unwrap_or(false);
-                    
-                    if !should_continue {
-                        break;
-                    }
+                // Resume playback if it was playing before seeking
+                if seeking_state.was_playing_before_seek {
+                    log::info!("▶️ Resuming playback after seeking: {}", recording_id);
+                    self.resume_voice_playback(recording_id, cx);
+                } else {
+                    log::info!("⏸️ Staying paused after seeking: {}", recording_id);
                 }
-            }));
-            
-            cx.notify();
+                
+                cx.notify();
+            } else {
+                // Put the seeking state back if it's for a different recording
+                self.seeking_state = Some(seeking_state);
+            }
         }
     }
 
-    fn seek_voice_playback(&mut self, recording_id: String, _event: &gpui::MouseDownEvent, cx: &mut Context<Self>) {
-        // This method is kept for compatibility but now just calls the fallback
-        self.seek_voice_playback_fallback(recording_id, 0.5, cx);
+    fn update_seek_position(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
+        // Only update if we're currently seeking this recording
+        if let Some(seeking_state) = &mut self.seeking_state {
+            if seeking_state.recording_id == recording_id {
+                // Update the seek position
+                seeking_state.seek_position = relative_position;
+                
+                // Update the playback state to reflect the new position
+                if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
+                    let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
+                    
+                    if let Some(playback_state) = &mut self.playback_state {
+                        if playback_state.recording_id == recording_id {
+                            // Update playback position
+                            playback_state.duration = recording.duration.saturating_sub(target_time);
+                            playback_state.start_time = std::time::Instant::now();
+                            // Keep is_playing as false during seeking
+                        }
+                    }
+                    
+                    log::debug!("🎯 Continuous seek to {:.1}s ({:.1}%)", target_time.as_secs_f32(), relative_position * 100.0);
+                }
+                
+                // Notify for UI update
+                cx.notify();
+            }
+        }
     }
 
     fn render_voice_button(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -1922,67 +2083,58 @@ impl MessageEditor {
         log::info!("Inserted voice recording: {} ({}s)", recording.id, recording.duration.as_secs_f32());
     }
 
-    fn seek_voice_playback_fallback(&mut self, recording_id: String, relative_position: f32, cx: &mut Context<Self>) {
+    fn start_voice_playback_at_position(&mut self, recording_id: String, start_position: Duration, cx: &mut Context<Self>) {
         if let Some(recording) = self.voice_recordings.iter().find(|r| r.id == recording_id).cloned() {
-            let target_time = Duration::from_secs_f32(recording.duration.as_secs_f32() * relative_position);
+            log::info!("Starting playback of voice recording: {} at position {:.1}s", recording.id, start_position.as_secs_f32());
             
-            log::info!("Seeking to position {:.1}s (fallback) in recording: {}", target_time.as_secs_f32(), recording_id);
+            // Stop any existing playback
+            self.stop_voice_playback(cx);
             
-            // Update playback state to new position
-            if let Some(playback_state) = &mut self.playback_state {
-                if playback_state.recording_id == recording_id {
-                    // Calculate remaining duration from seek position
-                    let remaining_duration = recording.duration.saturating_sub(target_time);
+            // Calculate remaining duration from start position
+            let remaining_duration = recording.duration.saturating_sub(start_position);
+            
+            // Clone recording_id for use in async closures
+            let recording_id_for_update = recording_id.clone();
+            
+            // Set up new playback state
+            self.playback_state = Some(PlaybackState {
+                recording_id: recording_id.clone(),
+                start_time: std::time::Instant::now(),
+                duration: remaining_duration,
+                original_duration: recording.duration,
+                is_playing: true,
+            });
+            
+            // Start playback update task
+            self.playback_update_task = Some(cx.spawn(async move |this, cx| {
+                let update_interval = Duration::from_millis(50);
+                
+                loop {
+                    smol::Timer::after(update_interval).await;
                     
-                    playback_state.duration = remaining_duration;
-                    playback_state.start_time = std::time::Instant::now();
-                    
-                    // If not currently playing, start playback from seek position
-                    if !playback_state.is_playing {
-                        self.resume_voice_playback(recording_id, cx);
-                    } else {
-                        // If playing, restart the update task with new position
-                        self.playback_update_task.take();
-                        let recording_id_for_update = recording_id.clone();
-                        self.playback_update_task = Some(cx.spawn(async move |this, cx| {
-                            let update_interval = Duration::from_millis(50);
-                            
-                            loop {
-                                smol::Timer::after(update_interval).await;
+                    let should_continue = this.update(cx, |this, cx| {
+                        if let Some(playback_state) = &this.playback_state {
+                            if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
+                                let elapsed = playback_state.start_time.elapsed();
                                 
-                                let should_continue = this.update(cx, |this, cx| {
-                                    if let Some(playback_state) = &this.playback_state {
-                                        if playback_state.recording_id == recording_id_for_update && playback_state.is_playing {
-                                            let elapsed = playback_state.start_time.elapsed();
-                                            
-                                            if elapsed >= playback_state.duration {
-                                                log::info!("Playback completed for recording: {}", recording_id_for_update);
-                                                this.stop_voice_playback(cx);
-                                                return false;
-                                            }
-                                            
-                                            cx.notify();
-                                            return true;
-                                        }
-                                    }
-                                    false
-                                }).unwrap_or(false);
-                                
-                                if !should_continue {
-                                    break;
+                                if elapsed >= playback_state.duration {
+                                    log::info!("Playback completed for recording: {}", recording_id_for_update);
+                                    this.stop_voice_playback(cx);
+                                    return false;
                                 }
+                                
+                                cx.notify();
+                                return true;
                             }
-                        }));
+                        }
+                        false
+                    }).unwrap_or(false);
+                    
+                    if !should_continue {
+                        break;
                     }
-                } else {
-                    // Different recording, start new playback at seek position
-                    self.stop_voice_playback(cx);
-                    self.start_voice_playback_at_position(recording_id, target_time, cx);
                 }
-            } else {
-                // No current playback, start at seek position
-                self.start_voice_playback_at_position(recording_id, target_time, cx);
-            }
+            }));
             
             cx.notify();
         }
