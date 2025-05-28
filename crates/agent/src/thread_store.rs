@@ -10,6 +10,8 @@ use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
+use db::sqlez_macros::sql;
+use db::{define_connection, query};
 use futures::channel::{mpsc, oneshot};
 use futures::future::{self, BoxFuture, Shared};
 use futures::{FutureExt as _, StreamExt as _};
@@ -985,5 +987,34 @@ impl ThreadsDatabase {
             txn.commit()?;
             Ok(())
         })
+    }
+}
+
+define_connection!(pub static ref AGENT_THREADS: ThreadStoreDB<()> =
+    &[sql!(
+        CREATE TABLE IF NOT EXISTS agent_threads(
+            id TEXT PRIMARY KEY,
+            summary TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            data TEXT NOT NULL,
+        ) STRICT;
+    )];
+);
+
+impl ThreadStoreDB {
+    query! {
+        fn all_threads(thread_id: ThreadId) -> Result<SerializedThreadMetadata> {
+            SELECT id, summary, updated_at
+            FROM agent_threads
+            WHERE id = ?
+        }
+    }
+
+    query! {
+        fn get_thread(thread_id: ThreadId) -> Result<Option<SerializedThread>> {
+            SELECT data
+            FROM agent_threads
+            WHERE id = ?
+        }
     }
 }
