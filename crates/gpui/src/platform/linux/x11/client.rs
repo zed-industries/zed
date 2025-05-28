@@ -1,4 +1,4 @@
-use crate::platform::scap_screen_capture::scap_screen_sources;
+use crate::{Capslock, platform::scap_screen_capture::scap_screen_sources};
 use core::str;
 use std::{
     cell::RefCell,
@@ -63,20 +63,6 @@ use crate::{
     PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
     ScaledPixels, ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
     modifiers_from_xinput_info, point, px,
-};
-use crate::{
-    Capslock,
-    platform::{
-        LinuxCommon, PlatformWindow,
-        blade::BladeContext,
-        linux::{
-            LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal,
-            platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
-            reveal_path_internal,
-            xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-        },
-        scap_screen_capture::scap_screen_sources,
-    },
 };
 
 /// Value for DeviceId parameters which selects all devices.
