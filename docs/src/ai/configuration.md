@@ -16,7 +16,7 @@ Here's an overview of the supported providers and tool call support:
 | [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
 | [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
 | [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
-| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | ✅                                                                                                                                                                          |
 | [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
 | [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
 | [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
@@ -248,7 +248,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### LM Studio {#lmstudio}
 
-> 🚫 Does not support tool use
+> ✅ Supports tool use
 
 1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
 2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b

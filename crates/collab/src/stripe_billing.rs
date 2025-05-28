@@ -1,31 +1,47 @@
 use std::sync::Arc;
 
-use crate::Result;
-use crate::db::billing_subscription::SubscriptionKind;
-use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
-use stripe::{CreateCustomer, Customer, CustomerId, PriceId, SubscriptionStatus};
+use stripe::SubscriptionStatus;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use crate::Result;
+use crate::db::billing_subscription::SubscriptionKind;
+use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
+use crate::stripe_client::{
+    RealStripeClient, StripeClient, StripeCustomerId, StripeMeter, StripePrice, StripePriceId,
+};
+
 pub struct StripeBilling {
     state: RwLock<StripeBillingState>,
-    client: Arc<stripe::Client>,
+    real_client: Arc<stripe::Client>,
+    client: Arc<dyn StripeClient>,
 }
 
 #[derive(Default)]
 struct StripeBillingState {
     meters_by_event_name: HashMap<String, StripeMeter>,
-    price_ids_by_meter_id: HashMap<String, stripe::PriceId>,
-    prices_by_lookup_key: HashMap<String, stripe::Price>,
+    price_ids_by_meter_id: HashMap<String, StripePriceId>,
+    prices_by_lookup_key: HashMap<String, StripePrice>,
 }
 
 impl StripeBilling {
     pub fn new(client: Arc<stripe::Client>) -> Self {
         Self {
+            client: Arc::new(RealStripeClient::new(client.clone())),
+            real_client: client,
+            state: RwLock::default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test(client: Arc<crate::stripe_client::FakeStripeClient>) -> Self {
+        Self {
+            // This is just temporary until we can remove all usages of the real Stripe client.
+            real_client: Arc::new(stripe::Client::new("sk_test")),
             client,
             state: RwLock::default(),
         }
@@ -36,24 +52,16 @@ impl StripeBilling {
 
         let mut state = self.state.write().await;
 
-        let (meters, prices) = futures::try_join!(
-            StripeMeter::list(&self.client),
-            stripe::Price::list(
-                &self.client,
-                &stripe::ListPrices {
-                    limit: Some(100),
-                    ..Default::default()
-                }
-            )
-        )?;
+        let (meters, prices) =
+            futures::try_join!(self.client.list_meters(), self.client.list_prices())?;
 
-        for meter in meters.data {
+        for meter in meters {
             state
                 .meters_by_event_name
                 .insert(meter.event_name.clone(), meter);
         }
 
-        for price in prices.data {
+        for price in prices {
             if let Some(lookup_key) = price.lookup_key.clone() {
                 state.prices_by_lookup_key.insert(lookup_key, price.clone());
             }
@@ -70,15 +78,15 @@ impl StripeBilling {
         Ok(())
     }
 
-    pub async fn zed_pro_price_id(&self) -> Result<PriceId> {
+    pub async fn zed_pro_price_id(&self) -> Result<StripePriceId> {
         self.find_price_id_by_lookup_key("zed-pro").await
     }
 
-    pub async fn zed_free_price_id(&self) -> Result<PriceId> {
+    pub async fn zed_free_price_id(&self) -> Result<StripePriceId> {
         self.find_price_id_by_lookup_key("zed-free").await
     }
 
-    pub async fn find_price_id_by_lookup_key(&self, lookup_key: &str) -> Result<PriceId> {
+    pub async fn find_price_id_by_lookup_key(&self, lookup_key: &str) -> Result<StripePriceId> {
         self.state
             .read()
             .await
@@ -88,7 +96,7 @@ impl StripeBilling {
             .ok_or_else(|| crate::Error::Internal(anyhow!("no price ID found for {lookup_key:?}")))
     }
 
-    pub async fn find_price_by_lookup_key(&self, lookup_key: &str) -> Result<stripe::Price> {
+    pub async fn find_price_by_lookup_key(&self, lookup_key: &str) -> Result<StripePrice> {
         self.state
             .read()
             .await
@@ -102,8 +110,10 @@ impl StripeBilling {
         &self,
         subscription: &stripe::Subscription,
     ) -> Option<SubscriptionKind> {
-        let zed_pro_price_id = self.zed_pro_price_id().await.ok()?;
-        let zed_free_price_id = self.zed_free_price_id().await.ok()?;
+        let zed_pro_price_id: stripe::PriceId =
+            self.zed_pro_price_id().await.ok()?.try_into().ok()?;
+        let zed_free_price_id: stripe::PriceId =
+            self.zed_free_price_id().await.ok()?.try_into().ok()?;
 
         subscription.items.data.iter().find_map(|item| {
             let price = item.price.as_ref()?;
@@ -129,18 +139,11 @@ impl StripeBilling {
     pub async fn find_or_create_customer_by_email(
         &self,
         email_address: Option<&str>,
-    ) -> Result<CustomerId> {
+    ) -> Result<StripeCustomerId> {
         let existing_customer = if let Some(email) = email_address {
-            let customers = Customer::list(
-                &self.client,
-                &stripe::ListCustomers {
-                    email: Some(email),
-                    ..Default::default()
-                },
-            )
-            .await?;
+            let customers = self.client.list_customers_by_email(email).await?;
 
-            customers.data.first().cloned()
+            customers.first().cloned()
         } else {
             None
         };
@@ -148,14 +151,12 @@ impl StripeBilling {
         let customer_id = if let Some(existing_customer) = existing_customer {
             existing_customer.id
         } else {
-            let customer = Customer::create(
-                &self.client,
-                CreateCustomer {
+            let customer = self
+                .client
+                .create_customer(crate::stripe_client::CreateCustomerParams {
                     email: email_address,
-                    ..Default::default()
-                },
-            )
-            .await?;
+                })
+                .await?;
 
             customer.id
         };
@@ -166,12 +167,13 @@ impl StripeBilling {
     pub async fn subscribe_to_price(
         &self,
         subscription_id: &stripe::SubscriptionId,
-        price: &stripe::Price,
+        price: &StripePrice,
     ) -> Result<()> {
         let subscription =
-            stripe::Subscription::retrieve(&self.client, &subscription_id, &[]).await?;
+            stripe::Subscription::retrieve(&self.real_client, &subscription_id, &[]).await?;
 
-        if subscription_contains_price(&subscription, &price.id) {
+        let price_id = price.id.clone().try_into()?;
+        if subscription_contains_price(&subscription, &price_id) {
             return Ok(());
         }
 
@@ -181,7 +183,7 @@ impl StripeBilling {
         let _units_for_billing_threshold = BILLING_THRESHOLD_IN_CENTS / price_per_unit;
 
         stripe::Subscription::update(
-            &self.client,
+            &self.real_client,
             subscription_id,
             stripe::UpdateSubscription {
                 items: Some(vec![stripe::UpdateSubscriptionItems {
@@ -211,7 +213,7 @@ impl StripeBilling {
         let idempotency_key = Uuid::new_v4();
 
         StripeMeterEvent::create(
-            &self.client,
+            &self.real_client,
             StripeCreateMeterEventParams {
                 identifier: &format!("model_requests/{}", idempotency_key),
                 event_name,
@@ -246,7 +248,7 @@ impl StripeBilling {
         }]);
         params.success_url = Some(success_url);
 
-        let session = stripe::CheckoutSession::create(&self.client, params).await?;
+        let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
         Ok(session.url.context("no checkout session URL")?)
     }
 
@@ -300,7 +302,7 @@ impl StripeBilling {
         }]);
         params.success_url = Some(success_url);
 
-        let session = stripe::CheckoutSession::create(&self.client, params).await?;
+        let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
         Ok(session.url.context("no checkout session URL")?)
     }
 
@@ -311,7 +313,7 @@ impl StripeBilling {
         let zed_free_price_id = self.zed_free_price_id().await?;
 
         let existing_subscriptions = stripe::Subscription::list(
-            &self.client,
+            &self.real_client,
             &stripe::ListSubscriptions {
                 customer: Some(customer_id.clone()),
                 status: None,
@@ -339,7 +341,7 @@ impl StripeBilling {
             ..Default::default()
         }]);
 
-        let subscription = stripe::Subscription::create(&self.client, params).await?;
+        let subscription = stripe::Subscription::create(&self.real_client, params).await?;
 
         Ok(subscription)
     }
@@ -365,26 +367,8 @@ impl StripeBilling {
         }]);
         params.success_url = Some(success_url);
 
-        let session = stripe::CheckoutSession::create(&self.client, params).await?;
+        let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
         Ok(session.url.context("no checkout session URL")?)
-    }
-}
-
-#[derive(Clone, Deserialize)]
-struct StripeMeter {
-    id: String,
-    event_name: String,
-}
-
-impl StripeMeter {
-    pub fn list(client: &stripe::Client) -> stripe::Response<stripe::List<Self>> {
-        #[derive(Serialize)]
-        struct Params {
-            #[serde(skip_serializing_if = "Option::is_none")]
-            limit: Option<u64>,
-        }
-
-        client.get_query("/billing/meters", Params { limit: Some(100) })
     }
 }
 
