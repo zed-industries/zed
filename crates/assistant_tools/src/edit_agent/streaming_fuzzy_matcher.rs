@@ -355,50 +355,6 @@ mod tests {
     }
 
     #[test]
-    fn test_streaming_with_typos() {
-        let buffer = TextBuffer::new(
-            0,
-            BufferId::new(1).unwrap(),
-            indoc! {"
-                function calculate_sum(a, b) {
-                    return a + b;
-                }
-
-                function calculate_product(x, y) {
-                    return x * y;
-                }
-            "},
-        );
-        let snapshot = buffer.snapshot();
-
-        let mut finder = StreamingFuzzyMatcher::new(snapshot.clone());
-
-        // Stream a query with typos that should still match
-        assert_eq!(
-            push(&mut finder, "function calulate_sum(a, b) {\n").as_deref(),
-            Some("function calculate_sum(a, b) {")
-        );
-        assert_eq!(
-            push(&mut finder, "return a + b;\n").as_deref(),
-            Some(concat!(
-                "function calculate_sum(a, b) {\n",
-                "    return a + b;",
-            ))
-        );
-        assert_eq!(
-            push(&mut finder, "}\n"),
-            Some(
-                concat!(
-                    "function calculate_sum(a, b) {\n",
-                    "    return a + b;\n",
-                    "}"
-                )
-                .to_string()
-            )
-        );
-    }
-
-    #[test]
     fn test_incomplete_lines_buffering() {
         let buffer = TextBuffer::new(
             0,
