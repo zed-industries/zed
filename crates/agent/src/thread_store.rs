@@ -57,8 +57,7 @@ impl Column for SerializedThreadMetadata {
             Self {
                 id: ThreadId::from(id_str.as_str()),
                 summary: summary.into(),
-                updated_at: DateTime::from_timestamp(updated_at_timestamp, 0)
-                    .unwrap_or_else(DateTime::default),
+                updated_at: DateTime::from_timestamp(updated_at_timestamp, 0).unwrap_or_default(),
             },
             next_index,
         ))
@@ -685,7 +684,8 @@ pub struct SerializedThreadMetadata {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(Clone))]
 pub struct SerializedThread {
     pub version: String,
     pub summary: SharedString,
@@ -709,7 +709,8 @@ pub struct SerializedThread {
     pub tool_use_limit_reached: bool,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(test, derive(Clone))]
 pub struct SerializedLanguageModel {
     pub provider: String,
     pub model: String,
@@ -976,7 +977,15 @@ impl ThreadsDatabase {
         drop(txn);
         drop(env);
 
-        // TODO: delete the old heed db
+        // Rename the old heed database with .bak suffix
+        let mut backup_path = heed_path.to_path_buf();
+        let file_name = heed_path
+            .file_name()
+            .ok_or_else(|| anyhow!("invalid heed path"))?;
+        let new_name = format!("{}.bak", file_name.to_string_lossy());
+        backup_path.set_file_name(new_name);
+        std::fs::rename(&heed_path, &backup_path)?;
+
         Ok(())
     }
 }
@@ -1099,6 +1108,9 @@ mod tests {
             tool_use_limit_reached: false,
         };
 
+        let thread_summary = thread.summary.clone();
+        let thread_version = thread.version.clone();
+
         // Save thread
         db.save_thread(thread_id.clone(), thread.clone())
             .await
@@ -1108,14 +1120,14 @@ mod tests {
         let threads = db.all_threads().await.unwrap();
         assert_eq!(threads.len(), 1);
         assert_eq!(threads[0].id, thread_id);
-        assert_eq!(threads[0].summary, thread.summary);
+        assert_eq!(threads[0].summary, thread_summary);
 
         // Load specific thread
         let loaded_thread = db.get_thread(thread_id.clone()).await.unwrap();
         assert!(loaded_thread.is_some());
         let loaded_thread = loaded_thread.unwrap();
-        assert_eq!(loaded_thread.summary, thread.summary);
-        assert_eq!(loaded_thread.version, thread.version);
+        assert_eq!(loaded_thread.summary, thread_summary);
+        assert_eq!(loaded_thread.version, thread_version);
 
         // Update thread
         let updated_thread = SerializedThread {
@@ -1161,7 +1173,7 @@ mod tests {
                 messages: vec![],
                 initial_project_snapshot: None,
                 cumulative_token_usage: TokenUsage::default(),
-                request_token_usage: vec![],
+                request_token_usage: Vec::new(),
                 detailed_summary_state: DetailedSummaryState::NotGenerated,
                 exceeded_window_error: None,
                 model: None,
@@ -1221,7 +1233,8 @@ mod tests {
                 let thread = SerializedThread {
                     version: SerializedThread::VERSION.to_string(),
                     summary: SharedString::from(format!("Legacy Thread {}", i + 1)),
-                    updated_at: Utc::now() - chrono::Duration::days(i as i64),
+                    updated_at: DateTime::from_timestamp(1700000000 - (i as i64) * 86400, 0)
+                        .unwrap(),
                     messages: vec![SerializedMessage {
                         id: MessageId(i),
                         role: Role::User,
@@ -1292,8 +1305,11 @@ mod tests {
             assert_eq!(thread.cumulative_token_usage.output_tokens, (i * 50) as u32);
         }
 
-        // Verify heed database still exists
-        assert!(heed_path.exists());
+        // Verify heed database was renamed with .bak suffix
+        assert!(!heed_path.exists());
+        let mut backup_path = heed_path.to_path_buf();
+        backup_path.set_file_name(format!("{}.bak", heed_path.file_name().unwrap().to_string_lossy()));
+        assert!(backup_path.exists());
     }
 
     #[gpui::test]
@@ -1403,7 +1419,10 @@ mod tests {
             loaded_thread.cumulative_token_usage.input_tokens,
             original_thread.cumulative_token_usage.input_tokens
         );
-        assert_eq!(loaded_thread.exceeded_window_error.is_none(), original_thread.exceeded_window_error.is_none());
+        assert_eq!(
+            loaded_thread.exceeded_window_error.is_none(),
+            original_thread.exceeded_window_error.is_none()
+        );
         assert!(loaded_thread.model.is_some());
         assert_eq!(loaded_thread.tool_use_limit_reached, true);
     }
