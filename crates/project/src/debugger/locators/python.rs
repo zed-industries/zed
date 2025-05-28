@@ -25,7 +25,13 @@ impl DapLocator for PythonLocator {
         if adapter.as_ref() != "Debugpy" {
             return None;
         }
-        if build_config.args.iter().any(|arg| arg == "-c") {
+        let valid_program = build_config.command.starts_with("$ZED_")
+            || Path::new(&build_config.command)
+                .file_name()
+                .map_or(false, |name| {
+                    name.to_str().is_some_and(|path| path.starts_with("python"))
+                });
+        if !valid_program || build_config.args.iter().any(|arg| arg == "-c") {
             // We cannot debug selections.
             return None;
         }
