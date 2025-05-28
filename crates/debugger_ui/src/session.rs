@@ -196,7 +196,7 @@ impl FollowableItem for DebugSession {
         _state: &mut Option<proto::view::Variant>,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Option<gpui::Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<gpui::Task<anyhow::Result<Entity<Self>>>> {
         None
     }
 
@@ -218,7 +218,7 @@ impl FollowableItem for DebugSession {
         _message: proto::update_view::Variant,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) -> gpui::Task<gpui::Result<()>> {
+    ) -> gpui::Task<anyhow::Result<()>> {
         Task::ready(Ok(()))
     }
 

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
@@ -675,10 +675,10 @@ impl Position {
                 let Some(Mark::Local(anchors)) =
                     vim.get_mark(&name.to_string(), editor, window, cx)
                 else {
-                    return Err(anyhow!("mark {} not set", name));
+                    anyhow::bail!("mark {name} not set");
                 };
                 let Some(mark) = anchors.last() else {
-                    return Err(anyhow!("mark {} contains empty anchors", name));
+                    anyhow::bail!("mark {name} contains empty anchors");
                 };
                 mark.to_point(&snapshot.buffer_snapshot)
                     .row

@@ -1,7 +1,7 @@
 mod project_panel_settings;
 mod utils;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
@@ -603,7 +603,7 @@ impl ProjectPanel {
             Some(serialization_key) => cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
                 .await
-                .map_err(|e| anyhow!("Failed to load project panel: {}", e))
+                .context("loading project panel")
                 .log_err()
                 .flatten()
                 .map(|panel| serde_json::from_str::<SerializedProjectPanel>(&panel))
@@ -694,7 +694,7 @@ impl ProjectPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| {
+            .read_with(cx, |workspace, _| {
                 ProjectPanel::serialization_key(workspace)
             })
             .ok()
@@ -2304,7 +2304,7 @@ impl ProjectPanel {
                             project_panel
                                 .project
                                 .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
-                                .ok_or_else(|| anyhow!("no such entry"))
+                                .context("no such entry")
                         })??
                         .await?;
                 }
@@ -3104,7 +3104,8 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let should_copy = window.modifiers().alt;
+        let should_copy = cfg!(target_os = "macos") && window.modifiers().alt
+            || cfg!(not(target_os = "macos")) && window.modifiers().control;
         if should_copy {
             let _ = maybe!({
                 let project = self.project.read(cx);
@@ -3456,7 +3457,7 @@ impl ProjectPanel {
             .read(cx)
             .repo_snapshots(cx);
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
-        worktree.update(cx, |tree, _| {
+        worktree.read_with(cx, |tree, _| {
             utils::ReversibleIterable::new(
                 GitTraversal::new(&repo_snapshots, tree.entries(true, 0usize)),
                 reverse_search,
@@ -3491,16 +3492,17 @@ impl ProjectPanel {
             let worktree = self
                 .project
                 .read(cx)
-                .worktree_for_id(start.worktree_id, cx)?;
+                .worktree_for_id(start.worktree_id, cx)?
+                .read(cx);
 
-            let search = worktree.update(cx, |tree, _| {
-                let entry = tree.entry_for_id(start.entry_id)?;
-                let root_entry = tree.root_entry()?;
-                let tree_id = tree.id();
+            let search = {
+                let entry = worktree.entry_for_id(start.entry_id)?;
+                let root_entry = worktree.root_entry()?;
+                let tree_id = worktree.id();
 
                 let mut first_iter = GitTraversal::new(
                     &repo_snapshots,
-                    tree.traverse_from_path(true, true, true, entry.path.as_ref()),
+                    worktree.traverse_from_path(true, true, true, entry.path.as_ref()),
                 );
 
                 if reverse_search {
@@ -3514,7 +3516,8 @@ impl ProjectPanel {
                     .find(|ele| predicate(*ele, tree_id))
                     .map(|ele| ele.to_owned());
 
-                let second_iter = GitTraversal::new(&repo_snapshots, tree.entries(true, 0usize));
+                let second_iter =
+                    GitTraversal::new(&repo_snapshots, worktree.entries(true, 0usize));
 
                 let second = if reverse_search {
                     second_iter
@@ -3535,7 +3538,7 @@ impl ProjectPanel {
                 } else {
                     Some((first, second))
                 }
-            });
+            };
 
             if let Some((first, second)) = search {
                 let first = first.map(|entry| SelectedEntry {
@@ -4340,19 +4343,7 @@ impl ProjectPanel {
         {
             return None;
         }
-
-        let scroll_handle = self.scroll_handle.0.borrow();
-        let longest_item_width = scroll_handle
-            .last_item_size
-            .filter(|size| size.contents.width > size.item.width)?
-            .contents
-            .width
-            .0 as f64;
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-            return None;
-        }
-
-        Some(
+        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
             div()
                 .occlude()
                 .id("project-panel-horizontal-scroll")
@@ -4389,12 +4380,8 @@ impl ProjectPanel {
                 .bottom_1()
                 .h(px(12.))
                 .cursor_default()
-                .when(self.width.is_some(), |this| {
-                    this.children(Scrollbar::horizontal(
-                        self.horizontal_scrollbar_state.clone(),
-                    ))
-                }),
-        )
+                .child(scrollbar)
+        })
     }
 
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
@@ -4465,34 +4452,30 @@ impl ProjectPanel {
         skip_ignored: bool,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
-            let worktree = worktree.read(cx);
-            if skip_ignored
-                && worktree
-                    .entry_for_id(entry_id)
-                    .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
-            {
-                return Err(anyhow!(
-                    "can't reveal an ignored entry in the project panel"
-                ));
-            }
-
-            let worktree_id = worktree.id();
-            self.expand_entry(worktree_id, entry_id, cx);
-            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-            self.marked_entries.clear();
-            self.marked_entries.insert(SelectedEntry {
-                worktree_id,
-                entry_id,
-            });
-            self.autoscroll(cx);
-            cx.notify();
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "can't reveal a non-existent entry in the project panel"
-            ))
+        let worktree = project
+            .read(cx)
+            .worktree_for_entry(entry_id, cx)
+            .context("can't reveal a non-existent entry in the project panel")?;
+        let worktree = worktree.read(cx);
+        if skip_ignored
+            && worktree
+                .entry_for_id(entry_id)
+                .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
+        {
+            anyhow::bail!("can't reveal an ignored entry in the project panel");
         }
+
+        let worktree_id = worktree.id();
+        self.expand_entry(worktree_id, entry_id, cx);
+        self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+        self.marked_entries.clear();
+        self.marked_entries.insert(SelectedEntry {
+            worktree_id,
+            entry_id,
+        });
+        self.autoscroll(cx);
+        cx.notify();
+        Ok(())
     }
 
     fn find_active_indent_guide(

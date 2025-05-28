@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
 use gpui::{
     AnyElement, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, ScrollStrategy,
@@ -250,6 +250,9 @@ impl StackFrameList {
         let Some(abs_path) = Self::abs_path_from_stack_frame(&stack_frame) else {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
+        if abs_path.starts_with("<node_internals>") {
+            return Task::ready(Ok(()));
+        }
         let row = stack_frame.line.saturating_sub(1) as u32;
         cx.emit(StackFrameListEvent::SelectedStackFrameChanged(
             stack_frame_id,
@@ -280,14 +283,15 @@ impl StackFrameList {
                     })
                 })??
                 .await?;
-            let position = buffer.update(cx, |this, _| {
+            let position = buffer.read_with(cx, |this, _| {
                 this.snapshot().anchor_after(PointUtf16::new(row, 0))
             })?;
             this.update_in(cx, |this, window, cx| {
                 this.workspace.update(cx, |workspace, cx| {
-                    let project_path = buffer.read(cx).project_path(cx).ok_or_else(|| {
-                        anyhow!("Could not select a stack frame for unnamed buffer")
-                    })?;
+                    let project_path = buffer
+                        .read(cx)
+                        .project_path(cx)
+                        .context("Could not select a stack frame for unnamed buffer")?;
 
                     let open_preview = !workspace
                         .item_of_type::<StackTraceView>(cx)
@@ -312,9 +316,9 @@ impl StackFrameList {
             .await?;
 
             this.update(cx, |this, cx| {
-                let Some(thread_id) = this.state.read_with(cx, |state, _| state.thread_id)? else {
-                    return Err(anyhow!("No selected thread ID found"));
-                };
+                let thread_id = this.state.read_with(cx, |state, _| {
+                    state.thread_id.context("No selected thread ID found")
+                })??;
 
                 this.workspace.update(cx, |workspace, cx| {
                     let breakpoint_store = workspace.project().read(cx).breakpoint_store();

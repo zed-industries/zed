@@ -14,7 +14,7 @@
 //!
 //! You only need to write replacement logic for x-1 to x because you can be certain that, internally, every user will be at x-1, regardless of their on disk state.
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};

@@ -7,7 +7,7 @@ use crate::{
     PrepareRenameResponse, ProjectTransaction, ResolveState,
     lsp_store::{LocalLspStore, LspStore},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use client::proto::{self, PeerId};
 use clock::Global;
@@ -49,9 +49,7 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
 pub(crate) fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
     match lsp::Url::from_file_path(path) {
         Ok(url) => Ok(url),
-        Err(()) => Err(anyhow!(
-            "Invalid file path provided to LSP request: {path:?}"
-        )),
+        Err(()) => anyhow::bail!("Invalid file path provided to LSP request: {path:?}"),
     }
 }
 
@@ -294,7 +292,7 @@ impl LspCommand for PrepareRename {
             Some(lsp::OneOf::Left(true)) => Ok(LspParamsOrResponse::Response(
                 PrepareRenameResponse::OnlyUnpreparedRenameSupported,
             )),
-            _ => Err(anyhow!("Rename not supported")),
+            _ => anyhow::bail!("Rename not supported"),
         }
     }
 
@@ -316,7 +314,7 @@ impl LspCommand for PrepareRename {
         _: LanguageServerId,
         mut cx: AsyncApp,
     ) -> Result<PrepareRenameResponse> {
-        buffer.update(&mut cx, |buffer, _| match message {
+        buffer.read_with(&mut cx, |buffer, _| match message {
             Some(lsp::PrepareRenameResponse::Range(range))
             | Some(lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. }) => {
                 let Range { start, end } = range_from_lsp(range);
@@ -360,7 +358,7 @@ impl LspCommand for PrepareRename {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
@@ -368,7 +366,7 @@ impl LspCommand for PrepareRename {
             .await?;
 
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -423,9 +421,9 @@ impl LspCommand for PrepareRename {
             ) {
                 Ok(PrepareRenameResponse::Success(start..end))
             } else {
-                Err(anyhow!(
+                anyhow::bail!(
                     "Missing start or end position in remote project PrepareRenameResponse"
-                ))
+                );
             }
         } else if message.only_unprepared_rename_supported {
             Ok(PrepareRenameResponse::OnlyUnpreparedRenameSupported)
@@ -509,14 +507,14 @@ impl LspCommand for PerformRename {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
             new_name: message.new_name,
             push_to_history: false,
         })
@@ -544,9 +542,7 @@ impl LspCommand for PerformRename {
         _: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> Result<ProjectTransaction> {
-        let message = message
-            .transaction
-            .ok_or_else(|| anyhow!("missing transaction"))?;
+        let message = message.transaction.context("missing transaction")?;
         lsp_store
             .update(&mut cx, |lsp_store, cx| {
                 lsp_store.buffer_store().update(cx, |buffer_store, cx| {
@@ -623,14 +619,14 @@ impl LspCommand for GetDefinition {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -722,14 +718,14 @@ impl LspCommand for GetDeclaration {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -814,14 +810,14 @@ impl LspCommand for GetImplementation {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -913,14 +909,14 @@ impl LspCommand for GetTypeDefinition {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -964,7 +960,7 @@ fn language_server_for_buffer(
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
             })
         })?
-        .ok_or_else(|| anyhow!("no language server found for buffer"))
+        .context("no language server found for buffer")
 }
 
 pub async fn location_links_from_proto(
@@ -998,11 +994,11 @@ pub fn location_link_from_proto(
                 let start = origin
                     .start
                     .and_then(deserialize_anchor)
-                    .ok_or_else(|| anyhow!("missing origin start"))?;
+                    .context("missing origin start")?;
                 let end = origin
                     .end
                     .and_then(deserialize_anchor)
-                    .ok_or_else(|| anyhow!("missing origin end"))?;
+                    .context("missing origin end")?;
                 buffer
                     .update(cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
                     .await?;
@@ -1014,7 +1010,7 @@ pub fn location_link_from_proto(
             None => None,
         };
 
-        let target = link.target.ok_or_else(|| anyhow!("missing target"))?;
+        let target = link.target.context("missing target")?;
         let buffer_id = BufferId::new(target.buffer_id)?;
         let buffer = lsp_store
             .update(cx, |lsp_store, cx| {
@@ -1024,11 +1020,11 @@ pub fn location_link_from_proto(
         let start = target
             .start
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("missing target start"))?;
+            .context("missing target start")?;
         let end = target
             .end
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("missing target end"))?;
+            .context("missing target end")?;
         buffer
             .update(cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
             .await?;
@@ -1301,7 +1297,7 @@ impl LspCommand for GetReferences {
 
                 target_buffer_handle
                     .clone()
-                    .update(&mut cx, |target_buffer, _| {
+                    .read_with(&mut cx, |target_buffer, _| {
                         let target_start = target_buffer
                             .clip_point_utf16(point_from_lsp(lsp_location.range.start), Bias::Left);
                         let target_end = target_buffer
@@ -1338,14 +1334,14 @@ impl LspCommand for GetReferences {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -1394,11 +1390,11 @@ impl LspCommand for GetReferences {
             let start = location
                 .start
                 .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing target start"))?;
+                .context("missing target start")?;
             let end = location
                 .end
                 .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing target end"))?;
+                .context("missing target end")?;
             target_buffer
                 .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
                 .await?;
@@ -1454,7 +1450,7 @@ impl LspCommand for GetDocumentHighlights {
         _: LanguageServerId,
         mut cx: AsyncApp,
     ) -> Result<Vec<DocumentHighlight>> {
-        buffer.update(&mut cx, |buffer, _| {
+        buffer.read_with(&mut cx, |buffer, _| {
             let mut lsp_highlights = lsp_highlights.unwrap_or_default();
             lsp_highlights.sort_unstable_by_key(|h| (h.range.start, Reverse(h.range.end)));
             lsp_highlights
@@ -1495,14 +1491,14 @@ impl LspCommand for GetDocumentHighlights {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -1541,11 +1537,11 @@ impl LspCommand for GetDocumentHighlights {
             let start = highlight
                 .start
                 .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing target start"))?;
+                .context("missing target start")?;
             let end = highlight
                 .end
                 .and_then(deserialize_anchor)
-                .ok_or_else(|| anyhow!("missing target end"))?;
+                .context("missing target end")?;
             buffer
                 .update(&mut cx, |buffer, _| buffer.wait_for_anchors([start, end]))?
                 .await?;
@@ -1724,19 +1720,15 @@ impl LspCommand for GetDocumentSymbols {
                 let kind =
                     unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
 
-                let start = serialized_symbol
-                    .start
-                    .ok_or_else(|| anyhow!("invalid start"))?;
-                let end = serialized_symbol
-                    .end
-                    .ok_or_else(|| anyhow!("invalid end"))?;
+                let start = serialized_symbol.start.context("invalid start")?;
+                let end = serialized_symbol.end.context("invalid end")?;
 
                 let selection_start = serialized_symbol
                     .selection_start
-                    .ok_or_else(|| anyhow!("invalid selection start"))?;
+                    .context("invalid selection start")?;
                 let selection_end = serialized_symbol
                     .selection_end
-                    .ok_or_else(|| anyhow!("invalid selection end"))?;
+                    .context("invalid selection end")?;
 
                 Ok(DocumentSymbol {
                     name: serialized_symbol.name,
@@ -1831,7 +1823,7 @@ impl LspCommand for GetSignatureHelp {
             })?
             .await
             .with_context(|| format!("waiting for version for buffer {}", buffer.entity_id()))?;
-        let buffer_snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let buffer_snapshot = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot())?;
         Ok(Self {
             position: payload
                 .position
@@ -1915,7 +1907,7 @@ impl LspCommand for GetHover {
             return Ok(None);
         };
 
-        let (language, range) = buffer.update(&mut cx, |buffer, _| {
+        let (language, range) = buffer.read_with(&mut cx, |buffer, _| {
             (
                 buffer.language().cloned(),
                 hover.range.map(|range| {
@@ -1994,14 +1986,14 @@ impl LspCommand for GetHover {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -2075,7 +2067,7 @@ impl LspCommand for GetHover {
             return Ok(None);
         }
 
-        let language = buffer.update(&mut cx, |buffer, _| buffer.language().cloned())?;
+        let language = buffer.read_with(&mut cx, |buffer, _| buffer.language().cloned())?;
         let range = if let (Some(start), Some(end)) = (message.start, message.end) {
             language::proto::deserialize_anchor(start)
                 .and_then(|start| language::proto::deserialize_anchor(end).map(|end| start..end))
@@ -2150,7 +2142,7 @@ impl LspCommand for GetCompletions {
         };
 
         let language_server_adapter = lsp_store
-            .update(&mut cx, |lsp_store, _| {
+            .read_with(&mut cx, |lsp_store, _| {
                 lsp_store.language_server_adapter_for_id(server_id)
             })?
             .with_context(|| format!("no language server with id {server_id}"))?;
@@ -2326,11 +2318,11 @@ impl LspCommand for GetCompletions {
             .position
             .and_then(language::proto::deserialize_anchor)
             .map(|p| {
-                buffer.update(&mut cx, |buffer, _| {
+                buffer.read_with(&mut cx, |buffer, _| {
                     buffer.clip_point_utf16(Unclipped(p.to_point_utf16(buffer)), Bias::Left)
                 })
             })
-            .ok_or_else(|| anyhow!("invalid position"))??;
+            .context("invalid position")??;
         Ok(Self {
             position,
             context: CompletionContext {
@@ -2598,11 +2590,11 @@ impl LspCommand for GetCodeActions {
         let start = message
             .start
             .and_then(language::proto::deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid start"))?;
+            .context("invalid start")?;
         let end = message
             .end
             .and_then(language::proto::deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid end"))?;
+            .context("invalid end")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
@@ -2768,7 +2760,7 @@ impl LspCommand for OnTypeFormatting {
         let position = message
             .position
             .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
+            .context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
@@ -2782,7 +2774,7 @@ impl LspCommand for OnTypeFormatting {
         })?;
 
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
             trigger: message.trigger.clone(),
             options,
             push_to_history: false,
@@ -2835,7 +2827,7 @@ impl InlayHints {
             _ => None,
         });
 
-        let position = buffer_handle.update(cx, |buffer, _| {
+        let position = buffer_handle.read_with(cx, |buffer, _| {
             let position = buffer.clip_point_utf16(point_from_lsp(lsp_hint.position), Bias::Left);
             if kind == Some(InlayHintKind::Parameter) {
                 buffer.anchor_before(position)
@@ -3396,7 +3388,7 @@ impl LspCommand for GetCodeLens {
         server_id: LanguageServerId,
         mut cx: AsyncApp,
     ) -> anyhow::Result<Vec<CodeAction>> {
-        let snapshot = buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
+        let snapshot = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot())?;
         let language_server = cx.update(|cx| {
             lsp_store
                 .read(cx)
@@ -3577,15 +3569,13 @@ impl LspCommand for LinkedEditingRange {
         buffer: Entity<Buffer>,
         mut cx: AsyncApp,
     ) -> Result<Self> {
-        let position = message
-            .position
-            .ok_or_else(|| anyhow!("invalid position"))?;
+        let position = message.position.context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
-        let position = deserialize_anchor(position).ok_or_else(|| anyhow!("invalid position"))?;
+        let position = deserialize_anchor(position).context("invalid position")?;
         buffer
             .update(&mut cx, |buffer, _| buffer.wait_for_anchors([position]))?
             .await?;

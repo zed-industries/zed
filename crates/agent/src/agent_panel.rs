@@ -1,22 +1,23 @@
 use std::ops::Range;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use db::kvp::KEY_VALUE_STORE;
-use markdown::Markdown;
+use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
+use agent_settings::{AgentDockPosition, AgentSettings, CompletionMode, DefaultView};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
     ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
     make_lsp_adapter_delegate, render_remaining_tokens,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
@@ -30,7 +31,6 @@ use language::LanguageRegistry;
 use language_model::{
     LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::ToggleModelSelector;
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
@@ -41,8 +41,8 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
+    Banner, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
 };
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -64,10 +64,11 @@ use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
-    AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
-    Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleContextPicker,
-    ToggleNavigationMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, ContextStore, ContinueThread, ContinueWithBurnMode,
+    DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
+    NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
+    ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleContextPicker, ToggleNavigationMenu,
+    ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -157,7 +158,10 @@ pub fn init(cx: &mut App) {
                     window.refresh();
                 })
                 .register_action(|_workspace, _: &ResetTrialUpsell, _window, cx| {
-                    set_trial_upsell_dismissed(false, cx);
+                    Upsell::set_dismissed(false, cx);
+                })
+                .register_action(|_workspace, _: &ResetTrialEndUpsell, _window, cx| {
+                    TrialEndUpsell::set_dismissed(false, cx);
                 });
         },
     )
@@ -367,8 +371,7 @@ pub struct AgentPanel {
     height: Option<Pixels>,
     zoomed: bool,
     pending_serialization: Option<Task<Result<()>>>,
-    hide_trial_upsell: bool,
-    _trial_markdown: Entity<Markdown>,
+    hide_upsell: bool,
 }
 
 impl AgentPanel {
@@ -521,7 +524,30 @@ impl AgentPanel {
 
         cx.observe(&history_store, |_, _, cx| cx.notify()).detach();
 
-        let active_view = ActiveView::thread(thread.clone(), window, cx);
+        let panel_type = AgentSettings::get_global(cx).default_view;
+        let active_view = match panel_type {
+            DefaultView::Thread => ActiveView::thread(thread.clone(), window, cx),
+            DefaultView::TextThread => {
+                let context =
+                    context_store.update(cx, |context_store, cx| context_store.create(cx));
+                let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
+                let context_editor = cx.new(|cx| {
+                    let mut editor = ContextEditor::for_context(
+                        context,
+                        fs.clone(),
+                        workspace.clone(),
+                        project.clone(),
+                        lsp_adapter_delegate,
+                        window,
+                        cx,
+                    );
+                    editor.insert_default_prompt(window, cx);
+                    editor
+                });
+                ActiveView::prompt_editor(context_editor, language_registry.clone(), window, cx)
+            }
+        };
+
         let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
             if let ThreadEvent::MessageAdded(_) = &event {
                 // needed to leave empty state
@@ -673,15 +699,6 @@ impl AgentPanel {
             },
         );
 
-        let trial_markdown = cx.new(|cx| {
-            Markdown::new(
-                include_str!("trial_markdown.md").into(),
-                Some(language_registry.clone()),
-                None,
-                cx,
-            )
-        });
-
         Self {
             active_view,
             workspace,
@@ -718,8 +735,7 @@ impl AgentPanel {
             height: None,
             zoomed: false,
             pending_serialization: None,
-            hide_trial_upsell: false,
-            _trial_markdown: trial_markdown,
+            hide_upsell: false,
         }
     }
 
@@ -901,8 +917,8 @@ impl AgentPanel {
         open_rules_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
-            Arc::new(|| {
-                Box::new(SlashCommandCompletionProvider::new(
+            Rc::new(|| {
+                Rc::new(SlashCommandCompletionProvider::new(
                     Arc::new(SlashCommandWorkingSet::default()),
                     None,
                     None,
@@ -1209,12 +1225,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(workspace) = self
-            .workspace
-            .upgrade()
-            .ok_or_else(|| anyhow!("workspace dropped"))
-            .log_err()
-        else {
+        let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
 
@@ -1240,7 +1251,7 @@ impl AgentPanel {
                     .map_or(true, |model| model.provider.id() != provider.id())
                 {
                     if let Some(model) = provider.default_model(cx) {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             self.fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model),
@@ -1271,6 +1282,26 @@ impl AgentPanel {
 
     pub(crate) fn has_active_thread(&self) -> bool {
         matches!(self.active_view, ActiveView::Thread { .. })
+    }
+
+    fn continue_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let thread_state = self.thread.read(cx).thread().read(cx);
+        if !thread_state.tool_use_limit_reached() {
+            return;
+        }
+
+        let model = thread_state.configured_model().map(|cm| cm.model.clone());
+        if let Some(model) = model {
+            self.thread.update(cx, |active_thread, cx| {
+                active_thread.thread().update(cx, |thread, cx| {
+                    thread.insert_invisible_continue_message(cx);
+                    thread.advance_prompt_id();
+                    thread.send_to_model(model, Some(window.window_handle()), cx);
+                });
+            });
+        } else {
+            log::warn!("No configured model available for continuation");
+        }
     }
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
@@ -1371,10 +1402,10 @@ impl Focusable for AgentPanel {
 }
 
 fn agent_panel_dock_position(cx: &App) -> DockPosition {
-    match AssistantSettings::get_global(cx).dock {
-        AssistantDockPosition::Left => DockPosition::Left,
-        AssistantDockPosition::Bottom => DockPosition::Bottom,
-        AssistantDockPosition::Right => DockPosition::Right,
+    match AgentSettings::get_global(cx).dock {
+        AgentDockPosition::Left => DockPosition::Left,
+        AgentDockPosition::Bottom => DockPosition::Bottom,
+        AgentDockPosition::Right => DockPosition::Right,
     }
 }
 
@@ -1394,22 +1425,18 @@ impl Panel for AgentPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<AssistantSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => AssistantDockPosition::Left,
-                    DockPosition::Bottom => AssistantDockPosition::Bottom,
-                    DockPosition::Right => AssistantDockPosition::Right,
-                };
-                settings.set_dock(dock);
-            },
-        );
+        settings::update_settings_file::<AgentSettings>(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left => AgentDockPosition::Left,
+                DockPosition::Bottom => AgentDockPosition::Bottom,
+                DockPosition::Right => AgentDockPosition::Right,
+            };
+            settings.set_dock(dock);
+        });
     }
 
     fn size(&self, window: &Window, cx: &App) -> Pixels {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => {
                 self.width.unwrap_or(settings.default_width)
@@ -1434,8 +1461,7 @@ impl Panel for AgentPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx) && AssistantSettings::get_global(cx).button)
-            .then_some(IconName::ZedAssistant)
+        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -1451,7 +1477,7 @@ impl Panel for AgentPanel {
     }
 
     fn enabled(&self, cx: &App) -> bool {
-        AssistantSettings::get_global(cx).enabled
+        AgentSettings::get_global(cx).enabled
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
@@ -1932,12 +1958,23 @@ impl AgentPanel {
         }
     }
 
+    fn should_render_trial_end_upsell(&self, cx: &mut Context<Self>) -> bool {
+        if TrialEndUpsell::dismissed() {
+            return false;
+        }
+
+        let plan = self.user_store.read(cx).current_plan();
+        let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
+
+        matches!(plan, Some(Plan::Free)) && has_previous_trial
+    }
+
     fn should_render_upsell(&self, cx: &mut Context<Self>) -> bool {
         if !matches!(self.active_view, ActiveView::Thread { .. }) {
             return false;
         }
 
-        if self.hide_trial_upsell || dismissed_trial_upsell() {
+        if self.hide_upsell || Upsell::dismissed() {
             return false;
         }
 
@@ -1967,7 +2004,7 @@ impl AgentPanel {
         true
     }
 
-    fn render_trial_upsell(
+    fn render_upsell(
         &self,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -1976,6 +2013,14 @@ impl AgentPanel {
             return None;
         }
 
+        if self.user_store.read(cx).account_too_young() {
+            Some(self.render_young_account_upsell(cx).into_any_element())
+        } else {
+            Some(self.render_trial_upsell(cx).into_any_element())
+        }
+    }
+
+    fn render_young_account_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let checkbox = CheckboxWithLabel::new(
             "dont-show-again",
             Label::new("Don't show again").color(Color::Muted),
@@ -1983,129 +2028,267 @@ impl AgentPanel {
             move |toggle_state, _window, cx| {
                 let toggle_state_bool = toggle_state.selected();
 
-                set_trial_upsell_dismissed(toggle_state_bool, cx);
+                Upsell::set_dismissed(toggle_state_bool, cx);
             },
         );
 
-        Some(
-            div().p_2().child(
-                v_flex()
+        let contents = div()
+            .size_full()
+            .gap_2()
+            .flex()
+            .flex_col()
+            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+            .child(
+                Label::new("Your GitHub account was created less than 30 days ago, so we can't offer you a free trial.")
+                    .size(LabelSize::Small),
+            )
+            .child(
+                Label::new(
+                    "Use your own API keys, upgrade to Zed Pro or send an email to billing-support@zed.dev.",
+                )
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
                     .w_full()
-                    .elevation_2(cx)
-                    .rounded(px(8.))
-                    .bg(cx.theme().colors().background.alpha(0.5))
-                    .p(px(3.))
-
+                    .px_neg_1()
+                    .justify_between()
+                    .items_center()
+                    .child(h_flex().items_center().gap_1().child(checkbox))
                     .child(
-                        div()
+                        h_flex()
                             .gap_2()
-                            .flex()
-                            .flex_col()
-                            .size_full()
-                            .border_1()
-                            .rounded(px(5.))
-                            .border_color(cx.theme().colors().text.alpha(0.1))
-                            .overflow_hidden()
-                            .relative()
-                            .bg(cx.theme().colors().panel_background)
-                            .px_4()
-                            .py_3()
                             .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .right(px(-1.0))
-                                    .w(px(441.))
-                                    .h(px(167.))
-                                    .child(
-                                    Vector::new(VectorName::Grid, rems_from_px(441.), rems_from_px(167.)).color(ui::Color::Custom(cx.theme().colors().text.alpha(0.1)))
-                                )
+                                Button::new("dismiss-button", "Not Now")
+                                    .style(ButtonStyle::Transparent)
+                                    .color(Color::Muted)
+                                    .on_click({
+                                        let agent_panel = cx.entity();
+                                        move |_, _, cx| {
+                                            agent_panel.update(cx, |this, cx| {
+                                                this.hide_upsell = true;
+                                                cx.notify();
+                                            });
+                                        }
+                                    }),
                             )
                             .child(
-                                div()
-                                    .absolute()
-                                    .top(px(-8.0))
-                                    .right_0()
-                                    .w(px(400.))
-                                    .h(px(92.))
-                                    .child(
-                                    Vector::new(VectorName::AiGrid, rems_from_px(400.), rems_from_px(92.)).color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32)))
-                                )
-                            )
-                            // .child(
-                            //     div()
-                            //         .absolute()
-                            //         .top_0()
-                            //         .right(px(360.))
-                            //         .size(px(401.))
-                            //         .overflow_hidden()
-                            //         .bg(cx.theme().colors().panel_background)
-                            // )
+                                Button::new("cta-button", "Upgrade to Zed Pro")
+                                    .style(ButtonStyle::Transparent)
+                                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                            ),
+                    ),
+            );
+
+        self.render_upsell_container(cx, contents)
+    }
+
+    fn render_trial_upsell(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let checkbox = CheckboxWithLabel::new(
+            "dont-show-again",
+            Label::new("Don't show again").color(Color::Muted),
+            ToggleState::Unselected,
+            move |toggle_state, _window, cx| {
+                let toggle_state_bool = toggle_state.selected();
+
+                Upsell::set_dismissed(toggle_state_bool, cx);
+            },
+        );
+
+        let contents = div()
+            .size_full()
+            .gap_2()
+            .flex()
+            .flex_col()
+            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+            .child(
+                Label::new("Try Zed Pro for free for 14 days - no credit card required.")
+                    .size(LabelSize::Small),
+            )
+            .child(
+                Label::new(
+                    "Use your own API keys or enable usage-based billing once you hit the cap.",
+                )
+                .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_neg_1()
+                    .justify_between()
+                    .items_center()
+                    .child(h_flex().items_center().gap_1().child(checkbox))
+                    .child(
+                        h_flex()
+                            .gap_2()
                             .child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .right_0()
-                                    .w(px(660.))
-                                    .h(px(401.))
-                                    .overflow_hidden()
-                                    .bg(linear_gradient(
-                                        75.,
-                                        linear_color_stop(cx.theme().colors().panel_background.alpha(0.01), 1.0),
-                                        linear_color_stop(cx.theme().colors().panel_background, 0.45),
-                                    ))
+                                Button::new("dismiss-button", "Not Now")
+                                    .style(ButtonStyle::Transparent)
+                                    .color(Color::Muted)
+                                    .on_click({
+                                        let agent_panel = cx.entity();
+                                        move |_, _, cx| {
+                                            agent_panel.update(cx, |this, cx| {
+                                                this.hide_upsell = true;
+                                                cx.notify();
+                                            });
+                                        }
+                                    }),
                             )
-                            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
-                            .child(Label::new("Try Zed Pro for free for 14 days - no credit card required.").size(LabelSize::Small))
-                            .child(Label::new("Use your own API keys or enable usage-based billing once you hit the cap.").color(Color::Muted))
+                            .child(
+                                Button::new("cta-button", "Start Trial")
+                                    .style(ButtonStyle::Transparent)
+                                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                            ),
+                    ),
+            );
+
+        self.render_upsell_container(cx, contents)
+    }
+
+    fn render_trial_end_upsell(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement> {
+        if !self.should_render_trial_end_upsell(cx) {
+            return None;
+        }
+
+        Some(
+            self.render_upsell_container(
+                cx,
+                div()
+                    .size_full()
+                    .gap_2()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        Headline::new("Your Zed Pro trial has expired.").size(HeadlineSize::Small),
+                    )
+                    .child(
+                        Label::new("You've been automatically reset to the free plan.")
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px_neg_1()
+                            .justify_between()
+                            .items_center()
+                            .child(div())
                             .child(
                                 h_flex()
-                                    .w_full()
-                                    .px_neg_1()
-                                    .justify_between()
-                                    .items_center()
-                                    .child(h_flex().items_center().gap_1().child(checkbox))
+                                    .gap_2()
                                     .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .child(
-                                                Button::new("dismiss-button", "Not Now")
-                                                    .style(ButtonStyle::Transparent)
-                                                    .color(Color::Muted)
-                                                    .on_click({
-                                                        let agent_panel = cx.entity();
-                                                        move |_, _, cx| {
-                                                            agent_panel.update(
-                                                                cx,
-                                                                |this, cx| {
-                                                                    let hidden =
-                                                                        this.hide_trial_upsell;
-                                                                    println!("hidden: {}", hidden);
-                                                                    this.hide_trial_upsell = true;
-                                                                    let new_hidden =
-                                                                        this.hide_trial_upsell;
-                                                                    println!(
-                                                                        "new_hidden: {}",
-                                                                        new_hidden
-                                                                    );
-
-                                                                    cx.notify();
-                                                                },
-                                                            );
-                                                        }
-                                                    }),
-                                            )
-                                            .child(
-                                                Button::new("cta-button", "Start Trial")
-                                                    .style(ButtonStyle::Transparent)
-                                                    .on_click(|_, _, cx| {
-                                                        cx.open_url(&zed_urls::account_url(cx))
-                                                    }),
-                                            ),
+                                        Button::new("dismiss-button", "Stay on Free")
+                                            .style(ButtonStyle::Transparent)
+                                            .color(Color::Muted)
+                                            .on_click({
+                                                let agent_panel = cx.entity();
+                                                move |_, _, cx| {
+                                                    agent_panel.update(cx, |_this, cx| {
+                                                        TrialEndUpsell::set_dismissed(true, cx);
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        Button::new("cta-button", "Upgrade to Zed Pro")
+                                            .style(ButtonStyle::Transparent)
+                                            .on_click(|_, _, cx| {
+                                                cx.open_url(&zed_urls::account_url(cx))
+                                            }),
                                     ),
                             ),
                     ),
             ),
+        )
+    }
+
+    fn render_upsell_container(&self, cx: &mut Context<Self>, content: Div) -> Div {
+        div().p_2().child(
+            v_flex()
+                .w_full()
+                .elevation_2(cx)
+                .rounded(px(8.))
+                .bg(cx.theme().colors().background.alpha(0.5))
+                .p(px(3.))
+                .child(
+                    div()
+                        .gap_2()
+                        .flex()
+                        .flex_col()
+                        .size_full()
+                        .border_1()
+                        .rounded(px(5.))
+                        .border_color(cx.theme().colors().text.alpha(0.1))
+                        .overflow_hidden()
+                        .relative()
+                        .bg(cx.theme().colors().panel_background)
+                        .px_4()
+                        .py_3()
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right(px(-1.0))
+                                .w(px(441.))
+                                .h(px(167.))
+                                .child(
+                                    Vector::new(
+                                        VectorName::Grid,
+                                        rems_from_px(441.),
+                                        rems_from_px(167.),
+                                    )
+                                    .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.1))),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .absolute()
+                                .top(px(-8.0))
+                                .right_0()
+                                .w(px(400.))
+                                .h(px(92.))
+                                .child(
+                                    Vector::new(
+                                        VectorName::AiGrid,
+                                        rems_from_px(400.),
+                                        rems_from_px(92.),
+                                    )
+                                    .color(ui::Color::Custom(cx.theme().colors().text.alpha(0.32))),
+                                ),
+                        )
+                        // .child(
+                        //     div()
+                        //         .absolute()
+                        //         .top_0()
+                        //         .right(px(360.))
+                        //         .size(px(401.))
+                        //         .overflow_hidden()
+                        //         .bg(cx.theme().colors().panel_background)
+                        // )
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .w(px(660.))
+                                .h(px(401.))
+                                .overflow_hidden()
+                                .bg(linear_gradient(
+                                    75.,
+                                    linear_color_stop(
+                                        cx.theme().colors().panel_background.alpha(0.01),
+                                        1.0,
+                                    ),
+                                    linear_color_stop(cx.theme().colors().panel_background, 0.45),
+                                )),
+                        )
+                        .child(content),
+                ),
         )
     }
 
@@ -2412,7 +2595,11 @@ impl AgentPanel {
             })
     }
 
-    fn render_tool_use_limit_reached(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_tool_use_limit_reached(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let tool_use_limit_reached = self
             .thread
             .read(cx)
@@ -2431,17 +2618,59 @@ impl AgentPanel {
             .configured_model()?
             .model;
 
-        let max_mode_upsell = if model.supports_max_mode() {
-            " Enable max mode for unlimited tool use."
-        } else {
-            ""
-        };
+        let focus_handle = self.focus_handle(cx);
 
         let banner = Banner::new()
             .severity(ui::Severity::Info)
-            .child(h_flex().child(Label::new(format!(
-                "Consecutive tool use limit reached.{max_mode_upsell}"
-            ))));
+            .child(Label::new("Consecutive tool use limit reached.").size(LabelSize::Small))
+            .action_slot(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("continue-conversation", "Continue")
+                            .layer(ElevationIndex::ModalSurface)
+                            .label_size(LabelSize::Small)
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &ContinueThread,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.continue_conversation(window, cx);
+                            })),
+                    )
+                    .when(model.supports_max_mode(), |this| {
+                        this.child(
+                            Button::new("continue-burn-mode", "Continue with Burn Mode")
+                                .style(ButtonStyle::Filled)
+                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                .layer(ElevationIndex::ModalSurface)
+                                .label_size(LabelSize::Small)
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &ContinueWithBurnMode,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
+                                .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.thread.update(cx, |active_thread, cx| {
+                                        active_thread.thread().update(cx, |thread, _cx| {
+                                            thread.set_completion_mode(CompletionMode::Max);
+                                        });
+                                    });
+                                    this.continue_conversation(window, cx);
+                                })),
+                        )
+                    }),
+            );
 
         Some(div().px_2().pb_2().child(banner).into_any_element())
     }
@@ -2796,9 +3025,9 @@ impl Render for AgentPanel {
         // non-obvious implications to the layout of children.
         //
         // If you need to change it, please confirm:
-        // - The message editor expands (⌘esc) correctly
+        // - The message editor expands (cmd-option-esc) correctly
         // - When expanded, the buttons at the bottom of the panel are displayed correctly
-        // - Font size works as expected and can be changed with ⌘+/⌘-
+        // - Font size works as expected and can be changed with cmd-+/cmd-
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
         let content = v_flex()
@@ -2825,13 +3054,25 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::toggle_zoom))
+            .on_action(cx.listener(|this, _: &ContinueThread, window, cx| {
+                this.continue_conversation(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ContinueWithBurnMode, window, cx| {
+                this.thread.update(cx, |active_thread, cx| {
+                    active_thread.thread().update(cx, |thread, _cx| {
+                        thread.set_completion_mode(CompletionMode::Max);
+                    });
+                });
+                this.continue_conversation(window, cx);
+            }))
             .child(self.render_toolbar(window, cx))
-            .children(self.render_trial_upsell(window, cx))
+            .children(self.render_upsell(window, cx))
+            .children(self.render_trial_end_upsell(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread { .. } => parent
                     .relative()
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .children(self.render_tool_use_limit_reached(cx))
+                    .children(self.render_tool_use_limit_reached(window, cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx))
                     .child(self.render_drag_target(cx)),
@@ -3014,25 +3255,14 @@ impl AgentPanelDelegate for ConcreteAssistantPanelDelegate {
     }
 }
 
-const DISMISSED_TRIAL_UPSELL_KEY: &str = "dismissed-trial-upsell";
+struct Upsell;
 
-fn dismissed_trial_upsell() -> bool {
-    db::kvp::KEY_VALUE_STORE
-        .read_kvp(DISMISSED_TRIAL_UPSELL_KEY)
-        .log_err()
-        .map_or(false, |s| s.is_some())
+impl Dismissable for Upsell {
+    const KEY: &'static str = "dismissed-trial-upsell";
 }
 
-fn set_trial_upsell_dismissed(is_dismissed: bool, cx: &mut App) {
-    db::write_and_log(cx, move || async move {
-        if is_dismissed {
-            db::kvp::KEY_VALUE_STORE
-                .write_kvp(DISMISSED_TRIAL_UPSELL_KEY.into(), "1".into())
-                .await
-        } else {
-            db::kvp::KEY_VALUE_STORE
-                .delete_kvp(DISMISSED_TRIAL_UPSELL_KEY.into())
-                .await
-        }
-    })
+struct TrialEndUpsell;
+
+impl Dismissable for TrialEndUpsell {
+    const KEY: &'static str = "dismissed-trial-end-upsell";
 }
