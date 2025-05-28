@@ -638,10 +638,10 @@ impl MessageEditor {
                                                 .dispatch_action(Box::new(ExpandMessageEditor), cx);
                                         })),
                                 )
-                            })
-                            .children(self.render_voice_recordings(cx)),
+                            }),
                     ),
             )
+            .children(self.render_voice_recordings(cx))
             .child(
                 v_flex()
                     .size_full()
@@ -1346,18 +1346,30 @@ impl MessageEditor {
         Some(
             v_flex()
                 .gap_2()
-                .p_2()
+                .w_full()
+                .min_w_0()
+                .p_3()
                 .bg(cx.theme().colors().editor_background)
                 .border_1()
                 .border_color(cx.theme().colors().border)
                 .rounded_md()
                 .child(
-                    Label::new("Voice Recordings")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted)
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            Label::new("Voice Recordings")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                        )
+                        .child(
+                            Label::new(format!("{} recording{}", recordings.len(), if recordings.len() == 1 { "" } else { "s" }))
+                                .size(LabelSize::XSmall)
+                                .color(Color::Disabled)
+                        )
                 )
                 .children(
-                    recordings.iter().map(|(_recording_id, recording)| {
+                    recordings.iter().enumerate().map(|(index, (_recording_id, recording))| {
                         let recording_id = recording.id.clone();
                         let is_playing = self.voice_player.is_playing(&recording_id);
                         let is_paused = self.voice_player.is_paused(&recording_id);
@@ -1393,154 +1405,184 @@ impl MessageEditor {
                         };
                         
                         v_flex()
-                            .gap_1()
-                            .p_2()
-                            .rounded_sm()
+                            .gap_2()
+                            .w_full() // Make each recording flexible
+                            .min_w_0() // Allow shrinking
+                            .p_3()
+                            .rounded_md()
+                            .bg(cx.theme().colors().element_background)
                             .hover(|style| style.bg(cx.theme().colors().element_hover))
                             .child(
+                                // Header with controls
                                 h_flex()
                                     .gap_2()
                                     .items_center()
+                                    .justify_between()
+                                    .w_full()
                                     .child(
-                                        // Separate play/pause button
-                                        div()
-                                            .cursor_pointer()
+                                        h_flex()
+                                            .gap_2()
+                                            .items_center()
+                                            .flex_1() // Take available space
+                                            .min_w_0() // Allow shrinking
                                             .child(
-                                                Icon::new(icon_name)
-                                                    .size(IconSize::XSmall)
-                                                    .color(icon_color)
+                                                // Play/pause button
+                                                IconButton::new(("play", index), icon_name)
+                                                    .size(ButtonSize::Compact)
+                                                    .style(ButtonStyle::Subtle)
+                                                    .icon_color(icon_color)
+                                                    .tooltip(move |window, cx| {
+                                                        Tooltip::text(
+                                                            if is_playing { "Pause" } else { "Play" }
+                                                        )(window, cx)
+                                                    })
+                                                    .on_click({
+                                                        let recording_id = recording_id.clone();
+                                                        cx.listener(move |this, _event, _window, cx| {
+                                                            this.toggle_voice_playback(recording_id.clone(), cx);
+                                                        })
+                                                    })
                                             )
-                                            .on_mouse_down(gpui::MouseButton::Left, {
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .flex_1()
+                                                    .min_w_0()
+                                                    .child(
+                                                        // Recording ID (truncated if needed)
+                                                        Label::new(recording.id.clone())
+                                                            .size(LabelSize::XSmall)
+                                                            .color(Color::Default)
+                                                            .single_line()
+                                                    )
+                                                    .child(
+                                                        // Time info
+                                                        h_flex()
+                                                            .gap_1()
+                                                            .items_center()
+                                                            .child(
+                                                                Label::new(format!("{:.1}s", current_time.as_secs_f32()))
+                                                                    .size(LabelSize::XSmall)
+                                                                    .color(Color::Muted)
+                                                            )
+                                                            .child(
+                                                                Label::new("/")
+                                                                    .size(LabelSize::XSmall)
+                                                                    .color(Color::Disabled)
+                                                            )
+                                                            .child(
+                                                                Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
+                                                                    .size(LabelSize::XSmall)
+                                                                    .color(Color::Muted)
+                                                            )
+                                                    )
+                                            )
+                                    )
+                                    .child(
+                                        // Remove button
+                                        IconButton::new(("remove", index), IconName::Trash)
+                                            .size(ButtonSize::Compact)
+                                            .style(ButtonStyle::Subtle)
+                                            .icon_color(Color::Error)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Remove recording")(window, cx)
+                                            })
+                                            .on_click({
                                                 let recording_id = recording_id.clone();
                                                 cx.listener(move |this, _event, _window, cx| {
-                                                    this.toggle_voice_playback(recording_id.clone(), cx);
+                                                    this.remove_voice_recording(recording_id.clone(), cx);
                                                 })
                                             })
                                     )
-                                    .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .child(
-                                                Label::new(format!("{:.1}s", current_time.as_secs_f32()))
-                                                    .size(LabelSize::XSmall)
-                                                    .color(Color::Muted)
-                                            )
-                                            .child(
-                                                Label::new(format!("{:.1}s", recording.duration.as_secs_f32()))
-                                                    .size(LabelSize::XSmall)
-                                                    .color(Color::Muted)
-                                            )
-                                    )
                             )
                             .child(
-                                v_flex()
-                                    .gap_1()
-                                    .child(
-                                        // Progress bar - separate from play button with exact bounds calculation
-                                        canvas(
-                                            {
+                                // Progress bar
+                                canvas(
+                                    {
+                                        let recording_id = recording_id.clone();
+                                        move |bounds, _window, _cx| (bounds, recording_id.clone())
+                                    },
+                                    {
+                                        let recording_id = recording_id.clone();
+                                        let progress = progress;
+                                        let is_playing = is_playing;
+                                        let entity = cx.entity().clone();
+                                        move |bounds, (_bounds_data, _recording_id), window, cx| {
+                                            // Draw simple progress bar background
+                                            window.paint_quad(gpui::fill(
+                                                bounds,
+                                                cx.theme().colors().element_background,
+                                            ));
+                                            
+                                            // Draw simple progress fill
+                                            let progress_width = bounds.size.width * progress;
+                                            let progress_bounds = gpui::Bounds {
+                                                origin: bounds.origin,
+                                                size: gpui::Size {
+                                                    width: progress_width,
+                                                    height: bounds.size.height,
+                                                },
+                                            };
+                                            
+                                            let fill_color = if is_playing { 
+                                                cx.theme().colors().text_accent 
+                                            } else { 
+                                                cx.theme().colors().element_disabled 
+                                            };
+                                            
+                                            window.paint_quad(gpui::fill(progress_bounds, fill_color));
+                                            
+                                            // Handle mouse events
+                                            window.on_mouse_event({
                                                 let recording_id = recording_id.clone();
-                                                move |bounds, _window, _cx| (bounds, recording_id.clone())
-                                            },
-                                            {
+                                                let entity = entity.clone();
+                                                move |event: &gpui::MouseDownEvent, _phase, _window, cx| {
+                                                    if bounds.contains(&event.position) {
+                                                        let relative_x = event.position.x - bounds.origin.x;
+                                                        let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
+                                                        
+                                                        entity.update(cx, |this, cx| {
+                                                            this.start_seek_voice_playback(recording_id.clone(), relative_position, cx);
+                                                        });
+                                                    }
+                                                }
+                                            });
+                                            
+                                            window.on_mouse_event({
                                                 let recording_id = recording_id.clone();
-                                                let progress = progress;
-                                                let is_playing = is_playing;
-                                                let entity = cx.entity().clone();
-                                                move |bounds, (_bounds_data, _recording_id), window, cx| {
-                                                    // Draw the progress bar background
-                                                    window.paint_quad(gpui::fill(
-                                                        bounds,
-                                                        cx.theme().colors().element_background,
-                                                    ));
-                                                    
-                                                    // Draw the progress fill
-                                                    let progress_width = bounds.size.width * progress;
-                                                    let progress_bounds = gpui::Bounds {
-                                                        origin: bounds.origin,
-                                                        size: gpui::Size {
-                                                            width: progress_width,
-                                                            height: bounds.size.height,
-                                                        },
-                                                    };
-                                                    
-                                                    let fill_color = if is_playing { 
-                                                        cx.theme().colors().text_accent 
-                                                    } else { 
-                                                        cx.theme().colors().element_disabled 
-                                                    };
-                                                    
-                                                    window.paint_quad(gpui::fill(progress_bounds, fill_color));
-                                                    
-                                                    // Handle mouse events with exact bounds
-                                                    window.on_mouse_event({
-                                                        let recording_id = recording_id.clone();
-                                                        let entity = entity.clone();
-                                                        move |event: &gpui::MouseDownEvent, _phase, _window, cx| {
-                                                            if bounds.contains(&event.position) {
-                                                                // Calculate exact relative position within the progress bar
-                                                                let relative_x = event.position.x - bounds.origin.x;
-                                                                let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
-                                                                
-                                                                log::info!("🖱️ Mouse down on progress bar: recording={}, position={:.1}%, bounds={:?}", 
-                                                                    recording_id, relative_position * 100.0, bounds);
-                                                                
-                                                                // Update the MessageEditor entity - start seeking
-                                                                entity.update(cx, |this, cx| {
-                                                                    this.start_seek_voice_playback(recording_id.clone(), relative_position, cx);
-                                                                });
+                                                let entity = entity.clone();
+                                                move |event: &gpui::MouseMoveEvent, _phase, _window, cx| {
+                                                    if event.pressed_button == Some(gpui::MouseButton::Left) {
+                                                        let relative_x = event.position.x - bounds.origin.x;
+                                                        let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
+                                                        
+                                                        entity.update(cx, |this, cx| {
+                                                            if this.voice_player.is_seeking(&recording_id) {
+                                                                this.update_seek_position(recording_id.clone(), relative_position, cx);
                                                             }
-                                                        }
-                                                    });
-                                                    
-                                                    // Handle mouse move for continuous seeking while dragging
-                                                    window.on_mouse_event({
-                                                        let recording_id = recording_id.clone();
-                                                        let entity = entity.clone();
-                                                        move |event: &gpui::MouseMoveEvent, _phase, _window, cx| {
-                                                            // Only seek if we're currently seeking this recording and mouse is pressed
-                                                            if event.pressed_button == Some(gpui::MouseButton::Left) {
-                                                                // Calculate relative position, clamping to bounds even if mouse is outside
-                                                                let relative_x = event.position.x - bounds.origin.x;
-                                                                let relative_position = (relative_x.0 / bounds.size.width.0).clamp(0.0, 1.0);
-                                                                
-                                                                entity.update(cx, |this, cx| {
-                                                                    // Only update if we're actually seeking this recording
-                                                                    if this.voice_player.is_seeking(&recording_id) {
-                                                                        log::debug!("🖱️ Mouse drag seek: recording={}, position={:.1}%", 
-                                                                            recording_id, relative_position * 100.0);
-                                                                        this.update_seek_position(recording_id.clone(), relative_position, cx);
-                                                                    }
-                                                                });
-                                                            }
-                                                        }
-                                                    });
-                                                    
-                                                    // Handle mouse up to resume playback after seeking
-                                                    window.on_mouse_event({
-                                                        let recording_id = recording_id.clone();
-                                                        let entity = entity.clone();
-                                                        move |_event: &gpui::MouseUpEvent, _phase, _window, cx| {
-                                                            // Resume playback after seeking - don't check bounds since user might drag outside and release
-                                                            entity.update(cx, |this, cx| {
-                                                                // Only end seeking if we're actually seeking this recording
-                                                                if this.voice_player.is_seeking(&recording_id) {
-                                                                    log::info!("🖱️ Mouse up - ending seek for recording: {}", recording_id);
-                                                                    this.end_seek_voice_playback(recording_id.clone(), cx);
-                                                                } else {
-                                                                    log::debug!("🖱️ Mouse up but no seeking state for recording: {}", recording_id);
-                                                                }
-                                                            });
+                                                        });
+                                                    }
+                                                }
+                                            });
+                                            
+                                            window.on_mouse_event({
+                                                let recording_id = recording_id.clone();
+                                                let entity = entity.clone();
+                                                move |_event: &gpui::MouseUpEvent, _phase, _window, cx| {
+                                                    entity.update(cx, |this, cx| {
+                                                        if this.voice_player.is_seeking(&recording_id) {
+                                                            this.end_seek_voice_playback(recording_id.clone(), cx);
                                                         }
                                                     });
                                                 }
-                                            }
-                                        )
-                                        .h_1p5()
-                                        .w_full()
-                                        .rounded_sm()
-                                        .cursor_pointer()
-                            )
+                                            });
+                                        }
+                                    }
+                                )
+                                .h_1p5()
+                                .w_full()
+                                .rounded_sm()
+                                .cursor_pointer()
                             )
                     })
                 )
@@ -1555,8 +1597,6 @@ impl MessageEditor {
             return;
         }
         
-        // Always ensure the update task is running if any recording is active
-        // (playing, paused, or seeking)
         let has_any_active_recording = self.voice_player.get_recordings()
             .iter()
             .any(|(_, recording)| {
@@ -1566,26 +1606,23 @@ impl MessageEditor {
             });
         
         if has_any_active_recording {
-            // Start or ensure update task is running
             if self.playback_update_task.is_none() {
                 log::info!("🔄 Starting playback update task for active recordings");
                 self.start_playback_update_task(cx);
             }
         } else {
-            // No active recordings, stop the update task
             log::info!("⏹️ No active recordings, stopping update task");
             self.playback_update_task.take();
         }
         
+        // Immediately update UI for responsive playback control
         cx.notify();
     }
 
     fn start_voice_playback(&mut self, recording_id: String, cx: &mut Context<Self>) {
-        // Set up event callback for the voice player if not already set
         let weak_entity = cx.entity().downgrade();
         self.voice_player.set_event_callback(move |event| {
             if let Some(_entity) = weak_entity.upgrade() {
-                // Handle voice player events here if needed
                 log::info!("Voice player event: {:?}", event);
             }
         });
@@ -1595,7 +1632,6 @@ impl MessageEditor {
             return;
         }
         
-        // Start real-time progress tracking
         self.start_playback_update_task(cx);
         cx.notify();
     }
@@ -1607,7 +1643,6 @@ impl MessageEditor {
         } else {
             log::info!("✅ Successfully ended seeking for recording: {}", recording_id);
             
-            // Ensure the update task is running for any active recordings
             let has_any_active_recording = self.voice_player.get_recordings()
                 .iter()
                 .any(|(_, recording)| {
@@ -1621,6 +1656,7 @@ impl MessageEditor {
                 self.start_playback_update_task(cx);
             }
         }
+        // Immediately update UI when seeking ends
         cx.notify();
     }
 
@@ -1629,6 +1665,7 @@ impl MessageEditor {
         if let Err(e) = self.voice_player.update_seek_position(recording_id.clone(), relative_position) {
             log::error!("Failed to update seek position: {}", e);
         }
+        // Immediately update UI for smooth seeking
         cx.notify();
     }
 
@@ -1639,6 +1676,7 @@ impl MessageEditor {
         } else {
             log::info!("✅ Successfully started seeking for recording: {}", recording_id);
         }
+        // Immediately update UI for responsive seeking
         cx.notify();
     }
 
@@ -1670,18 +1708,15 @@ impl MessageEditor {
     }
 
     fn toggle_voice_input(&mut self, cx: &mut Context<Self>) {
-        // Set up event callback for the voice recorder if not already set
         let weak_entity = cx.entity().downgrade();
         self.voice_recorder.set_event_callback(move |event| {
             if let Some(_entity) = weak_entity.upgrade() {
-                // Handle voice recorder events here if needed
                 log::info!("Voice recorder event: {:?}", event);
             }
         });
 
         if let Ok(recording) = self.voice_recorder.toggle_recording() {
             if let Some(recording) = recording {
-                // Recording was completed
                 self.voice_player.add_recording(recording.clone());
                 self.insert_voice_recording(recording, cx);
             }
@@ -1690,56 +1725,48 @@ impl MessageEditor {
     }
 
     fn insert_voice_recording(&mut self, recording: VoiceRecording, cx: &mut Context<Self>) {
-        // Insert a voice recording marker into the editor
         let text = format!("[Voice Recording: {} ({:.1}s)]", recording.id, recording.duration.as_secs_f32());
         
         self.editor.update(cx, |editor, cx| {
             let cursor_position = editor.selections.newest::<usize>(cx).head();
             
-            // Use buffer.edit() to insert text at cursor position
             editor.buffer().update(cx, |buffer, cx| {
                 buffer.edit([(cursor_position..cursor_position, text.as_str())], None, cx);
             });
-            
-            // Note: We skip changing selections to avoid needing window access
-            // The cursor will automatically be positioned after the inserted text
         });
         
         cx.notify();
     }
 
     fn start_playback_update_task(&mut self, cx: &mut Context<Self>) {
-        // Stop any existing update task
         self.playback_update_task.take();
         
-        log::info!("🔄 Starting playback update task for real-time progress tracking");
+        log::info!("🔄 Starting event-driven playback update task");
         
         self.playback_update_task = Some(cx.spawn(async move |this, cx| {
-            let update_interval = Duration::from_millis(50); // Update every 50ms for smooth progress
+            // Use a shorter interval but focus on immediate updates when state changes
+            let check_interval = Duration::from_millis(8); // Very fast check for state changes
             
             loop {
-                smol::Timer::after(update_interval).await;
+                smol::Timer::after(check_interval).await;
                 
                 let should_continue = this.update(cx, |this, cx| {
-                    // Don't update playback if any recording is currently being seeked
-                    let has_seeking = this.voice_player.get_recordings()
-                        .iter()
-                        .any(|(_, recording)| this.voice_player.is_seeking(&recording.id));
-                    
-                    if !has_seeking {
-                        // Update the voice player's internal state only if not seeking
-                        if let Some(event) = this.voice_player.update_playback() {
-                            match event {
-                                VoicePlayerEvent::PlaybackCompleted { recording_id } => {
-                                    log::info!("✅ Playback completed for recording: {}", recording_id);
-                                    // Don't stop the task here - other recordings might still be active
-                                }
-                                _ => {}
+                    // Check for any voice player events first
+                    if let Some(event) = this.voice_player.update_playback() {
+                        match event {
+                            VoicePlayerEvent::PlaybackCompleted { recording_id } => {
+                                log::info!("✅ Playback completed for recording: {}", recording_id);
+                                // Immediately update UI when playback completes
+                                cx.notify();
+                            }
+                            _ => {
+                                // Any other event should trigger immediate UI update
+                                cx.notify();
                             }
                         }
                     }
                     
-                    // Check if any recording is still active (playing, paused, or seeking)
+                    // Check if any recording is still active
                     let has_active_recordings = this.voice_player.get_recordings()
                         .iter()
                         .any(|(_, recording)| {
@@ -1749,12 +1776,11 @@ impl MessageEditor {
                         });
                     
                     if !has_active_recordings {
-                        // No active recordings, stop the update task
                         log::info!("⏹️ No more active recordings, stopping update task");
                         return false;
                     }
                     
-                    // Update UI for real-time progress of all recordings
+                    // Always update UI for smooth progress during playback
                     cx.notify();
                     true
                 }).unwrap_or(false);
@@ -1764,10 +1790,9 @@ impl MessageEditor {
                 }
             }
             
-            // Clean up the task when it finishes
             this.update(cx, |this, _cx| {
                 this.playback_update_task.take();
-                log::info!("🧹 Playback update task cleaned up");
+                log::info!("🧹 Event-driven update task cleaned up");
             }).ok();
         }));
     }
@@ -1792,8 +1817,14 @@ impl MessageEditor {
             return;
         }
         
-        // Restart real-time progress tracking
         self.start_playback_update_task(cx);
+        cx.notify();
+    }
+
+    fn remove_voice_recording(&mut self, recording_id: String, cx: &mut Context<Self>) {
+        log::info!("🗑️ Removing recording: {}", recording_id);
+        self.voice_player.remove_recording(&recording_id);
+        log::info!("✅ Successfully removed recording: {}", recording_id);
         cx.notify();
     }
 }
@@ -1816,8 +1847,6 @@ pub fn extract_message_creases(
                 .map(move |(id, _)| (id, context.clone()))
         })
         .collect::<HashMap<_, _>>();
-    // Filter the addon's list of creases based on what the editor reports,
-    // since the addon might have removed creases in it.
     let creases = editor.display_map.update(cx, |display_map, cx| {
         display_map
             .snapshot(cx)
