@@ -704,12 +704,12 @@ mod tests {
             SemanticVersion::new(1, 0, 0),
         ));
 
-        assert_eq!(message, "Install version: 1.0.0");
+        assert_eq!(message, "Version: 1.0.0");
 
         let message = ActivityIndicator::version_tooltip_message(&VersionCheckType::Sha(
             AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
         ));
 
-        assert_eq!(message, "Install version: 14d9a41…");
+        assert_eq!(message, "Version: 14d9a41…");
     }
 }
