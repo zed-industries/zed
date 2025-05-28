@@ -22,6 +22,7 @@ test-support = [
     "wayland",
     "x11",
 ]
+inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 runtime_shaders = []
 macos-blade = [

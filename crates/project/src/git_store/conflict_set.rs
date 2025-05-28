@@ -254,7 +254,7 @@ impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
 
 #[cfg(test)]
 mod tests {
-    use std::sync::mpsc;
+    use std::{path::Path, sync::mpsc};
 
     use crate::{Project, project_settings::ProjectSettings};
 
@@ -265,7 +265,7 @@ mod tests {
     use language::language_settings::AllLanguageSettings;
     use serde_json::json;
     use settings::Settings as _;
-    use text::{Buffer, BufferId, ToOffset as _};
+    use text::{Buffer, BufferId, Point, ToOffset as _};
     use unindent::Unindent as _;
     use util::path;
     use worktree::WorktreeSettings;
@@ -463,7 +463,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_conflict_updates(executor: BackgroundExecutor, cx: &mut TestAppContext) {
-        env_logger::try_init().ok();
+        zlog::init_test();
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
@@ -504,7 +504,8 @@ mod tests {
                 events_tx.send(event.clone()).ok();
             })
         });
-        let conflicts_snapshot = conflict_set.update(cx, |conflict_set, _| conflict_set.snapshot());
+        let conflicts_snapshot =
+            conflict_set.read_with(cx, |conflict_set, _| conflict_set.snapshot());
         assert!(conflicts_snapshot.conflicts.is_empty());
 
         buffer.update(cx, |buffer, cx| {
@@ -543,7 +544,7 @@ mod tests {
         assert_eq!(update.old_range, 0..0);
         assert_eq!(update.new_range, 0..1);
 
-        let conflict = conflict_set.update(cx, |conflict_set, _| {
+        let conflict = conflict_set.read_with(cx, |conflict_set, _| {
             conflict_set.snapshot().conflicts[0].clone()
         });
         cx.update(|cx| {
@@ -556,5 +557,107 @@ mod tests {
             .expect("conflicts should be removed after resolution");
         assert_eq!(update.old_range, 0..1);
         assert_eq!(update.new_range, 0..0);
+    }
+
+    #[gpui::test]
+    async fn test_conflict_updates_without_merge_head(
+        executor: BackgroundExecutor,
+        cx: &mut TestAppContext,
+    ) {
+        zlog::init_test();
+        cx.update(|cx| {
+            settings::init(cx);
+            WorktreeSettings::register(cx);
+            ProjectSettings::register(cx);
+            AllLanguageSettings::register(cx);
+        });
+
+        let initial_text = "
+            zero
+            <<<<<<< HEAD
+            one
+            =======
+            two
+            >>>>>>> Stashed Changes
+            three
+        "
+        .unindent();
+
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": initial_text,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (git_store, buffer) = project.update(cx, |project, cx| {
+            (
+                project.git_store().clone(),
+                project.open_local_buffer(path!("/project/a.txt"), cx),
+            )
+        });
+
+        cx.run_until_parked();
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.insert(
+                "a.txt".into(),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            )
+        })
+        .unwrap();
+
+        let buffer = buffer.await.unwrap();
+
+        // Open the conflict set for a file that currently has conflicts.
+        let conflict_set = git_store.update(cx, |git_store, cx| {
+            git_store.open_conflict_set(buffer.clone(), cx)
+        });
+
+        cx.run_until_parked();
+        conflict_set.update(cx, |conflict_set, cx| {
+            let conflict_range = conflict_set.snapshot().conflicts[0]
+                .range
+                .to_point(buffer.read(cx));
+            assert_eq!(conflict_range, Point::new(1, 0)..Point::new(6, 0));
+        });
+
+        // Simulate the conflict being removed by e.g. staging the file.
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.remove(Path::new("a.txt"))
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+        conflict_set.update(cx, |conflict_set, _| {
+            assert_eq!(conflict_set.has_conflict, false);
+            assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
+        });
+
+        // Simulate the conflict being re-added.
+        fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
+            state.unmerged_paths.insert(
+                "a.txt".into(),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                },
+            )
+        })
+        .unwrap();
+
+        cx.run_until_parked();
+        conflict_set.update(cx, |conflict_set, cx| {
+            let conflict_range = conflict_set.snapshot().conflicts[0]
+                .range
+                .to_point(buffer.read(cx));
+            assert_eq!(conflict_range, Point::new(1, 0)..Point::new(6, 0));
+        });
     }
 }

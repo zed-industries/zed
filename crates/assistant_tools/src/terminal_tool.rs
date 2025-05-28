@@ -275,7 +275,7 @@ impl Tool for TerminalTool {
                 let exit_status = terminal
                     .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
-                let (content, content_line_count) = terminal.update(cx, |terminal, _| {
+                let (content, content_line_count) = terminal.read_with(cx, |terminal, _| {
                     (terminal.get_content(), terminal.total_lines())
                 })?;
 
@@ -382,13 +382,11 @@ fn working_dir(
 
         match worktrees.next() {
             Some(worktree) => {
-                if worktrees.next().is_none() {
-                    Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
-                } else {
-                    Err(anyhow!(
-                        "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
-                    ))
-                }
+                anyhow::ensure!(
+                    worktrees.next().is_none(),
+                    "'.' is ambiguous in multi-root workspaces. Please specify a root directory explicitly.",
+                );
+                Ok(Some(worktree.read(cx).abs_path().to_path_buf()))
             }
             None => Ok(None),
         }
@@ -409,9 +407,7 @@ fn working_dir(
             }
         }
 
-        Err(anyhow!(
-            "`cd` directory {cd:?} was not in any of the project's worktrees."
-        ))
+        anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");
     }
 }
 
@@ -677,8 +673,7 @@ mod tests {
     use super::*;
 
     fn init_test(executor: &BackgroundExecutor, cx: &mut TestAppContext) {
-        zlog::init();
-        zlog::init_output_stdout();
+        zlog::init_test();
 
         executor.allow_parking();
         cx.update(|cx| {
