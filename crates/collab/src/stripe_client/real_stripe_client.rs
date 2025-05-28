@@ -1,7 +1,7 @@
 use std::str::FromStr as _;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use serde::Serialize;
 use stripe::{
@@ -12,9 +12,10 @@ use stripe::{
 };
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeClient, StripeCustomer, StripeCustomerId, StripeMeter, StripePrice,
-    StripePriceId, StripePriceRecurring, StripeSubscription, StripeSubscriptionId,
-    StripeSubscriptionItem, StripeSubscriptionItemId, UpdateSubscriptionParams,
+    CreateCustomerParams, StripeClient, StripeCreateMeterEventParams, StripeCustomer,
+    StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripePriceRecurring,
+    StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
+    UpdateSubscriptionParams,
 };
 
 pub struct RealStripeClient {
@@ -128,6 +129,26 @@ impl StripeClient for RealStripeClient {
             .await?;
 
         Ok(response.data)
+    }
+
+    async fn create_meter_event(&self, params: StripeCreateMeterEventParams<'_>) -> Result<()> {
+        let identifier = params.identifier;
+        match self.client.post_form("/billing/meter_events", params).await {
+            Ok(event) => Ok(event),
+            Err(stripe::StripeError::Stripe(error)) => {
+                if error.http_status == 400
+                    && error
+                        .message
+                        .as_ref()
+                        .map_or(false, |message| message.contains(identifier))
+                {
+                    Ok(())
+                } else {
+                    Err(anyhow!(stripe::StripeError::Stripe(error)))
+                }
+            }
+            Err(error) => Err(anyhow!(error)),
+        }
     }
 }
 

@@ -10,9 +10,9 @@ use async_trait::async_trait;
 #[cfg(test)]
 pub use fake_stripe_client::*;
 pub use real_stripe_client::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display, Serialize)]
 pub struct StripeCustomerId(pub Arc<str>);
 
 #[derive(Debug, Clone)]
@@ -97,6 +97,20 @@ pub struct StripeMeter {
     pub event_name: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct StripeCreateMeterEventParams<'a> {
+    pub identifier: &'a str,
+    pub event_name: &'a str,
+    pub payload: StripeCreateMeterEventPayload<'a>,
+    pub timestamp: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StripeCreateMeterEventPayload<'a> {
+    pub value: u64,
+    pub stripe_customer_id: &'a StripeCustomerId,
+}
+
 #[async_trait]
 pub trait StripeClient: Send + Sync {
     async fn list_customers_by_email(&self, email: &str) -> Result<Vec<StripeCustomer>>;
@@ -117,4 +131,6 @@ pub trait StripeClient: Send + Sync {
     async fn list_prices(&self) -> Result<Vec<StripePrice>>;
 
     async fn list_meters(&self) -> Result<Vec<StripeMeter>>;
+
+    async fn create_meter_event(&self, params: StripeCreateMeterEventParams<'_>) -> Result<()>;
 }

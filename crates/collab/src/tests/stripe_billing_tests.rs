@@ -4,9 +4,9 @@ use pretty_assertions::assert_eq;
 
 use crate::stripe_billing::StripeBilling;
 use crate::stripe_client::{
-    FakeStripeClient, StripeMeter, StripeMeterId, StripePrice, StripePriceId, StripePriceRecurring,
-    StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
-    UpdateSubscriptionItems,
+    FakeStripeClient, StripeCustomerId, StripeMeter, StripeMeterId, StripePrice, StripePriceId,
+    StripePriceRecurring, StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem,
+    StripeSubscriptionItemId, UpdateSubscriptionItems,
 };
 
 fn make_stripe_billing() -> (StripeBilling, Arc<FakeStripeClient>) {
@@ -209,4 +209,35 @@ async fn test_subscribe_to_price() {
 
         assert_eq!(stripe_client.update_subscription_calls.lock().len(), 1);
     }
+}
+
+#[gpui::test]
+async fn test_bill_model_request_usage() {
+    let (stripe_billing, stripe_client) = make_stripe_billing();
+
+    let customer_id = StripeCustomerId("cus_test".into());
+
+    stripe_billing
+        .bill_model_request_usage(&customer_id, "some_model/requests", 73)
+        .await
+        .unwrap();
+
+    let create_meter_event_calls = stripe_client
+        .create_meter_event_calls
+        .lock()
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(create_meter_event_calls.len(), 1);
+    assert!(
+        create_meter_event_calls[0]
+            .identifier
+            .starts_with("model_requests/")
+    );
+    assert_eq!(create_meter_event_calls[0].stripe_customer_id, customer_id);
+    assert_eq!(
+        create_meter_event_calls[0].event_name.as_ref(),
+        "some_model/requests"
+    );
+    assert_eq!(create_meter_event_calls[0].value, 73);
 }

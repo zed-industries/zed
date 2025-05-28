@@ -7,10 +7,19 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeClient, StripeCustomer, StripeCustomerId, StripeMeter,
-    StripeMeterId, StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
-    UpdateSubscriptionParams,
+    CreateCustomerParams, StripeClient, StripeCreateMeterEventParams, StripeCustomer,
+    StripeCustomerId, StripeMeter, StripeMeterId, StripePrice, StripePriceId, StripeSubscription,
+    StripeSubscriptionId, UpdateSubscriptionParams,
 };
+
+#[derive(Debug, Clone)]
+pub struct StripeCreateMeterEventCall {
+    pub identifier: Arc<str>,
+    pub event_name: Arc<str>,
+    pub value: u64,
+    pub stripe_customer_id: StripeCustomerId,
+    pub timestamp: Option<i64>,
+}
 
 pub struct FakeStripeClient {
     pub customers: Arc<Mutex<HashMap<StripeCustomerId, StripeCustomer>>>,
@@ -19,6 +28,7 @@ pub struct FakeStripeClient {
         Arc<Mutex<Vec<(StripeSubscriptionId, UpdateSubscriptionParams)>>>,
     pub prices: Arc<Mutex<HashMap<StripePriceId, StripePrice>>>,
     pub meters: Arc<Mutex<HashMap<StripeMeterId, StripeMeter>>>,
+    pub create_meter_event_calls: Arc<Mutex<Vec<StripeCreateMeterEventCall>>>,
 }
 
 impl FakeStripeClient {
@@ -29,6 +39,7 @@ impl FakeStripeClient {
             update_subscription_calls: Arc::new(Mutex::new(Vec::new())),
             prices: Arc::new(Mutex::new(HashMap::default())),
             meters: Arc::new(Mutex::new(HashMap::default())),
+            create_meter_event_calls: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -93,5 +104,19 @@ impl StripeClient for FakeStripeClient {
         let meters = self.meters.lock().values().cloned().collect();
 
         Ok(meters)
+    }
+
+    async fn create_meter_event(&self, params: StripeCreateMeterEventParams<'_>) -> Result<()> {
+        self.create_meter_event_calls
+            .lock()
+            .push(StripeCreateMeterEventCall {
+                identifier: params.identifier.into(),
+                event_name: params.event_name.into(),
+                value: params.payload.value,
+                stripe_customer_id: params.payload.stripe_customer_id.clone(),
+                timestamp: params.timestamp,
+            });
+
+        Ok(())
     }
 }
