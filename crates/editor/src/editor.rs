@@ -63,8 +63,8 @@ use dap::TelemetrySpawnLocation;
 use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
-    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, SearchSettings,
-    ShowScrollbar,
+    CurrentLineHighlight, EditorSettings, HideMouseMode, ScrollBeyondLastLine, ScrollbarAxes,
+    SearchSettings, ShowScrollbar,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
@@ -961,7 +961,7 @@ pub struct Editor {
     mode: EditorMode,
     show_breadcrumbs: bool,
     show_gutter: bool,
-    show_scrollbars: bool,
+    show_scrollbars: ScrollbarAxes,
     minimap_visibility: MinimapVisibility,
     offset_content: bool,
     disable_expand_excerpt_buttons: bool,
@@ -1801,7 +1801,10 @@ impl Editor {
             project,
             blink_manager: blink_manager.clone(),
             show_local_selections: true,
-            show_scrollbars: full_mode,
+            show_scrollbars: ScrollbarAxes {
+                horizontal: full_mode,
+                vertical: full_mode,
+            },
             minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
             offset_content: !matches!(mode, EditorMode::SingleLine { .. }),
             show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
@@ -4984,14 +4987,12 @@ impl Editor {
             (buffer_position..buffer_position, None)
         };
 
-        let completion_settings = language_settings(
-            buffer_snapshot
-                .language_at(buffer_position)
-                .map(|language| language.name()),
-            buffer_snapshot.file(),
-            cx,
-        )
-        .completions;
+        let language = buffer_snapshot
+            .language_at(buffer_position)
+            .map(|language| language.name());
+
+        let completion_settings =
+            language_settings(language.clone(), buffer_snapshot.file(), cx).completions;
 
         // The document can be large, so stay in reasonable bounds when searching for words,
         // otherwise completion pop-up might be slow to appear.
@@ -5103,16 +5104,26 @@ impl Editor {
                 let menu = if completions.is_empty() {
                     None
                 } else {
-                    let mut menu = CompletionsMenu::new(
-                        id,
-                        sort_completions,
-                        show_completion_documentation,
-                        ignore_completion_provider,
-                        position,
-                        buffer.clone(),
-                        completions.into(),
-                        snippet_sort_order,
-                    );
+                    let mut menu = editor.update(cx, |editor, cx| {
+                        let languages = editor
+                            .workspace
+                            .as_ref()
+                            .and_then(|(workspace, _)| workspace.upgrade())
+                            .map(|workspace| workspace.read(cx).app_state().languages.clone());
+                        CompletionsMenu::new(
+                            id,
+                            sort_completions,
+                            show_completion_documentation,
+                            ignore_completion_provider,
+                            position,
+                            buffer.clone(),
+                            completions.into(),
+                            snippet_sort_order,
+                            languages,
+                            language,
+                            cx,
+                        )
+                    })?;
 
                     menu.filter(
                         if filter_completions {
@@ -5185,6 +5196,22 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    pub fn with_completions_menu_matching_id<R>(
+        &self,
+        id: CompletionId,
+        on_absent: impl FnOnce() -> R,
+        on_match: impl FnOnce(&mut CompletionsMenu) -> R,
+    ) -> R {
+        let mut context_menu = self.context_menu.borrow_mut();
+        let Some(CodeContextMenu::Completions(completions_menu)) = &mut *context_menu else {
+            return on_absent();
+        };
+        if completions_menu.id != id {
+            return on_absent();
+        }
+        on_match(completions_menu)
     }
 
     pub fn confirm_completion(
@@ -8683,7 +8710,7 @@ impl Editor {
     ) -> Option<AnyElement> {
         self.context_menu.borrow_mut().as_mut().and_then(|menu| {
             if menu.visible() {
-                menu.render_aside(self, max_size, window, cx)
+                menu.render_aside(max_size, window, cx)
             } else {
                 None
             }
@@ -16999,8 +17026,21 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_show_scrollbars(&mut self, show_scrollbars: bool, cx: &mut Context<Self>) {
-        self.show_scrollbars = show_scrollbars;
+    pub fn set_show_scrollbars(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars = ScrollbarAxes {
+            horizontal: show,
+            vertical: show,
+        };
+        cx.notify();
+    }
+
+    pub fn set_show_vertical_scrollbar(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars.vertical = show;
+        cx.notify();
+    }
+
+    pub fn set_show_horizontal_scrollbar(&mut self, show: bool, cx: &mut Context<Self>) {
+        self.show_scrollbars.horizontal = show;
         cx.notify();
     }
 

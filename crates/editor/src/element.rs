@@ -1465,7 +1465,10 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
-        if !self.editor.read(cx).show_scrollbars || self.style.scrollbar_width.is_zero() {
+        let show_scrollbars = self.editor.read(cx).show_scrollbars;
+        if (!show_scrollbars.horizontal && !show_scrollbars.vertical)
+            || self.style.scrollbar_width.is_zero()
+        {
             return None;
         }
 
@@ -1510,7 +1513,12 @@ impl EditorElement {
         };
 
         Some(EditorScrollbars::from_scrollbar_axes(
-            scrollbar_settings.axes,
+            ScrollbarAxes {
+                horizontal: scrollbar_settings.axes.horizontal
+                    && self.editor.read(cx).show_scrollbars.horizontal,
+                vertical: scrollbar_settings.axes.vertical
+                    && self.editor.read(cx).show_scrollbars.vertical,
+            },
             scrollbar_layout_information,
             content_offset,
             scroll_position,
@@ -7558,7 +7566,7 @@ impl Element for EditorElement {
                     let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
                     let vertical_scrollbar_width = (scrollbars_shown
                         && settings.scrollbar.axes.vertical
-                        && self.editor.read(cx).show_scrollbars)
+                        && self.editor.read(cx).show_scrollbars.vertical)
                         .then_some(style.scrollbar_width)
                         .unwrap_or_default();
                     let minimap_width = self

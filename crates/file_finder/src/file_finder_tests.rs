@@ -1,9 +1,10 @@
-use std::{assert_eq, future::IntoFuture, path::Path, time::Duration};
+use std::{future::IntoFuture, path::Path, time::Duration};
 
 use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrevious};
+use pretty_assertions::assert_eq;
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use util::path;
@@ -664,11 +665,58 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
                 PathBuf::from("ignored-root/hiccup"),
                 PathBuf::from("tracked-root/hiccup"),
                 PathBuf::from("ignored-root/height"),
+                PathBuf::from("ignored-root/happiness"),
+                PathBuf::from("tracked-root/happiness"),
+            ],
+            "All ignored files that were indexed are found for default ignored mode"
+        );
+    });
+    cx.dispatch_action(ToggleIncludeIgnored);
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                PathBuf::from("ignored-root/hi"),
+                PathBuf::from("tracked-root/hi"),
+                PathBuf::from("ignored-root/hiccup"),
+                PathBuf::from("tracked-root/hiccup"),
+                PathBuf::from("ignored-root/height"),
                 PathBuf::from("tracked-root/height"),
                 PathBuf::from("ignored-root/happiness"),
                 PathBuf::from("tracked-root/happiness"),
             ],
-            "All ignored files that were indexed are found"
+            "All ignored files should be found, for the toggled on ignored mode"
+        );
+    });
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker.delegate.include_ignored = Some(false);
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                PathBuf::from("tracked-root/hi"),
+                PathBuf::from("tracked-root/hiccup"),
+                PathBuf::from("tracked-root/happiness"),
+            ],
+            "Only non-ignored files should be found for the turned off ignored mode"
         );
     });
 
@@ -686,6 +734,7 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         })
         .await
         .unwrap();
+    cx.run_until_parked();
     workspace
         .update_in(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
@@ -695,8 +744,37 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         })
         .await
         .unwrap();
+    cx.run_until_parked();
+
     picker
         .update_in(cx, |picker, window, cx| {
+            picker.delegate.include_ignored = None;
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                PathBuf::from("ignored-root/hi"),
+                PathBuf::from("tracked-root/hi"),
+                PathBuf::from("ignored-root/hiccup"),
+                PathBuf::from("tracked-root/hiccup"),
+                PathBuf::from("ignored-root/height"),
+                PathBuf::from("ignored-root/happiness"),
+                PathBuf::from("tracked-root/happiness"),
+            ],
+            "Only for the worktree with the ignored root, all indexed ignored files are found in the auto ignored mode"
+        );
+    });
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker.delegate.include_ignored = Some(true);
             picker
                 .delegate
                 .spawn_search(test_path_position("hi"), window, cx)
@@ -719,7 +797,29 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
                 PathBuf::from("ignored-root/happiness"),
                 PathBuf::from("tracked-root/happiness"),
             ],
-            "All ignored files that were indexed are found"
+            "All ignored files that were indexed are found in the turned on ignored mode"
+        );
+    });
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker.delegate.include_ignored = Some(false);
+            picker
+                .delegate
+                .spawn_search(test_path_position("hi"), window, cx)
+        })
+        .await;
+    picker.update(cx, |picker, _| {
+        let matches = collect_search_matches(picker);
+        assert_eq!(matches.history.len(), 0);
+        assert_eq!(
+            matches.search,
+            vec![
+                PathBuf::from("tracked-root/hi"),
+                PathBuf::from("tracked-root/hiccup"),
+                PathBuf::from("tracked-root/happiness"),
+            ],
+            "Only non-ignored files should be found for the turned off ignored mode"
         );
     });
 }

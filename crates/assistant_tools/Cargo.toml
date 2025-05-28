@@ -15,8 +15,8 @@ path = "src/assistant_tools.rs"
 eval = []
 
 [dependencies]
+agent_settings.workspace = true
 anyhow.workspace = true
-assistant_settings.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
 buffer_diff.workspace = true
@@ -62,7 +62,6 @@ which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_llm_client.workspace = true
-once_cell = "1.21.3"
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

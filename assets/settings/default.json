@@ -729,14 +729,14 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "claude-sonnet-4"
     },
     // The model to use when applying edits from the agent.
     "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "claude-sonnet-4"
     },
     // Additional parameters for language model requests. When making a request to a model, parameters will be taken
     // from the last entry in this list that matches the model's provider and name. In each entry, both provider
@@ -756,7 +756,7 @@
       // To set parameters for a specific provider and model:
       // {
       //   "provider": "zed.dev",
-      //   "model": "claude-3-7-sonnet-latest",
+      //   "model": "claude-sonnet-4",
       //   "temperature": 1.0
       // }
     ],
@@ -961,7 +961,15 @@
     // Default: true
     "skip_focus_for_active_in_search": true,
     // Whether to show the git status in the file finder.
-    "git_status": true
+    "git_status": true,
+    // Whether to use gitignored files when searching.
+    // Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    //
+    // Can accept 3 values:
+    //   * `true`: Use all gitignored files
+    //   * `false`: Use only the files Zed had indexed
+    //   * `null`: Be smart and search for ignored when called from a gitignored worktree
+    "include_ignored": null
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

@@ -113,8 +113,10 @@ impl DebugAdapter for JsDebugAdapter {
     ) -> Result<dap::StartDebuggingRequestArgumentsRequest> {
         match config.get("request") {
             Some(val) if val == "launch" => {
-                if config.get("program").is_none() {
-                    return Err(anyhow!("program is required"));
+                if config.get("program").is_none() && config.get("url").is_none() {
+                    return Err(anyhow!(
+                        "either program or url is required for launch request"
+                    ));
                 }
                 Ok(StartDebuggingRequestArgumentsRequest::Launch)
             }
@@ -143,7 +145,11 @@ impl DebugAdapter for JsDebugAdapter {
                 map.insert("processId".into(), attach.process_id.into());
             }
             DebugRequest::Launch(launch) => {
-                map.insert("program".into(), launch.program.clone().into());
+                if launch.program.starts_with("http://") {
+                    map.insert("url".into(), launch.program.clone().into());
+                } else {
+                    map.insert("program".into(), launch.program.clone().into());
+                }
 
                 if !launch.args.is_empty() {
                     map.insert("args".into(), launch.args.clone().into());
@@ -311,7 +317,10 @@ impl DebugAdapter for JsDebugAdapter {
                                     }
                                 }
                             },
-                            "required": ["program"]
+                            "oneOf": [
+                                { "required": ["program"] },
+                                { "required": ["url"] }
+                            ]
                         }
                     ]
                 },

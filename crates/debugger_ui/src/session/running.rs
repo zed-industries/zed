@@ -496,13 +496,22 @@ pub(crate) fn new_debugger_pane(
 pub struct DebugTerminal {
     pub terminal: Option<Entity<TerminalView>>,
     focus_handle: FocusHandle,
+    _subscriptions: [Subscription; 1],
 }
 
 impl DebugTerminal {
-    fn empty(cx: &mut Context<Self>) -> Self {
+    fn empty(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        let focus_subscription = cx.on_focus(&focus_handle, window, |this, window, cx| {
+            if let Some(terminal) = this.terminal.as_ref() {
+                terminal.focus_handle(cx).focus(window);
+            }
+        });
+
         Self {
             terminal: None,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
+            _subscriptions: [focus_subscription],
         }
     }
 }
@@ -538,6 +547,10 @@ impl RunningState {
                     .for_each(|value| Self::substitute_variables_in_config(value, context));
             }
             serde_json::Value::String(s) => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
                     *s = substituted;
                 }
@@ -562,6 +575,10 @@ impl RunningState {
                     .for_each(|value| Self::relativlize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 resolve_path(s);
 
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
@@ -588,7 +605,7 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
 
-        let debug_terminal = cx.new(DebugTerminal::empty);
+        let debug_terminal = cx.new(|cx| DebugTerminal::empty(window, cx));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));

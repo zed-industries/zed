@@ -248,7 +248,9 @@
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-alt-e": "agent::RemoveAllContext",
-      "ctrl-shift-e": "project_panel::ToggleFocus"
+      "ctrl-shift-e": "project_panel::ToggleFocus",
+      "ctrl-shift-enter": "agent::ContinueThread",
+      "alt-enter": "agent::ContinueWithBurnMode"
     }
   },
   {
@@ -871,6 +873,16 @@
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",
       "ctrl-i": "debugger::ToggleSessionPicker"
+    }
+  },
+  {
+    "context": "VariableList",
+    "bindings": {
+      "left": "variable_list::CollapseSelectedEntry",
+      "right": "variable_list::ExpandSelectedEntry",
+      "enter": "variable_list::EditVariable",
+      "ctrl-c": "variable_list::CopyVariableValue",
+      "ctrl-alt-c": "variable_list::CopyVariableName"
     }
   },
   {
