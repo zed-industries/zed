@@ -344,6 +344,7 @@ async fn create_billing_subscription(
         stripe_billing
             .find_or_create_customer_by_email(user.email_address.as_deref())
             .await?
+            .try_into()?
     };
 
     let success_url = format!(

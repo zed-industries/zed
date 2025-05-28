@@ -4039,7 +4039,8 @@ async fn get_llm_api_token(
         } else {
             let customer_id = stripe_billing
                 .find_or_create_customer_by_email(user.email_address.as_deref())
-                .await?;
+                .await?
+                .try_into()?;
 
             find_or_create_billing_customer(
                 &session.app_state,
