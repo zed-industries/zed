@@ -283,7 +283,6 @@ async fn list_billing_subscriptions(
 enum ProductCode {
     ZedPro,
     ZedProTrial,
-    ZedFree,
 }
 
 #[derive(Debug, Deserialize)]
@@ -378,11 +377,6 @@ async fn create_billing_subscription(
                     feature_flags,
                     &success_url,
                 )
-                .await?
-        }
-        ProductCode::ZedFree => {
-            stripe_billing
-                .checkout_with_zed_free(customer_id, &user.github_login, &success_url)
                 .await?
         }
     };
