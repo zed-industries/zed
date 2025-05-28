@@ -3428,10 +3428,11 @@ impl Workspace {
                     window.focus(&p.focus_handle(cx));
                 }
                 FocusTarget::Dock(d, _, _) => {
-                    // Read dock once and get the active panel
-                    let active_panel = d.read(cx).active_panel();
-                    if let Some(panel) = active_panel {
-                        panel.panel_focus_handle(cx).focus(window);
+                    // Get both the active panel and its focus handle in one read operation
+                    let focus_handle = d.read(cx).active_panel()
+                        .map(|panel| panel.panel_focus_handle(cx));
+                    if let Some(handle) = focus_handle {
+                        handle.focus(window);
                     }
                 }
             }
