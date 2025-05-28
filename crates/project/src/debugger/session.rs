@@ -966,7 +966,6 @@ impl Session {
         request: dap::messages::Request,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        dbg!(&request);
         let request_args = serde_json::from_value::<RunInTerminalRequestArguments>(
             request.arguments.unwrap_or_default(),
         )
