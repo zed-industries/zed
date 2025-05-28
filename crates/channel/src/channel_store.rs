@@ -333,7 +333,7 @@ impl ChannelStore {
             if let Some(request) = request {
                 let response = request.await?;
                 let this = this.upgrade().context("channel store dropped")?;
-                let user_store = this.update(cx, |this, _| this.user_store.clone())?;
+                let user_store = this.read_with(cx, |this, _| this.user_store.clone())?;
                 ChannelMessage::from_proto_vec(response.messages, &user_store, cx).await
             } else {
                 Ok(Vec::new())
@@ -478,7 +478,7 @@ impl ChannelStore {
                 hash_map::Entry::Vacant(e) => {
                     let task = cx
                         .spawn(async move |this, cx| {
-                            let channel = this.update(cx, |this, _| {
+                            let channel = this.read_with(cx, |this, _| {
                                 this.channel_for_id(channel_id).cloned().ok_or_else(|| {
                                     Arc::new(anyhow!("no channel for id: {channel_id}"))
                                 })
@@ -848,7 +848,7 @@ impl ChannelStore {
         message: TypedEnvelope<proto::UpdateChannels>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
+        this.read_with(&mut cx, |this, _| {
             this.update_channels_tx
                 .unbounded_send(message.payload)
                 .unwrap();

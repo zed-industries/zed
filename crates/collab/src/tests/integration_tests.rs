@@ -56,9 +56,36 @@ use workspace::Pane;
 
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
+    zlog::init_test();
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_database_failure_during_client_reconnection(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client = server.create_client(cx, "user_a").await;
+
+    // Keep disconnecting the client until a database failure prevents it from
+    // reconnecting.
+    server.test_db.set_query_failure_probability(0.3);
+    loop {
+        server.disconnect_client(client.peer_id().unwrap());
+        executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+        if !client.status().borrow().is_connected() {
+            break;
+        }
     }
+
+    // Make the database healthy again and ensure the client can finally connect.
+    server.test_db.set_query_failure_probability(0.);
+    executor.advance_clock(RECEIVE_TIMEOUT + RECONNECT_TIMEOUT);
+    assert!(
+        matches!(*client.status().borrow(), client::Status::Connected { .. }),
+        "status was {:?}",
+        *client.status().borrow()
+    );
 }
 
 #[gpui::test(iterations = 10)]

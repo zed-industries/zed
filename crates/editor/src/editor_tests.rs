@@ -2863,18 +2863,24 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
         settings.defaults.tab_size = NonZeroU32::new(4)
     });
 
-    let language = Arc::new(Language::new(
-        LanguageConfig {
-            documentation: Some(language::DocumentationConfig {
-                start: "/**".into(),
-                end: "*/".into(),
-                prefix: "* ".into(),
-                tab_size: NonZeroU32::new(1).unwrap(),
-            }),
-            ..LanguageConfig::default()
-        },
-        None,
-    ));
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                documentation: Some(language::DocumentationConfig {
+                    start: "/**".into(),
+                    end: "*/".into(),
+                    prefix: "* ".into(),
+                    tab_size: NonZeroU32::new(1).unwrap(),
+                }),
+
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_override_query("[(line_comment)(block_comment)] @comment.inclusive")
+        .unwrap(),
+    );
+
     {
         let mut cx = EditorTestContext::new(cx).await;
         cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
@@ -3037,6 +3043,17 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
          *
          */
          ˇtext
+    "});
+
+        // Ensure if not comment block it doesn't
+        // add comment prefix on newline
+        cx.set_state(indoc! {"
+        * textˇ
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        * text
+        ˇ
     "});
     }
     // Ensure that comment continuations can be disabled.
@@ -14243,7 +14260,7 @@ async fn test_context_menus_hide_hover_popover(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, window, cx| {
         editor.toggle_code_actions(
             &ToggleCodeActions {
-                deployed_from_indicator: None,
+                deployed_from: None,
                 quick_launch: false,
             },
             window,
@@ -20819,6 +20836,19 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
                     break
             else:ˇ
     "});
+
+    // test does not outdent on typing after line with square brackets
+    cx.set_state(indoc! {"
+        def f() -> list[str]:
+            ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("a", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def f() -> list[str]:
+            aˇ
+    "});
 }
 
 #[gpui::test]
@@ -20843,7 +20873,7 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
         ˇ
     "});
 
-    // test correct indent after newline in curly brackets
+    // test correct indent after newline in brackets
     cx.set_state(indoc! {"
         {ˇ}
     "});
@@ -20855,6 +20885,32 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
         {
             ˇ
         }
+    "});
+
+    cx.set_state(indoc! {"
+        (ˇ)
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        (
+            ˇ
+        )
+    "});
+
+    // do not indent after empty lists or dictionaries
+    cx.set_state(indoc! {"
+        a = []ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        a = []
+        ˇ
     "});
 }
 

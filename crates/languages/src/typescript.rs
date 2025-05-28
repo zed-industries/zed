@@ -20,6 +20,7 @@ use std::{
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::archive::extract_zip;
+use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
 
 pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
@@ -374,81 +375,55 @@ impl LspAdapter for EsLintLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
-
-        let eslint_user_settings = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
-        })?;
-
-        let mut code_action_on_save = json!({
-            // We enable this, but without also configuring `code_actions_on_format`
-            // in the Zed configuration, it doesn't have an effect.
-            "enable": true,
-        });
-
-        if let Some(code_action_settings) = eslint_user_settings
-            .get("codeActionOnSave")
-            .and_then(|settings| settings.as_object())
-        {
-            if let Some(enable) = code_action_settings.get("enable") {
-                code_action_on_save["enable"] = enable.clone();
-            }
-            if let Some(mode) = code_action_settings.get("mode") {
-                code_action_on_save["mode"] = mode.clone();
-            }
-            if let Some(rules) = code_action_settings.get("rules") {
-                code_action_on_save["rules"] = rules.clone();
-            }
-        }
-
-        let working_directory = eslint_user_settings
-            .get("workingDirectory")
-            .cloned()
-            .unwrap_or_else(|| json!({"mode": "auto"}));
-
-        let problems = eslint_user_settings
-            .get("problems")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-
-        let rules_customizations = eslint_user_settings
-            .get("rulesCustomizations")
-            .cloned()
-            .unwrap_or_else(|| json!([]));
-
-        let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
 
+        let mut default_workspace_configuration = json!({
+            "validate": "on",
+            "rulesCustomizations": [],
+            "run": "onType",
+            "nodePath": null,
+            "workingDirectory": {
+                "mode": "auto"
+            },
+            "workspaceFolder": {
+                "uri": workspace_root,
+                "name": workspace_root.file_name()
+                    .unwrap_or(workspace_root.as_os_str())
+                    .to_string_lossy(),
+            },
+            "problems": {},
+            "codeActionOnSave": {
+                // We enable this, but without also configuring code_actions_on_format
+                // in the Zed configuration, it doesn't have an effect.
+                "enable": true,
+            },
+            "codeAction": {
+                "disableRuleComment": {
+                    "enable": true,
+                    "location": "separateLine",
+                },
+                "showDocumentation": {
+                    "enable": true
+                }
+            },
+            "experimental": {
+                "useFlatConfig": use_flat_config,
+            },
+        });
+
+        let override_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = override_options {
+            merge_json_value_into(override_options, &mut default_workspace_configuration);
+        }
+
         Ok(json!({
-            "": {
-                "validate": "on",
-                "rulesCustomizations": rules_customizations,
-                "run": "onType",
-                "nodePath": node_path,
-                "workingDirectory": working_directory,
-                "workspaceFolder": {
-                    "uri": workspace_root,
-                    "name": workspace_root.file_name()
-                        .unwrap_or(workspace_root.as_os_str()),
-                },
-                "problems": problems,
-                "codeActionOnSave": code_action_on_save,
-                "codeAction": {
-                    "disableRuleComment": {
-                        "enable": true,
-                        "location": "separateLine",
-                    },
-                    "showDocumentation": {
-                        "enable": true
-                    }
-                },
-                "experimental": {
-                    "useFlatConfig": use_flat_config,
-                },
-            }
+            "": default_workspace_configuration
         }))
     }
 
@@ -515,7 +490,7 @@ impl LspAdapter for EsLintLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    extract_zip(&destination_path, BufReader::new(response.body_mut()))
+                    extract_zip(&destination_path, response.body_mut())
                         .await
                         .with_context(|| {
                             format!("unzipping {} to {:?}", version.url, destination_path)
@@ -621,7 +596,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline
                 .items

@@ -367,7 +367,7 @@ impl WorktreeStore {
 
         let handle_id = worktree.entity_id();
         cx.subscribe(worktree, |_, worktree, event, cx| {
-            let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+            let worktree_id = worktree.read(cx).id();
             match event {
                 worktree::Event::UpdatedEntries(changes) => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedEntries(

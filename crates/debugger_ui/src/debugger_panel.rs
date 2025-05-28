@@ -68,12 +68,13 @@ pub struct DebugPanel {
     pub(crate) thread_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
+    _subscriptions: [Subscription; 1],
 }
 
 impl DebugPanel {
     pub fn new(
         workspace: &Workspace,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
@@ -81,6 +82,14 @@ impl DebugPanel {
             let focus_handle = cx.focus_handle();
             let thread_picker_menu_handle = PopoverMenuHandle::default();
             let session_picker_menu_handle = PopoverMenuHandle::default();
+
+            let focus_subscription = cx.on_focus(
+                &focus_handle,
+                window,
+                |this: &mut DebugPanel, window, cx| {
+                    this.focus_active_item(window, cx);
+                },
+            );
 
             Self {
                 size: px(300.),
@@ -93,6 +102,7 @@ impl DebugPanel {
                 fs: workspace.app_state().fs.clone(),
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
+                _subscriptions: [focus_subscription],
             }
         })
     }
@@ -101,15 +111,12 @@ impl DebugPanel {
         let Some(session) = self.active_session.clone() else {
             return;
         };
-        let Some(active_pane) = session
+        let active_pane = session
             .read(cx)
             .running_state()
             .read(cx)
             .active_pane()
-            .cloned()
-        else {
-            return;
-        };
+            .clone();
         active_pane.update(cx, |pane, cx| {
             pane.focus_active_item(window, cx);
         });
@@ -288,7 +295,6 @@ impl DebugPanel {
                         })
                     })?
                     .await?;
-
                 dap_store
                     .update(cx, |dap_store, cx| {
                         dap_store.boot_session(session.clone(), definition, cx)
@@ -313,6 +319,45 @@ impl DebugPanel {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub(crate) fn rerun_last_session(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let task_store = workspace.project().read(cx).task_store().clone();
+        let Some(task_inventory) = task_store.read(cx).task_inventory() else {
+            return;
+        };
+        let Some(scenario) = task_inventory.read(cx).last_scheduled_scenario().cloned() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let task_contexts = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    tasks_ui::task_contexts(workspace, window, cx)
+                })?
+                .await;
+
+            let task_context = task_contexts.active_context().cloned().unwrap_or_default();
+            let worktree_id = task_contexts.worktree();
+
+            this.update_in(cx, |this, window, cx| {
+                this.start_session(
+                    scenario.clone(),
+                    task_context,
+                    None,
+                    worktree_id,
+                    window,
+                    cx,
+                );
+            })
+        })
+        .detach();
     }
 
     pub(crate) async fn register_session(
@@ -342,14 +387,12 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        while let Some(parent_session) =
-            curr_session.read_with(cx, |session, _| session.parent_session().cloned())
-        {
+        while let Some(parent_session) = curr_session.read(cx).parent_session().cloned() {
             curr_session = parent_session;
         }
 
         let Some(worktree) = curr_session.read(cx).worktree() else {
-            log::error!("Attempted to start a child session from non local debug session");
+            log::error!("Attempted to restart a non-running session");
             return;
         };
 
@@ -384,7 +427,7 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(worktree) = parent_session.read(cx).worktree() else {
-            log::error!("Attempted to start a child session from non local debug session");
+            log::error!("Attempted to start a child-session from a non-running session");
             return;
         };
 
@@ -911,7 +954,7 @@ impl DebugPanel {
                 cx.spawn_in(window, async move |workspace, cx| {
                     let serialized_scenario = serialized_scenario?;
                     let fs =
-                        workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+                        workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
                     path.push(paths::local_settings_folder_relative_path());
                     if !fs.is_dir(path.as_path()).await {
@@ -970,7 +1013,7 @@ async fn register_session_inner(
     session: Entity<Session>,
     cx: &mut AsyncWindowContext,
 ) -> Result<Entity<DebugSession>> {
-    let adapter_name = session.update(cx, |session, _| session.adapter())?;
+    let adapter_name = session.read_with(cx, |session, _| session.adapter())?;
     this.update_in(cx, |_, window, cx| {
         cx.subscribe_in(
             &session,

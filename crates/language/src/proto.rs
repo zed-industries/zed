@@ -213,6 +213,7 @@ pub fn serialize_diagnostics<'a>(
             } as i32,
             group_id: entry.diagnostic.group_id as u64,
             is_primary: entry.diagnostic.is_primary,
+            underline: entry.diagnostic.underline,
             code: entry.diagnostic.code.as_ref().map(|s| s.to_string()),
             code_description: entry
                 .diagnostic
@@ -429,6 +430,7 @@ pub fn deserialize_diagnostics(
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
+                    underline: diagnostic.underline,
                     data,
                 },
             })

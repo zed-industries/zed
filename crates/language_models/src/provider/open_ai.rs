@@ -400,7 +400,7 @@ pub fn into_open_ai(
                         tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
-                            content: open_ai::MessageContent::empty(),
+                            content: None,
                             tool_calls: vec![tool_call],
                         });
                     }
@@ -474,7 +474,13 @@ fn add_message_content_part(
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_ai::RequestMessage::User { content }))
-        | (Role::Assistant, Some(open_ai::RequestMessage::Assistant { content, .. }))
+        | (
+            Role::Assistant,
+            Some(open_ai::RequestMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        )
         | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
             content.push_part(new_part);
         }
@@ -484,7 +490,7 @@ fn add_message_content_part(
                     content: open_ai::MessageContent::from(vec![new_part]),
                 },
                 Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: open_ai::MessageContent::from(vec![new_part]),
+                    content: Some(open_ai::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                 },
                 Role::System => open_ai::RequestMessage::System {

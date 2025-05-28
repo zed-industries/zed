@@ -381,7 +381,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
 
@@ -392,7 +392,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             let delegate = &symbols.delegate;
             assert_eq!(delegate.matches.len(), 2);
             assert_eq!(delegate.matches[0].string, "ton");
@@ -406,7 +406,7 @@ mod tests {
         });
 
         cx.run_until_parked();
-        symbols.update(cx, |symbols, _| {
+        symbols.read_with(cx, |symbols, _| {
             assert_eq!(symbols.delegate.matches.len(), 0);
         });
     }

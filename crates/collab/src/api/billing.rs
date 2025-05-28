@@ -269,7 +269,8 @@ async fn list_billing_subscriptions(
                         .and_utc()
                         .to_rfc3339_opts(SecondsFormat::Millis, true)
                 }),
-                is_cancelable: subscription.stripe_subscription_status.is_cancelable()
+                is_cancelable: subscription.kind != Some(SubscriptionKind::ZedFree)
+                    && subscription.stripe_subscription_status.is_cancelable()
                     && subscription.stripe_cancel_at.is_none(),
             })
             .collect(),
@@ -591,23 +592,32 @@ async fn manage_billing_subscription(
             }),
             ..Default::default()
         }),
-        ManageSubscriptionIntent::Cancel => Some(CreateBillingPortalSessionFlowData {
-            type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
-            after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
-                type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
-                redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
-                    return_url: format!("{}/account", app.config.zed_dot_dev_url()),
+        ManageSubscriptionIntent::Cancel => {
+            if subscription.kind == Some(SubscriptionKind::ZedFree) {
+                return Err(Error::http(
+                    StatusCode::BAD_REQUEST,
+                    "free subscription cannot be canceled".into(),
+                ));
+            }
+
+            Some(CreateBillingPortalSessionFlowData {
+                type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
+                after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
+                    type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
+                    redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
+                        return_url: format!("{}/account", app.config.zed_dot_dev_url()),
+                    }),
+                    ..Default::default()
                 }),
+                subscription_cancel: Some(
+                    stripe::CreateBillingPortalSessionFlowDataSubscriptionCancel {
+                        subscription: subscription.stripe_subscription_id,
+                        retention: None,
+                    },
+                ),
                 ..Default::default()
-            }),
-            subscription_cancel: Some(
-                stripe::CreateBillingPortalSessionFlowDataSubscriptionCancel {
-                    subscription: subscription.stripe_subscription_id,
-                    retention: None,
-                },
-            ),
-            ..Default::default()
-        }),
+            })
+        }
         ManageSubscriptionIntent::StopCancellation => unreachable!(),
     };
 
@@ -1505,6 +1515,12 @@ async fn sync_model_request_usage_with_stripe(
     let claude_sonnet_4_max = stripe_billing
         .find_price_by_lookup_key("claude-sonnet-4-requests-max")
         .await?;
+    let claude_opus_4 = stripe_billing
+        .find_price_by_lookup_key("claude-opus-4-requests")
+        .await?;
+    let claude_opus_4_max = stripe_billing
+        .find_price_by_lookup_key("claude-opus-4-requests-max")
+        .await?;
     let claude_3_5_sonnet = stripe_billing
         .find_price_by_lookup_key("claude-3-5-sonnet-requests")
         .await?;
@@ -1538,6 +1554,10 @@ async fn sync_model_request_usage_with_stripe(
             let model = llm_db.model_by_id(usage_meter.model_id)?;
 
             let (price, meter_event_name) = match model.name.as_str() {
+                "claude-opus-4" => match usage_meter.mode {
+                    CompletionMode::Normal => (&claude_opus_4, "claude_opus_4/requests"),
+                    CompletionMode::Max => (&claude_opus_4_max, "claude_opus_4/requests/max"),
+                },
                 "claude-sonnet-4" => match usage_meter.mode {
                     CompletionMode::Normal => (&claude_sonnet_4, "claude_sonnet_4/requests"),
                     CompletionMode::Max => (&claude_sonnet_4_max, "claude_sonnet_4/requests/max"),

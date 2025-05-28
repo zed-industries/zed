@@ -4,10 +4,10 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
-use lsp::{DiagnosticTag, InitializeParams, LanguageServerBinary, LanguageServerName};
+use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
-use smol::{fs, io::BufReader};
+use smol::fs;
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
@@ -83,20 +83,10 @@ impl super::LspAdapter for CLspAdapter {
                 "download failed with status {}",
                 response.status().to_string()
             );
-            extract_zip(&container_dir, BufReader::new(response.body_mut()))
+            extract_zip(&container_dir, response.body_mut())
                 .await
                 .with_context(|| format!("unzipping clangd archive to {container_dir:?}"))?;
             remove_matching(&container_dir, |entry| entry != version_dir).await;
-
-            // todo("windows")
-            #[cfg(not(windows))]
-            {
-                fs::set_permissions(
-                    &binary_path,
-                    <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-                )
-                .await?;
-            }
         }
 
         Ok(LanguageServerBinary {
@@ -292,38 +282,12 @@ impl super::LspAdapter for CLspAdapter {
         Ok(original)
     }
 
-    fn process_diagnostics(
-        &self,
-        params: &mut lsp::PublishDiagnosticsParams,
-        server_id: LanguageServerId,
-        buffer: Option<&'_ Buffer>,
-    ) {
-        if let Some(buffer) = buffer {
-            let snapshot = buffer.snapshot();
-            let inactive_regions = buffer
-                .get_diagnostics(server_id)
-                .into_iter()
-                .flat_map(|v| v.iter())
-                .filter(|diag| clangd_ext::is_inactive_region(&diag.diagnostic))
-                .map(move |diag| {
-                    let range =
-                        language::range_to_lsp(diag.range.to_point_utf16(&snapshot)).unwrap();
-                    let mut tags = Vec::with_capacity(1);
-                    if diag.diagnostic.is_unnecessary {
-                        tags.push(DiagnosticTag::UNNECESSARY);
-                    }
-                    lsp::Diagnostic {
-                        range,
-                        severity: Some(diag.diagnostic.severity),
-                        source: diag.diagnostic.source.clone(),
-                        tags: Some(tags),
-                        message: diag.diagnostic.message.clone(),
-                        code: diag.diagnostic.code.clone(),
-                        ..Default::default()
-                    }
-                });
-            params.diagnostics.extend(inactive_regions);
-        }
+    fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, _: &App) -> bool {
+        clangd_ext::is_inactive_region(previous_diagnostic)
+    }
+
+    fn underline_diagnostic(&self, diagnostic: &lsp::Diagnostic) -> bool {
+        !clangd_ext::is_lsp_inactive_region(diagnostic)
     }
 }
 

@@ -28,6 +28,7 @@ message UpdateUserPlan {
     optional SubscriptionUsage usage = 4;
     optional SubscriptionPeriod subscription_period = 5;
     optional bool account_too_young = 6;
+    optional bool has_overdue_invoices = 7;
 }
 
 message SubscriptionPeriod {

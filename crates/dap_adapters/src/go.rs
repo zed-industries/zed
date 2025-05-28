@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::{Context as _, anyhow, bail};
 use dap::{
     StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
     adapters::DebugTaskDefinition,
@@ -7,6 +7,7 @@ use dap::{
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
 use std::{collections::HashMap, ffi::OsStr, path::PathBuf};
+use util;
 
 use crate::*;
 
@@ -15,6 +16,7 @@ pub(crate) struct GoDebugAdapter;
 
 impl GoDebugAdapter {
     const ADAPTER_NAME: &'static str = "Delve";
+    const DEFAULT_TIMEOUT_MS: u64 = 60000;
 }
 
 #[async_trait(?Send)]
@@ -305,15 +307,27 @@ impl DebugAdapter for GoDebugAdapter {
         let mut args = match &zed_scenario.request {
             dap::DebugRequest::Attach(attach_config) => {
                 json!({
+                    "request": "attach",
+                    "mode": "debug",
                     "processId": attach_config.process_id,
                 })
             }
-            dap::DebugRequest::Launch(launch_config) => json!({
-                "program": launch_config.program,
-                "cwd": launch_config.cwd,
-                "args": launch_config.args,
-                "env": launch_config.env_json()
-            }),
+            dap::DebugRequest::Launch(launch_config) => {
+                let mode = if launch_config.program != "." {
+                    "exec"
+                } else {
+                    "debug"
+                };
+
+                json!({
+                    "request": "launch",
+                    "mode": mode,
+                    "program": launch_config.program,
+                    "cwd": launch_config.cwd,
+                    "args": launch_config.args,
+                    "env": launch_config.env_json()
+                })
+            }
         };
 
         let map = args.as_object_mut().unwrap();
@@ -338,19 +352,75 @@ impl DebugAdapter for GoDebugAdapter {
         _user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let delve_path = delegate
-            .which(OsStr::new("dlv"))
-            .await
-            .and_then(|p| p.to_str().map(|p| p.to_string()))
-            .context("Dlv not found in path")?;
+        let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
+        let dlv_path = adapter_path.join("dlv");
 
-        let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
+        let delve_path = if let Some(path) = delegate.which(OsStr::new("dlv")).await {
+            path.to_string_lossy().to_string()
+        } else if delegate.fs().is_file(&dlv_path).await {
+            dlv_path.to_string_lossy().to_string()
+        } else {
+            let go = delegate
+                .which(OsStr::new("go"))
+                .await
+                .context("Go not found in path. Please install Go first, then Dlv will be installed automatically.")?;
+
+            let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
+
+            let install_output = util::command::new_smol_command(&go)
+                .env("GO111MODULE", "on")
+                .env("GOBIN", &adapter_path)
+                .args(&["install", "github.com/go-delve/delve/cmd/dlv@latest"])
+                .output()
+                .await?;
+
+            if !install_output.status.success() {
+                bail!(
+                    "failed to install dlv via `go install`. stdout: {:?}, stderr: {:?}\n Please try installing it manually using 'go install github.com/go-delve/delve/cmd/dlv@latest'",
+                    String::from_utf8_lossy(&install_output.stdout),
+                    String::from_utf8_lossy(&install_output.stderr)
+                );
+            }
+
+            adapter_path.join("dlv").to_string_lossy().to_string()
+        };
+
+        let mut tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
+
+        if tcp_connection.timeout.is_none()
+            || tcp_connection.timeout.unwrap_or(0) < Self::DEFAULT_TIMEOUT_MS
+        {
+            tcp_connection.timeout = Some(Self::DEFAULT_TIMEOUT_MS);
+        }
+
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
+
+        let cwd = task_definition
+            .config
+            .get("cwd")
+            .and_then(|s| s.as_str())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| delegate.worktree_root_path().to_path_buf());
+
+        let arguments = if cfg!(windows) {
+            vec![
+                "dap".into(),
+                "--listen".into(),
+                format!("{}:{}", host, port),
+                "--headless".into(),
+            ]
+        } else {
+            vec![
+                "dap".into(),
+                "--listen".into(),
+                format!("{}:{}", host, port),
+            ]
+        };
 
         Ok(DebugAdapterBinary {
             command: delve_path,
-            arguments: vec!["dap".into(), "--listen".into(), format!("{host}:{port}")],
-            cwd: Some(delegate.worktree_root_path().to_path_buf()),
+            arguments,
+            cwd: Some(cwd),
             envs: HashMap::default(),
             connection: Some(adapters::TcpArguments {
                 host,
