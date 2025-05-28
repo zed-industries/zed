@@ -1121,10 +1121,10 @@ impl MultiBuffer {
 
     pub fn last_transaction_id(&self, cx: &App) -> Option<TransactionId> {
         if let Some(buffer) = self.as_singleton() {
-            return buffer.read_with(cx, |b, _| {
-                b.peek_undo_stack()
-                    .map(|history_entry| history_entry.transaction_id())
-            });
+            return buffer
+                .read(cx)
+                .peek_undo_stack()
+                .map(|history_entry| history_entry.transaction_id());
         } else {
             let last_transaction = self.history.undo_stack.last()?;
             return Some(last_transaction.id);
@@ -1575,7 +1575,7 @@ impl MultiBuffer {
         context_line_count: u32,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
-        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
@@ -5793,7 +5793,7 @@ impl MultiBufferSnapshot {
                 line_indent.len(tab_size) / tab_size
                     + ((line_indent.len(tab_size) % tab_size) > 0) as u32
             } else {
-                current_depth
+                0
             };
 
             match depth.cmp(&current_depth) {

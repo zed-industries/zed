@@ -23,7 +23,6 @@ pub struct WorkspaceSettings {
     pub use_system_path_prompts: bool,
     pub use_system_prompts: bool,
     pub command_aliases: HashMap<String, String>,
-    pub show_user_picture: bool,
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub on_last_window_closed: OnLastWindowClosed,
@@ -189,10 +188,6 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub command_aliases: Option<HashMap<String, String>>,
-    /// Whether to show user avatar in the title bar.
-    ///
-    /// Default: true
-    pub show_user_picture: Option<bool>,
     /// Maximum open tabs in a pane. Will not close an unsaved
     /// tab. Set to `None` for unlimited tabs.
     ///

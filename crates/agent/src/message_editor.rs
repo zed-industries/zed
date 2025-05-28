@@ -1,13 +1,16 @@
 use std::collections::BTreeMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::assistant_model_selector::{AssistantModelSelector, ModelType};
+use crate::agent_model_selector::{AgentModelSelector, ModelType};
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     AnimatedLabel, MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use agent_settings::{AgentSettings, CompletionMode};
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -16,7 +19,6 @@ use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorEvent,
     EditorMode, EditorStyle, MultiBuffer,
 };
-use feature_flags::{FeatureFlagAppExt, NewBillingFeatureFlag};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::future::Shared;
@@ -26,8 +28,10 @@ use gpui::{
     Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language};
-use language_model::{ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage};
-use language_model_selector::ToggleModelSelector;
+use language_model::{
+    ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
+    ZED_CLOUD_PROVIDER_ID,
+};
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
@@ -38,7 +42,6 @@ use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
-use zed_llm_client::CompletionMode;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::ContextStore;
@@ -47,8 +50,9 @@ use crate::profile_selector::ProfileSelector;
 use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
-    ActiveThread, AgentDiffPane, Chat, ExpandMessageEditor, Follow, NewThread, OpenAgentDiff,
-    RemoveAllContext, ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+    ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, NewThread,
+    OpenAgentDiff, RemoveAllContext, ToggleContextPicker, ToggleProfileSelector,
+    register_agent_preview,
 };
 
 #[derive(RegisterComponent)]
@@ -63,7 +67,7 @@ pub struct MessageEditor {
     prompt_store: Option<Entity<PromptStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
-    model_selector: Entity<AssistantModelSelector>,
+    model_selector: Entity<AgentModelSelector>,
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
@@ -118,7 +122,7 @@ pub(crate) fn create_editor(
 
     let editor_entity = editor.downgrade();
     editor.update(cx, |editor, _| {
-        editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+        editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
             workspace,
             context_store,
             Some(thread_store),
@@ -187,12 +191,22 @@ impl MessageEditor {
         ];
 
         let model_selector = cx.new(|cx| {
-            AssistantModelSelector::new(
+            AgentModelSelector::new(
                 fs.clone(),
                 model_selector_menu_handle,
                 editor.focus_handle(cx),
                 ModelType::Default(thread.clone()),
                 window,
+                cx,
+            )
+        });
+
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(
+                fs,
+                thread.clone(),
+                thread_store,
+                editor.focus_handle(cx),
                 cx,
             )
         });
@@ -213,8 +227,7 @@ impl MessageEditor {
             model_selector,
             edits_expanded: false,
             editor_is_expanded: false,
-            profile_selector: cx
-                .new(|cx| ProfileSelector::new(fs, thread_store, editor.focus_handle(cx), cx)),
+            profile_selector,
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
@@ -267,7 +280,7 @@ impl MessageEditor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_store.update(cx, |store, _cx| store.clear());
+        self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
     }
 
@@ -291,8 +304,27 @@ impl MessageEditor {
         cx.notify();
     }
 
+    fn chat_with_follow(
+        &mut self,
+        _: &ChatWithFollow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.workspace
+            .update(cx, |this, cx| {
+                this.follow(CollaboratorId::Agent, window, cx)
+            })
+            .log_err();
+
+        self.chat(&Chat, window, cx);
+    }
+
     fn is_editor_empty(&self, cx: &App) -> bool {
         self.editor.read(cx).text(cx).trim().is_empty()
+    }
+
+    pub fn is_editor_fully_empty(&self, cx: &App) -> bool {
+        self.editor.read(cx).is_empty(cx)
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -386,7 +418,7 @@ impl MessageEditor {
     fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
-        } else {
+        } else if self.context_strip.read(cx).has_context_items(cx) {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
@@ -440,10 +472,6 @@ impl MessageEditor {
     }
 
     fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
-            return None;
-        }
-
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
         if !model?.model.supports_max_mode() {
@@ -451,12 +479,19 @@ impl MessageEditor {
         }
 
         let active_completion_mode = thread.completion_mode();
+        let max_mode_enabled = active_completion_mode == CompletionMode::Max;
+        let icon = if max_mode_enabled {
+            IconName::ZedBurnModeOn
+        } else {
+            IconName::ZedBurnMode
+        };
 
         Some(
-            IconButton::new("max-mode", IconName::ZedMaxMode)
+            IconButton::new("burn-mode", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .toggle_state(active_completion_mode == CompletionMode::Max)
+                .toggle_state(max_mode_enabled)
+                .selected_icon_color(Color::Error)
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.thread.update(cx, |thread, _cx| {
                         thread.set_completion_mode(match active_completion_mode {
@@ -465,7 +500,10 @@ impl MessageEditor {
                         });
                     });
                 }))
-                .tooltip(|_, cx| cx.new(MaxModeTooltip::new).into())
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| MaxModeTooltip::new().selected(max_mode_enabled))
+                        .into()
+                })
                 .into_any_element(),
         )
     }
@@ -543,6 +581,7 @@ impl MessageEditor {
         v_flex()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::chat_with_follow))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 this.profile_selector
                     .read(cx)
@@ -610,7 +649,7 @@ impl MessageEditor {
                         this.h(vh(0.8, window)).justify_between()
                     })
                     .child(
-                        div()
+                        v_flex()
                             .min_h_16()
                             .when(is_editor_expanded, |this| this.h_full())
                             .child({
@@ -649,7 +688,6 @@ impl MessageEditor {
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .gap_1()
                                     .child(self.render_follow_toggle(cx))
                                     .children(self.render_max_mode_toggle(cx)),
                             )
@@ -823,7 +861,7 @@ impl MessageEditor {
             .border_b_0()
             .border_color(border_color)
             .rounded_t_md()
-            .shadow(smallvec::smallvec![gpui::BoxShadow {
+            .shadow(vec![gpui::BoxShadow {
                 color: gpui::black().opacity(0.15),
                 offset: point(px(1.), px(-1.)),
                 blur_radius: px(3.),
@@ -1042,7 +1080,14 @@ impl MessageEditor {
     }
 
     fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
+        let is_using_zed_provider = self
+            .thread
+            .read(cx)
+            .configured_model()
+            .map_or(false, |model| {
+                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
+            });
+        if !is_using_zed_provider {
             return None;
         }
 
@@ -1059,11 +1104,11 @@ impl MessageEditor {
         let plan = user_store
             .current_plan()
             .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::Free,
+                Plan::Free => zed_llm_client::Plan::ZedFree,
                 Plan::ZedPro => zed_llm_client::Plan::ZedPro,
                 Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
             })
-            .unwrap_or(zed_llm_client::Plan::Free);
+            .unwrap_or(zed_llm_client::Plan::ZedFree);
         let usage = self.thread.read(cx).last_usage().or_else(|| {
             maybe!({
                 let amount = user_store.model_request_usage_amount()?;
@@ -1096,10 +1141,6 @@ impl MessageEditor {
         token_usage_ratio: TokenUsageRatio,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        if !cx.has_flag::<NewBillingFeatureFlag>() {
-            return None;
-        }
-
         let title = if token_usage_ratio == TokenUsageRatio::Exceeded {
             "Thread reached the token limit"
         } else {
@@ -1145,9 +1186,10 @@ impl MessageEditor {
     fn reload_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
         let load_task = cx.spawn(async move |this, cx| {
             let Ok(load_task) = this.update(cx, |this, cx| {
-                let new_context = this.context_store.read_with(cx, |context_store, cx| {
-                    context_store.new_context_for_thread(this.thread.read(cx), None)
-                });
+                let new_context = this
+                    .context_store
+                    .read(cx)
+                    .new_context_for_thread(this.thread.read(cx), None);
                 load_context(new_context, &this.project, &this.prompt_store, cx)
             }) else {
                 return;
@@ -1229,8 +1271,9 @@ impl MessageEditor {
                         mode: None,
                         messages: vec![request_message],
                         tools: vec![],
+                        tool_choice: None,
                         stop: vec![],
-                        temperature: None,
+                        temperature: AgentSettings::temperature_for_model(&model.model, cx),
                     };
 
                     Some(model.model.count_tokens(request, cx))

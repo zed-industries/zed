@@ -1059,7 +1059,7 @@ impl Render for ChatPanel {
                                         .child(
                                             Label::new(format!(
                                                 "@{}",
-                                                user_being_replied_to.github_login.clone()
+                                                user_being_replied_to.github_login
                                             ))
                                             .size(LabelSize::Small)
                                             .weight(FontWeight::BOLD),

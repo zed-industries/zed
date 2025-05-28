@@ -1,39 +1,54 @@
 use crate::{
-    replace::{replace_exact, replace_with_flexible_indent},
+    Templates,
+    edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
     schema::json_schema_for,
 };
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{
+    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
+    ToolUseStatus,
+};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{Editor, EditorElement, EditorMode, EditorStyle, MultiBuffer, PathKey};
+use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
+use futures::StreamExt;
 use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Context, Entity, EntityId,
-    Task, TextStyle, WeakEntity, pulsating_between,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
+    TextStyleRefinement, WeakEntity, pulsating_between,
 };
+use indoc::formatdoc;
 use language::{
-    Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Rope, TextBuffer,
-    language_settings::SoftWrap,
+    Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Point, Rope,
+    TextBuffer, language_settings::SoftWrap,
 };
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::{AgentLocation, Project};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
+use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
+    cmp::Reverse,
+    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, Window, prelude::*};
+use ui::{Disclosure, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::Workspace;
 
 pub struct EditFileTool;
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileToolInput {
-    /// A user-friendly markdown description of what's being replaced. This will be shown in the UI.
+    /// A one-line, user-friendly markdown description of the edit. This will be
+    /// shown in the UI and also passed to another model to perform the edit.
+    ///
+    /// Be terse, but also descriptive in what you want to achieve with this
+    /// edit. Avoid generic instructions.
+    ///
+    /// NEVER mention the file path in this description.
     ///
     /// <example>Fix API endpoint URLs</example>
     /// <example>Update copyright year in `page_footer`</example>
@@ -42,7 +57,7 @@ pub struct EditFileToolInput {
     /// so that we can display it immediately.
     pub display_description: String,
 
-    /// The full path of the file to modify in the project.
+    /// The full path of the file to create or modify in the project.
     ///
     /// WARNING: When specifying which file path need changing, you MUST
     /// start each path with one of the project's root directories.
@@ -63,11 +78,30 @@ pub struct EditFileToolInput {
     /// </example>
     pub path: PathBuf,
 
-    /// The text to replace.
-    pub old_string: String,
+    /// The mode of operation on the file. Possible values:
+    /// - 'edit': Make granular edits to an existing file.
+    /// - 'create': Create a new file if it doesn't exist.
+    /// - 'overwrite': Replace the entire contents of an existing file.
+    ///
+    /// When a file already exists or you just created it, prefer editing
+    /// it as opposed to recreating it from scratch.
+    pub mode: EditFileMode,
+}
 
-    /// The text to replace it with.
-    pub new_string: String,
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum EditFileMode {
+    Edit,
+    Create,
+    Overwrite,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct EditFileToolOutput {
+    pub original_path: PathBuf,
+    pub new_text: String,
+    pub old_text: Arc<String>,
+    pub raw_output: Option<EditAgentOutput>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -76,10 +110,6 @@ struct PartialInput {
     path: String,
     #[serde(default)]
     display_description: String,
-    #[serde(default)]
-    old_string: String,
-    #[serde(default)]
-    new_string: String,
 }
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
@@ -131,14 +161,20 @@ impl Tool for EditFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        model: Arc<dyn LanguageModel>,
         window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<EditFileToolInput>(input) {
             Ok(input) => input,
+            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
+        };
+
+        let project_path = match resolve_path(&input, project.clone(), cx) {
+            Ok(path) => path,
             Err(err) => return Task::ready(Err(anyhow!(err))).into(),
         };
 
@@ -154,11 +190,7 @@ impl Tool for EditFileTool {
 
         let card_clone = card.clone();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
-            let project_path = project.read_with(cx, |project, cx| {
-                project
-                    .find_project_path(&input.path, cx)
-                    .context("Path not found in project")
-            })??;
+            let edit_agent = EditAgent::new(model, project.clone(), action_log, Templates::new());
 
             let buffer = project
                 .update(cx, |project, cx| {
@@ -166,136 +198,232 @@ impl Tool for EditFileTool {
                 })?
                 .await?;
 
-            // Set the agent's location to the top of the file
-            project
-                .update(cx, |project, cx| {
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position: language::Anchor::MIN,
-                        }),
-                        cx,
-                    );
-                })
-                .ok();
-
-            let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-
-            if input.old_string.is_empty() {
-                return Err(anyhow!(
-                    "`old_string` can't be empty, use another tool if you want to create a file."
-                ));
-            }
-
-            if input.old_string == input.new_string {
-                return Err(anyhow!(
-                    "The `old_string` and `new_string` are identical, so no changes would be made."
-                ));
-            }
-
-            let result = cx
-                .background_spawn(async move {
-                    // Try to match exactly
-                    let diff = replace_exact(&input.old_string, &input.new_string, &snapshot)
-                        .await
-                        // If that fails, try being flexible about indentation
-                        .or_else(|| {
-                            replace_with_flexible_indent(
-                                &input.old_string,
-                                &input.new_string,
-                                &snapshot,
-                            )
-                        })?;
-
-                    if diff.edits.is_empty() {
-                        return None;
-                    }
-
-                    let old_text = snapshot.text();
-
-                    Some((old_text, diff))
+            let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            let old_text = cx
+                .background_spawn({
+                    let old_snapshot = old_snapshot.clone();
+                    async move { Arc::new(old_snapshot.text()) }
                 })
                 .await;
 
-            let Some((old_text, diff)) = result else {
-                let err = buffer.read_with(cx, |buffer, _cx| {
-                    let file_exists = buffer
-                        .file()
-                        .map_or(false, |file| file.disk_state().exists());
+            if let Some(card) = card_clone.as_ref() {
+                card.update(cx, |card, cx| card.initialize(buffer.clone(), cx))?;
+            }
 
-                    if !file_exists {
-                        anyhow!("{} does not exist", input.path.display())
-                    } else if buffer.is_empty() {
-                        anyhow!(
-                            "{} is empty, so the provided `old_string` wasn't found.",
-                            input.path.display()
-                        )
-                    } else {
-                        anyhow!("Failed to match the provided `old_string`")
-                    }
-                })?;
-
-                return Err(err);
+            let (output, mut events) = if matches!(input.mode, EditFileMode::Edit) {
+                edit_agent.edit(
+                    buffer.clone(),
+                    input.display_description.clone(),
+                    &request,
+                    cx,
+                )
+            } else {
+                edit_agent.overwrite(
+                    buffer.clone(),
+                    input.display_description.clone(),
+                    &request,
+                    cx,
+                )
             };
 
-            let snapshot = cx.update(|cx| {
-                action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
-                let base_version = diff.base_version.clone();
-                let snapshot = buffer.update(cx, |buffer, cx| {
-                    buffer.finalize_last_transaction();
-                    buffer.apply_diff(diff, cx);
-                    buffer.finalize_last_transaction();
-                    buffer.snapshot()
-                });
-                action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-
-                // Set the agent's location to the position of the first edit
-                if let Some(first_edit) = snapshot.edits_since::<usize>(&base_version).next() {
-                    let position = snapshot.anchor_before(first_edit.new.start);
-                    project.update(cx, |project, cx| {
-                        project.set_agent_location(
-                            Some(AgentLocation {
-                                buffer: buffer.downgrade(),
-                                position,
-                            }),
-                            cx,
-                        );
-                    })
+            let mut hallucinated_old_text = false;
+            while let Some(event) = events.next().await {
+                match event {
+                    EditAgentOutputEvent::Edited => {
+                        if let Some(card) = card_clone.as_ref() {
+                            card.update(cx, |card, cx| card.update_diff(cx))?;
+                        }
+                    }
+                    EditAgentOutputEvent::UnresolvedEditRange => hallucinated_old_text = true,
+                    EditAgentOutputEvent::ResolvingEditRange(range) => {
+                        if let Some(card) = card_clone.as_ref() {
+                            card.update(cx, |card, cx| card.reveal_range(range, cx))?;
+                        }
+                    }
                 }
-
-                snapshot
-            })?;
+            }
+            let agent_output = output.await?;
 
             project
-                .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
                 .await?;
 
-            let new_text = snapshot.text();
-            let diff_str = cx
-                .background_spawn({
-                    let old_text = old_text.clone();
-                    let new_text = new_text.clone();
-                    async move { language::unified_diff(&old_text, &new_text) }
-                })
-                .await;
+            let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+            let new_text = cx.background_spawn({
+                let new_snapshot = new_snapshot.clone();
+                async move { new_snapshot.text() }
+            });
+            let diff = cx.background_spawn(async move {
+                language::unified_diff(&old_snapshot.text(), &new_snapshot.text())
+            });
+            let (new_text, diff) = futures::join!(new_text, diff);
+
+            let output = EditFileToolOutput {
+                original_path: project_path.path.to_path_buf(),
+                new_text: new_text.clone(),
+                old_text,
+                raw_output: Some(agent_output),
+            };
 
             if let Some(card) = card_clone {
                 card.update(cx, |card, cx| {
-                    card.set_diff(project_path.path.clone(), old_text, new_text, cx);
+                    card.update_diff(cx);
+                    card.finalize(cx)
                 })
                 .log_err();
             }
 
-            Ok(format!(
-                "Edited {}:\n\n```diff\n{}\n```",
-                input.path.display(),
-                diff_str
-            ))
+            let input_path = input.path.display();
+            if diff.is_empty() {
+                anyhow::ensure!(
+                    !hallucinated_old_text,
+                    formatdoc! {"
+                        Some edits were produced but none of them could be applied.
+                        Read the relevant sections of {input_path} again so that
+                        I can perform the requested edits.
+                    "}
+                );
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Text("No edits were made.".into()),
+                    output: serde_json::to_value(output).ok(),
+                })
+            } else {
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Text(format!(
+                        "Edited {}:\n\n```diff\n{}\n```",
+                        input_path, diff
+                    )),
+                    output: serde_json::to_value(output).ok(),
+                })
+            }
         });
 
         ToolResult {
             output: task,
             card: card.map(AnyToolCard::from),
+        }
+    }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        project: Entity<Project>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyToolCard> {
+        let output = match serde_json::from_value::<EditFileToolOutput>(output) {
+            Ok(output) => output,
+            Err(_) => return None,
+        };
+
+        let card = cx.new(|cx| {
+            EditFileToolCard::new(output.original_path.clone(), project.clone(), window, cx)
+        });
+
+        cx.spawn({
+            let path: Arc<Path> = output.original_path.into();
+            let language_registry = project.read(cx).languages().clone();
+            let card = card.clone();
+            async move |cx| {
+                let buffer =
+                    build_buffer(output.new_text, path.clone(), &language_registry, cx).await?;
+                let buffer_diff =
+                    build_buffer_diff(output.old_text.clone(), &buffer, &language_registry, cx)
+                        .await?;
+                card.update(cx, |card, cx| {
+                    card.multibuffer.update(cx, |multibuffer, cx| {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let diff = buffer_diff.read(cx);
+                        let diff_hunk_ranges = diff
+                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
+                            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+                            .collect::<Vec<_>>();
+
+                        multibuffer.set_excerpts_for_path(
+                            PathKey::for_buffer(&buffer, cx),
+                            buffer,
+                            diff_hunk_ranges,
+                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            cx,
+                        );
+                        multibuffer.add_diff(buffer_diff, cx);
+                        let end = multibuffer.len(cx);
+                        card.total_lines =
+                            Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1);
+                    });
+
+                    cx.notify();
+                })?;
+                anyhow::Ok(())
+            }
+        })
+        .detach_and_log_err(cx);
+
+        Some(card.into())
+    }
+}
+
+/// Validate that the file path is valid, meaning:
+///
+/// - For `edit` and `overwrite`, the path must point to an existing file.
+/// - For `create`, the file must not already exist, but it's parent dir must exist.
+fn resolve_path(
+    input: &EditFileToolInput,
+    project: Entity<Project>,
+    cx: &mut App,
+) -> Result<ProjectPath> {
+    let project = project.read(cx);
+
+    match input.mode {
+        EditFileMode::Edit | EditFileMode::Overwrite => {
+            let path = project
+                .find_project_path(&input.path, cx)
+                .context("Can't edit file: path not found")?;
+
+            let entry = project
+                .entry_for_path(&path, cx)
+                .context("Can't edit file: path not found")?;
+
+            anyhow::ensure!(entry.is_file(), "Can't edit file: path is a directory");
+            Ok(path)
+        }
+
+        EditFileMode::Create => {
+            if let Some(path) = project.find_project_path(&input.path, cx) {
+                anyhow::ensure!(
+                    project.entry_for_path(&path, cx).is_none(),
+                    "Can't create file: file already exists"
+                );
+            }
+
+            let parent_path = input
+                .path
+                .parent()
+                .context("Can't create file: incorrect path")?;
+
+            let parent_project_path = project.find_project_path(&parent_path, cx);
+
+            let parent_entry = parent_project_path
+                .as_ref()
+                .and_then(|path| project.entry_for_path(&path, cx))
+                .context("Can't create file: parent directory doesn't exist")?;
+
+            anyhow::ensure!(
+                parent_entry.is_dir(),
+                "Can't create file: parent is not a directory"
+            );
+
+            let file_name = input
+                .path
+                .file_name()
+                .context("Can't create file: invalid filename")?;
+
+            let new_file_path = parent_project_path.map(|parent| ProjectPath {
+                path: Arc::from(parent.path.join(file_name)),
+                ..parent
+            });
+
+            new_file_path.context("Can't create file")
         }
     }
 }
@@ -305,12 +433,15 @@ pub struct EditFileToolCard {
     editor: Entity<Editor>,
     multibuffer: Entity<MultiBuffer>,
     project: Entity<Project>,
+    buffer: Option<Entity<Buffer>>,
+    base_text: Option<Arc<String>>,
+    buffer_diff: Option<Entity<BufferDiff>>,
+    revealed_ranges: Vec<Range<Anchor>>,
     diff_task: Option<Task<Result<()>>>,
     preview_expanded: bool,
-    error_expanded: bool,
+    error_expanded: Option<Entity<Markdown>>,
     full_height_expanded: bool,
     total_lines: Option<u32>,
-    editor_unique_id: EntityId,
 }
 
 impl EditFileToolCard {
@@ -331,9 +462,11 @@ impl EditFileToolCard {
             editor.set_show_gutter(false, cx);
             editor.disable_inline_diagnostics();
             editor.disable_expand_excerpt_buttons(cx);
+            // Keep horizontal scrollbar so user can scroll horizontally if needed
+            editor.set_show_vertical_scrollbar(false, cx);
+            editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
             editor.set_soft_wrap_mode(SoftWrap::None, cx);
             editor.scroll_manager.set_forbid_vertical_scroll(true);
-            editor.set_show_scrollbars(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_read_only(true);
             editor.set_show_breakpoints(false, cx);
@@ -343,59 +476,200 @@ impl EditFileToolCard {
             editor
         });
         Self {
-            editor_unique_id: editor.entity_id(),
             path,
             project,
             editor,
             multibuffer,
+            buffer: None,
+            base_text: None,
+            buffer_diff: None,
+            revealed_ranges: Vec::new(),
             diff_task: None,
             preview_expanded: true,
-            error_expanded: false,
-            full_height_expanded: false,
+            error_expanded: None,
+            full_height_expanded: true,
             total_lines: None,
         }
     }
 
-    pub fn has_diff(&self) -> bool {
-        self.total_lines.is_some()
+    pub fn initialize(&mut self, buffer: Entity<Buffer>, cx: &mut App) {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let base_text = buffer_snapshot.text();
+        let language_registry = buffer.read(cx).language_registry();
+        let text_snapshot = buffer.read(cx).text_snapshot();
+
+        // Create a buffer diff with the current text as the base
+        let buffer_diff = cx.new(|cx| {
+            let mut diff = BufferDiff::new(&text_snapshot, cx);
+            let _ = diff.set_base_text(
+                buffer_snapshot.clone(),
+                language_registry,
+                text_snapshot,
+                cx,
+            );
+            diff
+        });
+
+        self.buffer = Some(buffer.clone());
+        self.base_text = Some(base_text.into());
+        self.buffer_diff = Some(buffer_diff.clone());
+
+        // Add the diff to the multibuffer
+        self.multibuffer
+            .update(cx, |multibuffer, cx| multibuffer.add_diff(buffer_diff, cx));
     }
 
-    pub fn set_diff(
-        &mut self,
-        path: Arc<Path>,
-        old_text: String,
-        new_text: String,
-        cx: &mut Context<Self>,
-    ) {
-        let language_registry = self.project.read(cx).languages().clone();
-        self.diff_task = Some(cx.spawn(async move |this, cx| {
-            let buffer = build_buffer(new_text, path.clone(), &language_registry, cx).await?;
-            let buffer_diff = build_buffer_diff(old_text, &buffer, &language_registry, cx).await?;
+    pub fn is_loading(&self) -> bool {
+        self.total_lines.is_none()
+    }
 
+    pub fn update_diff(&mut self, cx: &mut Context<Self>) {
+        let Some(buffer) = self.buffer.as_ref() else {
+            return;
+        };
+        let Some(buffer_diff) = self.buffer_diff.as_ref() else {
+            return;
+        };
+
+        let buffer = buffer.clone();
+        let buffer_diff = buffer_diff.clone();
+        let base_text = self.base_text.clone();
+        self.diff_task = Some(cx.spawn(async move |this, cx| {
+            let text_snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot())?;
+            let diff_snapshot = BufferDiff::update_diff(
+                buffer_diff.clone(),
+                text_snapshot.clone(),
+                base_text,
+                false,
+                false,
+                None,
+                None,
+                cx,
+            )
+            .await?;
+            buffer_diff.update(cx, |diff, cx| {
+                diff.set_snapshot(diff_snapshot, &text_snapshot, cx)
+            })?;
+            this.update(cx, |this, cx| this.update_visible_ranges(cx))
+        }));
+    }
+
+    pub fn reveal_range(&mut self, range: Range<Anchor>, cx: &mut Context<Self>) {
+        self.revealed_ranges.push(range);
+        self.update_visible_ranges(cx);
+    }
+
+    fn update_visible_ranges(&mut self, cx: &mut Context<Self>) {
+        let Some(buffer) = self.buffer.as_ref() else {
+            return;
+        };
+
+        let ranges = self.excerpt_ranges(cx);
+        self.total_lines = self.multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_excerpts_for_path(
+                PathKey::for_buffer(buffer, cx),
+                buffer.clone(),
+                ranges,
+                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                cx,
+            );
+            let end = multibuffer.len(cx);
+            Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
+        });
+        cx.notify();
+    }
+
+    fn excerpt_ranges(&self, cx: &App) -> Vec<Range<Point>> {
+        let Some(buffer) = self.buffer.as_ref() else {
+            return Vec::new();
+        };
+        let Some(diff) = self.buffer_diff.as_ref() else {
+            return Vec::new();
+        };
+
+        let buffer = buffer.read(cx);
+        let diff = diff.read(cx);
+        let mut ranges = diff
+            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
+            .collect::<Vec<_>>();
+        ranges.extend(
+            self.revealed_ranges
+                .iter()
+                .map(|range| range.to_point(&buffer)),
+        );
+        ranges.sort_unstable_by_key(|range| (range.start, Reverse(range.end)));
+
+        // Merge adjacent ranges
+        let mut ranges = ranges.into_iter().peekable();
+        let mut merged_ranges = Vec::new();
+        while let Some(mut range) = ranges.next() {
+            while let Some(next_range) = ranges.peek() {
+                if range.end >= next_range.start {
+                    range.end = range.end.max(next_range.end);
+                    ranges.next();
+                } else {
+                    break;
+                }
+            }
+
+            merged_ranges.push(range);
+        }
+        merged_ranges
+    }
+
+    pub fn finalize(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        let ranges = self.excerpt_ranges(cx);
+        let buffer = self.buffer.take().context("card was already finalized")?;
+        let base_text = self
+            .base_text
+            .take()
+            .context("card was already finalized")?;
+        let language_registry = self.project.read(cx).languages().clone();
+
+        // Replace the buffer in the multibuffer with the snapshot
+        let buffer = cx.new(|cx| {
+            let language = buffer.read(cx).language().cloned();
+            let buffer = TextBuffer::new_normalized(
+                0,
+                cx.entity_id().as_non_zero_u64().into(),
+                buffer.read(cx).line_ending(),
+                buffer.read(cx).as_rope().clone(),
+            );
+            let mut buffer = Buffer::build(buffer, None, Capability::ReadWrite);
+            buffer.set_language(language, cx);
+            buffer
+        });
+
+        let buffer_diff = cx.spawn({
+            let buffer = buffer.clone();
+            let language_registry = language_registry.clone();
+            async move |_this, cx| {
+                build_buffer_diff(base_text, &buffer, &language_registry, cx).await
+            }
+        });
+
+        cx.spawn(async move |this, cx| {
+            let buffer_diff = buffer_diff.await?;
             this.update(cx, |this, cx| {
-                this.total_lines = this.multibuffer.update(cx, |multibuffer, cx| {
-                    let snapshot = buffer.read(cx).snapshot();
-                    let diff = buffer_diff.read(cx);
-                    let diff_hunk_ranges = diff
-                        .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-                        .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
-                        .collect::<Vec<_>>();
+                this.multibuffer.update(cx, |multibuffer, cx| {
+                    let path_key = PathKey::for_buffer(&buffer, cx);
                     multibuffer.clear(cx);
                     multibuffer.set_excerpts_for_path(
-                        PathKey::for_buffer(&buffer, cx),
+                        path_key,
                         buffer,
-                        diff_hunk_ranges,
+                        ranges,
                         editor::DEFAULT_MULTIBUFFER_CONTEXT,
                         cx,
                     );
-                    multibuffer.add_diff(buffer_diff, cx);
-                    let end = multibuffer.len(cx);
-                    Some(multibuffer.snapshot(cx).offset_to_point(end).row + 1)
+                    multibuffer.add_diff(buffer_diff.clone(), cx);
                 });
 
                 cx.notify();
             })
-        }));
+        })
+        .detach_and_log_err(cx);
+        Ok(())
     }
 }
 
@@ -407,13 +681,13 @@ impl ToolCard for EditFileToolCard {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let (failed, error_message) = match status {
-            ToolUseStatus::Error(err) => (true, Some(err.to_string())),
-            _ => (false, None),
+        let error_message = match status {
+            ToolUseStatus::Error(err) => Some(err),
+            _ => None,
         };
 
         let path_label_button = h_flex()
-            .id(("edit-tool-path-label-button", self.editor_unique_id))
+            .id(("edit-tool-path-label-button", self.editor.entity_id()))
             .w_full()
             .max_w_full()
             .px_1()
@@ -497,9 +771,11 @@ impl ToolCard for EditFileToolCard {
             .gap_1()
             .justify_between()
             .rounded_t_md()
-            .when(!failed, |header| header.bg(codeblock_header_bg))
+            .when(error_message.is_none(), |header| {
+                header.bg(codeblock_header_bg)
+            })
             .child(path_label_button)
-            .when(failed, |header| {
+            .when_some(error_message, |header, error_message| {
                 header.child(
                     h_flex()
                         .gap_1()
@@ -510,23 +786,32 @@ impl ToolCard for EditFileToolCard {
                         )
                         .child(
                             Disclosure::new(
-                                ("edit-file-error-disclosure", self.editor_unique_id),
-                                self.error_expanded,
+                                ("edit-file-error-disclosure", self.editor.entity_id()),
+                                self.error_expanded.is_some(),
                             )
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown)
-                            .on_click(cx.listener(
-                                move |this, _event, _window, _cx| {
-                                    this.error_expanded = !this.error_expanded;
-                                },
-                            )),
+                            .on_click(cx.listener({
+                                let error_message = error_message.clone();
+
+                                move |this, _event, _window, cx| {
+                                    if this.error_expanded.is_some() {
+                                        this.error_expanded.take();
+                                    } else {
+                                        this.error_expanded = Some(cx.new(|cx| {
+                                            Markdown::new(error_message.clone(), None, None, cx)
+                                        }))
+                                    }
+                                    cx.notify();
+                                }
+                            })),
                         ),
                 )
             })
-            .when(!failed && self.has_diff(), |header| {
+            .when(error_message.is_none() && !self.is_loading(), |header| {
                 header.child(
                     Disclosure::new(
-                        ("edit-file-disclosure", self.editor_unique_id),
+                        ("edit-file-disclosure", self.editor.entity_id()),
                         self.preview_expanded,
                     )
                     .opened_icon(IconName::ChevronUp)
@@ -545,33 +830,16 @@ impl ToolCard for EditFileToolCard {
                 .map(|style| style.text.line_height_in_pixels(window.rem_size()))
                 .unwrap_or_default();
 
-            let settings = ThemeSettings::get_global(cx);
-            let element = EditorElement::new(
-                &cx.entity(),
-                EditorStyle {
-                    background: cx.theme().colors().editor_background,
-                    horizontal_padding: rems(0.25).to_pixels(window.rem_size()),
-                    local_player: cx.theme().players().local(),
-                    text: TextStyle {
-                        color: cx.theme().colors().editor_foreground,
-                        font_family: settings.buffer_font.family.clone(),
-                        font_features: settings.buffer_font.features.clone(),
-                        font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                        font_size: TextSize::Small
-                            .rems(cx)
-                            .to_pixels(settings.agent_font_size(cx))
-                            .into(),
-                        font_weight: settings.buffer_font.weight,
-                        line_height: relative(settings.buffer_line_height.value()),
-                        ..Default::default()
-                    },
-                    scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
-                    syntax: cx.theme().syntax().clone(),
-                    status: cx.theme().status().clone(),
-                    ..Default::default()
-                },
-            );
-
+            editor.set_text_style_refinement(TextStyleRefinement {
+                font_size: Some(
+                    TextSize::Small
+                        .rems(cx)
+                        .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                        .into(),
+                ),
+                ..TextStyleRefinement::default()
+            });
+            let element = editor.render(window, cx);
             (element.into_any_element(), line_height)
         });
 
@@ -581,18 +849,18 @@ impl ToolCard for EditFileToolCard {
             (IconName::ChevronDown, "Expand Code Block")
         };
 
-        let gradient_overlay = div()
-            .absolute()
-            .bottom_0()
-            .left_0()
-            .w_full()
-            .h_2_5()
-            .rounded_b_lg()
-            .bg(gpui::linear_gradient(
-                0.,
-                gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
-                gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
-            ));
+        let gradient_overlay =
+            div()
+                .absolute()
+                .bottom_0()
+                .left_0()
+                .w_full()
+                .h_2_5()
+                .bg(gpui::linear_gradient(
+                    0.,
+                    gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
+                    gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
+                ));
 
         let border_color = cx.theme().colors().border.opacity(0.6);
 
@@ -610,8 +878,9 @@ impl ToolCard for EditFileToolCard {
 
             let mut container = v_flex()
                 .p_3()
-                .gap_1p5()
+                .gap_1()
                 .border_t_1()
+                .rounded_b_md()
                 .border_color(border_color)
                 .bg(cx.theme().colors().editor_background);
 
@@ -626,7 +895,7 @@ impl ToolCard for EditFileToolCard {
                     _ => div().w_1_2(),
                 }
                 .id("loading_div")
-                .h_2()
+                .h_1()
                 .rounded_full()
                 .bg(cx.theme().colors().element_active)
                 .with_animation(
@@ -646,12 +915,12 @@ impl ToolCard for EditFileToolCard {
         v_flex()
             .mb_2()
             .border_1()
-            .when(failed, |card| card.border_dashed())
+            .when(error_message.is_some(), |card| card.border_dashed())
             .border_color(border_color)
-            .rounded_lg()
+            .rounded_md()
             .overflow_hidden()
             .child(codeblock_header)
-            .when(failed && self.error_expanded, |card| {
+            .when_some(self.error_expanded.as_ref(), |card, error_markdown| {
                 card.child(
                     v_flex()
                         .p_2()
@@ -671,64 +940,81 @@ impl ToolCard for EditFileToolCard {
                                 .rounded_md()
                                 .text_ui_sm(cx)
                                 .bg(cx.theme().colors().editor_background)
-                                .children(
-                                    error_message
-                                        .map(|error| div().child(error).into_any_element()),
-                                ),
+                                .child(MarkdownElement::new(
+                                    error_markdown.clone(),
+                                    markdown_style(window, cx),
+                                )),
                         ),
                 )
             })
-            .when(!self.has_diff() && !failed, |card| {
+            .when(self.is_loading() && error_message.is_none(), |card| {
                 card.child(waiting_for_diff)
             })
-            .when(
-                !failed && self.preview_expanded && self.has_diff(),
-                |card| {
+            .when(self.preview_expanded && !self.is_loading(), |card| {
+                card.child(
+                    v_flex()
+                        .relative()
+                        .h_full()
+                        .when(!self.full_height_expanded, |editor_container| {
+                            editor_container
+                                .max_h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
+                        })
+                        .overflow_hidden()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .bg(cx.theme().colors().editor_background)
+                        .child(editor)
+                        .when(
+                            !self.full_height_expanded && is_collapsible,
+                            |editor_container| editor_container.child(gradient_overlay),
+                        ),
+                )
+                .when(is_collapsible, |card| {
                     card.child(
-                        v_flex()
-                            .relative()
-                            .h_full()
-                            .when(!self.full_height_expanded, |editor_container| {
-                                editor_container
-                                    .max_h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
-                            })
-                            .overflow_hidden()
+                        h_flex()
+                            .id(("expand-button", self.editor.entity_id()))
+                            .flex_none()
+                            .cursor_pointer()
+                            .h_5()
+                            .justify_center()
                             .border_t_1()
+                            .rounded_b_md()
                             .border_color(border_color)
                             .bg(cx.theme().colors().editor_background)
-                            .child(editor)
-                            .when(
-                                !self.full_height_expanded && is_collapsible,
-                                |editor_container| editor_container.child(gradient_overlay),
-                            ),
+                            .hover(|style| style.bg(cx.theme().colors().element_hover.opacity(0.1)))
+                            .child(
+                                Icon::new(full_height_icon)
+                                    .size(IconSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .tooltip(Tooltip::text(full_height_tooltip_label))
+                            .on_click(cx.listener(move |this, _event, _window, _cx| {
+                                this.full_height_expanded = !this.full_height_expanded;
+                            })),
                     )
-                    .when(is_collapsible, |editor_container| {
-                        editor_container.child(
-                            h_flex()
-                                .id(("expand-button", self.editor_unique_id))
-                                .flex_none()
-                                .cursor_pointer()
-                                .h_5()
-                                .justify_center()
-                                .border_t_1()
-                                .border_color(border_color)
-                                .bg(cx.theme().colors().editor_background)
-                                .hover(|style| {
-                                    style.bg(cx.theme().colors().element_hover.opacity(0.1))
-                                })
-                                .child(
-                                    Icon::new(full_height_icon)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .tooltip(Tooltip::text(full_height_tooltip_label))
-                                .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                    this.full_height_expanded = !this.full_height_expanded;
-                                })),
-                        )
-                    })
-                },
-            )
+                })
+            })
+    }
+}
+
+fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let theme_settings = ThemeSettings::get_global(cx);
+    let ui_font_size = TextSize::Default.rems(cx);
+    let mut text_style = window.text_style();
+
+    text_style.refine(&TextStyleRefinement {
+        font_family: Some(theme_settings.ui_font.family.clone()),
+        font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
+        font_features: Some(theme_settings.ui_font.features.clone()),
+        font_size: Some(ui_font_size.into()),
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    });
+
+    MarkdownStyle {
+        base_text_style: text_style.clone(),
+        selection_background_color: cx.theme().players().local().selection,
+        ..Default::default()
     }
 }
 
@@ -760,19 +1046,23 @@ async fn build_buffer(
 }
 
 async fn build_buffer_diff(
-    mut old_text: String,
+    old_text: Arc<String>,
     buffer: &Entity<Buffer>,
     language_registry: &Arc<LanguageRegistry>,
     cx: &mut AsyncApp,
 ) -> Result<Entity<BufferDiff>> {
-    LineEnding::normalize(&mut old_text);
-
     let buffer = cx.update(|cx| buffer.read(cx).snapshot())?;
 
+    let old_text_rope = cx
+        .background_spawn({
+            let old_text = old_text.clone();
+            async move { Rope::from(old_text.as_str()) }
+        })
+        .await;
     let base_buffer = cx
         .update(|cx| {
             Buffer::build_snapshot(
-                old_text.clone().into(),
+                old_text_rope,
                 buffer.language().cloned(),
                 Some(language_registry.clone()),
                 cx,
@@ -784,7 +1074,7 @@ async fn build_buffer_diff(
         .update(|cx| {
             BufferDiffSnapshot::new_with_base_buffer(
                 buffer.text.clone(),
-                Some(old_text.into()),
+                Some(old_text),
                 base_buffer,
                 cx,
             )
@@ -808,7 +1098,141 @@ async fn build_buffer_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client::TelemetrySettings;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let result = cx
+            .update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Some edit".into(),
+                    path: "root/nonexistent_file.txt".into(),
+                    mode: EditFileMode::Edit,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Can't edit file: path not found"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_path_for_creating_file(cx: &mut TestAppContext) {
+        let mode = &EditFileMode::Create;
+
+        let result = test_resolve_path(mode, "root/new.txt", cx);
+        assert_resolved_path_eq(result.await, "new.txt");
+
+        let result = test_resolve_path(mode, "new.txt", cx);
+        assert_resolved_path_eq(result.await, "new.txt");
+
+        let result = test_resolve_path(mode, "dir/new.txt", cx);
+        assert_resolved_path_eq(result.await, "dir/new.txt");
+
+        let result = test_resolve_path(mode, "root/dir/subdir/existing.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't create file: file already exists"
+        );
+
+        let result = test_resolve_path(mode, "root/dir/nonexistent_dir/new.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't create file: parent directory doesn't exist"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_resolve_path_for_editing_file(cx: &mut TestAppContext) {
+        let mode = &EditFileMode::Edit;
+
+        let path_with_root = "root/dir/subdir/existing.txt";
+        let path_without_root = "dir/subdir/existing.txt";
+        let result = test_resolve_path(mode, path_with_root, cx);
+        assert_resolved_path_eq(result.await, path_without_root);
+
+        let result = test_resolve_path(mode, path_without_root, cx);
+        assert_resolved_path_eq(result.await, path_without_root);
+
+        let result = test_resolve_path(mode, "root/nonexistent.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't edit file: path not found"
+        );
+
+        let result = test_resolve_path(mode, "root/dir", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't edit file: path is a directory"
+        );
+    }
+
+    async fn test_resolve_path(
+        mode: &EditFileMode,
+        path: &str,
+        cx: &mut TestAppContext,
+    ) -> anyhow::Result<ProjectPath> {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir": {
+                    "subdir": {
+                        "existing.txt": "hello"
+                    }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let input = EditFileToolInput {
+            display_description: "Some edit".into(),
+            path: path.into(),
+            mode: mode.clone(),
+        };
+
+        let result = cx.update(|cx| resolve_path(&input, project, cx));
+        result
+    }
+
+    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
+        let actual = path
+            .expect("Should return valid path")
+            .path
+            .to_str()
+            .unwrap()
+            .replace("\\", "/"); // Naive Windows paths normalization
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn still_streaming_ui_text_with_path() {
@@ -875,5 +1299,15 @@ mod tests {
             EditFileTool.still_streaming_ui_text(&input),
             DEFAULT_UI_TEXT,
         );
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            TelemetrySettings::register(cx);
+            Project::init_settings(cx);
+        });
     }
 }

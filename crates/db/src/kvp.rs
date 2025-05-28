@@ -1,6 +1,8 @@
+use gpui::App;
 use sqlez_macros::sql;
+use util::ResultExt as _;
 
-use crate::{define_connection, query};
+use crate::{define_connection, query, write_and_log};
 
 define_connection!(pub static ref KEY_VALUE_STORE: KeyValueStore<()> =
     &[sql!(
@@ -10,6 +12,29 @@ define_connection!(pub static ref KEY_VALUE_STORE: KeyValueStore<()> =
         ) STRICT;
     )];
 );
+
+pub trait Dismissable {
+    const KEY: &'static str;
+
+    fn dismissed() -> bool {
+        KEY_VALUE_STORE
+            .read_kvp(Self::KEY)
+            .log_err()
+            .map_or(false, |s| s.is_some())
+    }
+
+    fn set_dismissed(is_dismissed: bool, cx: &mut App) {
+        write_and_log(cx, move || async move {
+            if is_dismissed {
+                KEY_VALUE_STORE
+                    .write_kvp(Self::KEY.into(), "1".into())
+                    .await
+            } else {
+                KEY_VALUE_STORE.delete_kvp(Self::KEY.into()).await
+            }
+        })
+    }
+}
 
 impl KeyValueStore {
     query! {

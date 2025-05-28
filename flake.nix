@@ -2,7 +2,7 @@
   description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-unstable";
+    nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.xz";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -54,11 +54,9 @@
     };
 
   nixConfig = {
-    extra-substituters = [
-      "https://zed-industries.cachix.org"
-    ];
+    extra-substituters = [ "https://zed.cachix.org" ];
     extra-trusted-public-keys = [
-      "zed-industries.cachix.org-1:QW3RoXK0Lm4ycmU5/3bmYRd3MLf4RbTGPqRulGlX5W0="
+      "zed.cachix.org-1:/pHQ6dpMsAZk2DiP4WCL0p9YDNKWj2Q5FL20bNmw1cU="
     ];
   };
 }

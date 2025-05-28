@@ -1,4 +1,4 @@
-use anyhow::{Context, bail};
+use anyhow::{Context as _, bail};
 use collections::{HashMap, HashSet};
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
@@ -237,6 +237,18 @@ impl TaskTemplate {
             env
         };
 
+        // We filter out env variables here that aren't set so we don't have extra white space in args
+        let args = self
+            .args
+            .iter()
+            .filter(|arg| {
+                arg.starts_with('$')
+                    .then(|| env.get(&arg[1..]).is_some_and(|arg| !arg.trim().is_empty()))
+                    .unwrap_or(true)
+            })
+            .cloned()
+            .collect();
+
         Some(ResolvedTask {
             id: id.clone(),
             substituted_variables,
@@ -256,7 +268,7 @@ impl TaskTemplate {
                     },
                 ),
                 command,
-                args: self.args.clone(),
+                args,
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
@@ -315,7 +327,7 @@ pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) ->
         &mut substituted_variables,
     )
 }
-pub fn substitute_all_template_variables_in_str<A: AsRef<str>>(
+fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
     variable_names: &HashMap<String, VariableName>,
@@ -703,6 +715,7 @@ mod tests {
             label: "My task".into(),
             command: "echo".into(),
             args: vec!["$PATH".into()],
+            env: HashMap::from_iter([("PATH".to_owned(), "non-empty".to_owned())]),
             ..TaskTemplate::default()
         };
         let resolved_task = task
@@ -713,6 +726,32 @@ mod tests {
         assert_eq!(resolved.label, task.label);
         assert_eq!(resolved.command, task.command);
         assert_eq!(resolved.args, task.args);
+    }
+
+    #[test]
+    fn test_empty_env_variables_excluded_from_args() {
+        let task = TaskTemplate {
+            label: "My task".into(),
+            command: "echo".into(),
+            args: vec![
+                "$EMPTY_VAR".into(),
+                "hello".into(),
+                "$WHITESPACE_VAR".into(),
+                "$UNDEFINED_VAR".into(),
+                "$WORLD".into(),
+            ],
+            env: HashMap::from_iter([
+                ("EMPTY_VAR".to_owned(), "".to_owned()),
+                ("WHITESPACE_VAR".to_owned(), "   ".to_owned()),
+                ("WORLD".to_owned(), "non-empty".to_owned()),
+            ]),
+            ..TaskTemplate::default()
+        };
+        let resolved_task = task
+            .resolve_task(TEST_ID_BASE, &TaskContext::default())
+            .unwrap();
+        let resolved = resolved_task.resolved;
+        assert_eq!(resolved.args, vec!["hello", "$WORLD"]);
     }
 
     #[test]

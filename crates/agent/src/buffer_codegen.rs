@@ -1,7 +1,8 @@
 use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
 use crate::{context::load_context, context_store::ContextStore};
-use anyhow::Result;
+use agent_settings::AgentSettings;
+use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
@@ -383,7 +384,7 @@ impl CodegenAlternative {
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
-                let request = self.build_request(user_prompt, cx)?;
+                let request = self.build_request(&model, user_prompt, cx)?;
                 cx.spawn(async move |_, cx| model.stream_completion_text(request.await, &cx).await)
                     .boxed_local()
             };
@@ -393,6 +394,7 @@ impl CodegenAlternative {
 
     fn build_request(
         &self,
+        model: &Arc<dyn LanguageModel>,
         user_prompt: String,
         cx: &mut App,
     ) -> Result<Task<LanguageModelRequest>> {
@@ -417,16 +419,16 @@ impl CodegenAlternative {
             if start_buffer.remote_id() == end_buffer.remote_id() {
                 (start_buffer.clone(), start_buffer_offset..end_buffer_offset)
             } else {
-                return Err(anyhow::anyhow!("invalid transformation range"));
+                anyhow::bail!("invalid transformation range");
             }
         } else {
-            return Err(anyhow::anyhow!("invalid transformation range"));
+            anyhow::bail!("invalid transformation range");
         };
 
         let prompt = self
             .builder
             .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
-            .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
+            .context("generating content prompt")?;
 
         let context_task = self.context_store.as_ref().map(|context_store| {
             if let Some(project) = self.project.upgrade() {
@@ -440,6 +442,8 @@ impl CodegenAlternative {
                 Task::ready(ContextLoadResult::default())
             }
         });
+
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {
@@ -462,8 +466,9 @@ impl CodegenAlternative {
                 prompt_id: None,
                 mode: None,
                 tools: Vec::new(),
+                tool_choice: None,
                 stop: Vec::new(),
-                temperature: None,
+                temperature,
                 messages: vec![request_message],
             }
         }))
@@ -772,7 +777,7 @@ impl CodegenAlternative {
         cx: &mut Context<CodegenAlternative>,
     ) {
         let transaction = self.buffer.update(cx, |buffer, cx| {
-            // Avoid grouping assistant edits with user edits.
+            // Avoid grouping agent edits with user edits.
             buffer.finalize_last_transaction(cx);
             buffer.start_transaction(cx);
             buffer.edit(edits, None, cx);
@@ -781,7 +786,7 @@ impl CodegenAlternative {
 
         if let Some(transaction) = transaction {
             if let Some(first_transaction) = self.transformation_transaction_id {
-                // Group all assistant edits into the first transaction.
+                // Group all agent edits into the first transaction.
                 self.buffer.update(cx, |buffer, cx| {
                     buffer.merge_transactions(transaction, first_transaction, cx)
                 });

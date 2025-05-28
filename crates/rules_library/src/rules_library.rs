@@ -15,6 +15,7 @@ use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
 use rope::Rope;
 use settings::Settings;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
@@ -52,8 +53,8 @@ pub trait InlineAssistDelegate {
         cx: &mut Context<RulesLibrary>,
     );
 
-    /// Returns whether the Assistant panel was focused.
-    fn focus_assistant_panel(
+    /// Returns whether the Agent panel was focused.
+    fn focus_agent_panel(
         &self,
         workspace: &mut Workspace,
         window: &mut Window,
@@ -70,7 +71,7 @@ pub trait InlineAssistDelegate {
 pub fn open_rules_library(
     language_registry: Arc<LanguageRegistry>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-    make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
+    make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
     prompt_to_select: Option<PromptId>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<RulesLibrary>>> {
@@ -146,7 +147,7 @@ pub struct RulesLibrary {
     picker: Entity<Picker<RulePickerDelegate>>,
     pending_load: Task<()>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-    make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
+    make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -349,7 +350,7 @@ impl RulesLibrary {
         store: Entity<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
-        make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
+        make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
         rule_to_select: Option<PromptId>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -814,7 +815,7 @@ impl RulesLibrary {
                         .update(cx, |workspace, window, cx| {
                             window.activate_window();
                             self.inline_assist_delegate
-                                .focus_assistant_panel(workspace, window, cx)
+                                .focus_agent_panel(workspace, window, cx)
                         })
                         .ok();
                     if panel == Some(true) {
@@ -929,6 +930,7 @@ impl RulesLibrary {
                                         cache: false,
                                     }],
                                     tools: Vec::new(),
+                                    tool_choice: None,
                                     stop: Vec::new(),
                                     temperature: None,
                                 },

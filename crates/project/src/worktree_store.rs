@@ -262,7 +262,7 @@ impl WorktreeStore {
         if abs_path.starts_with("/~") {
             abs_path = abs_path[1..].to_string();
         }
-        if abs_path.is_empty() || abs_path == "/" {
+        if abs_path.is_empty() {
             abs_path = "~/".to_string();
         }
         cx.spawn(async move |this, cx| {
@@ -367,7 +367,7 @@ impl WorktreeStore {
 
         let handle_id = worktree.entity_id();
         cx.subscribe(worktree, |_, worktree, event, cx| {
-            let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+            let worktree_id = worktree.read(cx).id();
             match event {
                 worktree::Event::UpdatedEntries(changes) => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedEntries(
@@ -450,10 +450,7 @@ impl WorktreeStore {
             })
             .collect::<HashMap<_, _>>();
 
-        let (client, project_id) = self
-            .upstream_client()
-            .clone()
-            .ok_or_else(|| anyhow!("invalid project"))?;
+        let (client, project_id) = self.upstream_client().clone().context("invalid project")?;
 
         for worktree in worktrees {
             if let Some(old_worktree) =
@@ -876,7 +873,7 @@ impl WorktreeStore {
 
     async fn filter_paths(
         fs: &Arc<dyn Fs>,
-        mut input: Receiver<MatchingEntry>,
+        input: Receiver<MatchingEntry>,
         query: &SearchQuery,
     ) -> Result<()> {
         let mut input = pin!(input);
@@ -916,7 +913,7 @@ impl WorktreeStore {
         let worktree = this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             this.worktree_for_id(worktree_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))
+                .context("worktree not found")
         })??;
         Worktree::handle_create_entry(worktree, envelope.payload, cx).await
     }
@@ -929,7 +926,7 @@ impl WorktreeStore {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this.update(&mut cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))
+                .context("worktree not found")
         })??;
         Worktree::handle_copy_entry(worktree, envelope.payload, cx).await
     }
@@ -942,7 +939,7 @@ impl WorktreeStore {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this.update(&mut cx, |this, cx| {
             this.worktree_for_entry(entry_id, cx)
-                .ok_or_else(|| anyhow!("worktree not found"))
+                .context("worktree not found")
         })??;
         Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
     }
@@ -955,7 +952,7 @@ impl WorktreeStore {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
-            .ok_or_else(|| anyhow!("invalid request"))?;
+            .context("invalid request")?;
         Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
     }
 
@@ -967,7 +964,7 @@ impl WorktreeStore {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
         let worktree = this
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
-            .ok_or_else(|| anyhow!("invalid request"))?;
+            .context("invalid request")?;
         Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
     }
 }

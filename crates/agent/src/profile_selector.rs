@@ -1,20 +1,25 @@
 use std::sync::Arc;
 
-use assistant_settings::{
-    AgentProfile, AgentProfileId, AssistantSettings, GroupedAgentProfiles, builtin_profiles,
+use agent_settings::{
+    AgentDockPosition, AgentProfile, AgentProfileId, AgentSettings, GroupedAgentProfiles,
+    builtin_profiles,
 };
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
+use gpui::{Action, Empty, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
-use ui::{ContextMenu, ContextMenuEntry, PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{
+    ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, Tooltip,
+    prelude::*,
+};
 use util::ResultExt as _;
 
-use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
+use crate::{ManageProfiles, Thread, ThreadStore, ToggleProfileSelector};
 
 pub struct ProfileSelector {
     profiles: GroupedAgentProfiles,
     fs: Arc<dyn Fs>,
+    thread: Entity<Thread>,
     thread_store: WeakEntity<ThreadStore>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
@@ -24,6 +29,7 @@ pub struct ProfileSelector {
 impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
+        thread: Entity<Thread>,
         thread_store: WeakEntity<ThreadStore>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
@@ -33,8 +39,9 @@ impl ProfileSelector {
         });
 
         Self {
-            profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
+            profiles: GroupedAgentProfiles::from_settings(AgentSettings::get_global(cx)),
             fs,
+            thread,
             thread_store,
             menu_handle: PopoverMenuHandle::default(),
             focus_handle,
@@ -47,7 +54,7 @@ impl ProfileSelector {
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
-        self.profiles = GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx));
+        self.profiles = GroupedAgentProfiles::from_settings(AgentSettings::get_global(cx));
     }
 
     fn build_context_menu(
@@ -56,10 +63,14 @@ impl ProfileSelector {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
-            let settings = AssistantSettings::get_global(cx);
+            let settings = AgentSettings::get_global(cx);
             for (profile_id, profile) in self.profiles.builtin.iter() {
-                menu =
-                    menu.item(self.menu_entry_for_profile(profile_id.clone(), profile, settings));
+                menu = menu.item(self.menu_entry_for_profile(
+                    profile_id.clone(),
+                    profile,
+                    settings,
+                    cx,
+                ));
             }
 
             if !self.profiles.custom.is_empty() {
@@ -69,6 +80,7 @@ impl ProfileSelector {
                         profile_id.clone(),
                         profile,
                         settings,
+                        cx,
                     ));
                 }
             }
@@ -88,7 +100,8 @@ impl ProfileSelector {
         &self,
         profile_id: AgentProfileId,
         profile: &AgentProfile,
-        settings: &AssistantSettings,
+        settings: &AgentSettings,
+        _cx: &App,
     ) -> ContextMenuEntry {
         let documentation = match profile.name.to_lowercase().as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
@@ -101,7 +114,9 @@ impl ProfileSelector {
             .toggleable(IconPosition::End, profile_id == settings.default_profile);
 
         let entry = if let Some(doc_text) = documentation {
-            entry.documentation_aside(move |_| Label::new(doc_text).into_any_element())
+            entry.documentation_aside(documentation_side(settings.dock), move |_| {
+                Label::new(doc_text).into_any_element()
+            })
         } else {
             entry
         };
@@ -111,7 +126,7 @@ impl ProfileSelector {
             let thread_store = self.thread_store.clone();
             let profile_id = profile_id.clone();
             move |_window, cx| {
-                update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+                update_settings_file::<AgentSettings>(fs.clone(), cx, {
                     let profile_id = profile_id.clone();
                     move |settings, _cx| {
                         settings.set_profile(profile_id.clone());
@@ -130,7 +145,7 @@ impl ProfileSelector {
 
 impl Render for ProfileSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         let profile_id = &settings.default_profile;
         let profile = settings.profiles.get(profile_id);
 
@@ -138,47 +153,65 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let supports_tools = model_registry
-            .default_model()
-            .map_or(false, |default| default.model.supports_tools());
+        let configured_model = self.thread.read(cx).configured_model().or_else(|| {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            model_registry.default_model()
+        });
+        let Some(configured_model) = configured_model else {
+            return Empty.into_any_element();
+        };
 
-        let this = cx.entity().clone();
-        let focus_handle = self.focus_handle.clone();
-
-        let trigger_button = if supports_tools {
-            Button::new("profile-selector-model", selected_profile)
+        if configured_model.model.supports_tools() {
+            let this = cx.entity().clone();
+            let focus_handle = self.focus_handle.clone();
+            let trigger_button = Button::new("profile-selector-model", selected_profile)
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)
                 .icon(IconName::ChevronDown)
                 .icon_size(IconSize::XSmall)
                 .icon_position(IconPosition::End)
-                .icon_color(Color::Muted)
+                .icon_color(Color::Muted);
+
+            PopoverMenu::new("profile-selector")
+                .trigger_with_tooltip(trigger_button, {
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Profile Menu",
+                            &ToggleProfileSelector,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .anchor(
+                    if documentation_side(settings.dock) == DocumentationSide::Left {
+                        gpui::Corner::BottomRight
+                    } else {
+                        gpui::Corner::BottomLeft
+                    },
+                )
+                .with_handle(self.menu_handle.clone())
+                .menu(move |window, cx| {
+                    Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
+                })
+                .into_any_element()
         } else {
-            Button::new("tools-not-supported-button", "No Tools")
+            Button::new("tools-not-supported-button", "Tools Unsupported")
                 .disabled(true)
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)
-                .tooltip(Tooltip::text("The current model does not support tools."))
-        };
+                .tooltip(Tooltip::text("This model does not support tools."))
+                .into_any_element()
+        }
+    }
+}
 
-        PopoverMenu::new("profile-selector")
-            .trigger_with_tooltip(trigger_button, {
-                let focus_handle = focus_handle.clone();
-                move |window, cx| {
-                    Tooltip::for_action_in(
-                        "Toggle Profile Menu",
-                        &ToggleProfileSelector,
-                        &focus_handle,
-                        window,
-                        cx,
-                    )
-                }
-            })
-            .anchor(gpui::Corner::BottomRight)
-            .with_handle(self.menu_handle.clone())
-            .menu(move |window, cx| {
-                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
-            })
+fn documentation_side(position: AgentDockPosition) -> DocumentationSide {
+    match position {
+        AgentDockPosition::Left => DocumentationSide::Right,
+        AgentDockPosition::Bottom => DocumentationSide::Left,
+        AgentDockPosition::Right => DocumentationSide::Left,
     }
 }

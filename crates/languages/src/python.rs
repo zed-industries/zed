@@ -1,16 +1,16 @@
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::LanguageName;
 use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -37,6 +37,32 @@ use std::{
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
+
+pub(crate) struct PyprojectTomlManifestProvider;
+
+impl ManifestProvider for PyprojectTomlManifestProvider {
+    fn name(&self) -> ManifestName {
+        SharedString::new_static("pyproject.toml").into()
+    }
+
+    fn search(
+        &self,
+        ManifestQuery {
+            path,
+            depth,
+            delegate,
+        }: ManifestQuery,
+    ) -> Option<Arc<Path>> {
+        for path in path.ancestors().take(depth) {
+            let p = path.join("pyproject.toml");
+            if delegate.exists(&p, Some(false)) {
+                return Some(path.into());
+            }
+        }
+
+        None
+    }
+}
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
 const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
@@ -301,6 +327,9 @@ impl LspAdapter for PythonLspAdapter {
             user_settings
         })
     }
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
+    }
 }
 
 async fn get_cached_server_binary(
@@ -353,10 +382,7 @@ impl ContextProvider for PythonContextProvider {
                 toolchains
                     .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
                     .await
-                    .map_or_else(
-                        || "python3".to_owned(),
-                        |toolchain| format!("\"{}\"", toolchain.path),
-                    )
+                    .map_or_else(|| "python3".to_owned(), |toolchain| toolchain.path.into())
             } else {
                 String::from("python3")
             };
@@ -387,6 +413,7 @@ impl ContextProvider for PythonContextProvider {
                     "-c".to_owned(),
                     VariableName::SelectedText.template_value_with_whitespace(),
                 ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
             // Execute an entire file
@@ -394,6 +421,7 @@ impl ContextProvider for PythonContextProvider {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
             // Execute a file as module
@@ -404,6 +432,7 @@ impl ContextProvider for PythonContextProvider {
                     "-m".to_owned(),
                     PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -421,6 +450,7 @@ impl ContextProvider for PythonContextProvider {
                             "unittest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
@@ -436,6 +466,7 @@ impl ContextProvider for PythonContextProvider {
                             "python-unittest-class".to_owned(),
                             "python-unittest-method".to_owned(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                 ]
@@ -451,6 +482,7 @@ impl ContextProvider for PythonContextProvider {
                             "pytest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
@@ -462,6 +494,7 @@ impl ContextProvider for PythonContextProvider {
                             "pytest".to_owned(),
                             PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         tags: vec![
                             "python-pytest-class".to_owned(),
                             "python-pytest-method".to_owned(),
@@ -473,10 +506,6 @@ impl ContextProvider for PythonContextProvider {
         });
 
         Some(TaskTemplates(tasks))
-    }
-
-    fn debug_adapter(&self) -> Option<String> {
-        Some("Debugpy".into())
     }
 }
 
@@ -858,11 +887,11 @@ impl PyLspAdapter {
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
         let python_path = Self::find_base_python(delegate)
             .await
-            .ok_or_else(|| anyhow!("Could not find Python installation for PyLSP"))?;
+            .context("Could not find Python installation for PyLSP")?;
         let work_dir = delegate
             .language_server_download_dir(&Self::SERVER_NAME)
             .await
-            .ok_or_else(|| anyhow!("Could not get working directory for PyLSP"))?;
+            .context("Could not get working directory for PyLSP")?;
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
@@ -1146,6 +1175,9 @@ impl LspAdapter for PyLspAdapter {
             user_settings
         })
     }
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
+    }
 }
 
 #[cfg(test)]
@@ -1208,7 +1240,7 @@ mod tests {
                 "def a():\n  \n  if a:\n    b()\n  else:\n    "
             );
 
-            // indent after an open paren. the closing  paren is not indented
+            // indent after an open paren. the closing paren is not indented
             // because there is another token before it on the same line.
             append(&mut buffer, "foo(\n1)", cx);
             assert_eq!(
@@ -1259,7 +1291,7 @@ mod tests {
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);
-            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
+            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n");
 
             buffer
         });

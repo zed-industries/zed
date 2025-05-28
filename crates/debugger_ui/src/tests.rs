@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use dap::adapters::DebugTaskDefinition;
-use dap::{DebugRequest, client::DebugAdapterClient};
+use dap::client::DebugAdapterClient;
 use gpui::{Entity, TestAppContext, WindowHandle};
 use project::{Project, debugger::session::Session};
 use settings::SettingsStore;
@@ -21,7 +21,11 @@ mod dap_logger;
 #[cfg(test)]
 mod debugger_panel;
 #[cfg(test)]
+mod inline_values;
+#[cfg(test)]
 mod module_list;
+#[cfg(test)]
+mod new_session_modal;
 #[cfg(test)]
 mod persistence;
 #[cfg(test)]
@@ -30,9 +34,8 @@ mod stack_frame_list;
 mod variable_list;
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    #[cfg(test)]
+    zlog::init_test();
 
     cx.update(|cx| {
         let settings = SettingsStore::test(cx);
@@ -45,6 +48,7 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
         Project::init_settings(cx);
         editor::init(cx);
         crate::init(cx);
+        dap_adapters::init(cx);
     });
 }
 
@@ -122,7 +126,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
             .and_then(|panel| panel.read(cx).active_session())
             .map(|session| session.read(cx).running_state().read(cx).session())
             .cloned()
-            .ok_or_else(|| anyhow!("Failed to get active session"))
+            .context("Failed to get active session")
     })??;
 
     Ok(session)
@@ -133,16 +137,18 @@ pub fn start_debug_session<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
     cx: &mut gpui::TestAppContext,
     configure: T,
 ) -> Result<Entity<Session>> {
+    use serde_json::json;
+
     start_debug_session_with(
         workspace,
         cx,
         DebugTaskDefinition {
             adapter: "fake-adapter".into(),
-            request: DebugRequest::Launch(Default::default()),
             label: "test".into(),
-            initialize_args: None,
+            config: json!({
+                "request": "launch"
+            }),
             tcp_connection: None,
-            stop_on_entry: None,
         },
         configure,
     )
