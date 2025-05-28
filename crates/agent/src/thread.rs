@@ -3414,8 +3414,8 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Brief".into());
-        fake_model.stream_last_completion_response(" Introduction".into());
+        fake_model.stream_last_completion_response("Brief");
+        fake_model.stream_last_completion_response(" Introduction");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -3508,7 +3508,7 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("A successful summary".into());
+        fake_model.stream_last_completion_response("A successful summary");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -3550,7 +3550,7 @@ fn main() {{
 
     fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Assistant response".into());
+        fake_model.stream_last_completion_response("Assistant response");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
     }
