@@ -308,22 +308,11 @@ impl Offset<f32> {
     // const ZERO: Self = Self { x: 0., y: 0. };
 
     fn unwrap_or_default(mut self, cx: &Context<Workspace>) -> Self {
-        let mut offset = None;
-        let get_ui_font_size = || ThemeSettings::get_global(cx).ui_font_size(cx).0;
-
         if self.x == 0. {
-            let ui_font_size = get_ui_font_size();
-
-            self.x = ui_font_size;
-            // Cache ui_font_size, avoid repeated calls to get_ui_font_size().
-            offset = Some(ui_font_size);
+            self.x = ThemeSettings::get_global(cx).ui_font_size(cx).0;
         }
         if self.y == 0. {
-            if let Some(ui_font_size) = offset {
-                self.y = ui_font_size;
-            } else {
-                self.y = get_ui_font_size();
-            }
+            self.y = ThemeSettings::get_global(cx).ui_font_size(cx).0;
         }
 
         self
@@ -5439,17 +5428,12 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ResetDocksSize, window, cx| {
-                    let panels = workspace
-                        .all_docks()
-                        .into_iter()
-                        .filter_map(|dock| dock.read(cx).visible_panel())
-                        .cloned()
-                        .collect::<Vec<_>>();
-
-                    panels
-                        .into_iter()
-                        // Set to `None`, then the size will fall back to the default.
-                        .for_each(|panel| panel.set_size(None, window, cx));
+                    for dock in workspace.all_docks() {
+                        if let Some(panel) = dock.read(cx).visible_panel() {
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+                        }
+                    }
                 },
             ))
             .on_action(cx.listener(
@@ -5875,7 +5859,7 @@ fn adjust_open_docks_size_by_offset(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let fns = workspace
+    let docks = workspace
         .all_docks()
         .into_iter()
         .filter_map(|dock| {
@@ -5884,14 +5868,18 @@ fn adjust_open_docks_size_by_offset(
                 let panel_size = dock.active_panel_size(window, cx)?;
                 let dock_pos = dock.position();
 
-                Some(adjust_dock_size(panel_size, dock_pos, offset))
+                Some((panel_size, dock_pos, offset))
             } else {
                 None
             }
         })
         .collect::<Vec<_>>();
 
-    fns.into_iter().for_each(|f| f(workspace, window, cx));
+    docks
+        .into_iter()
+        .for_each(|(panel_size, dock_pos, offset)| {
+            adjust_dock_size(panel_size, dock_pos, offset)(workspace, window, cx)
+        });
 }
 
 fn adjust_dock_size(
