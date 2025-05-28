@@ -18,16 +18,21 @@ use gpui::{
 use indoc::formatdoc;
 use language::{
     Anchor, Buffer, Capability, LanguageRegistry, LineEnding, OffsetRangeExt, Point, Rope,
-    TextBuffer, language_settings::SoftWrap,
+    TextBuffer,
+    language_settings::{self, FormatOnSave, SoftWrap},
 };
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
-use project::{Project, ProjectPath};
+use project::{
+    Project, ProjectPath,
+    lsp_store::{FormatTrigger, LspFormatTarget},
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
     cmp::Reverse,
+    collections::HashSet,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -244,6 +249,87 @@ impl Tool for EditFileTool {
             }
             let agent_output = output.await?;
 
+            // Check if format_on_save is enabled and get the language if formatting is needed
+            let language_to_format = buffer
+                .read_with(cx, |buffer, cx| {
+                    let language = buffer.language().cloned();
+                    let settings = language_settings::language_settings(
+                        language.as_ref().map(|l| l.name()),
+                        buffer.file(),
+                        cx,
+                    );
+                    if !matches!(settings.format_on_save, FormatOnSave::Off) {
+                        language
+                    } else {
+                        None
+                    }
+                })
+                .log_err()
+                .flatten();
+
+            let final_text = if let Some(language) = language_to_format {
+                // Format the content in a separate buffer to get the formatted text
+                // without triggering "file changed" events on the actual buffer
+                let unformatted_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                let unformatted_text = cx
+                    .background_spawn({
+                        let unformatted_snapshot = unformatted_snapshot.clone();
+                        async move { unformatted_snapshot.text() }
+                    })
+                    .await;
+
+                // Create a temporary buffer to apply formatting without triggering file change events
+                let file = buffer.read_with(cx, |buffer, _| buffer.file().cloned())?;
+                let line_ending = buffer.read_with(cx, |buffer, _| buffer.line_ending())?;
+
+                let temp_buffer_entity = cx.new(|cx| {
+                    let text_buffer = TextBuffer::new_normalized(
+                        0,
+                        cx.entity_id().as_non_zero_u64().into(),
+                        line_ending,
+                        unformatted_text.clone().into(),
+                    );
+                    let mut temp_buffer = Buffer::build(text_buffer, file, Capability::ReadWrite);
+                    temp_buffer.set_language(Some(language), cx);
+                    temp_buffer
+                })?;
+
+                // Format the temporary buffer
+                if let Some(format_task) = project
+                    .update(cx, move |project, cx| {
+                        project.format(
+                            HashSet::from_iter([temp_buffer_entity.clone()]),
+                            LspFormatTarget::Buffers,
+                            false, // Don't push to history since the tool did it.
+                            FormatTrigger::Save,
+                            cx,
+                        )
+                    })
+                    .log_err()
+                {
+                    format_task.await.log_err();
+                }
+
+                // Get the formatted text
+                let formatted_text = temp_buffer_entity.read_with(cx, |buffer, _| buffer.text())?;
+
+                // Apply the formatted content to the actual buffer
+                buffer.update(cx, |buffer, cx| {
+                    let range = 0..buffer.len();
+                    buffer.edit([(range, formatted_text.clone())], None, cx);
+                })?;
+
+                formatted_text
+            } else {
+                // No formatting needed, just get the current text
+                let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
+                cx.background_spawn({
+                    let new_snapshot = new_snapshot.clone();
+                    async move { new_snapshot.text() }
+                })
+                .await
+            };
+
             project
                 .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))?
                 .await?;
@@ -253,8 +339,10 @@ impl Tool for EditFileTool {
                 let new_snapshot = new_snapshot.clone();
                 async move { new_snapshot.text() }
             });
-            let diff = cx.background_spawn(async move {
-                language::unified_diff(&old_snapshot.text(), &new_snapshot.text())
+            let diff = cx.background_spawn({
+                let old_text = old_text.clone();
+                let final_text = final_text.clone();
+                async move { language::unified_diff(&old_text, &final_text) }
             });
             let (new_text, diff) = futures::join!(new_text, diff);
 
@@ -1099,8 +1187,8 @@ async fn build_buffer_diff(
 mod tests {
     use super::*;
     use client::TelemetrySettings;
-    use fs::FakeFs;
-    use gpui::TestAppContext;
+    use fs::{FakeFs, Fs};
+    use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1309,5 +1397,332 @@ mod tests {
             TelemetrySettings::register(cx);
             Project::init_settings(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_format_on_save(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({"src": {}})).await;
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        // Set up a Rust language with LSP formatting support
+        let rust_language = Arc::new(language::Language::new(
+            language::LanguageConfig {
+                name: "Rust".into(),
+                matcher: language::LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+        ));
+
+        // Register the language and fake LSP
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(rust_language);
+
+        let mut fake_language_servers = language_registry.register_fake_lsp(
+            "Rust",
+            language::FakeLspAdapter {
+                capabilities: lsp::ServerCapabilities {
+                    document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        // Create the file
+        fs.save(
+            path!("/root/src/main.rs").as_ref(),
+            &"initial content".into(),
+            language::LineEnding::Unix,
+        )
+        .await
+        .unwrap();
+
+        // Open the buffer to trigger LSP initialization
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/root/src/main.rs"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Register the buffer with language servers
+        let _handle = project.update(cx, |project, cx| {
+            project.register_buffer_with_language_servers(&buffer, cx)
+        });
+
+        const UNFORMATTED_CONTENT: &str = "fn main() {println!(\"Hello!\");}\n";
+        const FORMATTED_CONTENT: &str =
+            "This file was formatted by the fake formatter in the test.\n";
+
+        // Get the fake language server and set up formatting handler
+        let fake_language_server = fake_language_servers.next().await.unwrap();
+        fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>({
+            |_, _| async move {
+                Ok(Some(vec![lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(1, 0)),
+                    new_text: FORMATTED_CONTENT.to_string(),
+                }]))
+            }
+        });
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // First, test with format_on_save enabled
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
+                    cx,
+                    |settings| {
+                        settings.defaults.format_on_save = Some(FormatOnSave::On);
+                        settings.defaults.formatter =
+                            Some(language::language_settings::SelectedFormatter::Auto);
+                    },
+                );
+            });
+        });
+
+        // Have the model stream unformatted content
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Create main function".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            });
+
+            // Stream the unformatted content
+            cx.executor().run_until_parked();
+            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Read the file to verify it was formatted automatically
+        let new_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
+        assert_eq!(
+            // Ignore carriage returns on Windows
+            new_content.replace("\r\n", "\n"),
+            FORMATTED_CONTENT,
+            "Code should be formatted when format_on_save is enabled"
+        );
+
+        // Next, test with format_on_save disabled
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
+                    cx,
+                    |settings| {
+                        settings.defaults.format_on_save = Some(FormatOnSave::Off);
+                    },
+                );
+            });
+        });
+
+        // Stream unformatted edits again
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Update main function".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            });
+
+            // Stream the unformatted content
+            cx.executor().run_until_parked();
+            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Verify the file was not formatted
+        let new_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
+        assert_eq!(
+            // Ignore carriage returns on Windows
+            new_content.replace("\r\n", "\n"),
+            UNFORMATTED_CONTENT,
+            "Code should not be formatted when format_on_save is disabled"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_remove_trailing_whitespace(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({"src": {}})).await;
+
+        // Create a simple file with trailing whitespace
+        fs.save(
+            path!("/root/src/main.rs").as_ref(),
+            &"initial content".into(),
+            language::LineEnding::Unix,
+        )
+        .await
+        .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // First, test with remove_trailing_whitespace_on_save enabled
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
+                    cx,
+                    |settings| {
+                        settings.defaults.remove_trailing_whitespace_on_save = Some(true);
+                    },
+                );
+            });
+        });
+
+        const CONTENT_WITH_TRAILING_WHITESPACE: &str =
+            "fn main() {  \n    println!(\"Hello!\");  \n}\n";
+
+        // Have the model stream content that contains trailing whitespace
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Create main function".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            });
+
+            // Stream the content with trailing whitespace
+            cx.executor().run_until_parked();
+            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Read the file to verify trailing whitespace was removed automatically
+        assert_eq!(
+            // Ignore carriage returns on Windows
+            fs.load(path!("/root/src/main.rs").as_ref())
+                .await
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "fn main() {\n    println!(\"Hello!\");\n}\n",
+            "Trailing whitespace should be removed when remove_trailing_whitespace_on_save is enabled"
+        );
+
+        // Next, test with remove_trailing_whitespace_on_save disabled
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
+                    cx,
+                    |settings| {
+                        settings.defaults.remove_trailing_whitespace_on_save = Some(false);
+                    },
+                );
+            });
+        });
+
+        // Stream edits again with trailing whitespace
+        let edit_result = {
+            let edit_task = cx.update(|cx| {
+                let input = serde_json::to_value(EditFileToolInput {
+                    display_description: "Update main function".into(),
+                    path: "root/src/main.rs".into(),
+                    mode: EditFileMode::Overwrite,
+                })
+                .unwrap();
+                Arc::new(EditFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            });
+
+            // Stream the content with trailing whitespace
+            cx.executor().run_until_parked();
+            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.end_last_completion_stream();
+
+            edit_task.await
+        };
+        assert!(edit_result.is_ok());
+
+        // Wait for any async operations (e.g. formatting) to complete
+        cx.executor().run_until_parked();
+
+        // Verify the file still has trailing whitespace
+        // Read the file again - it should still have trailing whitespace
+        let final_content = fs.load(path!("/root/src/main.rs").as_ref()).await.unwrap();
+        assert_eq!(
+            // Ignore carriage returns on Windows
+            final_content.replace("\r\n", "\n"),
+            CONTENT_WITH_TRAILING_WHITESPACE,
+            "Trailing whitespace should remain when remove_trailing_whitespace_on_save is disabled"
+        );
     }
 }
