@@ -13,5 +13,10 @@ anyhow.workspace = true
 log.workspace = true
 serde = { workspace = true, features = ["derive"] }
 smol.workspace = true
+cpal = "0.15"
+futures = { workspace = true, features = ["std"] }
+gpui.workspace = true
+parking_lot.workspace = true
+util.workspace = true
 
 [dev-dependencies] 

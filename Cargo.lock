@@ -8848,9 +8848,14 @@ name = "media_player"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cpal",
+ "futures 0.3.31",
+ "gpui",
  "log",
+ "parking_lot",
  "serde",
  "smol",
+ "util",
 ]
 
 [[package]]

@@ -1,7 +1,12 @@
 use crate::voice::types::*;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use gpui::{BackgroundExecutor, Task};
+use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
+use std::thread;
 
 pub struct VoicePlayer {
     recordings: HashMap<String, VoiceRecording>,
@@ -10,6 +15,10 @@ pub struct VoicePlayer {
     // Store paused recordings' progress separately
     paused_progress: HashMap<String, (f32, Duration)>, // recording_id -> (progress, current_time)
     event_callback: Option<Box<dyn Fn(VoicePlayerEvent) + Send + Sync>>,
+    executor: Option<BackgroundExecutor>,
+    playback_task: Option<Task<()>>,
+    audio_stop_sender: Option<std::sync::mpsc::Sender<()>>,
+    playback_speed: f32, // 1.0 = normal speed, 0.5 = half speed, 2.0 = double speed
 }
 
 impl VoicePlayer {
@@ -20,6 +29,24 @@ impl VoicePlayer {
             seeking_state: None,
             paused_progress: HashMap::new(),
             event_callback: None,
+            executor: None,
+            playback_task: None,
+            audio_stop_sender: None,
+            playback_speed: 1.0,
+        }
+    }
+
+    pub fn with_executor(executor: BackgroundExecutor) -> Self {
+        Self {
+            recordings: HashMap::new(),
+            playback_state: None,
+            seeking_state: None,
+            paused_progress: HashMap::new(),
+            event_callback: None,
+            executor: Some(executor),
+            playback_task: None,
+            audio_stop_sender: None,
+            playback_speed: 1.0,
         }
     }
 
@@ -182,6 +209,13 @@ impl VoicePlayer {
             is_playing: true,
         });
 
+        // Start real audio playback
+        if let Some(executor) = &self.executor {
+            let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+            self.audio_stop_sender = Some(stop_tx);
+            self.playback_task = Some(self.start_audio_playback(executor.clone(), recording, stop_rx)?);
+        }
+
         self.emit_event(VoicePlayerEvent::PlaybackStarted { recording_id });
         Ok(())
     }
@@ -190,6 +224,15 @@ impl VoicePlayer {
         if let Some(playback_state) = &self.playback_state {
             log::info!("Stopping playback of voice recording: {}", playback_state.recording_id);
             let recording_id = playback_state.recording_id.clone();
+            
+            // Stop audio playback
+            if let Some(stop_sender) = self.audio_stop_sender.take() {
+                let _ = stop_sender.send(());
+            }
+            if let Some(task) = self.playback_task.take() {
+                drop(task);
+            }
+            
             self.emit_event(VoicePlayerEvent::PlaybackStopped { recording_id });
         }
         
@@ -201,32 +244,68 @@ impl VoicePlayer {
         if let Some(playback_state) = &mut self.playback_state {
             if playback_state.is_playing {
                 log::info!("Pausing playback of voice recording: {}", playback_state.recording_id);
-                playback_state.is_playing = false;
                 
-                // Calculate how much time has elapsed and adjust the duration
+                // Update the remaining duration based on elapsed time
                 let elapsed = playback_state.start_time.elapsed();
                 playback_state.duration = playback_state.duration.saturating_sub(elapsed);
+                playback_state.is_playing = false;
+                
+                // Stop audio playback
+                if let Some(stop_sender) = self.audio_stop_sender.take() {
+                    let _ = stop_sender.send(());
+                }
+                if let Some(task) = self.playback_task.take() {
+                    drop(task);
+                }
                 
                 let recording_id = playback_state.recording_id.clone();
                 self.emit_event(VoicePlayerEvent::PlaybackPaused { recording_id });
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Playback is already paused"))
             }
+        } else {
+            Err(anyhow::anyhow!("No active playback to pause"))
         }
-        Ok(())
     }
 
     pub fn resume_playback(&mut self, recording_id: String) -> Result<()> {
         if let Some(playback_state) = &mut self.playback_state {
             if playback_state.recording_id == recording_id && !playback_state.is_playing {
-                log::info!("Resuming playback of voice recording: {}", playback_state.recording_id);
+                log::info!("Resuming playback of voice recording: {}", recording_id);
                 
-                // Reset start time for remaining duration
                 playback_state.start_time = std::time::Instant::now();
                 playback_state.is_playing = true;
                 
+                // Resume real audio playback from current position
+                if let Some(executor) = &self.executor {
+                    let recording = self.recordings.get(&recording_id)
+                        .ok_or_else(|| anyhow::anyhow!("Recording not found: {}", recording_id))?
+                        .clone();
+                    
+                    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+                    self.audio_stop_sender = Some(stop_tx);
+                    
+                    // Calculate start position for resume
+                    let played_duration = playback_state.original_duration.saturating_sub(playback_state.duration);
+                    let start_position = played_duration.as_secs_f32() / recording.duration.as_secs_f32();
+                    
+                    self.playback_task = Some(self.start_audio_playback_from_position(
+                        executor.clone(), 
+                        recording, 
+                        start_position,
+                        stop_rx
+                    )?);
+                }
+                
                 self.emit_event(VoicePlayerEvent::PlaybackResumed { recording_id });
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Cannot resume: recording not paused or different recording"))
             }
+        } else {
+            Err(anyhow::anyhow!("No playback state to resume"))
         }
-        Ok(())
     }
 
     pub fn start_seeking(&mut self, recording_id: String, relative_position: f32) -> Result<()> {
@@ -489,12 +568,228 @@ impl VoicePlayer {
             // Remove from paused progress since it's now active
             self.paused_progress.remove(&recording_id);
 
+            // Start real audio playback from saved position
+            if let Some(executor) = &self.executor {
+                let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+                self.audio_stop_sender = Some(stop_tx);
+                
+                let start_position = progress;
+                self.playback_task = Some(self.start_audio_playback_from_position(
+                    executor.clone(), 
+                    recording, 
+                    start_position,
+                    stop_rx
+                )?);
+            }
+
             self.emit_event(VoicePlayerEvent::PlaybackResumed { recording_id });
             Ok(())
         } else {
             // No saved progress, start from beginning
             self.start_playback(recording_id)
         }
+    }
+
+    fn start_audio_playback(&self, executor: BackgroundExecutor, recording: VoiceRecording, stop_rx: std::sync::mpsc::Receiver<()>) -> Result<Task<()>> {
+        self.start_audio_playback_from_position(executor, recording, 0.0, stop_rx)
+    }
+
+    fn start_audio_playback_from_position(
+        &self, 
+        executor: BackgroundExecutor, 
+        recording: VoiceRecording, 
+        start_position: f32,
+        stop_rx: std::sync::mpsc::Receiver<()>
+    ) -> Result<Task<()>> {
+        let playback_speed = self.playback_speed;
+        let task = executor.spawn(async move {
+            if let Err(e) = Self::audio_playback_loop(recording, start_position, playback_speed, stop_rx).await {
+                log::error!("Audio playback failed: {}", e);
+            }
+        });
+        
+        Ok(task)
+    }
+
+    async fn audio_playback_loop(
+        recording: VoiceRecording, 
+        start_position: f32,
+        playback_speed: f32,
+        stop_rx: std::sync::mpsc::Receiver<()>
+    ) -> Result<()> {
+        // Get default output device
+        let host = cpal::default_host();
+        let device = host
+            .default_output_device()
+            .context("No audio output device available")?;
+        
+        if let Ok(name) = device.name() {
+            log::info!("Using audio output device: {}", name);
+        }
+        
+        let config = device
+            .default_output_config()
+            .context("Failed to get default output config")?;
+        
+        log::info!("Output config: {:?}, playback speed: {:.2}x", config, playback_speed);
+        
+        // Log recording vs output configuration
+        log::info!("Recording config: {}Hz, {} channels vs Output config: {}Hz, {} channels", 
+            recording.sample_rate, recording.channels, config.sample_rate().0, config.channels());
+        
+        // Convert recorded data back to i16 samples
+        let mut audio_samples: Vec<i16> = Vec::new();
+        for chunk in recording.data.chunks_exact(2) {
+            if let Ok(bytes) = chunk.try_into() {
+                audio_samples.push(i16::from_le_bytes(bytes));
+            }
+        }
+        
+        // Calculate start sample based on position
+        let start_sample = (audio_samples.len() as f32 * start_position) as usize;
+        let samples_to_play = &audio_samples[start_sample..];
+        
+        // Handle sample rate conversion if needed
+        let resampled_samples = if recording.sample_rate != config.sample_rate().0 {
+            let ratio = config.sample_rate().0 as f32 / recording.sample_rate as f32;
+            log::info!("Resampling from {}Hz to {}Hz (ratio: {:.3})", 
+                recording.sample_rate, config.sample_rate().0, ratio);
+            
+            let mut resampled = Vec::new();
+            for i in 0..((samples_to_play.len() as f32 * ratio) as usize) {
+                let source_index = (i as f32 / ratio) as usize;
+                if source_index < samples_to_play.len() {
+                    resampled.push(samples_to_play[source_index]);
+                }
+            }
+            resampled
+        } else {
+            samples_to_play.to_vec()
+        };
+        
+        // Handle channel conversion if needed (mono to stereo)
+        let final_samples = if recording.channels == 1 && config.channels() == 2 {
+            log::info!("Converting mono to stereo");
+            let mut stereo_samples = Vec::with_capacity(resampled_samples.len() * 2);
+            for sample in resampled_samples {
+                stereo_samples.push(sample); // Left channel
+                stereo_samples.push(sample); // Right channel (duplicate)
+            }
+            stereo_samples
+        } else if recording.channels == 2 && config.channels() == 1 {
+            log::info!("Converting stereo to mono");
+            let mut mono_samples = Vec::with_capacity(resampled_samples.len() / 2);
+            for chunk in resampled_samples.chunks_exact(2) {
+                // Average left and right channels
+                let mono_sample = ((chunk[0] as i32 + chunk[1] as i32) / 2) as i16;
+                mono_samples.push(mono_sample);
+            }
+            mono_samples
+        } else {
+            resampled_samples
+        };
+        
+        log::info!("Playing {} samples starting from position {:.1}% (sample {}) at {:.2}x speed", 
+            final_samples.len(), start_position * 100.0, start_sample, playback_speed);
+        
+        // Create a shared buffer for audio data with speed control
+        let audio_buffer = Arc::new(Mutex::new(final_samples));
+        let sample_index = Arc::new(Mutex::new(0.0f32)); // Use float for fractional indexing
+        
+        // Create a channel for completion notification
+        let (completion_tx, completion_rx) = std::sync::mpsc::channel::<()>();
+        
+        // Spawn a thread to handle the audio stream
+        let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
+        
+        thread::spawn(move || {
+            let result = (|| -> Result<()> {
+                // Build the output stream
+                let stream = device
+                    .build_output_stream(
+                        &config.into(),
+                        {
+                            let audio_buffer = audio_buffer.clone();
+                            let sample_index = sample_index.clone();
+                            let completion_tx = completion_tx.clone();
+                            let mut completion_sent = false;
+                            
+                            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                                let buffer = audio_buffer.lock();
+                                let mut index = sample_index.lock();
+                                
+                                for sample in data.iter_mut() {
+                                    let current_index = *index as usize;
+                                    if current_index < buffer.len() {
+                                        // Convert i16 to f32 and write to output
+                                        *sample = buffer[current_index] as f32 / i16::MAX as f32;
+                                        // Advance index by playback speed (faster = skip samples, slower = repeat samples)
+                                        *index += playback_speed;
+                                    } else {
+                                        // End of audio data
+                                        *sample = 0.0;
+                                        if !completion_sent {
+                                            let _ = completion_tx.send(());
+                                            completion_sent = true;
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        |err| {
+                            log::error!("Audio output stream error: {}", err);
+                        },
+                        None,
+                    )
+                    .context("Failed to build output stream")?;
+                
+                // Start the stream
+                stream.play().context("Failed to start audio output stream")?;
+                
+                // Keep the thread alive and holding onto the stream
+                end_on_drop_rx.recv().ok();
+                
+                Ok(())
+            })();
+            
+            if let Err(e) = result {
+                log::error!("Audio playback thread error: {}", e);
+            }
+        });
+        
+        // Wait for either stop signal or completion
+        loop {
+            // Check for stop signal (non-blocking)
+            if stop_rx.try_recv().is_ok() {
+                log::info!("Audio playback stop signal received");
+                break;
+            }
+            
+            // Check for completion (non-blocking)
+            if completion_rx.try_recv().is_ok() {
+                log::info!("Audio playback completed naturally");
+                break;
+            }
+            
+            // Small delay to prevent busy waiting
+            smol::Timer::after(Duration::from_millis(10)).await;
+        }
+        
+        // Signal the audio thread to stop
+        drop(end_on_drop_tx);
+        log::info!("Audio playback stopped");
+        
+        Ok(())
+    }
+
+    pub fn get_playback_speed(&self) -> f32 {
+        self.playback_speed
+    }
+
+    pub fn set_playback_speed(&mut self, speed: f32) {
+        // Clamp speed to reasonable range
+        self.playback_speed = speed.clamp(0.25, 4.0);
+        log::info!("Set playback speed to {:.2}x", self.playback_speed);
     }
 }
 
