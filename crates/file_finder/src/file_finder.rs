@@ -280,7 +280,7 @@ impl FileFinder {
                             worktree_id: WorktreeId::from_usize(m.0.worktree_id),
                             path: m.0.path.clone(),
                         },
-                        Match::CreateNew(_) => todo!(),
+                        Match::CreateNew(p) => p.clone(),
                     };
                     let open_task = workspace.update(cx, move |workspace, cx| {
                         workspace.split_path_preview(path, false, Some(split_direction), window, cx)
@@ -400,7 +400,7 @@ enum Match {
         panel_match: Option<ProjectPanelOrdMatch>,
     },
     Search(ProjectPanelOrdMatch),
-    CreateNew(String),
+    CreateNew(ProjectPath),
 }
 
 impl Match {
@@ -859,11 +859,15 @@ impl FileFinderDelegate {
                 matches.into_iter(),
                 extend_old_matches,
             );
+            let worktree = self.project.read(cx).visible_worktrees(cx).next();
+            let filename = query.raw_query.to_string();
+            let path = Path::new(&filename);
 
             // add option of creating new file
-            self.matches
-                .matches
-                .push(Match::CreateNew(query.raw_query.to_string()));
+            self.matches.matches.push(Match::CreateNew(ProjectPath {
+                worktree_id: worktree.unwrap().read(cx).id(),
+                path: Arc::from(path),
+            }));
 
             self.selected_index = selected_match.map_or_else(
                 || self.calculate_selected_index(cx),
@@ -944,8 +948,8 @@ impl FileFinderDelegate {
                     }
                 }
                 Match::Search(path_match) => self.labels_for_path_match(&path_match.0),
-                Match::CreateNew(filename) => (
-                    format!("Create file: {filename}"),
+                Match::CreateNew(project_path) => (
+                    format!("Create file: {}", project_path.path.display()),
                     vec![],
                     String::from(""),
                     vec![],
@@ -1287,40 +1291,26 @@ impl PickerDelegate for FileFinderDelegate {
                             }
                         };
                     match &m {
-                        Match::CreateNew(filename) => {
+                        Match::CreateNew(project_path) => {
                             // Create a new file with the given filename
-                            let worktree = self.project.read(cx).visible_worktrees(cx).next();
-                            if let Some(tree) = worktree {
-                                let worktree = tree.read(cx);
-                                let worktree_id = worktree.id();
-                                let path = Path::new(filename);
-                                let project_path = ProjectPath {
-                                    worktree_id,
-                                    path: Arc::from(path),
-                                };
-
-                                if secondary {
-                                    workspace.split_path_preview(
-                                        project_path,
-                                        false,
-                                        None,
-                                        window,
-                                        cx,
-                                    )
-                                } else {
-                                    workspace.open_path_preview(
-                                        project_path,
-                                        None,
-                                        true,
-                                        false,
-                                        true,
-                                        window,
-                                        cx,
-                                    )
-                                }
+                            if secondary {
+                                workspace.split_path_preview(
+                                    project_path.clone(),
+                                    false,
+                                    None,
+                                    window,
+                                    cx,
+                                )
                             } else {
-                                // Not quite sure what to do here
-                                panic!("Worktree not found");
+                                workspace.open_path_preview(
+                                    project_path.clone(),
+                                    None,
+                                    true,
+                                    false,
+                                    true,
+                                    window,
+                                    cx,
+                                )
                             }
                         }
 
