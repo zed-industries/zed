@@ -8954,6 +8954,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "shell-words",
  "smol",
  "snippet_provider",
  "task",
