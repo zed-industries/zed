@@ -832,7 +832,7 @@ impl RunningState {
                         (task, None)
                     }
                 };
-                let Some(mut task) = task.resolve_task("debug-build-task", &task_context) else {
+                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 
