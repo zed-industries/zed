@@ -114,7 +114,7 @@ impl StripeClient for FakeStripeClient {
                 event_name: params.event_name.into(),
                 value: params.payload.value,
                 stripe_customer_id: params.payload.stripe_customer_id.clone(),
-                timestamp: params.timestamp.into(),
+                timestamp: params.timestamp,
             });
 
         Ok(())
