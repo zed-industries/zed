@@ -30,3 +30,4 @@
 {"Put":{"state":"bar ˇó\n"}}
 {"Key":"g"}
 {"Key":"e"}
+{"Get":{"state":"baˇr ó\n","mode":"Normal"}}
