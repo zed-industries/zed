@@ -289,7 +289,6 @@ struct DefaultState {
     scrollbar: ScrollbarState,
     add_new_server: NavigableEntry,
     servers: Vec<RemoteEntry>,
-    handle: ScrollHandle,
 }
 
 impl DefaultState {
@@ -339,7 +338,6 @@ impl DefaultState {
             scrollbar,
             add_new_server,
             servers,
-            handle,
         }
     }
 }
