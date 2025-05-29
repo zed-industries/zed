@@ -174,7 +174,7 @@ enum ActiveView {
         thread: WeakEntity<Thread>,
         _subscriptions: Vec<gpui::Subscription>,
     },
-    PromptEditor {
+    TextThread {
         context_editor: Entity<ContextEditor>,
         title_editor: Entity<Editor>,
         buffer_search_bar: Entity<BufferSearchBar>,
@@ -194,7 +194,7 @@ impl ActiveView {
     pub fn which_font_size_used(&self) -> WhichFontSize {
         match self {
             ActiveView::Thread { .. } | ActiveView::History => WhichFontSize::AgentFont,
-            ActiveView::PromptEditor { .. } => WhichFontSize::BufferFont,
+            ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
             ActiveView::Configuration => WhichFontSize::None,
         }
     }
@@ -333,7 +333,7 @@ impl ActiveView {
             buffer_search_bar.set_active_pane_item(Some(&context_editor), window, cx)
         });
 
-        Self::PromptEditor {
+        Self::TextThread {
             context_editor,
             title_editor: editor,
             buffer_search_bar,
@@ -1324,7 +1324,7 @@ impl AgentPanel {
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
         match &self.active_view {
-            ActiveView::PromptEditor { context_editor, .. } => Some(context_editor.clone()),
+            ActiveView::TextThread { context_editor, .. } => Some(context_editor.clone()),
             _ => None,
         }
     }
@@ -1358,7 +1358,7 @@ impl AgentPanel {
                     }
                 }
             }
-            ActiveView::PromptEditor { context_editor, .. } => {
+            ActiveView::TextThread { context_editor, .. } => {
                 let context = context_editor.read(cx).context();
                 // When switching away from an unsaved text thread, delete its entry.
                 if context.read(cx).path().is_none() {
@@ -1378,7 +1378,7 @@ impl AgentPanel {
                     store.push_recently_opened_entry(RecentEntry::Thread(id, thread), cx);
                 }
             }),
-            ActiveView::PromptEditor { context_editor, .. } => {
+            ActiveView::TextThread { context_editor, .. } => {
                 self.history_store.update(cx, |store, cx| {
                     let context = context_editor.read(cx).context().clone();
                     store.push_recently_opened_entry(RecentEntry::Context(context), cx)
@@ -1407,7 +1407,7 @@ impl Focusable for AgentPanel {
         match &self.active_view {
             ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
-            ActiveView::PromptEditor { context_editor, .. } => context_editor.focus_handle(cx),
+            ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
                 if let Some(configuration) = self.configuration.as_ref() {
                     configuration.focus_handle(cx)
@@ -1559,7 +1559,7 @@ impl AgentPanel {
                         .into_any_element(),
                 }
             }
-            ActiveView::PromptEditor {
+            ActiveView::TextThread {
                 title_editor,
                 context_editor,
                 ..
@@ -1651,7 +1651,7 @@ impl AgentPanel {
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty || !editor_empty,
-            ActiveView::PromptEditor { .. } => true,
+            ActiveView::TextThread { .. } => true,
             _ => false,
         };
 
@@ -1967,7 +1967,7 @@ impl AgentPanel {
 
                 Some(token_count)
             }
-            ActiveView::PromptEditor { context_editor, .. } => {
+            ActiveView::TextThread { context_editor, .. } => {
                 let element = render_remaining_tokens(context_editor, cx)?;
 
                 Some(element.into_any_element())
@@ -2885,7 +2885,7 @@ impl AgentPanel {
     ) -> Div {
         let mut registrar = buffer_search::DivRegistrar::new(
             |this, _, _cx| match &this.active_view {
-                ActiveView::PromptEditor {
+                ActiveView::TextThread {
                     buffer_search_bar, ..
                 } => Some(buffer_search_bar.clone()),
                 _ => None,
@@ -3003,7 +3003,7 @@ impl AgentPanel {
                     .detach();
                 });
             }
-            ActiveView::PromptEditor { context_editor, .. } => {
+            ActiveView::TextThread { context_editor, .. } => {
                 context_editor.update(cx, |context_editor, cx| {
                     ContextEditor::insert_dragged_files(
                         context_editor,
@@ -3030,7 +3030,7 @@ impl AgentPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        if matches!(self.active_view, ActiveView::PromptEditor { .. }) {
+        if matches!(self.active_view, ActiveView::TextThread { .. }) {
             key_context.add("prompt_editor");
         }
         key_context
@@ -3096,7 +3096,7 @@ impl Render for AgentPanel {
                     .children(self.render_last_error(cx))
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor {
+                ActiveView::TextThread {
                     context_editor,
                     buffer_search_bar,
                     ..
