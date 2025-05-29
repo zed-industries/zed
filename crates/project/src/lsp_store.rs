@@ -10672,8 +10672,12 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         self.worktree.abs_path().as_ref()
     }
 
-    fn subproject_root_path(&self) -> &Path {
-        self.worktree.abs_path().as_ref()
+    fn subproject_root_path(&self) -> PathBuf {
+        if let Some(url) = &*self.workspace_scope.lock() {
+            // get_with_adapters
+        } else {
+            self.worktree_root_path().to_path_buf()
+        }
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
