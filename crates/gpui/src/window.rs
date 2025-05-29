@@ -431,17 +431,17 @@ bitflags! {
     /// Flags that specify hitbox behavior.
     #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
     pub struct HitboxFlags: u64 {
-        /// All hitboxes in front of this hitbox will be ignored and so will have
-        /// `hitbox.is_hovered() == false` and `hitbox.contains_mouse() == false`. Typically for
-        /// elements this causes skipping of all mouse events, hover styles, and tooltips. This flag
-        /// is set by [`InteractiveElement::occlude`].
+        /// All hitboxes behind this hitbox will be ignored and so will have `hitbox.is_hovered() ==
+        /// false` and `hitbox.contains_mouse() == false`. Typically for elements this causes
+        /// skipping of all mouse events, hover styles, and tooltips. This flag is set by
+        /// [`InteractiveElement::occlude`].
         ///
         /// For mouse handlers that check those hitboxes, this behaves the same as registering a
-        /// capture-phase handler for every type mouse event:
+        /// bubble-phase handler for every mouse event type:
         ///
         /// ```
         /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
-        ///     if phase == DispatchPhase::Capture && hitbox.contains_mouse(window) {
+        ///     if phase == DispatchPhase::Bubble && hitbox.contains_mouse(window) {
         ///         cx.stop_propagation();
         ///     }
         /// }
@@ -452,7 +452,7 @@ bitflags! {
         /// alternative might be to not affect mouse event handling - but this would allow
         /// inconsistent UI where clicks and moves interact with elements that are not considered to
         /// be hovered.
-        const BLOCK_MOUSE_IN_FRONT = 1 << 0;
+        const BLOCK_MOUSE = 1 << 0;
         /// All hitboxes behind this hitbox will have `hitbox.is_hovered() == false`, even when
         /// `hitbox.contains_mouse() == true`. Typically for elements this causes all mouse
         /// interaction except scroll events to be ignored - see the documentation of
@@ -460,7 +460,7 @@ bitflags! {
         /// [`InteractiveElement::block_mouse_except_scroll`].
         ///
         /// For mouse handlers that check those hitboxes, this behaves the same as registering a
-        /// capture-phase handler for every type mouse event **except** `ScrollWheelEvent`:
+        /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
         ///
         /// ```
         /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
@@ -549,13 +549,9 @@ impl Hitbox {
     /// typically what you want when determining whether to handle mouse events or paint hover
     /// styles.
     ///
-    /// This can return `false` even when the hitbox contains the mouse:
-    ///
-    /// * When a hitbox in front of this sets `HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL`
-    /// (`InteractiveElement::block_mouse_except_scroll`)
-    ///
-    /// * When a hitbox behind this sets `HitboxFlags::BLOCK_MOUSE_IN_FRONT`
-    /// (`InteractiveElement::occlude`)
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`) or
+    /// `HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL` (`InteractiveElement::block_mouse_except_scroll`).
     ///
     /// Handling of `ScrollWheelEvent` should typically use `contains_mouse` instead. Concretely,
     /// this is due to use-cases like overlays that cause the elements under to be non-interactive
@@ -570,10 +566,8 @@ impl Hitbox {
     /// when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be used. See the
     /// documentation of `Hitbox::is_hovered` for details.
     ///
-    /// This can return `false` even when the hitbox contains the mouse:
-    ///
-    /// * When a hitbox behind this sets `HitboxFlags::BLOCK_MOUSE_IN_FRONT`
-    /// (`InteractiveElement::occlude`)
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`).
     pub fn contains_mouse(&self, window: &Window) -> bool {
         self.id.contains_mouse(window)
     }
@@ -716,7 +710,7 @@ impl Frame {
             let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
             if bounds.contains(&position) {
                 hit_test.0.push(hitbox.id);
-                if hitbox.id.has_flags(HitboxFlags::BLOCK_MOUSE_IN_FRONT) {
+                if hitbox.id.has_flags(HitboxFlags::BLOCK_MOUSE) {
                     break;
                 }
             }

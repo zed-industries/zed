@@ -1780,8 +1780,7 @@ impl EditorElement {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
                     let hunk_bounds =
                         Self::diff_hunk_bounds(snapshot, line_height, gutter_hitbox.bounds, hunk);
-                    *hitbox =
-                        Some(window.insert_hitbox(hunk_bounds, HitboxFlags::BLOCK_MOUSE_IN_FRONT));
+                    *hitbox = Some(window.insert_hitbox(hunk_bounds, HitboxFlags::BLOCK_MOUSE));
                 }
             }
         }

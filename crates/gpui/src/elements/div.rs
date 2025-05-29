@@ -567,10 +567,12 @@ impl Interactivity {
         });
     }
 
-    /// Block the mouse from interacting with any elements over this element's hitbox.
+    /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
+    /// `block_mouse_except_scroll` should be preferred.
+    ///
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
-        self.hitbox_flags = HitboxFlags::BLOCK_MOUSE_IN_FRONT;
+        self.hitbox_flags = HitboxFlags::BLOCK_MOUSE;
     }
 
     /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
@@ -948,7 +950,8 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with elements in front of this element's hitbox.
+    /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
+    /// `block_mouse_except_scroll` should be preferred.
     /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
