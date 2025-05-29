@@ -573,9 +573,12 @@ impl Interactivity {
         self.hitbox_flags = HitboxFlags::BLOCK_MOUSE_IN_FRONT;
     }
 
-    /// todo! document
+    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
+    /// [`Hitbox::is_hovered`] for details.
+    ///
+    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
     pub fn block_mouse_except_scroll(&mut self) {
-        self.hitbox_flags = HitboxFlags::BLOCK_HOVER_BEHIND;
+        self.hitbox_flags = HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL;
     }
 }
 
@@ -957,7 +960,9 @@ pub trait InteractiveElement: Sized {
         self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     }
 
-    /// todo! document
+    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
+    /// [`Hitbox::is_hovered`] for details.
+    ///
     /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
     fn block_mouse_except_scroll(mut self) -> Self {
         self.interactivity().block_mouse_except_scroll();
@@ -2185,12 +2190,10 @@ impl Interactivity {
                 let hitbox = hitbox.clone();
                 window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
-                        // todo! renames
                         let group_hovered = active_group_hitbox
                             .map_or(false, |group_hitbox_id| group_hitbox_id.is_hovered(window));
                         let element_hovered = hitbox.is_hovered(window);
                         if group_hovered || element_hovered {
-                            // todo! probably wrong
                             *active_state.borrow_mut() = ElementClickedState {
                                 group: group_hovered,
                                 element: element_hovered,
@@ -2504,7 +2507,6 @@ pub(crate) fn set_tooltip_on_window(
     Some(window.set_tooltip(tooltip))
 }
 
-// todo! revisit this
 pub(crate) fn register_tooltip_mouse_handlers(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     tooltip_id: Option<TooltipId>,
