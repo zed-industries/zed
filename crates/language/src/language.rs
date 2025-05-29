@@ -323,6 +323,8 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
+    fn subproject_root_path(&self) -> &Path;
+    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -335,6 +337,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: PathBuf) -> Result<String>;
     async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
+    fn set_workspace_scope(&self, scope_uri: Option<lsp::Url>);
 }
 
 #[async_trait(?Send)]

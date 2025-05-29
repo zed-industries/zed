@@ -515,29 +515,34 @@ impl LocalLspStore {
                         let toolchains =
                             this.update(&mut cx, |this, cx| this.toolchain_store(cx))?;
 
-                        let workspace_config = Self::workspace_configuration_for_adapter(
-                            adapter.clone(),
-                            fs.as_ref(),
-                            &delegate,
-                            toolchains.clone(),
-                            &mut cx,
-                        )
-                        .await?;
+                        let mut results = Vec::new();
 
-                        Ok(params
-                            .items
-                            .into_iter()
-                            .map(|item| {
-                                if let Some(section) = &item.section {
-                                    workspace_config
-                                        .get(section)
-                                        .cloned()
-                                        .unwrap_or(serde_json::Value::Null)
-                                } else {
-                                    workspace_config.clone()
-                                }
-                            })
-                            .collect())
+                        for item in params.items {
+                            let workspace_config =
+                                Self::with_workspace_scope(&delegate, item.scope_uri, || {
+                                    Self::workspace_configuration_for_adapter(
+                                        adapter.clone(),
+                                        fs.as_ref(),
+                                        &delegate,
+                                        toolchains.clone(),
+                                        &mut cx,
+                                    )
+                                })
+                                .await?;
+
+                            let config_value = if let Some(section) = &item.section {
+                                workspace_config
+                                    .get(section)
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null)
+                            } else {
+                                workspace_config
+                            };
+
+                            results.push(config_value);
+                        }
+
+                        Ok(results)
                     }
                 }
             })
@@ -3398,6 +3403,25 @@ impl LocalLspStore {
         }
 
         Ok(Some(initialization_config))
+    }
+
+    async fn with_workspace_scope<F, Fut, T, E>(
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        scope_uri: Option<Url>,
+        f: F,
+    ) -> Result<T, E>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<T, E>>,
+    {
+        if let Some(uri) = scope_uri {
+            delegate.set_workspace_scope(Some(uri));
+            let result = f().await;
+            delegate.set_workspace_scope(None);
+            result
+        } else {
+            f().await
+        }
     }
 
     async fn workspace_configuration_for_adapter(
@@ -10581,6 +10605,7 @@ pub struct LocalLspAdapterDelegate {
     http_client: Arc<dyn HttpClient>,
     language_registry: Arc<LanguageRegistry>,
     load_shell_env_task: Shared<Task<Option<HashMap<String, String>>>>,
+    workspace_scope: Mutex<Option<lsp::Url>>,
 }
 
 impl LocalLspAdapterDelegate {
@@ -10604,6 +10629,7 @@ impl LocalLspAdapterDelegate {
             http_client,
             language_registry,
             load_shell_env_task,
+            workspace_scope: Mutex::new(None),
         })
     }
 
@@ -10643,6 +10669,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     }
 
     fn worktree_root_path(&self) -> &Path {
+        self.worktree.abs_path().as_ref()
+    }
+
+    fn subproject_root_path(&self) -> &Path {
         self.worktree.abs_path().as_ref()
     }
 
@@ -10760,6 +10790,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .with_context(|| format!("cannot absolutize path {path:?}"))?;
 
         self.fs.load(&abs_path).await
+    }
+
+    fn set_workspace_scope(&self, scope_uri: Option<lsp::Url>) {
+        *self.workspace_scope.lock() = scope_uri;
     }
 }
 
