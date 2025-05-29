@@ -13,7 +13,6 @@ use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
-
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
     scroll::ScrollbarAutoHide,
@@ -42,6 +41,7 @@ use language_model::{
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
+use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
@@ -64,13 +64,12 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::AppState;
-
-use notifications::status_toast::{StatusToast, ToastIcon};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
 };
+use zed_llm_client::CompletionIntent;
 
 actions!(
     git_panel,
@@ -1765,6 +1764,7 @@ impl GitPanel {
                 let request = LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
+                    intent: Some(CompletionIntent::GenerateGitCommitMessage),
                     mode: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: Role::User,

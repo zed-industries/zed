@@ -41,6 +41,7 @@ use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
+use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::ContextStore;
@@ -358,7 +359,12 @@ impl MessageEditor {
             thread
                 .update(cx, |thread, cx| {
                     thread.advance_prompt_id();
-                    thread.send_to_model(model, Some(window_handle), cx);
+                    thread.send_to_model(
+                        model,
+                        CompletionIntent::UserPrompt,
+                        Some(window_handle),
+                        cx,
+                    );
                 })
                 .log_err();
         })
@@ -1248,6 +1254,7 @@ impl MessageEditor {
                     let request = language_model::LanguageModelRequest {
                         thread_id: None,
                         prompt_id: None,
+                        intent: None,
                         mode: None,
                         messages: vec![request_message],
                         tools: vec![],

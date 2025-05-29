@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
 use util::debug_panic;
+use zed_llm_client::CompletionIntent;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
@@ -102,7 +103,9 @@ impl EditAgent {
                 edit_description,
             }
             .render(&this.templates)?;
-            let new_chunks = this.request(conversation, prompt, cx).await?;
+            let new_chunks = this
+                .request(conversation, CompletionIntent::CreateFile, prompt, cx)
+                .await?;
 
             let (output, mut inner_events) = this.overwrite_with_chunks(buffer, new_chunks, cx);
             while let Some(event) = inner_events.next().await {
@@ -226,7 +229,9 @@ impl EditAgent {
                 edit_description,
             }
             .render(&this.templates)?;
-            let edit_chunks = this.request(conversation, prompt, cx).await?;
+            let edit_chunks = this
+                .request(conversation, CompletionIntent::EditFile, prompt, cx)
+                .await?;
 
             let (output, mut inner_events) = this.apply_edit_chunks(buffer, edit_chunks, cx);
             while let Some(event) = inner_events.next().await {
@@ -517,6 +522,7 @@ impl EditAgent {
     async fn request(
         &self,
         mut conversation: LanguageModelRequest,
+        intent: CompletionIntent,
         prompt: String,
         cx: &mut AsyncApp,
     ) -> Result<BoxStream<'static, Result<String, LanguageModelCompletionError>>> {
@@ -574,6 +580,7 @@ impl EditAgent {
         let request = LanguageModelRequest {
             thread_id: conversation.thread_id,
             prompt_id: conversation.prompt_id,
+            intent: Some(intent),
             mode: conversation.mode,
             messages: conversation.messages,
             tool_choice,

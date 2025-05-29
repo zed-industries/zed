@@ -531,6 +531,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -5043,6 +5044,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -6146,6 +6148,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -19888,9 +19891,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.2"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9be71e2f9b271e1eb8eb3e0d986075e770d1a0a299fb036abc3f1fc13a2fa7eb"
+checksum = "de7d9523255f4e00ee3d0918e5407bd252d798a4a8e71f6d37f23317a1588203"
 dependencies = [
  "anyhow",
  "serde",
