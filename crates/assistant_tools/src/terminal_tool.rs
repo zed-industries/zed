@@ -25,7 +25,7 @@ use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::{
-    get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
+    ResultExt, get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
     time::duration_alt_display,
 };
 use workspace::Workspace;
@@ -255,22 +255,25 @@ impl Tool for TerminalTool {
 
                 let terminal_view = window.update(cx, |_, window, cx| {
                     cx.new(|cx| {
-                        TerminalView::new(
+                        let mut view = TerminalView::new(
                             terminal.clone(),
                             workspace.downgrade(),
                             None,
                             project.downgrade(),
-                            true,
                             window,
                             cx,
-                        )
+                        );
+                        view.set_embedded_mode(None, cx);
+                        view
                     })
                 })?;
 
-                let _ = card.update(cx, |card, _| {
+                card.update(cx, |card, _| {
+                    // todo! card.finish()?
                     card.terminal = Some(terminal_view.clone());
                     card.start_instant = Instant::now();
-                });
+                })
+                .log_err();
 
                 let exit_status = terminal
                     .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
@@ -286,7 +289,8 @@ impl Tool for TerminalTool {
                     exit_status.map(portable_pty::ExitStatus::from),
                 );
 
-                let _ = card.update(cx, |card, _| {
+                card.update(cx, |card, _| {
+                    // todo! card.finish()?
                     card.command_finished = true;
                     card.exit_status = exit_status;
                     card.was_content_truncated = processed_content.len() < previous_len;
@@ -294,7 +298,8 @@ impl Tool for TerminalTool {
                     card.content_line_count = content_line_count;
                     card.finished_with_empty_output = finished_with_empty_output;
                     card.elapsed_time = Some(card.start_instant.elapsed());
-                });
+                })
+                .log_err();
 
                 Ok(processed_content.into())
             }
@@ -474,6 +479,7 @@ impl ToolCard for TerminalToolCard {
         let time_elapsed = self
             .elapsed_time
             .unwrap_or_else(|| self.start_instant.elapsed());
+        // todo! should we really hide when failed??
         let should_hide_terminal = tool_failed || self.finished_with_empty_output;
 
         let header_bg = cx
@@ -623,14 +629,13 @@ impl ToolCard for TerminalToolCard {
                 this.child(
                     div()
                         .pt_2()
-                        .min_h_72()
                         .border_t_1()
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
                         .child(terminal.clone()),
-                )
+                ).child()
             })
             .into_any()
     }

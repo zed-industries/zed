@@ -261,7 +261,6 @@ async fn deserialize_pane_group(
                             workspace.clone(),
                             Some(workspace_id),
                             project.downgrade(),
-                            false,
                             window,
                             cx,
                         )
