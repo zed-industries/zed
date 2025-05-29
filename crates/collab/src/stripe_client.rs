@@ -30,7 +30,7 @@ pub struct CreateCustomerParams<'a> {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
 pub struct StripeSubscriptionId(pub Arc<str>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripeSubscription {
     pub id: StripeSubscriptionId,
     // TODO: Create our own version of this enum.
@@ -43,7 +43,7 @@ pub struct StripeSubscription {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
 pub struct StripeSubscriptionItemId(pub Arc<str>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripeSubscriptionItem {
     pub id: StripeSubscriptionItemId,
     pub price: Option<StripePrice>,
@@ -92,7 +92,7 @@ pub enum StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
 pub struct StripePriceId(pub Arc<str>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripePrice {
     pub id: StripePriceId,
     pub unit_amount: Option<i64>,
@@ -100,7 +100,7 @@ pub struct StripePrice {
     pub recurring: Option<StripePriceRecurring>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripePriceRecurring {
     pub meter: Option<String>,
 }
