@@ -248,7 +248,7 @@ impl ScrollManager {
             UpdateResponse::RequiresAnimationFrame { ref intermediate_anchor, intermediate_top_row } => {
                 Some(
                     (
-                        intermediate_anchor.clone(),
+                        *intermediate_anchor,
                         intermediate_top_row,
                         self.animation_manager.as_ref().unwrap().get_state().unwrap()
                     )
@@ -257,7 +257,7 @@ impl ScrollManager {
             UpdateResponse::Finished { ref destination_anchor, destination_top_row, ref state } => { 
                 Some(
                     (
-                        destination_anchor.clone(),
+                        *destination_anchor,
                         destination_top_row,
                         state.clone(),
                     )
@@ -385,7 +385,7 @@ impl ScrollManager {
             map,
             local,
             autoscroll,
-            workspace_id.clone(),
+            workspace_id,
             cx
         ) {
             self.set_anchor(
