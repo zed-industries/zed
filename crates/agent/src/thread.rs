@@ -1349,7 +1349,7 @@ impl Thread {
                 }
                 request.messages.push(tool_results_message);
             }
-        }
+        } // end for message
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
         if let Some(message_ix_to_cache) = message_ix_to_cache {
@@ -1365,6 +1365,7 @@ impl Thread {
             Some(CompletionMode::Normal.into())
         };
 
+        // dbg!(&request);
         request
     }
 
@@ -1423,38 +1424,38 @@ impl Thread {
         messages: &mut Vec<LanguageModelRequestMessage>,
         cx: &App,
     ) {
-        const STALE_FILES_HEADER: &str = "These files changed since last read:";
-
-        let mut stale_message = String::new();
+        let mut stale_files = String::new();
 
         let action_log = self.action_log.read(cx);
 
         for stale_file in action_log.stale_buffers(cx) {
-            let Some(file) = stale_file.read(cx).file() else {
-                continue;
-            };
-
-            if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER).ok();
+            if let Some(file) = stale_file.read(cx).file() {
+                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
             }
-
-            writeln!(&mut stale_message, "- {}", file.path().display()).ok();
         }
 
-        let mut content = Vec::with_capacity(2);
-
-        if !stale_message.is_empty() {
-            content.push(stale_message.into());
+        if stale_files.is_empty() {
+            return;
         }
 
-        if !content.is_empty() {
-            let context_message = LanguageModelRequestMessage {
-                role: Role::User,
-                content,
-                cache: false,
-            };
+        let content = MessageContent::Text(format!(
+            "These files have changed since the last read:
+{stale_files}
 
-            messages.push(context_message);
+(This is an auto-generated message; do not reply).
+"
+        ));
+
+        // let request_message = LanguageModelRequestMessage {
+        //     role: Role::User,
+        //     content: vec![message.into()],
+        //     cache: false,
+        // };
+
+        if let Some(message) = messages.last_mut() {
+            if message.role == Role::User {
+                message.content.push(content);
+            }
         }
     }
 
