@@ -1091,7 +1091,7 @@ mod element {
             };
 
             PaneAxisHandleLayout {
-                hitbox: window.insert_hitbox(handle_bounds, HitboxBehavior::Normal),
+                hitbox: window.insert_hitbox(handle_bounds, HitboxBehavior::BlockMouse),
                 divider_bounds,
             }
         }
