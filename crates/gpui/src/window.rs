@@ -477,7 +477,7 @@ impl Hitbox {
     ///
     /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
     /// Concretely, this is due to use-cases like overlays that cause the elements under to be
-    /// non-interactive while stilll allowing scrolling. More abstractly, this is because
+    /// non-interactive while still allowing scrolling. More abstractly, this is because
     /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
     /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
     /// container.
