@@ -110,15 +110,19 @@ impl ManifestProvider for EsLintConfigProvider {
 
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME.clone()
+    }
+
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("eslint").into())
+    }
+
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         Some(vec![
             CodeActionKind::QUICKFIX,
             CodeActionKind::new("source.fixAll.eslint"),
         ])
-    }
-
-    fn attach_kind(&self) -> Attach {
-        Attach::InstancePerRoot
     }
 
     async fn workspace_configuration(
@@ -129,7 +133,10 @@ impl LspAdapter for EsLintLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
+
         dbg!(&delegate.worktree_root_path());
+        dbg!(&delegate.subproject_root_path());
+
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
@@ -180,10 +187,6 @@ impl LspAdapter for EsLintLspAdapter {
         Ok(json!({
             "": default_workspace_configuration
         }))
-    }
-
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
