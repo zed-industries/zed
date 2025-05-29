@@ -53,6 +53,21 @@ use workspace::{
 use crate::OpenRemote;
 use crate::ssh_config::parse_ssh_config_hosts;
 use crate::ssh_connections::RemoteSettingsContent;
+
+fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState>> {
+    let Some(weak_app_state) = AppState::try_global(cx) else {
+        log::error!("AppState not initialized when handling {} - critical bug in app startup", action_name);
+        cx.quit();
+        return None;
+    };
+
+    let Some(app_state) = weak_app_state.upgrade() else {
+        log::debug!("AppState dropped when handling {} - app likely shutting down", action_name);
+        return None;
+    };
+
+    Some(app_state)
+}
 use crate::ssh_connections::SshConnection;
 use crate::ssh_connections::SshConnectionHeader;
 use crate::ssh_connections::SshConnectionModal;
@@ -351,14 +366,7 @@ pub fn init(cx: &mut App) {
             if action.from_existing_connection {
                 return;
             }
-            let Some(weak_app_state) = AppState::try_global(cx) else {
-                log::error!("AppState not initialized when handling OpenRemote - critical bug in app startup");
-                cx.quit();
-                return;
-            };
-
-            let Some(app_state) = weak_app_state.upgrade() else {
-                log::debug!("AppState dropped when handling OpenRemote - app likely shutting down");
+            let Some(app_state) = get_app_state_or_quit(cx, "OpenRemote") else {
                 return;
             };
 

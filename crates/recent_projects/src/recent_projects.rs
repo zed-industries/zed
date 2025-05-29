@@ -31,6 +31,21 @@ use workspace::{
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
+fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState>> {
+    let Some(weak_app_state) = AppState::try_global(cx) else {
+        log::error!("AppState not initialized when handling {} - critical bug in app startup", action_name);
+        cx.quit();
+        return None;
+    };
+
+    let Some(app_state) = weak_app_state.upgrade() else {
+        log::debug!("AppState dropped when handling {} - app likely shutting down", action_name);
+        return None;
+    };
+
+    Some(app_state)
+}
+
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
     cx.observe_new(RecentProjects::register).detach();
@@ -41,14 +56,7 @@ pub fn init(cx: &mut App) {
     cx.on_action({
         move |action: &OpenRecent, cx: &mut App| {
             let create_new_window = action.create_new_window;
-            let Some(weak_app_state) = AppState::try_global(cx) else {
-                log::error!("AppState not initialized when handling OpenRecent - critical bug in app startup");
-                cx.quit();
-                return;
-            };
-
-            let Some(app_state) = weak_app_state.upgrade() else {
-                log::debug!("AppState dropped when handling OpenRecent - app likely shutting down");
+            let Some(app_state) = get_app_state_or_quit(cx, "OpenRecent") else {
                 return;
             };
 

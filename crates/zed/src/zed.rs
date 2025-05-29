@@ -77,6 +77,21 @@ use zed_actions::{
     icon_theme_selector, theme_selector,
 };
 
+fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState>> {
+    let Some(weak_app_state) = AppState::try_global(cx) else {
+        log::error!("AppState not initialized when handling {} - critical bug in app startup", action_name);
+        cx.quit();
+        return None;
+    };
+
+    let Some(app_state) = weak_app_state.upgrade() else {
+        log::debug!("AppState dropped when handling {} - app likely shutting down", action_name);
+        return None;
+    };
+
+    Some(app_state)
+}
+
 actions!(
     zed,
     [
@@ -114,14 +129,7 @@ pub fn init(cx: &mut App) {
     }
 
     cx.on_action(|_: &OpenSettings, cx: &mut App| {
-        let Some(weak_app_state) = AppState::try_global(cx) else {
-            log::error!("AppState not initialized when handling OpenSettings - critical bug in app startup");
-            cx.quit();
-            return;
-        };
-
-        let Some(app_state) = weak_app_state.upgrade() else {
-            log::debug!("AppState dropped when handling OpenSettings - app likely shutting down");
+        let Some(app_state) = get_app_state_or_quit(cx, "OpenSettings") else {
             return;
         };
 
@@ -142,14 +150,7 @@ pub fn init(cx: &mut App) {
     });
 
     cx.on_action(|_: &zed_actions::OpenKeymap, cx: &mut App| {
-        let Some(weak_app_state) = AppState::try_global(cx) else {
-            log::error!("AppState not initialized when handling OpenKeymap - critical bug in app startup");
-            cx.quit();
-            return;
-        };
-
-        let Some(app_state) = weak_app_state.upgrade() else {
-            log::debug!("AppState dropped when handling OpenKeymap - app likely shutting down");
+        let Some(app_state) = get_app_state_or_quit(cx, "OpenKeymap") else {
             return;
         };
 
@@ -170,14 +171,7 @@ pub fn init(cx: &mut App) {
     });
 
     cx.on_action(|_: &OpenDefaultSettings, cx: &mut App| {
-        let Some(weak_app_state) = AppState::try_global(cx) else {
-            log::error!("AppState not initialized when handling OpenDefaultSettings - critical bug in app startup");
-            cx.quit();
-            return;
-        };
-
-        let Some(app_state) = weak_app_state.upgrade() else {
-            log::debug!("AppState dropped when handling OpenDefaultSettings - app likely shutting down");
+        let Some(app_state) = get_app_state_or_quit(cx, "OpenDefaultSettings") else {
             return;
         };
 
@@ -200,14 +194,7 @@ pub fn init(cx: &mut App) {
     });
 
     cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx: &mut App| {
-        let Some(weak_app_state) = AppState::try_global(cx) else {
-            log::error!("AppState not initialized when handling OpenDefaultKeymap - critical bug in app startup");
-            cx.quit();
-            return;
-        };
-
-        let Some(app_state) = weak_app_state.upgrade() else {
-            log::debug!("AppState dropped when handling OpenDefaultKeymap - app likely shutting down");
+        let Some(app_state) = get_app_state_or_quit(cx, "OpenDefaultKeymap") else {
             return;
         };
 
@@ -231,14 +218,7 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|action: &theme_selector::Toggle, cx: &mut App| {
         let action = action.clone();
-        let Some(weak_app_state) = AppState::try_global(cx) else {
-            log::error!("AppState not initialized when handling theme selector - critical bug in app startup");
-            cx.quit();
-            return;
-        };
-
-        let Some(app_state) = weak_app_state.upgrade() else {
-            log::debug!("AppState dropped when handling theme selector - app likely shutting down");
+        let Some(app_state) = get_app_state_or_quit(cx, "theme selector") else {
             return;
         };
 
@@ -255,14 +235,7 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|action: &icon_theme_selector::Toggle, cx: &mut App| {
         let action = action.clone();
-        let Some(weak_app_state) = AppState::try_global(cx) else {
-            log::error!("AppState not initialized when handling icon theme selector - critical bug in app startup");
-            cx.quit();
-            return;
-        };
-
-        let Some(app_state) = weak_app_state.upgrade() else {
-            log::debug!("AppState dropped when handling icon theme selector - app likely shutting down");
+        let Some(app_state) = get_app_state_or_quit(cx, "icon theme selector") else {
             return;
         };
 
