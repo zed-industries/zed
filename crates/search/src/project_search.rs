@@ -4114,6 +4114,7 @@ pub mod tests {
                     results_editor.scroll(
                         Point::new(0., f32::MAX),
                         Some(Axis::Vertical),
+                        false,
                         window,
                         cx,
                     );
