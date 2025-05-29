@@ -370,7 +370,7 @@ async fn create_billing_subscription(
 
             stripe_billing
                 .checkout_with_zed_pro_trial(
-                    customer_id.try_into()?,
+                    customer_id,
                     &user.github_login,
                     feature_flags,
                     &success_url,

@@ -118,6 +118,7 @@ pub struct StripeCreateCheckoutSessionParams<'a> {
     pub client_reference_id: Option<&'a str>,
     pub mode: Option<StripeCheckoutSessionMode>,
     pub line_items: Option<Vec<StripeCreateCheckoutSessionLineItems>>,
+    pub payment_method_collection: Option<StripeCheckoutSessionPaymentMethodCollection>,
     pub subscription_data: Option<StripeCreateCheckoutSessionSubscriptionData>,
     pub success_url: Option<&'a str>,
 }
@@ -133,6 +134,12 @@ pub enum StripeCheckoutSessionMode {
 pub struct StripeCreateCheckoutSessionLineItems {
     pub price: Option<String>,
     pub quantity: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StripeCheckoutSessionPaymentMethodCollection {
+    Always,
+    IfRequired,
 }
 
 #[derive(Debug)]

@@ -5,8 +5,9 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use serde::Serialize;
 use stripe::{
-    CheckoutSession, CheckoutSessionMode, CreateCheckoutSession, CreateCheckoutSessionLineItems,
-    CreateCheckoutSessionSubscriptionData, CreateCheckoutSessionSubscriptionDataTrialSettings,
+    CheckoutSession, CheckoutSessionMode, CheckoutSessionPaymentMethodCollection,
+    CreateCheckoutSession, CreateCheckoutSessionLineItems, CreateCheckoutSessionSubscriptionData,
+    CreateCheckoutSessionSubscriptionDataTrialSettings,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod,
     CreateCustomer, Customer, CustomerId, ListCustomers, Price, PriceId, Recurring, Subscription,
@@ -16,7 +17,8 @@ use stripe::{
 };
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeCheckoutSession, StripeCheckoutSessionMode, StripeClient,
+    CreateCustomerParams, StripeCheckoutSession, StripeCheckoutSessionMode,
+    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams, StripeCustomer,
     StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripePriceRecurring,
@@ -315,6 +317,7 @@ impl<'a> TryFrom<StripeCreateCheckoutSessionParams<'a>> for CreateCheckoutSessio
             line_items: value
                 .line_items
                 .map(|line_items| line_items.into_iter().map(Into::into).collect()),
+            payment_method_collection: value.payment_method_collection.map(Into::into),
             subscription_data: value.subscription_data.map(Into::into),
             success_url: value.success_url,
             ..Default::default()
@@ -338,6 +341,15 @@ impl From<StripeCreateCheckoutSessionLineItems> for CreateCheckoutSessionLineIte
             price: value.price,
             quantity: value.quantity,
             ..Default::default()
+        }
+    }
+}
+
+impl From<StripeCheckoutSessionPaymentMethodCollection> for CheckoutSessionPaymentMethodCollection {
+    fn from(value: StripeCheckoutSessionPaymentMethodCollection) -> Self {
+        match value {
+            StripeCheckoutSessionPaymentMethodCollection::Always => Self::Always,
+            StripeCheckoutSessionPaymentMethodCollection::IfRequired => Self::IfRequired,
         }
     }
 }
