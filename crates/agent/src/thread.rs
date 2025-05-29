@@ -1374,13 +1374,14 @@ impl Thread {
     fn to_summarize_request(
         &self,
         model: &Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         added_user_message: String,
         cx: &App,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
-            intent: Some(CompletionIntent::ThreadSummarization),
+            intent: Some(intent),
             mode: None,
             messages: vec![],
             tools: Vec::new(),
@@ -1858,7 +1859,12 @@ impl Thread {
             If the conversation is about a specific subject, include it in the title. \
             Be descriptive. DO NOT speak in the first person.";
 
-        let request = self.to_summarize_request(&model.model, added_user_message.into(), cx);
+        let request = self.to_summarize_request(
+            &model.model,
+            CompletionIntent::ThreadSummarization,
+            added_user_message.into(),
+            cx,
+        );
 
         self.summary = ThreadSummary::Generating;
 
@@ -1959,7 +1965,12 @@ impl Thread {
              4. Any action items or next steps if any\n\
              Format it in Markdown with headings and bullet points.";
 
-        let request = self.to_summarize_request(&model, added_user_message.into(), cx);
+        let request = self.to_summarize_request(
+            &model,
+            CompletionIntent::ThreadContextSummarization,
+            added_user_message.into(),
+            cx,
+        );
 
         *self.detailed_summary_tx.borrow_mut() = DetailedSummaryState::Generating {
             message_id: last_message_id,
