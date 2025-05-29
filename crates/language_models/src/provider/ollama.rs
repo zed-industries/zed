@@ -54,6 +54,8 @@ pub struct AvailableModel {
     pub keep_alive: Option<KeepAlive>,
     /// Whether the model supports tools
     pub supports_tools: Option<bool>,
+    /// Whether to enable think mode
+    pub supports_thinking: Option<bool>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -99,6 +101,7 @@ impl State {
                             None,
                             None,
                             Some(capabilities.supports_tools()),
+                            Some(capabilities.supports_thinking()),
                         );
                         Ok(ollama_model)
                     }
@@ -219,6 +222,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     keep_alive: model.keep_alive.clone(),
                     supports_tools: model.supports_tools,
+                    supports_thinking: model.supports_thinking,
                 },
             );
         }
@@ -312,7 +316,7 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
-            think: Some(true),
+            think: self.model.supports_thinking,
             tools: request.tools.into_iter().map(tool_into_ollama).collect(),
         }
     }

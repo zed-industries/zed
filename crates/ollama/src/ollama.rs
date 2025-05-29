@@ -38,6 +38,7 @@ pub struct Model {
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
     pub supports_tools: Option<bool>,
+    pub supports_thinking: Option<bool>,
 }
 
 fn get_max_tokens(name: &str) -> usize {
@@ -67,6 +68,7 @@ impl Model {
         display_name: Option<&str>,
         max_tokens: Option<usize>,
         supports_tools: Option<bool>,
+        supports_thinking: Option<bool>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -76,6 +78,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
+            supports_thinking,
         }
     }
 
@@ -223,6 +226,10 @@ impl ModelShow {
     pub fn supports_tools(&self) -> bool {
         // .contains expects &String, which would require an additional allocation
         self.capabilities.iter().any(|v| v == "tools")
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.capabilities.iter().any(|v| v == "thinking")
     }
 }
 
@@ -472,7 +479,7 @@ mod tests {
             } => {
                 assert!(content.is_empty());
                 assert!(tool_calls.is_some_and(|v| !v.is_empty()));
-                assert!(thinking.is_some());
+                assert!(thinking.is_none());
             }
             _ => panic!("Deserialized wrong role"),
         }
