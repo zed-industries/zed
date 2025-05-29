@@ -1020,8 +1020,7 @@
     }
   },
   {
-    "context": "Tasks > Editor",
-    "use_key_equivalents": true,
+    "context": "RunModal",
     "bindings": {
       "ctrl-tab": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivatePreviousItem"

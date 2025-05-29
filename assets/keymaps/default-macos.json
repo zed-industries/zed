@@ -1110,7 +1110,7 @@
     }
   },
   {
-    "context": "Tasks > Editor",
+    "context": "RunModal",
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-tab": "pane::ActivateNextItem",

@@ -607,7 +607,7 @@ impl Render for NewSessionModal {
             .key_context({
                 let mut key_context = KeyContext::new_with_defaults();
                 key_context.add("Pane");
-                key_context.add("Tasks");
+                key_context.add("RunModal");
                 key_context
             })
             .elevation_3(cx)
