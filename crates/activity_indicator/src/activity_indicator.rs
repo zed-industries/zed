@@ -311,6 +311,31 @@ impl ActivityIndicator {
             });
         }
 
+        if let Some(session) = self
+            .project
+            .read(cx)
+            .dap_store()
+            .read(cx)
+            .sessions()
+            .find(|s| !s.read(cx).is_started())
+        {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        )
+                        .into_any_element(),
+                ),
+                message: format!("Debug: {}", session.read(cx).adapter()),
+                tooltip_message: Some(session.read(cx).label().to_string()),
+                on_click: None,
+            });
+        }
+
         let current_job = self
             .project
             .read(cx)
