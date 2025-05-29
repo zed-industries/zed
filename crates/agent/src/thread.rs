@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -360,6 +360,7 @@ pub struct Thread {
     >,
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
+    profile: AgentProfileId,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -407,6 +408,7 @@ impl Thread {
     ) -> Self {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
+        let profile = AgentSettings::get_global(cx).default_profile.clone();
 
         Self {
             id: ThreadId::new(),
@@ -449,6 +451,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
+            profile,
         }
     }
 
@@ -495,6 +498,9 @@ impl Thread {
         let completion_mode = serialized
             .completion_mode
             .unwrap_or_else(|| AgentSettings::get_global(cx).preferred_completion_mode);
+        let profile = serialized
+            .profile
+            .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
 
         Self {
             id,
@@ -570,6 +576,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
+            profile,
         }
     }
 
@@ -1180,6 +1187,7 @@ impl Thread {
                     }),
                 completion_mode: Some(this.completion_mode),
                 tool_use_limit_reached: this.tool_use_limit_reached,
+                profile: Some(this.profile.clone()),
             })
         })
     }
@@ -3283,6 +3291,63 @@ fn main() {{
             expected_content,
             "Last message should be exactly the stale buffer notification"
         );
+    }
+
+    #[gpui::test]
+    async fn test_storing_profile_setting_per_thread(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, _context_store, _model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Check that we are starting with the default profile
+        let profile = cx.read(|cx| thread.read(cx).profile.clone());
+        assert_eq!(profile, AgentProfileId::default());
+    }
+
+    #[gpui::test]
+    async fn test_serializing_thread_profile(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(
+            cx,
+            json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
+        )
+        .await;
+
+        let (_workspace, _thread_store, thread, _context_store, _model) =
+            setup_test_environment(cx, project.clone()).await;
+
+        // Profile gets serialized with default values
+        let serialized = thread
+            .update(cx, |thread, cx| thread.serialize(cx))
+            .await
+            .unwrap();
+
+        assert_eq!(serialized.profile, Some(AgentProfileId::default()));
+
+        let deserialized = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                Thread::deserialize(
+                    thread.id.clone(),
+                    serialized,
+                    thread.project.clone(),
+                    thread.tools.clone(),
+                    thread.prompt_builder.clone(),
+                    thread.project_context.clone(),
+                    None,
+                    cx,
+                )
+            })
+        });
+
+        assert_eq!(deserialized.profile, AgentProfileId::default());
     }
 
     #[gpui::test]
