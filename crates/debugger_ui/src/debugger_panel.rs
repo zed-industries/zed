@@ -5,7 +5,7 @@ use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
     FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
     ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
-    ToggleSessionPicker, ToggleThreadPicker, persistence,
+    ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
 };
 use anyhow::{Context as _, Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
@@ -1377,5 +1377,15 @@ impl workspace::DebuggerProvider for DebuggerProvider {
                 this.start_session(definition, context, buffer, None, window, cx);
             })
         })
+    }
+
+    fn spawn_task_or_modal(
+        &self,
+        workspace: &mut Workspace,
+        action: &tasks_ui::Spawn,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        spawn_task_or_modal(workspace, action, window, cx);
     }
 }

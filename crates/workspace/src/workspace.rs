@@ -100,13 +100,13 @@ use task::{DebugScenario, SpawnInTerminal, TaskContext};
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::prelude::*;
+use ui::{Window, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
-use zed_actions::feedback::FileBugReport;
+use zed_actions::{Spawn, feedback::FileBugReport};
 
 use crate::notifications::NotificationId;
 use crate::persistence::{
@@ -148,6 +148,14 @@ pub trait DebuggerProvider {
         active_buffer: Option<Entity<Buffer>>,
         window: &mut Window,
         cx: &mut App,
+    );
+
+    fn spawn_task_or_modal(
+        &self,
+        workspace: &mut Workspace,
+        action: &Spawn,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
     );
 }
 
@@ -947,7 +955,7 @@ pub struct Workspace {
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     terminal_provider: Option<Box<dyn TerminalProvider>>,
-    debugger_provider: Option<Box<dyn DebuggerProvider>>,
+    debugger_provider: Option<Arc<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
@@ -1828,7 +1836,11 @@ impl Workspace {
     }
 
     pub fn set_debugger_provider(&mut self, provider: impl DebuggerProvider + 'static) {
-        self.debugger_provider = Some(Box::new(provider));
+        self.debugger_provider = Some(Arc::new(provider));
+    }
+
+    pub fn debugger_provider(&self) -> Option<Arc<dyn DebuggerProvider>> {
+        self.debugger_provider.clone()
     }
 
     pub fn serialized_ssh_project(&self) -> Option<SerializedSshProject> {
