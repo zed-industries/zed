@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
 
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
@@ -163,8 +164,12 @@ async fn test_subscribe_to_price() {
         .lock()
         .insert(price.id.clone(), price.clone());
 
+    let now = Utc::now();
     let subscription = StripeSubscription {
         id: StripeSubscriptionId("sub_test".into()),
+        status: stripe::SubscriptionStatus::Active,
+        current_period_start: now.timestamp(),
+        current_period_end: (now + Duration::days(30)).timestamp(),
         items: vec![],
     };
     stripe_client
@@ -194,8 +199,12 @@ async fn test_subscribe_to_price() {
 
     // Subscribing to a price that is already on the subscription is a no-op.
     {
+        let now = Utc::now();
         let subscription = StripeSubscription {
             id: StripeSubscriptionId("sub_test".into()),
+            status: stripe::SubscriptionStatus::Active,
+            current_period_start: now.timestamp(),
+            current_period_end: (now + Duration::days(30)).timestamp(),
             items: vec![StripeSubscriptionItem {
                 id: StripeSubscriptionItemId("si_test".into()),
                 price: Some(price.clone()),

@@ -33,6 +33,10 @@ pub struct StripeSubscriptionId(pub Arc<str>);
 #[derive(Debug, Clone)]
 pub struct StripeSubscription {
     pub id: StripeSubscriptionId,
+    // TODO: Create our own version of this enum.
+    pub status: stripe::SubscriptionStatus,
+    pub current_period_end: i64,
+    pub current_period_start: i64,
     pub items: Vec<StripeSubscriptionItem>,
 }
 
@@ -43,6 +47,18 @@ pub struct StripeSubscriptionItemId(pub Arc<str>);
 pub struct StripeSubscriptionItem {
     pub id: StripeSubscriptionItemId,
     pub price: Option<StripePrice>,
+}
+
+#[derive(Debug)]
+pub struct StripeCreateSubscriptionParams {
+    pub customer: StripeCustomerId,
+    pub items: Vec<StripeCreateSubscriptionItems>,
+}
+
+#[derive(Debug)]
+pub struct StripeCreateSubscriptionItems {
+    pub price: Option<StripePriceId>,
+    pub quantity: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -160,9 +176,19 @@ pub trait StripeClient: Send + Sync {
 
     async fn create_customer(&self, params: CreateCustomerParams<'_>) -> Result<StripeCustomer>;
 
+    async fn list_subscriptions_for_customer(
+        &self,
+        customer_id: &StripeCustomerId,
+    ) -> Result<Vec<StripeSubscription>>;
+
     async fn get_subscription(
         &self,
         subscription_id: &StripeSubscriptionId,
+    ) -> Result<StripeSubscription>;
+
+    async fn create_subscription(
+        &self,
+        params: StripeCreateSubscriptionParams,
     ) -> Result<StripeSubscription>;
 
     async fn update_subscription(

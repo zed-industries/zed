@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use chrono::{Duration, Utc};
 use collections::HashMap;
 use parking_lot::Mutex;
 use uuid::Uuid;
@@ -10,9 +11,10 @@ use crate::stripe_client::{
     CreateCustomerParams, StripeCheckoutSession, StripeCheckoutSessionMode,
     StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
-    StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams, StripeCustomer,
-    StripeCustomerId, StripeMeter, StripeMeterId, StripePrice, StripePriceId, StripeSubscription,
-    StripeSubscriptionId, UpdateSubscriptionParams,
+    StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
+    StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeMeter, StripeMeterId,
+    StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem,
+    StripeSubscriptionItemId, UpdateSubscriptionParams,
 };
 
 #[derive(Debug, Clone)]
@@ -85,6 +87,13 @@ impl StripeClient for FakeStripeClient {
         Ok(customer)
     }
 
+    async fn list_subscriptions_for_customer(
+        &self,
+        customer_id: &StripeCustomerId,
+    ) -> Result<Vec<StripeSubscription>> {
+        Ok(vec![])
+    }
+
     async fn get_subscription(
         &self,
         subscription_id: &StripeSubscriptionId,
@@ -94,6 +103,36 @@ impl StripeClient for FakeStripeClient {
             .get(subscription_id)
             .cloned()
             .ok_or_else(|| anyhow!("no subscription found for {subscription_id:?}"))
+    }
+
+    async fn create_subscription(
+        &self,
+        params: StripeCreateSubscriptionParams,
+    ) -> Result<StripeSubscription> {
+        let now = Utc::now();
+
+        let subscription = StripeSubscription {
+            id: StripeSubscriptionId(format!("sub_{}", Uuid::new_v4()).into()),
+            status: stripe::SubscriptionStatus::Active,
+            current_period_start: now.timestamp(),
+            current_period_end: (now + Duration::days(30)).timestamp(),
+            items: params
+                .items
+                .into_iter()
+                .map(|item| StripeSubscriptionItem {
+                    id: StripeSubscriptionItemId(format!("si_{}", Uuid::new_v4()).into()),
+                    price: item
+                        .price
+                        .and_then(|price_id| self.prices.lock().get(&price_id).cloned()),
+                })
+                .collect(),
+        };
+
+        self.subscriptions
+            .lock()
+            .insert(subscription.id.clone(), subscription.clone());
+
+        Ok(subscription)
     }
 
     async fn update_subscription(

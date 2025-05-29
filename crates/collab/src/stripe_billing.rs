@@ -14,8 +14,9 @@ use crate::stripe_client::{
     RealStripeClient, StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection,
     StripeClient, StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
-    StripeCreateMeterEventPayload, StripeCustomerId, StripeMeter, StripePrice, StripePriceId,
-    StripeSubscription, StripeSubscriptionId, StripeSubscriptionTrialSettings,
+    StripeCreateMeterEventPayload, StripeCreateSubscriptionItems, StripeCreateSubscriptionParams,
+    StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripeSubscription,
+    StripeSubscriptionId, StripeSubscriptionTrialSettings,
     StripeSubscriptionTrialSettingsEndBehavior,
     StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
     UpdateSubscriptionParams,
@@ -306,40 +307,33 @@ impl StripeBilling {
 
     pub async fn subscribe_to_zed_free(
         &self,
-        customer_id: stripe::CustomerId,
-    ) -> Result<stripe::Subscription> {
+        customer_id: StripeCustomerId,
+    ) -> Result<StripeSubscription> {
         let zed_free_price_id = self.zed_free_price_id().await?;
 
-        let existing_subscriptions = stripe::Subscription::list(
-            &self.real_client,
-            &stripe::ListSubscriptions {
-                customer: Some(customer_id.clone()),
-                status: None,
-                ..Default::default()
-            },
-        )
-        .await?;
+        let existing_subscriptions = self
+            .client
+            .list_subscriptions_for_customer(&customer_id)
+            .await?;
 
         let existing_active_subscription =
-            existing_subscriptions
-                .data
-                .into_iter()
-                .find(|subscription| {
-                    subscription.status == SubscriptionStatus::Active
-                        || subscription.status == SubscriptionStatus::Trialing
-                });
+            existing_subscriptions.into_iter().find(|subscription| {
+                subscription.status == SubscriptionStatus::Active
+                    || subscription.status == SubscriptionStatus::Trialing
+            });
         if let Some(subscription) = existing_active_subscription {
             return Ok(subscription);
         }
 
-        let mut params = stripe::CreateSubscription::new(customer_id);
-        params.items = Some(vec![stripe::CreateSubscriptionItems {
-            price: Some(zed_free_price_id.to_string()),
-            quantity: Some(1),
-            ..Default::default()
-        }]);
+        let params = StripeCreateSubscriptionParams {
+            customer: customer_id,
+            items: vec![StripeCreateSubscriptionItems {
+                price: Some(zed_free_price_id),
+                quantity: Some(1),
+            }],
+        };
 
-        let subscription = stripe::Subscription::create(&self.real_client, params).await?;
+        let subscription = self.client.create_subscription(params).await?;
 
         Ok(subscription)
     }
