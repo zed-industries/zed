@@ -15,10 +15,10 @@ path = "src/assistant_tools.rs"
 eval = []
 
 [dependencies]
-aho-corasick.workspace = true
+agent_settings.workspace = true
 anyhow.workspace = true
-assistant_settings.workspace = true
 assistant_tool.workspace = true
+async-watch.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true

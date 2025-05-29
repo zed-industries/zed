@@ -1,8 +1,11 @@
-use crate::language_model_selector::{
-    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+use crate::{
+    language_model_selector::{
+        LanguageModelSelector, ToggleModelSelector, language_model_selector,
+    },
+    max_mode_tooltip::MaxModeTooltip,
 };
+use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
-use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
     DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs, FileSlashCommand,
@@ -40,7 +43,7 @@ use language_model::{
     Role,
 };
 use multi_buffer::MultiBufferRow;
-use picker::Picker;
+use picker::{Picker, popover_menu::PickerPopoverMenu};
 use project::{Project, Worktree};
 use project::{ProjectPath, lsp_store::LocalLspAdapterDelegate};
 use rope::Point;
@@ -51,6 +54,7 @@ use std::{
     cmp,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -234,7 +238,7 @@ impl ContextEditor {
             editor.set_show_breakpoints(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Some(Box::new(completion_provider)));
+            editor.set_completion_provider(Some(Rc::new(completion_provider)));
             editor.set_menu_inline_completions_policy(MenuInlineCompletionsPolicy::Never);
             editor.set_collaboration_hub(Box::new(project.clone()));
 
@@ -279,10 +283,10 @@ impl ContextEditor {
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
-                LanguageModelSelector::new(
+                language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model.clone()),
@@ -1890,7 +1894,7 @@ impl ContextEditor {
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 let client = this
                                     .workspace
-                                    .update(cx, |workspace, _| workspace.client().clone())
+                                    .read_with(cx, |workspace, _| workspace.client().clone())
                                     .log_err();
 
                                 if let Some(client) = client {
@@ -1995,17 +1999,17 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        ButtonLike::new("send_button")
+        Button::new("send_button", "Send")
+            .label_size(LabelSize::Small)
             .disabled(self.sending_disabled(cx))
             .style(style)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Send"))
-            .children(
+            .key_binding(
                 KeyBinding::for_action_in(&Assist, &focus_handle, window, cx)
-                    .map(|binding| binding.into_any_element()),
+                    .map(|kb| kb.size(rems_from_px(12.))),
             )
             .on_click(move |_event, window, cx| {
                 focus_handle.dispatch_action(&Assist, window, cx);
@@ -2045,7 +2049,50 @@ impl ContextEditor {
         )
     }
 
-    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let context = self.context().read(cx);
+        let active_model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model)?;
+        if !active_model.supports_max_mode() {
+            return None;
+        }
+
+        let active_completion_mode = context.completion_mode();
+        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
+        let icon = if burn_mode_enabled {
+            IconName::ZedBurnModeOn
+        } else {
+            IconName::ZedBurnMode
+        };
+
+        Some(
+            IconButton::new("burn-mode", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .toggle_state(burn_mode_enabled)
+                .selected_icon_color(Color::Error)
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.context().update(cx, |context, _cx| {
+                        context.set_completion_mode(match active_completion_mode {
+                            CompletionMode::Burn => CompletionMode::Normal,
+                            CompletionMode::Normal => CompletionMode::Burn,
+                        });
+                    });
+                }))
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
+                        .into()
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn render_language_model_selector(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let active_model = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.model);
@@ -2055,7 +2102,7 @@ impl ContextEditor {
             None => SharedString::from("No model selected"),
         };
 
-        LanguageModelSelectorPopoverMenu::new(
+        PickerPopoverMenu::new(
             self.language_model_selector.clone(),
             ButtonLike::new("active-model")
                 .style(ButtonStyle::Subtle)
@@ -2083,8 +2130,10 @@ impl ContextEditor {
                 )
             },
             gpui::Corner::BottomLeft,
+            cx,
         )
         .with_handle(self.language_model_selector_menu_handle.clone())
+        .render(window, cx)
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2490,6 +2539,7 @@ impl Render for ContextEditor {
         let provider = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.provider);
+
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
@@ -2499,6 +2549,8 @@ impl Render for ContextEditor {
         };
 
         let language_model_selector = self.language_model_selector_menu_handle.clone();
+        let max_mode_toggle = self.render_max_mode_toggle(cx);
+
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -2538,31 +2590,28 @@ impl Render for ContextEditor {
             })
             .children(self.render_last_error(cx))
             .child(
-                h_flex().w_full().relative().child(
-                    h_flex()
-                        .p_2()
-                        .w_full()
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(self.render_inject_context_menu(cx))
-                                .child(ui::Divider::vertical())
-                                .child(
-                                    div()
-                                        .pl_0p5()
-                                        .child(self.render_language_model_selector(cx)),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_end()
-                                .child(self.render_send_button(window, cx)),
-                        ),
-                ),
+                h_flex()
+                    .relative()
+                    .py_2()
+                    .pl_1p5()
+                    .pr_2()
+                    .w_full()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(self.render_inject_context_menu(cx))
+                            .when_some(max_mode_toggle, |this, element| this.child(element)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(self.render_language_model_selector(window, cx))
+                            .child(self.render_send_button(window, cx)),
+                    ),
             )
     }
 }
@@ -3353,7 +3402,7 @@ mod tests {
         LanguageModelRegistry::test(cx);
         cx.set_global(settings_store);
         language::init(cx);
-        assistant_settings::init(cx);
+        agent_settings::init(cx);
         Project::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         workspace::init_settings(cx);

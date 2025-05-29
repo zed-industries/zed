@@ -3,6 +3,7 @@ mod context_editor;
 mod context_history;
 mod context_store;
 pub mod language_model_selector;
+mod max_mode_tooltip;
 mod slash_command;
 mod slash_command_picker;
 

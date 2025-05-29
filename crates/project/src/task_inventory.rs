@@ -230,6 +230,10 @@ impl Inventory {
         }
     }
 
+    pub fn last_scheduled_scenario(&self) -> Option<&DebugScenario> {
+        self.last_scheduled_scenarios.back()
+    }
+
     pub fn list_debug_scenarios(
         &self,
         task_contexts: &TaskContexts,
@@ -843,11 +847,21 @@ impl ContextProvider for BasicContextProvider {
             );
             if let Some(full_path) = current_file.as_ref() {
                 let relative_path = pathdiff::diff_paths(full_path, worktree_path);
-                if let Some(relative_path) = relative_path {
+                if let Some(relative_file) = relative_path {
                     task_variables.insert(
                         VariableName::RelativeFile,
-                        relative_path.to_sanitized_string(),
+                        relative_file.to_sanitized_string(),
                     );
+                    if let Some(relative_dir) = relative_file.parent() {
+                        task_variables.insert(
+                            VariableName::RelativeDir,
+                            if relative_dir.as_os_str().is_empty() {
+                                String::from(".")
+                            } else {
+                                relative_dir.to_sanitized_string()
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -1191,9 +1205,7 @@ mod tests {
     }
 
     fn init_test(_cx: &mut TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
         TaskStore::init(None);
     }
 

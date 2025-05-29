@@ -72,7 +72,7 @@ impl Console {
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Some(Box::new(ConsoleQueryBarCompletionProvider(this))));
+            editor.set_completion_provider(Some(Rc::new(ConsoleQueryBarCompletionProvider(this))));
 
             editor
         });
@@ -110,7 +110,7 @@ impl Console {
     }
 
     fn is_running(&self, cx: &Context<Self>) -> bool {
-        self.session.read(cx).is_local()
+        self.session.read(cx).is_running()
     }
 
     fn handle_stack_frame_list_events(

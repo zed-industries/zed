@@ -11,8 +11,8 @@ use crate::{
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
 use agent::{ContextLoadResult, Thread, ThreadEvent};
+use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
-use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
@@ -49,6 +49,7 @@ pub struct ExampleMetadata {
     pub max_assertions: Option<usize>,
     pub profile_id: AgentProfileId,
     pub existing_thread_json: Option<String>,
+    pub max_turns: Option<u32>,
 }
 
 #[derive(Clone, Debug)]

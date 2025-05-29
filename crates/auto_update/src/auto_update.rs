@@ -41,7 +41,7 @@ struct UpdateRequestBody {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VersionCheckType {
-    Sha(String),
+    Sha(AppCommitSha),
     Semantic(SemanticVersion),
 }
 
@@ -49,8 +49,12 @@ pub enum VersionCheckType {
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
-    Downloading,
-    Installing,
+    Downloading {
+        version: VersionCheckType,
+    },
+    Installing {
+        version: VersionCheckType,
+    },
     Updated {
         binary_path: PathBuf,
         version: VersionCheckType,
@@ -510,13 +514,13 @@ impl AutoUpdater {
         let fetched_release_data =
             Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
         let fetched_version = fetched_release_data.clone().version;
-        let app_commit_sha = cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.0));
-        let newer_version = Self::check_for_newer_version(
+        let app_commit_sha = cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full()));
+        let newer_version = Self::check_if_fetched_version_is_newer(
             *RELEASE_CHANNEL,
             app_commit_sha,
             installed_version,
-            previous_status.clone(),
             fetched_version,
+            previous_status.clone(),
         )?;
 
         let Some(newer_version) = newer_version else {
@@ -531,7 +535,9 @@ impl AutoUpdater {
         };
 
         this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Downloading;
+            this.status = AutoUpdateStatus::Downloading {
+                version: newer_version.clone(),
+            };
             cx.notify();
         })?;
 
@@ -540,7 +546,9 @@ impl AutoUpdater {
         download_release(&target_path, fetched_release_data, client, &cx).await?;
 
         this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Installing;
+            this.status = AutoUpdateStatus::Installing {
+                version: newer_version.clone(),
+            };
             cx.notify();
         })?;
 
@@ -557,25 +565,25 @@ impl AutoUpdater {
         })
     }
 
-    fn check_for_newer_version(
+    fn check_if_fetched_version_is_newer(
         release_channel: ReleaseChannel,
         app_commit_sha: Result<Option<String>>,
         installed_version: SemanticVersion,
-        status: AutoUpdateStatus,
         fetched_version: String,
+        status: AutoUpdateStatus,
     ) -> Result<Option<VersionCheckType>> {
         let parsed_fetched_version = fetched_version.parse::<SemanticVersion>();
 
         if let AutoUpdateStatus::Updated { version, .. } = status {
             match version {
                 VersionCheckType::Sha(cached_version) => {
-                    let should_download = fetched_version != cached_version;
-                    let newer_version =
-                        should_download.then(|| VersionCheckType::Sha(fetched_version));
+                    let should_download = fetched_version != cached_version.full();
+                    let newer_version = should_download
+                        .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
                     return Ok(newer_version);
                 }
                 VersionCheckType::Semantic(cached_version) => {
-                    return Self::check_for_newer_version_non_nightly(
+                    return Self::check_if_fetched_version_is_newer_non_nightly(
                         cached_version,
                         parsed_fetched_version?,
                     );
@@ -590,10 +598,11 @@ impl AutoUpdater {
                     .flatten()
                     .map(|sha| fetched_version != sha)
                     .unwrap_or(true);
-                let newer_version = should_download.then(|| VersionCheckType::Sha(fetched_version));
+                let newer_version = should_download
+                    .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
                 Ok(newer_version)
             }
-            _ => Self::check_for_newer_version_non_nightly(
+            _ => Self::check_if_fetched_version_is_newer_non_nightly(
                 installed_version,
                 parsed_fetched_version?,
             ),
@@ -630,7 +639,7 @@ impl AutoUpdater {
         }
     }
 
-    fn check_for_newer_version_non_nightly(
+    fn check_if_fetched_version_is_newer_non_nightly(
         installed_version: SemanticVersion,
         fetched_version: SemanticVersion,
     ) -> Result<Option<VersionCheckType>> {
@@ -924,12 +933,12 @@ mod tests {
         let status = AutoUpdateStatus::Idle;
         let fetched_version = SemanticVersion::new(1, 0, 0);
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_version.to_string(),
+            status,
         );
 
         assert_eq!(newer_version.unwrap(), None);
@@ -943,12 +952,12 @@ mod tests {
         let status = AutoUpdateStatus::Idle;
         let fetched_version = SemanticVersion::new(1, 0, 1);
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_version.to_string(),
+            status,
         );
 
         assert_eq!(
@@ -968,12 +977,12 @@ mod tests {
         };
         let fetched_version = SemanticVersion::new(1, 0, 1);
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_version.to_string(),
+            status,
         );
 
         assert_eq!(newer_version.unwrap(), None);
@@ -990,12 +999,12 @@ mod tests {
         };
         let fetched_version = SemanticVersion::new(1, 0, 2);
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_version.to_string(),
+            status,
         );
 
         assert_eq!(
@@ -1012,12 +1021,12 @@ mod tests {
         let status = AutoUpdateStatus::Idle;
         let fetched_sha = "a".to_string();
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_sha,
+            status,
         );
 
         assert_eq!(newer_version.unwrap(), None);
@@ -1031,17 +1040,17 @@ mod tests {
         let status = AutoUpdateStatus::Idle;
         let fetched_sha = "b".to_string();
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_sha.clone(),
+            status,
         );
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(fetched_sha))
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
         );
     }
 
@@ -1052,16 +1061,16 @@ mod tests {
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             binary_path: PathBuf::new(),
-            version: VersionCheckType::Sha("b".to_string()),
+            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
         let fetched_sha = "b".to_string();
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_sha,
+            status,
         );
 
         assert_eq!(newer_version.unwrap(), None);
@@ -1074,21 +1083,21 @@ mod tests {
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             binary_path: PathBuf::new(),
-            version: VersionCheckType::Sha("b".to_string()),
+            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
         let fetched_sha = "c".to_string();
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_sha.clone(),
+            status,
         );
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(fetched_sha))
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
         );
     }
 
@@ -1100,17 +1109,17 @@ mod tests {
         let status = AutoUpdateStatus::Idle;
         let fetched_sha = "a".to_string();
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_sha.clone(),
+            status,
         );
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(fetched_sha))
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
         );
     }
 
@@ -1122,16 +1131,16 @@ mod tests {
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             binary_path: PathBuf::new(),
-            version: VersionCheckType::Sha("b".to_string()),
+            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
         let fetched_sha = "b".to_string();
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_sha,
+            status,
         );
 
         assert_eq!(newer_version.unwrap(), None);
@@ -1145,21 +1154,21 @@ mod tests {
         let installed_version = SemanticVersion::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
             binary_path: PathBuf::new(),
-            version: VersionCheckType::Sha("b".to_string()),
+            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
         };
         let fetched_sha = "c".to_string();
 
-        let newer_version = AutoUpdater::check_for_newer_version(
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            status,
             fetched_sha.clone(),
+            status,
         );
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(fetched_sha))
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
         );
     }
 }
