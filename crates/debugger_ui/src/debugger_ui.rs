@@ -352,13 +352,7 @@ fn spawn_task_or_modal(
             .detach_and_log_err(cx)
         }
         Spawn::ViaModal { reveal_target } => {
-            NewSessionModal::show(
-                workspace,
-                window,
-                NewSessionMode::Task,
-                reveal_target.clone(),
-                cx,
-            );
+            NewSessionModal::show(workspace, window, NewSessionMode::Task, *reveal_target, cx);
         }
     }
 }
