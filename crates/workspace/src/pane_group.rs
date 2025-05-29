@@ -902,7 +902,7 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId, HitboxFlags,
+        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId, HitboxBehavior,
         IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
         Size, Style, WeakEntity, Window, px, relative, size,
     };
@@ -1091,7 +1091,7 @@ mod element {
             };
 
             PaneAxisHandleLayout {
-                hitbox: window.insert_hitbox(handle_bounds, HitboxFlags::empty()),
+                hitbox: window.insert_hitbox(handle_bounds, HitboxBehavior::Normal),
                 divider_bounds,
             }
         }

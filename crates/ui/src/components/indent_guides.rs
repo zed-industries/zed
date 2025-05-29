@@ -136,7 +136,9 @@ pub struct IndentGuideLayout {
 
 /// Implements the necessary functionality for rendering indent guides inside a uniform list.
 mod uniform_list {
-    use gpui::{DispatchPhase, Hitbox, HitboxFlags, MouseButton, MouseDownEvent, MouseMoveEvent};
+    use gpui::{
+        DispatchPhase, Hitbox, HitboxBehavior, MouseButton, MouseDownEvent, MouseMoveEvent,
+    };
 
     use super::*;
 
@@ -259,7 +261,7 @@ mod uniform_list {
                     .map(|guide| {
                         window.insert_hitbox(
                             guide.hitbox.unwrap_or(guide.bounds),
-                            HitboxFlags::empty(),
+                            HitboxBehavior::Normal,
                         )
                     })
                     .collect();

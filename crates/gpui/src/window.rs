@@ -18,7 +18,6 @@ use crate::{
     point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
-use bitflags::bitflags;
 use collections::{FxHashMap, FxHashSet};
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
@@ -420,7 +419,7 @@ pub(crate) struct HitTest {
     pub(crate) hover_hitbox_count: usize,
 }
 
-/// An identifier for a [Hitbox] which also includes [HitboxFlags].
+/// An identifier for a [Hitbox] which also includes [HitboxBehavior].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
@@ -464,7 +463,7 @@ pub struct Hitbox {
     /// The content mask when the hitbox was inserted.
     pub content_mask: ContentMask<Pixels>,
     /// Flags that specify hitbox behavior.
-    pub flags: HitboxFlags,
+    pub behavior: HitboxBehavior,
 }
 
 impl Hitbox {
@@ -473,8 +472,8 @@ impl Hitbox {
     /// styles.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
-    /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`) or
-    /// `HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL` (`InteractiveElement::block_mouse_except_scroll`).
+    /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`) or
+    /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`).
     ///
     /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
     /// Concretely, this is due to use-cases like overlays that cause the elements under to be
@@ -491,66 +490,69 @@ impl Hitbox {
     /// documentation of `Hitbox::is_hovered` for details.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
-    /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`).
+    /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
     pub fn should_handle_scroll(&self, window: &Window) -> bool {
         self.id.should_handle_scroll(window)
     }
 }
 
-bitflags! {
-    /// Flags that specify hitbox behavior.
-    #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-    pub struct HitboxFlags: u64 {
-        /// All hitboxes behind this hitbox will be ignored and so will have `hitbox.is_hovered() ==
-        /// false` and `hitbox.should_handle_scroll() == false`. Typically for elements this causes
-        /// skipping of all mouse events, hover styles, and tooltips. This flag is set by
-        /// [`InteractiveElement::occlude`].
-        ///
-        /// For mouse handlers that check those hitboxes, this behaves the same as registering a
-        /// bubble-phase handler for every mouse event type:
-        ///
-        /// ```
-        /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
-        ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
-        ///         cx.stop_propagation();
-        ///     }
-        /// }
-        /// ```
-        ///
-        /// This has effects beyond event handling - any use of hitbox checking, such as hover
-        /// styles and tooltops. These other behaviors are the main point of this mechanism. An
-        /// alternative might be to not affect mouse event handling - but this would allow
-        /// inconsistent UI where clicks and moves interact with elements that are not considered to
-        /// be hovered.
-        const BLOCK_MOUSE = 1 << 0;
-        /// All hitboxes behind this hitbox will have `hitbox.is_hovered() == false`, even when
-        /// `hitbox.should_handle_scroll() == true`. Typically for elements this causes all mouse
-        /// interaction except scroll events to be ignored - see the documentation of
-        /// [`Hitbox::is_hovered`] for details. This flag is set by
-        /// [`InteractiveElement::block_mouse_except_scroll`].
-        ///
-        /// For mouse handlers that check those hitboxes, this behaves the same as registering a
-        /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
-        ///
-        /// ```
-        /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
-        ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-        ///         cx.stop_propagation();
-        ///     }
-        /// }
-        /// ```
-        ///
-        /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
-        /// handled differently than other mouse events. If also blocking these scroll events is
-        /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
-        ///
-        /// This has effects beyond event handling - this affects any use of `is_hovered`, such as
-        /// hover styles and tooltops. These other behaviors are the main point of this mechanism.
-        /// An alternative might be to not affect mouse event handling - but this would allow
-        /// inconsistent UI where clicks and moves interact with elements that are not considered to
-        /// be hovered.
-        const BLOCK_MOUSE_EXCEPT_SCROLL = 1 << 1;
-    }
+/// How the hitbox affects mouse behavior.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum HitboxBehavior {
+    /// Normal hitbox mouse behavior, doesn't affect mouse handling for other hitboxes.
+    #[default]
+    Normal,
+
+    /// All hitboxes behind this hitbox will be ignored and so will have `hitbox.is_hovered() ==
+    /// false` and `hitbox.should_handle_scroll() == false`. Typically for elements this causes
+    /// skipping of all mouse events, hover styles, and tooltips. This flag is set by
+    /// [`InteractiveElement::occlude`].
+    ///
+    /// For mouse handlers that check those hitboxes, this behaves the same as registering a
+    /// bubble-phase handler for every mouse event type:
+    ///
+    /// ```
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
+    ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+    ///         cx.stop_propagation();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// This has effects beyond event handling - any use of hitbox checking, such as hover
+    /// styles and tooltops. These other behaviors are the main point of this mechanism. An
+    /// alternative might be to not affect mouse event handling - but this would allow
+    /// inconsistent UI where clicks and moves interact with elements that are not considered to
+    /// be hovered.
+    BlockMouse,
+
+    /// All hitboxes behind this hitbox will have `hitbox.is_hovered() == false`, even when
+    /// `hitbox.should_handle_scroll() == true`. Typically for elements this causes all mouse
+    /// interaction except scroll events to be ignored - see the documentation of
+    /// [`Hitbox::is_hovered`] for details. This flag is set by
+    /// [`InteractiveElement::block_mouse_except_scroll`].
+    ///
+    /// For mouse handlers that check those hitboxes, this behaves the same as registering a
+    /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
+    ///
+    /// ```
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
+    ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+    ///         cx.stop_propagation();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
+    /// handled differently than other mouse events. If also blocking these scroll events is
+    /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
+    ///
+    /// This has effects beyond event handling - this affects any use of `is_hovered`, such as
+    /// hover styles and tooltops. These other behaviors are the main point of this mechanism.
+    /// An alternative might be to not affect mouse event handling - but this would allow
+    /// inconsistent UI where clicks and moves interact with elements that are not considered to
+    /// be hovered.
+    BlockMouseExceptScroll,
 }
 
 /// An identifier for a tooltip.
@@ -689,14 +691,12 @@ impl Frame {
             if bounds.contains(&position) {
                 hit_test.ids.push(hitbox.id);
                 if !set_hover_hitbox_count
-                    && hitbox
-                        .flags
-                        .contains(HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL)
+                    && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
                 {
                     hit_test.hover_hitbox_count = hit_test.ids.len();
                     set_hover_hitbox_count = true;
                 }
-                if hitbox.flags.contains(HitboxFlags::BLOCK_MOUSE) {
+                if hitbox.behavior == HitboxBehavior::BlockMouse {
                     break;
                 }
             }
@@ -2986,7 +2986,7 @@ impl Window {
     /// to determine whether the inserted hitbox was the topmost.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, flags: HitboxFlags) -> Hitbox {
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = self.content_mask();
@@ -2996,7 +2996,7 @@ impl Window {
             id,
             bounds,
             content_mask,
-            flags,
+            behavior,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox

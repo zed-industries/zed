@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     AnyElement, AnyView, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId,
-    Entity, Focusable as _, GlobalElementId, HitboxFlags, HitboxId, InteractiveElement,
+    Entity, Focusable as _, GlobalElementId, HitboxBehavior, HitboxId, InteractiveElement,
     IntoElement, LayoutId, Length, ManagedView, MouseDownEvent, ParentElement, Pixels, Point,
     Style, Window, anchored, deferred, div, point, prelude::FluentBuilder, px, size,
 };
@@ -421,7 +421,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 ((), element_state)
             });
 
-            window.insert_hitbox(bounds, HitboxFlags::empty()).id
+            window.insert_hitbox(bounds, HitboxBehavior::Normal).id
         })
     }
 

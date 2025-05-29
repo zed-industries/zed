@@ -17,7 +17,7 @@
 
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxFlags,
+    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
     HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
     LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
@@ -572,7 +572,7 @@ impl Interactivity {
     ///
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
-        self.hitbox_flags = HitboxFlags::BLOCK_MOUSE;
+        self.hitbox_behavior = HitboxBehavior::BlockMouse;
     }
 
     /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
@@ -580,7 +580,7 @@ impl Interactivity {
     ///
     /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
     pub fn block_mouse_except_scroll(&mut self) {
-        self.hitbox_flags = HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL;
+        self.hitbox_behavior = HitboxBehavior::BlockMouseExceptScroll;
     }
 }
 
@@ -1452,7 +1452,7 @@ pub struct Interactivity {
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
-    pub(crate) hitbox_flags: HitboxFlags,
+    pub(crate) hitbox_behavior: HitboxBehavior,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1598,7 +1598,7 @@ impl Interactivity {
                         style.overflow_mask(bounds, window.rem_size()),
                         |window| {
                             let hitbox = if self.should_insert_hitbox(&style, window, cx) {
-                                Some(window.insert_hitbox(bounds, self.hitbox_flags))
+                                Some(window.insert_hitbox(bounds, self.hitbox_behavior))
                             } else {
                                 None
                             };
@@ -1615,7 +1615,7 @@ impl Interactivity {
     }
 
     fn should_insert_hitbox(&self, style: &Style, window: &Window, cx: &App) -> bool {
-        !self.hitbox_flags.is_empty()
+        self.hitbox_behavior != HitboxBehavior::Normal
             || style.mouse_cursor.is_some()
             || self.group.is_some()
             || self.scroll_offset.is_some()

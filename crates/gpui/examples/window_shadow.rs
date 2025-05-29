@@ -1,5 +1,5 @@
 use gpui::{
-    App, Application, Bounds, Context, CursorStyle, Decorations, HitboxFlags, Hsla, MouseButton,
+    App, Application, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton,
     Pixels, Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds,
     WindowDecorations, WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size,
     transparent_black, white,
@@ -37,7 +37,7 @@ impl Render for WindowShadow {
                                         point(px(0.0), px(0.0)),
                                         window.window_bounds().get_bounds().size,
                                     ),
-                                    HitboxFlags::empty(),
+                                    HitboxBehavior::Normal,
                                 )
                             },
                             move |_bounds, hitbox, window, _cx| {

@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     AnyElement, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Entity,
-    Focusable as _, GlobalElementId, Hitbox, HitboxFlags, InteractiveElement, IntoElement,
+    Focusable as _, GlobalElementId, Hitbox, HitboxBehavior, InteractiveElement, IntoElement,
     LayoutId, ManagedView, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Window,
     anchored, deferred, div, px,
 };
@@ -185,7 +185,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
         window: &mut Window,
         cx: &mut App,
     ) -> PrepaintState {
-        let hitbox = window.insert_hitbox(bounds, HitboxFlags::empty());
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
         if let Some(child) = request_layout.child_element.as_mut() {
             child.prepaint(window, cx);
