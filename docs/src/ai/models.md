@@ -24,11 +24,14 @@ Non-Max Mode usage will use up to 25 tool calls per one prompt. If your prompt e
 In Max Mode, we enable models to use [large context windows](#context-windows), unlimited tool calls, and other capabilities for expanded reasoning, to allow an unfettered agentic experience.
 
 Because of the increased cost to Zed, each subsequent request beyond the initial user prompt in Max Mode models is counted as a prompt for metering.
+
 In addition, usage-based pricing per request is slightly more expensive for Max Mode models than usage-based pricing per prompt for regular models.
 
-> Note that the Agent Panel using a Max Mode model may consume a good bit of your monthly prompt capacity, if many tool calls are used. We encourage you to think through what model is best for your needs before leaving the Agent Panel to work.
+> Note that the Agent Panel using a Max Mode model may consume a good bit of your monthly prompt capacity, if many tool calls are used.
+> We encourage you to think through what model is best for your needs before leaving the Agent Panel to work.
 
-By default, all Agent threads start in normal mode, however you can use the agent setting `preferred_completion_mode` to start new Agent threads in Max Mode.
+By default, all threads and [text threads](./text-threads.md) start in normal mode.
+However, you can use the `agent.preferred_completion_mode` setting to have Max Mode activated by default.
 
 ## Context Windows {#context-windows}
 
@@ -36,7 +39,7 @@ A context window is the maximum span of text and code an LLM can consider at onc
 
 In [Max Mode](#max-mode), we increase context window size to allow models to have enhanced reasoning capabilities.
 
-Each Agent thread in Zed maintains its own context window.
+Each Agent thread and text thread in Zed maintains its own context window.
 The more prompts, attached files, and responses included in a session, the larger the context window grows.
 
 For best results, it’s recommended you take a purpose-based approach to Agent thread management, starting a new thread for each unique task.

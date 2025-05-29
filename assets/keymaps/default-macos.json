@@ -283,7 +283,10 @@
       "cmd-shift-i": "agent::ToggleOptionsMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd-alt-e": "agent::RemoveAllContext",
-      "cmd-shift-e": "project_panel::ToggleFocus"
+      "cmd-shift-e": "project_panel::ToggleFocus",
+      "cmd-shift-enter": "agent::ContinueThread",
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "cmd-alt-b": "agent::ToggleBurnMode"
     }
   },
   {

@@ -547,6 +547,10 @@ impl RunningState {
                     .for_each(|value| Self::substitute_variables_in_config(value, context));
             }
             serde_json::Value::String(s) => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
                     *s = substituted;
                 }
@@ -571,6 +575,10 @@ impl RunningState {
                     .for_each(|value| Self::relativlize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 resolve_path(s);
 
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
@@ -866,6 +874,7 @@ impl RunningState {
                     args,
                     ..task.resolved.clone()
                 };
+
                 let terminal = project
                     .update_in(cx, |project, window, cx| {
                         project.create_terminal(
@@ -910,12 +919,6 @@ impl RunningState {
             };
 
             if config_is_valid {
-                // Ok(DebugTaskDefinition {
-                //     label,
-                //     adapter: DebugAdapterName(adapter),
-                //     config,
-                //     tcp_connection,
-                // })
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name =
                     locator_name.context("Could not find a valid locator for a build task")?;
@@ -934,7 +937,7 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
+                    .context(format!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);

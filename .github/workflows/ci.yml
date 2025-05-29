@@ -714,6 +714,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   nix-build:
+    name: Build with Nix
     uses: ./.github/workflows/nix.yml
     if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
     with:
