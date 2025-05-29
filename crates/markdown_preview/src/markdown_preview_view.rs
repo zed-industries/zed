@@ -130,7 +130,7 @@ impl MarkdownPreviewView {
             editor,
             workspace_handle,
             language_registry,
-            "Markdown Preview".into(),
+            "".into(),
             window,
             cx,
         )
@@ -343,7 +343,11 @@ impl MarkdownPreviewView {
         );
 
         let tab_content = editor.read(cx).tab_content_text(0, cx);
-        self.tab_content_text = format!("Preview {}", tab_content).into();
+
+        // Only update the tab content if it's not have a default value.
+        if self.tab_content_text.is_empty() {
+            self.tab_content_text = format!("Preview {}", tab_content).into();
+        }
 
         self.active_editor = Some(EditorState {
             editor,
