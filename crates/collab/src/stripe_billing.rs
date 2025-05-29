@@ -14,8 +14,9 @@ use crate::stripe_client::{
     RealStripeClient, StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection,
     StripeClient, StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
-    StripeCreateMeterEventPayload, StripeCustomerId, StripeMeter, StripePrice, StripePriceId,
-    StripeSubscription, StripeSubscriptionId, StripeSubscriptionTrialSettings,
+    StripeCreateMeterEventPayload, StripeCreateSubscriptionItems, StripeCreateSubscriptionParams,
+    StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripeSubscription,
+    StripeSubscriptionId, StripeSubscriptionTrialSettings,
     StripeSubscriptionTrialSettingsEndBehavior,
     StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
     UpdateSubscriptionParams,
@@ -23,7 +24,6 @@ use crate::stripe_client::{
 
 pub struct StripeBilling {
     state: RwLock<StripeBillingState>,
-    real_client: Arc<stripe::Client>,
     client: Arc<dyn StripeClient>,
 }
 
@@ -38,7 +38,6 @@ impl StripeBilling {
     pub fn new(client: Arc<stripe::Client>) -> Self {
         Self {
             client: Arc::new(RealStripeClient::new(client.clone())),
-            real_client: client,
             state: RwLock::default(),
         }
     }
@@ -46,8 +45,6 @@ impl StripeBilling {
     #[cfg(test)]
     pub fn test(client: Arc<crate::stripe_client::FakeStripeClient>) -> Self {
         Self {
-            // This is just temporary until we can remove all usages of the real Stripe client.
-            real_client: Arc::new(stripe::Client::new("sk_test")),
             client,
             state: RwLock::default(),
         }
@@ -306,40 +303,33 @@ impl StripeBilling {
 
     pub async fn subscribe_to_zed_free(
         &self,
-        customer_id: stripe::CustomerId,
-    ) -> Result<stripe::Subscription> {
+        customer_id: StripeCustomerId,
+    ) -> Result<StripeSubscription> {
         let zed_free_price_id = self.zed_free_price_id().await?;
 
-        let existing_subscriptions = stripe::Subscription::list(
-            &self.real_client,
-            &stripe::ListSubscriptions {
-                customer: Some(customer_id.clone()),
-                status: None,
-                ..Default::default()
-            },
-        )
-        .await?;
+        let existing_subscriptions = self
+            .client
+            .list_subscriptions_for_customer(&customer_id)
+            .await?;
 
         let existing_active_subscription =
-            existing_subscriptions
-                .data
-                .into_iter()
-                .find(|subscription| {
-                    subscription.status == SubscriptionStatus::Active
-                        || subscription.status == SubscriptionStatus::Trialing
-                });
+            existing_subscriptions.into_iter().find(|subscription| {
+                subscription.status == SubscriptionStatus::Active
+                    || subscription.status == SubscriptionStatus::Trialing
+            });
         if let Some(subscription) = existing_active_subscription {
             return Ok(subscription);
         }
 
-        let mut params = stripe::CreateSubscription::new(customer_id);
-        params.items = Some(vec![stripe::CreateSubscriptionItems {
-            price: Some(zed_free_price_id.to_string()),
-            quantity: Some(1),
-            ..Default::default()
-        }]);
+        let params = StripeCreateSubscriptionParams {
+            customer: customer_id,
+            items: vec![StripeCreateSubscriptionItems {
+                price: Some(zed_free_price_id),
+                quantity: Some(1),
+            }],
+        };
 
-        let subscription = stripe::Subscription::create(&self.real_client, params).await?;
+        let subscription = self.client.create_subscription(params).await?;
 
         Ok(subscription)
     }

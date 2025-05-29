@@ -20,10 +20,11 @@ use crate::stripe_client::{
     CreateCustomerParams, StripeCheckoutSession, StripeCheckoutSessionMode,
     StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
-    StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams, StripeCustomer,
-    StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripePriceRecurring,
-    StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
-    StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
+    StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
+    StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeMeter, StripePrice,
+    StripePriceId, StripePriceRecurring, StripeSubscription, StripeSubscriptionId,
+    StripeSubscriptionItem, StripeSubscriptionItemId, StripeSubscriptionTrialSettings,
+    StripeSubscriptionTrialSettingsEndBehavior,
     StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionParams,
 };
 
@@ -69,6 +70,29 @@ impl StripeClient for RealStripeClient {
         Ok(StripeCustomer::from(customer))
     }
 
+    async fn list_subscriptions_for_customer(
+        &self,
+        customer_id: &StripeCustomerId,
+    ) -> Result<Vec<StripeSubscription>> {
+        let customer_id = customer_id.try_into()?;
+
+        let subscriptions = stripe::Subscription::list(
+            &self.client,
+            &stripe::ListSubscriptions {
+                customer: Some(customer_id),
+                status: None,
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        Ok(subscriptions
+            .data
+            .into_iter()
+            .map(StripeSubscription::from)
+            .collect())
+    }
+
     async fn get_subscription(
         &self,
         subscription_id: &StripeSubscriptionId,
@@ -76,6 +100,30 @@ impl StripeClient for RealStripeClient {
         let subscription_id = subscription_id.try_into()?;
 
         let subscription = Subscription::retrieve(&self.client, &subscription_id, &[]).await?;
+
+        Ok(StripeSubscription::from(subscription))
+    }
+
+    async fn create_subscription(
+        &self,
+        params: StripeCreateSubscriptionParams,
+    ) -> Result<StripeSubscription> {
+        let customer_id = params.customer.try_into()?;
+
+        let mut create_subscription = stripe::CreateSubscription::new(customer_id);
+        create_subscription.items = Some(
+            params
+                .items
+                .into_iter()
+                .map(|item| stripe::CreateSubscriptionItems {
+                    price: item.price.map(|price| price.to_string()),
+                    quantity: item.quantity,
+                    ..Default::default()
+                })
+                .collect(),
+        );
+
+        let subscription = Subscription::create(&self.client, create_subscription).await?;
 
         Ok(StripeSubscription::from(subscription))
     }
@@ -220,6 +268,10 @@ impl From<Subscription> for StripeSubscription {
     fn from(value: Subscription) -> Self {
         Self {
             id: value.id.into(),
+            customer: value.customer.id().into(),
+            status: value.status,
+            current_period_start: value.current_period_start,
+            current_period_end: value.current_period_end,
             items: value.items.data.into_iter().map(Into::into).collect(),
         }
     }
