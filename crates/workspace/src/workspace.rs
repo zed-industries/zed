@@ -90,7 +90,6 @@ use std::{
     collections::hash_map::DefaultHasher,
     env,
     hash::{Hash, Hasher},
-    ops::Mul,
     path::{Path, PathBuf},
     process::ExitStatus,
     rc::Rc,
@@ -179,7 +178,8 @@ actions!(
         OpenInTerminal,
         OpenComponentPreview,
         ReloadActiveItem,
-        ResetDocksSize,
+        ResetActiveDockSize,
+        ResetOpenDocksSize,
         SaveAs,
         SaveWithoutFormat,
         ShutdownDebugAdapters,
@@ -262,66 +262,32 @@ pub struct ToggleFileFinder {
 
 impl_action_as!(file_finder, ToggleFileFinder as Toggle);
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DecreaseActiveDockSize {
-    #[serde(default, flatten)]
-    pub offset: Offset<f32>,
-}
-
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DecreaseOpenDocksSize {
-    #[serde(default, flatten)]
-    pub offset: Offset<f32>,
-}
-
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IncreaseActiveDockSize {
-    #[serde(default, flatten)]
-    pub offset: Offset<f32>,
+    #[serde(default)]
+    pub px: u32,
 }
 
-#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseActiveDockSize {
+    #[serde(default)]
+    pub px: u32,
+}
+
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IncreaseOpenDocksSize {
-    #[serde(flatten)]
-    pub offset: Offset<f32>,
+    #[serde(default)]
+    pub px: u32,
 }
 
-#[derive(Clone, Copy, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Offset<T>
-where
-    T: Default,
-{
+pub struct DecreaseOpenDocksSize {
     #[serde(default)]
-    pub x: T,
-    #[serde(default)]
-    pub y: T,
-}
-impl Offset<f32> {
-    fn unwrap_or_default(mut self, cx: &Context<Workspace>) -> Self {
-        if self.x == 0. {
-            self.x = ThemeSettings::get_global(cx).ui_font_size(cx).0;
-        }
-        if self.y == 0. {
-            self.y = ThemeSettings::get_global(cx).ui_font_size(cx).0;
-        }
-
-        self
-    }
-}
-impl Mul<Pixels> for Offset<f32> {
-    type Output = Offset<Pixels>;
-
-    fn mul(self, rhs: Pixels) -> Self::Output {
-        Offset {
-            x: px(self.x * rhs.0),
-            y: px(self.y * rhs.0),
-        }
-    }
+    pub px: u32,
 }
 
 impl_actions!(
@@ -5422,7 +5388,23 @@ impl Workspace {
                 },
             ))
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ResetDocksSize, window, cx| {
+                |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if dock.focus_handle(cx).contains_focused(window, cx) {
+                            let Some(panel) = dock.read(cx).active_panel() else {
+                                return;
+                            };
+
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+
+                            return;
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetOpenDocksSize, window, cx| {
                     for dock in workspace.all_docks() {
                         if let Some(panel) = dock.read(cx).visible_panel() {
                             // Set to `None`, then the size will fall back to the default.
@@ -5433,30 +5415,42 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
-                    let px = act.offset.unwrap_or_default(cx) * px(1.);
-
-                    adjust_active_dock_size_by_px(px, workspace, window, cx);
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px as _, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
                 },
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &DecreaseActiveDockSize, window, cx| {
-                    let px = act.offset.unwrap_or_default(cx) * px(-1.);
-
-                    adjust_active_dock_size_by_px(px, workspace, window, cx);
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px as f32, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
                 },
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &IncreaseOpenDocksSize, window, cx| {
-                    let px = act.offset.unwrap_or_default(cx) * px(1.);
-
-                    adjust_open_docks_size_by_px(px, workspace, window, cx);
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px as _, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
                 },
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &DecreaseOpenDocksSize, window, cx| {
-                    let px = act.offset.unwrap_or_default(cx) * px(-1.);
-
-                    adjust_open_docks_size_by_px(px, workspace, window, cx);
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px as f32, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
@@ -5826,8 +5820,16 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
+fn px_with_ui_font_fallback(val: f32, cx: &Context<Workspace>) -> Pixels {
+    if val == 0. {
+        ThemeSettings::get_global(cx).ui_font_size(cx)
+    } else {
+        px(val)
+    }
+}
+
 fn adjust_active_dock_size_by_px(
-    px: Offset<Pixels>,
+    px: Pixels,
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -5849,7 +5851,7 @@ fn adjust_active_dock_size_by_px(
 }
 
 fn adjust_open_docks_size_by_px(
-    px: Offset<Pixels>,
+    px: Pixels,
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -5880,12 +5882,12 @@ fn adjust_open_docks_size_by_px(
 fn adjust_dock_size_by_px(
     panel_size: Pixels,
     dock_pos: DockPosition,
-    px: Offset<Pixels>,
+    px: Pixels,
 ) -> impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) {
     move |workspace, window, cx| match dock_pos {
-        DockPosition::Left => resize_left_dock(panel_size + px.x, workspace, window, cx),
-        DockPosition::Right => resize_right_dock(panel_size + px.x, workspace, window, cx),
-        DockPosition::Bottom => resize_bottom_dock(panel_size + px.y, workspace, window, cx),
+        DockPosition::Left => resize_left_dock(panel_size + px, workspace, window, cx),
+        DockPosition::Right => resize_right_dock(panel_size + px, workspace, window, cx),
+        DockPosition::Bottom => resize_bottom_dock(panel_size + px, workspace, window, cx),
     }
 }
 
