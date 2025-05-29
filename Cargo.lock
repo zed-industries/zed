@@ -19879,7 +19879,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.3"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de7d9523255f4e00ee3d0918e5407bd252d798a4a8e71f6d37f23317a1588203"
 dependencies = [
  "anyhow",
  "serde",
