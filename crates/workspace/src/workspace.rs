@@ -6841,7 +6841,7 @@ pub fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppS
 
     let Some(app_state) = weak_app_state.upgrade() else {
         log::debug!(
-            "AppState dropped when handling {} - app likely shutting down",
+            "AppState no longer available when handling {} - strong references dropped, could indicate app shutdown or a bug",
             action_name
         );
         return None;
