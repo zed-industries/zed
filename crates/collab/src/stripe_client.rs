@@ -30,19 +30,36 @@ pub struct CreateCustomerParams<'a> {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
 pub struct StripeSubscriptionId(pub Arc<str>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripeSubscription {
     pub id: StripeSubscriptionId,
+    pub customer: StripeCustomerId,
+    // TODO: Create our own version of this enum.
+    pub status: stripe::SubscriptionStatus,
+    pub current_period_end: i64,
+    pub current_period_start: i64,
     pub items: Vec<StripeSubscriptionItem>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
 pub struct StripeSubscriptionItemId(pub Arc<str>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripeSubscriptionItem {
     pub id: StripeSubscriptionItemId,
     pub price: Option<StripePrice>,
+}
+
+#[derive(Debug)]
+pub struct StripeCreateSubscriptionParams {
+    pub customer: StripeCustomerId,
+    pub items: Vec<StripeCreateSubscriptionItems>,
+}
+
+#[derive(Debug)]
+pub struct StripeCreateSubscriptionItems {
+    pub price: Option<StripePriceId>,
+    pub quantity: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +93,7 @@ pub enum StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod {
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
 pub struct StripePriceId(pub Arc<str>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripePrice {
     pub id: StripePriceId,
     pub unit_amount: Option<i64>,
@@ -84,7 +101,7 @@ pub struct StripePrice {
     pub recurring: Option<StripePriceRecurring>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripePriceRecurring {
     pub meter: Option<String>,
 }
@@ -160,9 +177,19 @@ pub trait StripeClient: Send + Sync {
 
     async fn create_customer(&self, params: CreateCustomerParams<'_>) -> Result<StripeCustomer>;
 
+    async fn list_subscriptions_for_customer(
+        &self,
+        customer_id: &StripeCustomerId,
+    ) -> Result<Vec<StripeSubscription>>;
+
     async fn get_subscription(
         &self,
         subscription_id: &StripeSubscriptionId,
+    ) -> Result<StripeSubscription>;
+
+    async fn create_subscription(
+        &self,
+        params: StripeCreateSubscriptionParams,
     ) -> Result<StripeSubscription>;
 
     async fn update_subscription(

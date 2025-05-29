@@ -15021,7 +15021,7 @@ impl Editor {
                                         text_style = text_style.highlight(highlight_style);
                                     }
                                     div()
-                                        .block_mouse_down()
+                                        .block_mouse_except_scroll()
                                         .pl(cx.anchor_x)
                                         .child(EditorElement::new(
                                             &rename_editor,
@@ -21907,7 +21907,7 @@ fn render_diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .stop_mouse_events_except_scroll()
+        .block_mouse_except_scroll()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")
