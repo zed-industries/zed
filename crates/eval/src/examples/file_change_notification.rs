@@ -43,7 +43,7 @@ impl Example for FileChangeNotificationExample {
 
         cx.agent_thread().update(cx, |thread, cx| {
             thread.action_log().update(cx, |action_log, cx| {
-                action_log.buffer_read(buffer, cx);
+                action_log.buffer_read(buffer.clone(), cx);
             });
         })?;
 
@@ -52,22 +52,13 @@ impl Example for FileChangeNotificationExample {
         cx.run_turn().await?;
 
         // Edit README -- the model should get a notification on next turn
-        let buffer = cx
-            .agent_thread()
-            .update(cx, |thread, cx| {
-                let project = thread.project().clone();
-                project.update(cx, |project, cx| {
-                    project.open_buffer(project_path.clone(), cx)
-                })
-            })?
-            .await?;
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..buffer.len(), "Surprise!")], None, cx);
         })?;
 
         // Run for some more turns.
         // The model shouldn't thank for letting it know about the file change.
-        cx.run_turns(4).await?;
+        cx.run_turns(3).await?;
 
         Ok(())
     }

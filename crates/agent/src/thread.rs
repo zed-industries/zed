@@ -1424,13 +1424,13 @@ impl Thread {
         messages: &mut Vec<LanguageModelRequestMessage>,
         cx: &App,
     ) {
-        let mut stale_files = String::new();
+        let mut stale_files = Vec::new();
 
         let action_log = self.action_log.read(cx);
 
         for stale_file in action_log.stale_buffers(cx) {
             if let Some(file) = stale_file.read(cx).file() {
-                writeln!(&mut stale_files, "- {}", file.path().display()).ok();
+                stale_files.push(file.path().display().to_string());
             }
         }
 
@@ -1438,24 +1438,64 @@ impl Thread {
             return;
         }
 
-        let content = MessageContent::Text(format!(
-            "These files have changed since the last read:
-{stale_files}
-
-(This is an auto-generated message; do not reply).
-"
-        ));
-
-        // let request_message = LanguageModelRequestMessage {
-        //     role: Role::User,
-        //     content: vec![message.into()],
-        //     cache: false,
-        // };
-
-        if let Some(message) = messages.last_mut() {
-            if message.role == Role::User {
-                message.content.push(content);
+        // Find the position before the last Assistant-User message pair
+        let mut insert_position = None;
+        if messages.len() >= 2 {
+            for i in (0..messages.len() - 1).rev() {
+                if messages[i].role == Role::Assistant && messages[i + 1].role == Role::User {
+                    insert_position = Some(i);
+                    break;
+                }
             }
+        }
+
+        // If we couldn't find an Assistant-User pair, insert before the last message if it's a User message
+        if insert_position.is_none() && !messages.is_empty() {
+            if messages.last().unwrap().role == Role::User {
+                insert_position = Some(messages.len() - 1);
+            }
+        }
+
+        if let Some(position) = insert_position {
+            // Create a fake tool use ID
+            let tool_use_id = LanguageModelToolUseId::from(format!("fake_list_changed_files_{}", uuid::Uuid::new_v4()));
+
+            // Create the fake tool call message
+            let tool_call_message = LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::ToolUse(language_model::LanguageModelToolUse {
+                    id: tool_use_id.clone(),
+                    name: "list_changed_files".into(),
+                    raw_input: "{}".to_string(),
+                    input: serde_json::json!({}),
+                    is_input_complete: true,
+                })],
+                cache: false,
+            };
+
+            // Create the tool result message
+            let mut result_content = String::from("Changed files:\n");
+            for file in &stale_files {
+                writeln!(&mut result_content, "- {}", file).ok();
+            }
+
+            let tool_result_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::ToolResult(LanguageModelToolResult {
+                    tool_use_id,
+                    tool_name: "list_changed_files".into(),
+                    is_error: false,
+                    content: LanguageModelToolResultContent::Text(result_content.into()),
+                    output: Some(serde_json::json!({
+                        "files": stale_files
+                    })),
+                })],
+                cache: false,
+            };
+
+            // Insert the messages at the calculated position
+            messages.insert(position, tool_call_message);
+            messages.insert(position + 1, tool_result_message);
         }
     }
 
