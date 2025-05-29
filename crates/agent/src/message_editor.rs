@@ -46,8 +46,7 @@ use language_model::{
 use language_model_selector::ToggleModelSelector;
 use media_player::{VoicePlayer, VoiceRecorder, VoiceRecording, VoicePlayerEvent};
 use speech::{
-    stt::{SpeechToText, create_provider},
-    config::{SttConfig, SttProvider},
+    SpeechToText, SttConfig, create_provider, audio_utils,
 };
 use multi_buffer;
 use project::Project;
@@ -92,6 +91,8 @@ pub struct MessageEditor {
     playback_speed_menu_handle: PopoverMenuHandle<ContextMenu>,
     // Transcription state tracking
     transcribing_recordings: std::collections::HashSet<String>,
+    // Language detection for improved transcription accuracy
+    detected_language: Option<String>,
 }
 
 const MAX_EDITOR_LINES: usize = 8;
@@ -253,6 +254,7 @@ impl MessageEditor {
             playback_update_task: None,
             playback_speed_menu_handle: PopoverMenuHandle::default(),
             transcribing_recordings: std::collections::HashSet::new(),
+            detected_language: None,
         };
         
         instance
@@ -1379,6 +1381,38 @@ impl MessageEditor {
                                         .gap_2()
                                         .items_center()
                                         .child(
+                                            // Language detection status
+                                            if let Some(ref detected_lang) = self.detected_language {
+                                                Button::new("reset_language_detection", format!("Lang: {}", detected_lang.to_uppercase()))
+                                                    .label_size(LabelSize::XSmall)
+                                                    .style(ButtonStyle::Subtle)
+                                                    .icon(IconName::Globe)
+                                                    .icon_position(IconPosition::Start)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .icon_color(Color::Success)
+                                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                                        this.reset_detected_language(cx);
+                                                    }))
+                                                    .into_any_element()
+                                            } else {
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_1()
+                                                    .child(
+                                                        Icon::new(IconName::Globe)
+                                                            .size(IconSize::XSmall)
+                                                            .color(Color::Muted)
+                                                    )
+                                                    .child(
+                                                        Label::new("Auto-detect")
+                                                            .size(LabelSize::XSmall)
+                                                            .color(Color::Muted)
+                                                    )
+                                                    .into_any_element()
+                                            }
+                                        )
+                                        .child(
                                             // Playback speed control
                                             Button::new("playback_speed", format!("{:.1}x", self.voice_player.get_playback_speed()))
                                                 .label_size(LabelSize::XSmall)
@@ -1404,19 +1438,11 @@ impl MessageEditor {
                                 let is_paused = self.voice_player.is_paused(&recording_id);
                                 let is_transcribing = self.transcribing_recordings.contains(&recording_id);
                                 
+                                // Capture language detection status for use in closures
+                                let detected_language = self.detected_language.clone();
+                                
                                 let (progress, current_time) = self.voice_player.get_progress(&recording_id)
                                     .unwrap_or((0.0, Duration::ZERO));
-                                
-                                // Debug: Log progress for each recording
-                                log::debug!("📊 Recording {} progress: {:.1}% ({:.1}s/{:.1}s) - playing: {}, paused: {}, seeking: {}", 
-                                    recording_id, 
-                                    progress * 100.0, 
-                                    current_time.as_secs_f32(), 
-                                    recording.duration.as_secs_f32(),
-                                    is_playing,
-                                    is_paused,
-                                    self.voice_player.is_seeking(&recording_id)
-                                );
                                 
                                 let icon_name = if is_playing {
                                     IconName::Stop
@@ -1529,7 +1555,12 @@ impl MessageEditor {
                                                                 .style(ButtonStyle::Subtle)
                                                                 .icon_color(Color::Accent)
                                                                 .tooltip(move |window, cx| {
-                                                                    Tooltip::text("Transcribe recording")(window, cx)
+                                                                    let tooltip_text = if let Some(ref lang) = detected_language {
+                                                                        format!("Transcribe recording (Language: {})", lang.to_uppercase())
+                                                                    } else {
+                                                                        "Transcribe recording (Auto-detect language)".to_string()
+                                                                    };
+                                                                    Tooltip::text(tooltip_text)(window, cx)
                                                                 })
                                                                 .on_click({
                                                                     let recording_id = recording_id.clone();
@@ -1870,7 +1901,7 @@ impl MessageEditor {
             this.update(cx, |this, _cx| {
                 this.playback_update_task.take();
                 log::info!("🧹 Event-driven update task cleaned up");
-            }).ok();
+            }).log_err();
         }));
     }
 
@@ -1897,36 +1928,38 @@ impl MessageEditor {
         }
         
         if let Some(recording) = self.voice_player.get_recording(&recording_id) {
-            log::info!("📝 Starting transcription for recording {} ({:.1}s)", 
-                recording.id, recording.duration.as_secs_f32());
+            log::info!("📝 Starting transcription for recording {} ({:.1}s, {}Hz, {} channels)", 
+                recording.id, recording.duration.as_secs_f32(), recording.sample_rate, recording.channels);
             
             // Mark this recording as being transcribed
             self.transcribing_recordings.insert(recording_id.clone());
             cx.notify(); // Update UI to show transcribing state
             
             // Clone the recording data for async processing
-            let audio_data = recording.data.clone();
+            let audio_bytes = recording.data.clone();
+            let sample_rate = recording.sample_rate;
+            let channels = recording.channels;
             let transcription_recording_id = recording_id.clone();
-            
-            // Convert audio data to f32 samples for transcription
-            let samples: Vec<f32> = audio_data.iter()
-                .map(|&sample| sample as f32 / i16::MAX as f32)
-                .collect();
-            
-            log::info!("🔄 Processing {} samples", samples.len());
             
             // Phase 1: Background transcription work (no UI access)
             let background_task = cx.background_spawn(async move {
-                log::info!("🔧 Initializing Whisper STT provider...");
-                let config = SttConfig {
-                    provider: SttProvider::Whisper,
-                    model_path: Some("/Users/vladislavstarshinov/ai/models/my/ggml-large-v3-turbo.bin".into()),
-                    language: "en".to_string(),
-                    api_key: None,
-                    api_url: None,
-                    chunk_duration_ms: 5000,
-                    enable_streaming: false,
+                log::info!("🔧 Preparing audio for transcription...");
+                
+                // Use audio utilities to prepare the audio data
+                let samples = audio_utils::prepare_for_whisper(&audio_bytes, sample_rate, channels);
+                log::info!("🔄 Processing {} samples at 16kHz", samples.len());
+                
+                // Use smart language configuration with fresh auto-detection
+                let config = {
+                    log::info!("🌍 Using fresh auto-detection for new recording");
+                    SttConfig::whisper_with_auto_model() // Always use auto-detection for unbiased results
                 };
+                
+                if !config.is_valid() {
+                    return Err(anyhow::anyhow!("No valid Whisper model found. Please install a Whisper model."));
+                }
+                
+                log::info!("🔧 Initializing Whisper STT provider with language: {}", config.language);
                 
                 // Initialize STT provider in background
                 let provider = match create_provider(config).await {
@@ -1936,7 +1969,7 @@ impl MessageEditor {
                     }
                     Err(e) => {
                         log::error!("❌ Failed to initialize STT provider: {}", e);
-                        return Err(e);
+                        return Err(e.into());
                     }
                 };
                 
@@ -1960,10 +1993,28 @@ impl MessageEditor {
                                 Ok(result) => {
                                     log::info!("✅ Transcription completed: \"{}\"", result.text);
                                     
+                                    // Store detected language for future transcriptions
+                                    if let Some(ref detected_lang) = result.language {
+                                        if detected_lang != "auto" && detected_lang.len() == 2 {
+                                            log::info!("🎯 Language detected: {}", detected_lang);
+                                            this.detected_language = Some(detected_lang.clone());
+                                        }
+                                    }
+                                    
                                     let transcribed_text = if result.text.trim().is_empty() {
                                         "[No speech detected in recording]".to_string()
                                     } else {
-                                        result.text.trim().to_string()
+                                        // Include language information for user awareness
+                                        if let Some(ref lang) = result.language {
+                                            if lang != "auto" && lang.len() == 2 {
+                                                log::info!("📝 Adding language-aware transcription: {} ({})", result.text.trim(), lang);
+                                                result.text.trim().to_string()
+                                            } else {
+                                                result.text.trim().to_string()
+                                            }
+                                        } else {
+                                            result.text.trim().to_string()
+                                        }
                                     };
                                     
                                     // Update the editor with transcribed text
@@ -2010,6 +2061,12 @@ impl MessageEditor {
             log::error!("❌ Recording not found for transcription: {}", recording_id);
         }
         
+        cx.notify();
+    }
+
+    fn reset_detected_language(&mut self, cx: &mut Context<Self>) {
+        log::info!("🔄 Resetting detected language to auto-detection");
+        self.detected_language = None;
         cx.notify();
     }
 }

@@ -59,12 +59,157 @@ impl Default for SttConfig {
     fn default() -> Self {
         Self {
             provider: SttProvider::Whisper,
-            language: "en".to_string(),
+            language: "auto".to_string(),
             model_path: None,
             api_key: None,
             api_url: None,
             chunk_duration_ms: 5000, // 5 seconds
             enable_streaming: true,
+        }
+    }
+}
+
+impl SttConfig {
+    /// Create a default Whisper configuration with automatic model detection
+    pub fn whisper_with_auto_model() -> Self {
+        let model_path = Self::find_whisper_model();
+        
+        Self {
+            provider: SttProvider::Whisper,
+            language: "auto".to_string(), // Enable automatic language detection
+            model_path,
+            api_key: None,
+            api_url: None,
+            chunk_duration_ms: 5000,
+            enable_streaming: false,
+        }
+    }
+    
+    /// Create a configuration for a specific language
+    pub fn whisper_with_language<P: Into<PathBuf>, L: Into<String>>(model_path: P, language: L) -> Self {
+        Self {
+            provider: SttProvider::Whisper,
+            language: language.into(),
+            model_path: Some(model_path.into()),
+            api_key: None,
+            api_url: None,
+            chunk_duration_ms: 5000,
+            enable_streaming: false,
+        }
+    }
+    
+    /// Get the most likely language for transcription based on system locale
+    pub fn detect_system_language() -> String {
+        // Try to detect language from system locale
+        if let Ok(locale) = std::env::var("LANG") {
+            // Extract language code from locale (e.g., "en_US.UTF-8" -> "en")
+            if let Some(lang) = locale.split('_').next() {
+                if lang.len() == 2 {
+                    log::info!("🌍 Detected system language from LANG: {}", lang);
+                    return lang.to_string();
+                }
+            }
+        }
+        
+        // Try other locale environment variables
+        for env_var in &["LC_ALL", "LC_MESSAGES", "LANGUAGE"] {
+            if let Ok(locale) = std::env::var(env_var) {
+                if let Some(lang) = locale.split('_').next() {
+                    if lang.len() == 2 {
+                        log::info!("🌍 Detected system language from {}: {}", env_var, lang);
+                        return lang.to_string();
+                    }
+                }
+            }
+        }
+        
+        log::info!("🌍 Could not detect system language, defaulting to English");
+        "en".to_string()
+    }
+    
+    /// Check if this configuration uses automatic language detection
+    pub fn uses_auto_detection(&self) -> bool {
+        self.language == "auto" || self.language == "detect"
+    }
+    
+    /// Update the configuration with a detected language for future use
+    pub fn with_detected_language(&self, detected_language: &str) -> Self {
+        let mut new_config = self.clone();
+        new_config.language = detected_language.to_string();
+        log::info!("🎯 Updated STT config with detected language: {}", detected_language);
+        new_config
+    }
+    
+    /// Find available Whisper model files in common locations
+    fn find_whisper_model() -> Option<PathBuf> {
+        let possible_paths = [
+            // User's AI models directory
+            "/Users/vladislavstarshinov/ai/models/my/ggml-large-v3-turbo.bin",
+            // Common Whisper model locations
+            "models/ggml-large-v3-turbo.bin",
+            "models/ggml-large-v3.bin", 
+            "models/ggml-base.en.bin",
+            "models/ggml-small.en.bin",
+            "models/ggml-tiny.en.bin",
+            // Whisper.cpp locations
+            "whisper.cpp/models/ggml-large-v3-turbo.bin",
+            "whisper.cpp/models/ggml-large-v3.bin",
+            "whisper.cpp/models/ggml-base.en.bin",
+            "whisper.cpp/models/ggml-small.en.bin",
+            "whisper.cpp/models/ggml-tiny.en.bin",
+            // Alternative common locations
+            "~/.cache/whisper/ggml-base.en.bin",
+            "/usr/local/share/whisper/models/ggml-base.en.bin",
+        ];
+        
+        for path_str in &possible_paths {
+            let path = if path_str.starts_with('~') {
+                // Expand home directory
+                if let Some(home) = std::env::var("HOME").ok() {
+                    PathBuf::from(path_str.replace('~', &home))
+                } else {
+                    continue;
+                }
+            } else {
+                PathBuf::from(path_str)
+            };
+            
+            if path.exists() {
+                log::info!("🔍 Found Whisper model at: {}", path.display());
+                return Some(path);
+            }
+        }
+        
+        log::warn!("⚠️ No Whisper model found in common locations. Please install a Whisper model.");
+        log::info!("💡 You can download models from: https://huggingface.co/ggerganov/whisper.cpp");
+        None
+    }
+    
+    /// Create a configuration for a specific model file
+    pub fn whisper_with_model<P: Into<PathBuf>>(model_path: P) -> Self {
+        Self {
+            provider: SttProvider::Whisper,
+            language: "auto".to_string(), // Enable automatic language detection
+            model_path: Some(model_path.into()),
+            api_key: None,
+            api_url: None,
+            chunk_duration_ms: 5000,
+            enable_streaming: false,
+        }
+    }
+    
+    /// Validate that the configuration is complete and usable
+    pub fn is_valid(&self) -> bool {
+        match self.provider {
+            SttProvider::Whisper => {
+                if let Some(ref model_path) = self.model_path {
+                    model_path.exists()
+                } else {
+                    false
+                }
+            }
+            SttProvider::System => true,
+            SttProvider::OpenAI => self.api_key.is_some(),
         }
     }
 }
