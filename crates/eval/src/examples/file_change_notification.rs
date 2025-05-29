@@ -22,24 +22,24 @@ impl Example for FileChangeNotificationExample {
     }
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
-        // Track README in action log, so that the model gets notified of its change
+        // Track README so that the model gets notified of its changes
         let project_path = cx.agent_thread().read_with(cx, |thread, cx| {
-            let project = thread.project().clone();
-            let project_path = project
+            thread
+                .project()
                 .read(cx)
                 .find_project_path("README", cx)
-                .expect("README file should exist");
-            project_path
+                .expect("README file should exist in this repo")
         })?;
-        let buffer = cx
-            .agent_thread()
-            .update(cx, |thread, cx| {
-                let project = thread.project().clone();
-                project.update(cx, |project, cx| {
-                    project.open_buffer(project_path.clone(), cx)
-                })
-            })?
-            .await?;
+
+        let buffer = {
+            cx.agent_thread()
+                .update(cx, |thread, cx| {
+                    thread
+                        .project()
+                        .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                })?
+                .await?
+        };
 
         cx.agent_thread().update(cx, |thread, cx| {
             thread.action_log().update(cx, |action_log, cx| {
@@ -47,29 +47,28 @@ impl Example for FileChangeNotificationExample {
             });
         })?;
 
-        // Start conversation, the specific message is not important
+        // Start conversation (specific message is not important)
         cx.push_user_message("Find all files in this repo");
         cx.run_turn().await?;
 
-        // Edit README -- the model should get a notification on next turn
+        // Edit the README buffer - the model should get a notification on next turn
         buffer.update(cx, |buffer, cx| {
             buffer.edit([(0..buffer.len(), "Surprise!")], None, cx);
         })?;
 
         // Run for some more turns.
-        // The model shouldn't thank for letting it know about the file change.
+        // The model shouldn't thank us for letting it know about the file change.
         cx.run_turns(3).await?;
 
         Ok(())
     }
 
     fn thread_assertions(&self) -> Vec<JudgeAssertion> {
-        let assert = JudgeAssertion {
+        vec![JudgeAssertion {
             id: "change-file-notification".into(),
             description:
                 "Agent should not acknowledge or mention anything about files that have been changed"
                     .into(),
-        };
-        vec![assert]
+        }]
     }
 }

@@ -1365,7 +1365,6 @@ impl Thread {
             Some(CompletionMode::Normal.into())
         };
 
-        // dbg!(&request);
         request
     }
 
