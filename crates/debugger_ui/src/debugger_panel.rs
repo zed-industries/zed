@@ -295,7 +295,6 @@ impl DebugPanel {
                         })
                     })?
                     .await?;
-
                 dap_store
                     .update(cx, |dap_store, cx| {
                         dap_store.boot_session(session.clone(), definition, cx)

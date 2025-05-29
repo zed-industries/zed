@@ -7,7 +7,7 @@ use std::time::Duration;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
-use agent_settings::{AgentDockPosition, AgentSettings, DefaultView};
+use agent_settings::{AgentDockPosition, AgentSettings, CompletionMode, DefaultView};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
@@ -41,8 +41,8 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
+    Banner, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
 };
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -64,10 +64,11 @@ use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
-    AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
-    Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, TextThreadStore, ThreadEvent,
-    ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, ContextStore, ContinueThread, ContinueWithBurnMode,
+    DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
+    NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
+    ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleBurnMode, ToggleContextPicker,
+    ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -1281,6 +1282,44 @@ impl AgentPanel {
 
     pub(crate) fn has_active_thread(&self) -> bool {
         matches!(self.active_view, ActiveView::Thread { .. })
+    }
+
+    fn continue_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let thread_state = self.thread.read(cx).thread().read(cx);
+        if !thread_state.tool_use_limit_reached() {
+            return;
+        }
+
+        let model = thread_state.configured_model().map(|cm| cm.model.clone());
+        if let Some(model) = model {
+            self.thread.update(cx, |active_thread, cx| {
+                active_thread.thread().update(cx, |thread, cx| {
+                    thread.insert_invisible_continue_message(cx);
+                    thread.advance_prompt_id();
+                    thread.send_to_model(model, Some(window.window_handle()), cx);
+                });
+            });
+        } else {
+            log::warn!("No configured model available for continuation");
+        }
+    }
+
+    fn toggle_burn_mode(
+        &mut self,
+        _: &ToggleBurnMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.thread.update(cx, |active_thread, cx| {
+            active_thread.thread().update(cx, |thread, _cx| {
+                let current_mode = thread.completion_mode();
+
+                thread.set_completion_mode(match current_mode {
+                    CompletionMode::Max => CompletionMode::Normal,
+                    CompletionMode::Normal => CompletionMode::Max,
+                });
+            });
+        });
     }
 
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
@@ -2574,7 +2613,11 @@ impl AgentPanel {
             })
     }
 
-    fn render_tool_use_limit_reached(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_tool_use_limit_reached(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let tool_use_limit_reached = self
             .thread
             .read(cx)
@@ -2593,17 +2636,59 @@ impl AgentPanel {
             .configured_model()?
             .model;
 
-        let max_mode_upsell = if model.supports_max_mode() {
-            " Enable max mode for unlimited tool use."
-        } else {
-            ""
-        };
+        let focus_handle = self.focus_handle(cx);
 
         let banner = Banner::new()
             .severity(ui::Severity::Info)
-            .child(h_flex().child(Label::new(format!(
-                "Consecutive tool use limit reached.{max_mode_upsell}"
-            ))));
+            .child(Label::new("Consecutive tool use limit reached.").size(LabelSize::Small))
+            .action_slot(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("continue-conversation", "Continue")
+                            .layer(ElevationIndex::ModalSurface)
+                            .label_size(LabelSize::Small)
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &ContinueThread,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.continue_conversation(window, cx);
+                            })),
+                    )
+                    .when(model.supports_max_mode(), |this| {
+                        this.child(
+                            Button::new("continue-burn-mode", "Continue with Burn Mode")
+                                .style(ButtonStyle::Filled)
+                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                .layer(ElevationIndex::ModalSurface)
+                                .label_size(LabelSize::Small)
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &ContinueWithBurnMode,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
+                                .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.thread.update(cx, |active_thread, cx| {
+                                        active_thread.thread().update(cx, |thread, _cx| {
+                                            thread.set_completion_mode(CompletionMode::Max);
+                                        });
+                                    });
+                                    this.continue_conversation(window, cx);
+                                })),
+                        )
+                    }),
+            );
 
         Some(div().px_2().pb_2().child(banner).into_any_element())
     }
@@ -2958,9 +3043,9 @@ impl Render for AgentPanel {
         // non-obvious implications to the layout of children.
         //
         // If you need to change it, please confirm:
-        // - The message editor expands (⌘esc) correctly
+        // - The message editor expands (cmd-option-esc) correctly
         // - When expanded, the buttons at the bottom of the panel are displayed correctly
-        // - Font size works as expected and can be changed with ⌘+/⌘-
+        // - Font size works as expected and can be changed with cmd-+/cmd-
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
         let content = v_flex()
@@ -2987,6 +3072,18 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::toggle_zoom))
+            .on_action(cx.listener(|this, _: &ContinueThread, window, cx| {
+                this.continue_conversation(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ContinueWithBurnMode, window, cx| {
+                this.thread.update(cx, |active_thread, cx| {
+                    active_thread.thread().update(cx, |thread, _cx| {
+                        thread.set_completion_mode(CompletionMode::Max);
+                    });
+                });
+                this.continue_conversation(window, cx);
+            }))
+            .on_action(cx.listener(Self::toggle_burn_mode))
             .child(self.render_toolbar(window, cx))
             .children(self.render_upsell(window, cx))
             .children(self.render_trial_end_upsell(window, cx))
@@ -2994,7 +3091,7 @@ impl Render for AgentPanel {
                 ActiveView::Thread { .. } => parent
                     .relative()
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .children(self.render_tool_use_limit_reached(cx))
+                    .children(self.render_tool_use_limit_reached(window, cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx))
                     .child(self.render_drag_target(cx)),
