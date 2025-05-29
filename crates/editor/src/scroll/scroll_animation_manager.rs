@@ -121,7 +121,7 @@ impl ScrollAnimationManager {
             ScrollAnchor {
                 anchor: new_top_anchor,
                 offset: point(
-                    // mamamia we don't support horizontal scrolling yet ...
+                    // no horizontal scrolling yet ...
                     self.anim.as_ref().unwrap().destination_anchor.offset.x,
                     intermediate_scroll_top - new_top_anchor.to_display_point(map).row().as_f32(),
                 ),
