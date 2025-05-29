@@ -46,7 +46,8 @@ use language_model::{
 use language_model_selector::ToggleModelSelector;
 use media_player::{VoicePlayer, VoiceRecorder, VoiceRecording, VoicePlayerEvent};
 use speech::{
-    SpeechToText, SttConfig, create_provider, audio_utils,
+    SpeechToText, SttConfig, create_provider, audio_utils, TtsService, TtsConfig, 
+    config::VoiceGender,
 };
 use multi_buffer;
 use project::Project;
@@ -60,7 +61,7 @@ use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
 
 // Voice actions
-actions!(voice, [ToggleVoiceInput]);
+actions!(voice, [ToggleVoiceInput, SpeakText, StopSpeaking]);
 
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
@@ -89,6 +90,12 @@ pub struct MessageEditor {
     voice_recognizer: Option<Box<dyn SpeechToText>>,
     playback_update_task: Option<Task<()>>,
     playback_speed_menu_handle: PopoverMenuHandle<ContextMenu>,
+    // TTS (Text-to-Speech) functionality
+    tts_service: Option<TtsService>,
+    tts_config: TtsConfig,
+    tts_language_menu_handle: PopoverMenuHandle<ContextMenu>,
+    tts_gender_menu_handle: PopoverMenuHandle<ContextMenu>,
+    tts_is_speaking: bool,
     // Transcription state tracking
     transcribing_recordings: std::collections::HashSet<String>,
     // Language detection for improved transcription accuracy
@@ -253,11 +260,20 @@ impl MessageEditor {
             voice_recognizer: None,
             playback_update_task: None,
             playback_speed_menu_handle: PopoverMenuHandle::default(),
+            tts_service: None,
+            tts_config: TtsConfig::default(),
+            tts_language_menu_handle: PopoverMenuHandle::default(),
+            tts_gender_menu_handle: PopoverMenuHandle::default(),
+            tts_is_speaking: false,
             transcribing_recordings: std::collections::HashSet::new(),
             detected_language: None,
         };
         
-        instance
+        // Initialize TTS service manager
+        let mut instance_with_tts = instance;
+        instance_with_tts.initialize_tts_service(cx);
+        
+        instance_with_tts
     }
 
     pub fn context_store(&self) -> &Entity<ContextStore> {
@@ -607,6 +623,8 @@ impl MessageEditor {
             .on_action(cx.listener(|this, _: &ToggleVoiceInput, _window, cx| {
                 this.toggle_voice_input(cx);
             }))
+            .on_action(cx.listener(Self::handle_speak_text))
+            .on_action(cx.listener(Self::handle_stop_speaking))
             .capture_action(cx.listener(Self::paste))
             .gap_2()
             .p_2()
@@ -709,6 +727,7 @@ impl MessageEditor {
                                 h_flex()
                                     .gap_1()
                                     .when(!incompatible_tools.is_empty(), |this| {
+                                        let incompatible_tools = incompatible_tools.clone();
                                         this.child(
                                             IconButton::new(
                                                 "tools-incompatible-warning",
@@ -847,7 +866,7 @@ impl MessageEditor {
                                             }
                                         }
                                     }),
-                            ),
+                            )
                     ),
             )
     }
@@ -2069,6 +2088,323 @@ impl MessageEditor {
         self.detected_language = None;
         cx.notify();
     }
+    
+    /// Initialize TTS service manager
+    fn initialize_tts_service(&mut self, cx: &mut Context<Self>) {
+        log::info!("🔊 Initializing TTS service with system defaults");
+        
+        let tts_config = TtsConfig::default();
+        
+        // Initialize TTS service asynchronously
+        let tts_task = cx.spawn(async move |_handle, _cx| {
+            match TtsService::with_system_default().await {
+                Ok(service) => {
+                    log::info!("✅ TTS service initialized successfully");
+                    Some(service)
+                }
+                Err(e) => {
+                    log::error!("❌ Failed to initialize TTS service: {}", e);
+                    None
+                }
+            }
+        });
+        
+        // Store the task and let it complete in the background
+        cx.spawn(async move |handle, cx| {
+            if let Some(service) = tts_task.await {
+                handle.update(cx, |this: &mut MessageEditor, _cx| {
+                    this.tts_service = Some(service);
+                    this.tts_config = tts_config;
+                }).ok();
+            }
+        }).detach();
+    }
+    
+    /// Change TTS language
+    fn set_tts_language(&mut self, language: String, cx: &mut Context<Self>) {
+        if let Some(ref tts_service) = self.tts_service {
+            match tts_service.change_language(language.clone()) {
+                Ok(_) => {
+                    log::info!("🌍 TTS language changed to: {}", language);
+                    self.tts_config.set_language(&language);
+                    cx.notify();
+                }
+                Err(e) => {
+                    log::error!("❌ Failed to change TTS language: {}", e);
+                }
+            }
+        } else {
+            log::warn!("⚠️ TTS service not available");
+        }
+    }
+    
+    /// Change TTS voice gender
+    fn set_tts_gender(&mut self, gender: VoiceGender, cx: &mut Context<Self>) {
+        if let Some(ref tts_service) = self.tts_service {
+            let current_language = self.tts_config.get_language().unwrap_or_else(|| "en-US".to_string());
+            
+            match tts_service.change_voice(current_language.clone(), gender.clone()) {
+                Ok(_) => {
+                    log::info!("🎭 TTS voice changed to {:?} for {}", gender, current_language);
+                    // Update the config to reflect the new voice
+                    self.tts_config = TtsConfig::with_language_and_gender(&current_language, gender);
+                    cx.notify();
+                }
+                Err(e) => {
+                    log::error!("❌ Failed to change TTS voice: {}", e);
+                }
+            }
+        } else {
+            log::warn!("⚠️ TTS service not available");
+        }
+    }
+    
+    /// Speak the given text
+    fn speak_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if let Some(ref tts_service) = self.tts_service {
+            let service = tts_service.clone();
+            let text = text.to_string();
+            
+            self.tts_is_speaking = true;
+            cx.notify(); // Update UI immediately
+            
+            cx.spawn(async move |handle, cx| {
+                match service.speak_text(&text).await {
+                    Ok(_) => {
+                        log::info!("🔊 TTS started speaking: {}", 
+                            if text.len() > 50 { format!("{}...", &text[..50]) } else { text });
+                        // Speaking will finish automatically, reset state
+                        handle.update(cx, |this: &mut MessageEditor, cx| {
+                            this.tts_is_speaking = false;
+                            cx.notify();
+                        }).ok();
+                    }
+                    Err(e) => {
+                        log::error!("❌ TTS speaking error: {}", e);
+                        handle.update(cx, |this: &mut MessageEditor, cx| {
+                            this.tts_is_speaking = false;
+                            cx.notify();
+                        }).ok();
+                    }
+                }
+            }).detach();
+        } else {
+            log::warn!("🚫 TTS service not available");
+        }
+    }
+    
+    /// Stop speaking
+    fn stop_speaking(&mut self, cx: &mut Context<Self>) {
+        if let Some(ref tts_service) = self.tts_service {
+            let service = tts_service.clone();
+            
+            self.tts_is_speaking = false;
+            cx.notify(); // Update UI immediately
+            
+            cx.spawn(async move |_handle, _cx| {
+                match service.stop_speaking().await {
+                    Ok(_) => {
+                        log::info!("🔇 TTS stopped speaking");
+                    }
+                    Err(e) => {
+                        log::error!("❌ Failed to stop TTS: {}", e);
+                    }
+                }
+            }).detach();
+        } else {
+            log::warn!("⚠️ TTS service not available");
+        }
+    }
+    
+    /// Handle TTS-related actions
+    fn handle_speak_text(&mut self, _: &SpeakText, _window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.editor.read(cx).text(cx);
+        if !text.trim().is_empty() {
+            self.speak_text(&text, cx);
+        }
+    }
+    
+    fn handle_stop_speaking(&mut self, _: &StopSpeaking, _window: &mut Window, cx: &mut Context<Self>) {
+        self.stop_speaking(cx);
+    }
+    
+    /// Render TTS controls with modern toggle button and compact language/gender selection
+    fn render_tts_controls(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        // Only show TTS controls if the service is available
+        if self.tts_service.is_none() {
+            return None;
+        }
+        
+        let is_editor_empty = self.is_editor_empty(cx);
+        let is_speaking = self.tts_is_speaking;
+        
+        // Get current language and voice info from config
+        let current_language = self.tts_config.get_language().unwrap_or_else(|| "en-US".to_string());
+        let current_gender = self.tts_config.voice.as_ref()
+            .and_then(|v| v.gender.clone())
+            .unwrap_or(VoiceGender::Male);
+        
+        // Get list of supported languages
+        let available_languages = TtsConfig::supported_languages()
+            .iter()
+            .map(|&lang| lang.to_string())
+            .collect::<Vec<_>>();
+        
+        Some(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .justify_end()
+                .child(
+                    Label::new("TTS:")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                )
+                .child(
+                    // Language Selection Menu
+                    PopoverMenu::new("tts-language-menu")
+                        .trigger(Button::new("tts-language", {
+                            format!("🌍 {}", current_language.to_uppercase())
+                        })
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Subtle))
+                        .with_handle(self.tts_language_menu_handle.clone())
+                        .menu({
+                            let entity = cx.entity().clone();
+                            let languages = available_languages.clone();
+                            let current_lang = current_language.clone();
+                            move |window, cx| {
+                                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                                    for language in &languages {
+                                        let display_name = match language.as_str() {
+                                            "en" | "en-US" => "🇺🇸 English (US)".to_string(),
+                                            "en-GB" => "🇬🇧 English (UK)".to_string(),
+                                            "es" | "es-ES" => "🇪🇸 Spanish".to_string(),
+                                            "fr" | "fr-FR" => "🇫🇷 French".to_string(),
+                                            "de" | "de-DE" => "🇩🇪 German".to_string(),
+                                            "it" | "it-IT" => "🇮🇹 Italian".to_string(),
+                                            "pt" | "pt-PT" => "🇵🇹 Portuguese".to_string(),
+                                            "ru" | "ru-RU" => "🇷🇺 Russian".to_string(),
+                                            "ja" | "ja-JP" => "🇯🇵 Japanese".to_string(),
+                                            "zh" | "zh-CN" => "🇨🇳 Chinese".to_string(),
+                                            "ko" | "ko-KR" => "🇰🇷 Korean".to_string(),
+                                            "ar" | "ar-SA" => "🇸🇦 Arabic".to_string(),
+                                            "hi" | "hi-IN" => "🇮🇳 Hindi".to_string(),
+                                            lang => lang.to_string(),
+                                        };
+                                        
+                                        let is_current = &current_lang == language;
+                                        menu = menu.toggleable_entry(
+                                            display_name,
+                                            is_current,
+                                            IconPosition::Start,
+                                            None,
+                                            {
+                                                let entity = entity.clone();
+                                                let lang = language.clone();
+                                                move |_window, cx| {
+                                                    entity.update(cx, |this, cx| {
+                                                        this.set_tts_language(lang.clone(), cx);
+                                                    });
+                                                }
+                                            }
+                                        );
+                                    }
+                                    menu
+                                }))
+                            }
+                        })
+                )
+                .child(
+                    // Gender Selection Menu
+                    PopoverMenu::new("tts-gender-menu")
+                        .trigger(Button::new("tts-gender", {
+                            match current_gender {
+                                VoiceGender::Male => "♂️",
+                                VoiceGender::Female => "♀️",
+                                VoiceGender::Neutral => "⚪",
+                            }.to_string()
+                        })
+                        .label_size(LabelSize::Small)
+                        .style(ButtonStyle::Subtle))
+                        .with_handle(self.tts_gender_menu_handle.clone())
+                        .menu({
+                            let entity = cx.entity().clone();
+                            let current_gdr = current_gender.clone();
+                            move |window, cx| {
+                                Some(ContextMenu::build(window, cx, |mut menu, _window, _cx| {
+                                    let genders = vec![
+                                        (VoiceGender::Male, "♂️ Male"),
+                                        (VoiceGender::Female, "♀️ Female"),
+                                        (VoiceGender::Neutral, "⚪ Neutral"),
+                                    ];
+                                    
+                                    for (gender, display) in genders {
+                                        let is_current = current_gdr == gender;
+                                        menu = menu.toggleable_entry(
+                                            display.to_string(),
+                                            is_current,
+                                            IconPosition::Start,
+                                            None,
+                                            {
+                                                let entity = entity.clone();
+                                                let selected_gender = gender.clone();
+                                                move |_window, cx| {
+                                                    entity.update(cx, |this, cx| {
+                                                        this.set_tts_gender(selected_gender.clone(), cx);
+                                                    });
+                                                }
+                                            }
+                                        );
+                                    }
+                                    menu
+                                }))
+                            }
+                        })
+                )
+                .child(
+                    // Modern TTS Toggle Button
+                    IconButton::new("tts-toggle", if is_speaking { IconName::Stop } else { IconName::Play })
+                        .size(ButtonSize::Compact)
+                        .style(if is_speaking { 
+                            ButtonStyle::Filled 
+                        } else { 
+                            ButtonStyle::Subtle 
+                        })
+                        .icon_color(if is_speaking { 
+                            Color::Error 
+                        } else { 
+                            Color::Accent 
+                        })
+                        .disabled(is_editor_empty && !is_speaking)
+                        .on_click({
+                            let entity = cx.entity().clone();
+                            move |_event, _window, cx| {
+                                entity.update(cx, |this, cx| {
+                                    if this.tts_is_speaking {
+                                        this.stop_speaking(cx);
+                                    } else {
+                                        let text = this.editor.read(cx).text(cx);
+                                        if !text.trim().is_empty() {
+                                            this.speak_text(&text, cx);
+                                        }
+                                    }
+                                });
+                            }
+                        })
+                        .tooltip(move |window, cx| {
+                            let tooltip_text = if is_speaking {
+                                "Stop TTS playback"
+                            } else if is_editor_empty {
+                                "Type a message to speak"
+                            } else {
+                                "Speak the current message"
+                            };
+                            Tooltip::text(tooltip_text)(window, cx)
+                        })
+                )
+        )
+    }
 }
 
 pub fn extract_message_creases(
@@ -2149,6 +2485,7 @@ impl Render for MessageEditor {
                 parent.child(self.render_changed_buffers(&changed_buffers, window, cx))
             })
             .child(self.render_editor(window, cx))
+            .children(self.render_tts_controls(cx))
             .children({
                 let usage_callout = self.render_usage_callout(line_height, cx);
 
