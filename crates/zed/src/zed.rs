@@ -68,7 +68,7 @@ use workspace::notifications::{NotificationId, dismiss_app_notification, show_ap
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new, with_workspace,
+    open_new,
 };
 use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
@@ -114,65 +114,113 @@ pub fn init(cx: &mut App) {
     }
 
     cx.on_action(|_: &OpenSettings, cx: &mut App| {
-        with_workspace(cx, |_workspace, window, cx| {
-            open_settings_file(
-                paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
-                window,
+        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+            open_new(
+                Default::default(),
+                app_state,
                 cx,
-            );
-        });
+                |_workspace, window, cx| {
+                    open_settings_file(
+                        paths::settings_file(),
+                        || settings::initial_user_settings_content().as_ref().into(),
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .detach();
+        }
     });
 
     cx.on_action(|_: &zed_actions::OpenKeymap, cx: &mut App| {
-        with_workspace(cx, |_workspace, window, cx| {
-            open_settings_file(
-                paths::keymap_file(),
-                || settings::initial_keymap_content().as_ref().into(),
-                window,
+        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+            open_new(
+                Default::default(),
+                app_state,
                 cx,
-            );
-        });
+                |_workspace, window, cx| {
+                    open_settings_file(
+                        paths::keymap_file(),
+                        || settings::initial_keymap_content().as_ref().into(),
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .detach();
+        }
     });
 
     cx.on_action(|_: &OpenDefaultSettings, cx: &mut App| {
-        with_workspace(cx, |workspace, window, cx| {
-            open_bundled_file(
-                workspace,
-                settings::default_settings(),
-                "Default Settings",
-                "JSON",
-                window,
+        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+            open_new(
+                Default::default(),
+                app_state,
                 cx,
-            );
-        });
+                |workspace, window, cx| {
+                    open_bundled_file(
+                        workspace,
+                        settings::default_settings(),
+                        "Default Settings",
+                        "JSON",
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .detach();
+        }
     });
 
     cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx: &mut App| {
-        with_workspace(cx, |workspace, window, cx| {
-            open_bundled_file(
-                workspace,
-                settings::default_keymap(),
-                "Default Key Bindings",
-                "JSON",
-                window,
+        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+            open_new(
+                Default::default(),
+                app_state,
                 cx,
-            );
-        });
+                |workspace, window, cx| {
+                    open_bundled_file(
+                        workspace,
+                        settings::default_keymap(),
+                        "Default Key Bindings",
+                        "JSON",
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .detach();
+        }
     });
 
     cx.on_action(|action: &theme_selector::Toggle, cx: &mut App| {
         let action = action.clone();
-        with_workspace(cx, move |_workspace, window, cx| {
-            window.dispatch_action(action.boxed_clone(), cx);
-        });
+        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+            open_new(
+                Default::default(),
+                app_state,
+                cx,
+                move |_workspace, window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx);
+                },
+            )
+            .detach();
+        }
     });
 
     cx.on_action(|action: &icon_theme_selector::Toggle, cx: &mut App| {
         let action = action.clone();
-        with_workspace(cx, move |_workspace, window, cx| {
-            window.dispatch_action(action.boxed_clone(), cx);
-        });
+        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+            open_new(
+                Default::default(),
+                app_state,
+                cx,
+                move |_workspace, window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx);
+                },
+            )
+            .detach();
+        }
     });
 }
 
@@ -785,9 +833,34 @@ fn register_actions(
                 cx,
             );
         })
-        .register_action(open_project_settings_file)
-        .register_action(open_project_tasks_file)
-        .register_action(open_project_debug_tasks_file)
+        .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
+            open_settings_file(
+                paths::settings_file(),
+                || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        })
+        .register_action(
+            move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
+                open_settings_file(
+                    paths::keymap_file(),
+                    || settings::initial_keymap_content().as_ref().into(),
+                    window,
+                    cx,
+                );
+            },
+        )
+        .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_settings(),
+                "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        })
         .register_action(
             move |workspace, _: &zed_actions::OpenDefaultKeymap, window, cx| {
                 open_bundled_file(
@@ -798,6 +871,25 @@ fn register_actions(
                     window,
                     cx,
                 );
+            },
+        )
+        .register_action(open_project_settings_file)
+        .register_action(open_project_tasks_file)
+        .register_action(open_project_debug_tasks_file)
+        .register_action(
+            |_workspace: &mut Workspace,
+             action: &theme_selector::Toggle,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                window.dispatch_action(action.boxed_clone(), cx);
+            },
+        )
+        .register_action(
+            |_workspace: &mut Workspace,
+             action: &icon_theme_selector::Toggle,
+             window: &mut Window,
+             cx: &mut Context<Workspace>| {
+                window.dispatch_action(action.boxed_clone(), cx);
             },
         )
         .register_action(

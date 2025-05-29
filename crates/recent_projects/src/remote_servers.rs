@@ -46,8 +46,8 @@ use workspace::OpenOptions;
 use workspace::Toast;
 use workspace::notifications::NotificationId;
 use workspace::{
-    ModalView, Workspace, notifications::DetachAndPromptErr,
-    open_ssh_project_with_existing_connection, with_workspace,
+    AppState, ModalView, Workspace, notifications::DetachAndPromptErr, open_new,
+    open_ssh_project_with_existing_connection,
 };
 
 use crate::OpenRemote;
@@ -351,13 +351,21 @@ pub fn init(cx: &mut App) {
             if action.from_existing_connection {
                 return;
             }
-            with_workspace(cx, |workspace, window, cx| {
-                let handle = cx.entity().downgrade();
-                let fs = workspace.app_state().fs.clone();
-                workspace.toggle_modal(window, cx, |window, cx| {
-                    RemoteServerProjects::new(fs, window, cx, handle)
-                });
-            });
+            if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+                open_new(
+                    Default::default(),
+                    app_state,
+                    cx,
+                    |workspace, window, cx| {
+                        let handle = cx.entity().downgrade();
+                        let fs = workspace.app_state().fs.clone();
+                        workspace.toggle_modal(window, cx, |window, cx| {
+                            RemoteServerProjects::new(fs, window, cx, handle)
+                        });
+                    },
+                )
+                .detach();
+            }
         }
     });
 }

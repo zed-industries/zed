@@ -26,8 +26,8 @@ use std::{
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
-    Workspace, WorkspaceId, with_workspace,
+    AppState, CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation,
+    WORKSPACE_DB, Workspace, WorkspaceId, open_new,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -41,9 +41,17 @@ pub fn init(cx: &mut App) {
     cx.on_action({
         move |action: &OpenRecent, cx: &mut App| {
             let create_new_window = action.create_new_window;
-            with_workspace(cx, move |workspace, window, cx| {
-                RecentProjects::open(workspace, create_new_window, window, cx);
-            });
+            if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
+                open_new(
+                    Default::default(),
+                    app_state,
+                    cx,
+                    move |workspace, window, cx| {
+                        RecentProjects::open(workspace, create_new_window, window, cx);
+                    },
+                )
+                .detach();
+            }
         }
     });
 }
