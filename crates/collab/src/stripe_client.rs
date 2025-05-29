@@ -2,6 +2,7 @@
 mod fake_stripe_client;
 mod real_stripe_client;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -10,9 +11,9 @@ use async_trait::async_trait;
 #[cfg(test)]
 pub use fake_stripe_client::*;
 pub use real_stripe_client::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display, Serialize)]
 pub struct StripeCustomerId(pub Arc<str>);
 
 #[derive(Debug, Clone)]
@@ -47,7 +48,7 @@ pub struct StripeSubscriptionItem {
 #[derive(Debug, Clone)]
 pub struct UpdateSubscriptionParams {
     pub items: Option<Vec<UpdateSubscriptionItems>>,
-    pub trial_settings: Option<UpdateSubscriptionTrialSettings>,
+    pub trial_settings: Option<StripeSubscriptionTrialSettings>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -55,18 +56,18 @@ pub struct UpdateSubscriptionItems {
     pub price: Option<StripePriceId>,
 }
 
-#[derive(Debug, Clone)]
-pub struct UpdateSubscriptionTrialSettings {
-    pub end_behavior: UpdateSubscriptionTrialSettingsEndBehavior,
+#[derive(Debug, PartialEq, Clone)]
+pub struct StripeSubscriptionTrialSettings {
+    pub end_behavior: StripeSubscriptionTrialSettingsEndBehavior,
 }
 
-#[derive(Debug, Clone)]
-pub struct UpdateSubscriptionTrialSettingsEndBehavior {
-    pub missing_payment_method: UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
+#[derive(Debug, PartialEq, Clone)]
+pub struct StripeSubscriptionTrialSettingsEndBehavior {
+    pub missing_payment_method: StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod {
+pub enum StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod {
     Cancel,
     CreateInvoice,
     Pause,
@@ -97,6 +98,62 @@ pub struct StripeMeter {
     pub event_name: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct StripeCreateMeterEventParams<'a> {
+    pub identifier: &'a str,
+    pub event_name: &'a str,
+    pub payload: StripeCreateMeterEventPayload<'a>,
+    pub timestamp: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StripeCreateMeterEventPayload<'a> {
+    pub value: u64,
+    pub stripe_customer_id: &'a StripeCustomerId,
+}
+
+#[derive(Debug, Default)]
+pub struct StripeCreateCheckoutSessionParams<'a> {
+    pub customer: Option<&'a StripeCustomerId>,
+    pub client_reference_id: Option<&'a str>,
+    pub mode: Option<StripeCheckoutSessionMode>,
+    pub line_items: Option<Vec<StripeCreateCheckoutSessionLineItems>>,
+    pub payment_method_collection: Option<StripeCheckoutSessionPaymentMethodCollection>,
+    pub subscription_data: Option<StripeCreateCheckoutSessionSubscriptionData>,
+    pub success_url: Option<&'a str>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StripeCheckoutSessionMode {
+    Payment,
+    Setup,
+    Subscription,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StripeCreateCheckoutSessionLineItems {
+    pub price: Option<String>,
+    pub quantity: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StripeCheckoutSessionPaymentMethodCollection {
+    Always,
+    IfRequired,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StripeCreateCheckoutSessionSubscriptionData {
+    pub metadata: Option<HashMap<String, String>>,
+    pub trial_period_days: Option<u32>,
+    pub trial_settings: Option<StripeSubscriptionTrialSettings>,
+}
+
+#[derive(Debug)]
+pub struct StripeCheckoutSession {
+    pub url: Option<String>,
+}
+
 #[async_trait]
 pub trait StripeClient: Send + Sync {
     async fn list_customers_by_email(&self, email: &str) -> Result<Vec<StripeCustomer>>;
@@ -117,4 +174,11 @@ pub trait StripeClient: Send + Sync {
     async fn list_prices(&self) -> Result<Vec<StripePrice>>;
 
     async fn list_meters(&self) -> Result<Vec<StripeMeter>>;
+
+    async fn create_meter_event(&self, params: StripeCreateMeterEventParams<'_>) -> Result<()>;
+
+    async fn create_checkout_session(
+        &self,
+        params: StripeCreateCheckoutSessionParams<'_>,
+    ) -> Result<StripeCheckoutSession>;
 }

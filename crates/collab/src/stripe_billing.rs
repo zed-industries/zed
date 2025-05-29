@@ -3,7 +3,6 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
 use collections::HashMap;
-use serde::{Deserialize, Serialize};
 use stripe::SubscriptionStatus;
 use tokio::sync::RwLock;
 use uuid::Uuid;
@@ -12,10 +11,14 @@ use crate::Result;
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_client::{
-    RealStripeClient, StripeClient, StripeCustomerId, StripeMeter, StripePrice, StripePriceId,
-    StripeSubscription, StripeSubscriptionId, UpdateSubscriptionItems, UpdateSubscriptionParams,
-    UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
-    UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
+    RealStripeClient, StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection,
+    StripeClient, StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
+    StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
+    StripeCreateMeterEventPayload, StripeCustomerId, StripeMeter, StripePrice, StripePriceId,
+    StripeSubscription, StripeSubscriptionId, StripeSubscriptionTrialSettings,
+    StripeSubscriptionTrialSettingsEndBehavior,
+    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
+    UpdateSubscriptionParams,
 };
 
 pub struct StripeBilling {
@@ -190,9 +193,9 @@ impl StripeBilling {
                     items: Some(vec![UpdateSubscriptionItems {
                         price: Some(price.id.clone()),
                     }]),
-                    trial_settings: Some(UpdateSubscriptionTrialSettings {
-                        end_behavior: UpdateSubscriptionTrialSettingsEndBehavior {
-                            missing_payment_method: UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel
+                    trial_settings: Some(StripeSubscriptionTrialSettings {
+                        end_behavior: StripeSubscriptionTrialSettingsEndBehavior {
+                            missing_payment_method: StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel
                         },
                     }),
                 },
@@ -204,16 +207,15 @@ impl StripeBilling {
 
     pub async fn bill_model_request_usage(
         &self,
-        customer_id: &stripe::CustomerId,
+        customer_id: &StripeCustomerId,
         event_name: &str,
         requests: i32,
     ) -> Result<()> {
         let timestamp = Utc::now().timestamp();
         let idempotency_key = Uuid::new_v4();
 
-        StripeMeterEvent::create(
-            &self.real_client,
-            StripeCreateMeterEventParams {
+        self.client
+            .create_meter_event(StripeCreateMeterEventParams {
                 identifier: &format!("model_requests/{}", idempotency_key),
                 event_name,
                 payload: StripeCreateMeterEventPayload {
@@ -221,39 +223,37 @@ impl StripeBilling {
                     stripe_customer_id: customer_id,
                 },
                 timestamp: Some(timestamp),
-            },
-        )
-        .await?;
+            })
+            .await?;
 
         Ok(())
     }
 
     pub async fn checkout_with_zed_pro(
         &self,
-        customer_id: stripe::CustomerId,
+        customer_id: &StripeCustomerId,
         github_login: &str,
         success_url: &str,
     ) -> Result<String> {
         let zed_pro_price_id = self.zed_pro_price_id().await?;
 
-        let mut params = stripe::CreateCheckoutSession::new();
-        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
+        let mut params = StripeCreateCheckoutSessionParams::default();
+        params.mode = Some(StripeCheckoutSessionMode::Subscription);
         params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
-        params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
+        params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
             price: Some(zed_pro_price_id.to_string()),
             quantity: Some(1),
-            ..Default::default()
         }]);
         params.success_url = Some(success_url);
 
-        let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
+        let session = self.client.create_checkout_session(params).await?;
         Ok(session.url.context("no checkout session URL")?)
     }
 
     pub async fn checkout_with_zed_pro_trial(
         &self,
-        customer_id: stripe::CustomerId,
+        customer_id: &StripeCustomerId,
         github_login: &str,
         feature_flags: Vec<String>,
         success_url: &str,
@@ -274,34 +274,33 @@ impl StripeBilling {
             );
         }
 
-        let mut params = stripe::CreateCheckoutSession::new();
-        params.subscription_data = Some(stripe::CreateCheckoutSessionSubscriptionData {
+        let mut params = StripeCreateCheckoutSessionParams::default();
+        params.subscription_data = Some(StripeCreateCheckoutSessionSubscriptionData {
             trial_period_days: Some(trial_period_days),
-            trial_settings: Some(stripe::CreateCheckoutSessionSubscriptionDataTrialSettings {
-                end_behavior: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior {
-                    missing_payment_method: stripe::CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
-                }
+            trial_settings: Some(StripeSubscriptionTrialSettings {
+                end_behavior: StripeSubscriptionTrialSettingsEndBehavior {
+                    missing_payment_method:
+                        StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
+                },
             }),
             metadata: if !subscription_metadata.is_empty() {
                 Some(subscription_metadata)
             } else {
                 None
             },
-            ..Default::default()
         });
-        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
+        params.mode = Some(StripeCheckoutSessionMode::Subscription);
         params.payment_method_collection =
-            Some(stripe::CheckoutSessionPaymentMethodCollection::IfRequired);
+            Some(StripeCheckoutSessionPaymentMethodCollection::IfRequired);
         params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
-        params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
+        params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
             price: Some(zed_pro_price_id.to_string()),
             quantity: Some(1),
-            ..Default::default()
         }]);
         params.success_url = Some(success_url);
 
-        let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
+        let session = self.client.create_checkout_session(params).await?;
         Ok(session.url.context("no checkout session URL")?)
     }
 
@@ -344,77 +343,6 @@ impl StripeBilling {
 
         Ok(subscription)
     }
-
-    pub async fn checkout_with_zed_free(
-        &self,
-        customer_id: stripe::CustomerId,
-        github_login: &str,
-        success_url: &str,
-    ) -> Result<String> {
-        let zed_free_price_id = self.zed_free_price_id().await?;
-
-        let mut params = stripe::CreateCheckoutSession::new();
-        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
-        params.payment_method_collection =
-            Some(stripe::CheckoutSessionPaymentMethodCollection::IfRequired);
-        params.customer = Some(customer_id);
-        params.client_reference_id = Some(github_login);
-        params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
-            price: Some(zed_free_price_id.to_string()),
-            quantity: Some(1),
-            ..Default::default()
-        }]);
-        params.success_url = Some(success_url);
-
-        let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
-        Ok(session.url.context("no checkout session URL")?)
-    }
-}
-
-#[derive(Deserialize)]
-struct StripeMeterEvent {
-    identifier: String,
-}
-
-impl StripeMeterEvent {
-    pub async fn create(
-        client: &stripe::Client,
-        params: StripeCreateMeterEventParams<'_>,
-    ) -> Result<Self, stripe::StripeError> {
-        let identifier = params.identifier;
-        match client.post_form("/billing/meter_events", params).await {
-            Ok(event) => Ok(event),
-            Err(stripe::StripeError::Stripe(error)) => {
-                if error.http_status == 400
-                    && error
-                        .message
-                        .as_ref()
-                        .map_or(false, |message| message.contains(identifier))
-                {
-                    Ok(Self {
-                        identifier: identifier.to_string(),
-                    })
-                } else {
-                    Err(stripe::StripeError::Stripe(error))
-                }
-            }
-            Err(error) => Err(error),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct StripeCreateMeterEventParams<'a> {
-    identifier: &'a str,
-    event_name: &'a str,
-    payload: StripeCreateMeterEventPayload<'a>,
-    timestamp: Option<i64>,
-}
-
-#[derive(Serialize)]
-struct StripeCreateMeterEventPayload<'a> {
-    value: u64,
-    stripe_customer_id: &'a stripe::CustomerId,
 }
 
 fn subscription_contains_price(

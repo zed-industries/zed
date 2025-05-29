@@ -82,6 +82,7 @@ impl DeclarativeExample {
             max_assertions: None,
             profile_id,
             existing_thread_json,
+            max_turns: base.max_turns,
         };
 
         Ok(DeclarativeExample {
@@ -124,6 +125,8 @@ pub struct ExampleToml {
     pub thread_assertions: BTreeMap<String, String>,
     #[serde(default)]
     pub existing_thread_path: Option<String>,
+    #[serde(default)]
+    pub max_turns: Option<u32>,
 }
 
 #[async_trait(?Send)]
@@ -134,7 +137,8 @@ impl Example for DeclarativeExample {
 
     async fn conversation(&self, cx: &mut ExampleContext) -> Result<()> {
         cx.push_user_message(&self.prompt);
-        let _ = cx.run_to_end().await;
+        let max_turns = self.metadata.max_turns.unwrap_or(1000);
+        let _ = cx.run_turns(max_turns).await;
         Ok(())
     }
 

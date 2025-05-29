@@ -1,10 +1,15 @@
 use std::str::FromStr as _;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use serde::Serialize;
 use stripe::{
+    CheckoutSession, CheckoutSessionMode, CheckoutSessionPaymentMethodCollection,
+    CreateCheckoutSession, CreateCheckoutSessionLineItems, CreateCheckoutSessionSubscriptionData,
+    CreateCheckoutSessionSubscriptionDataTrialSettings,
+    CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior,
+    CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod,
     CreateCustomer, Customer, CustomerId, ListCustomers, Price, PriceId, Recurring, Subscription,
     SubscriptionId, SubscriptionItem, SubscriptionItemId, UpdateSubscriptionItems,
     UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
@@ -12,9 +17,14 @@ use stripe::{
 };
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeClient, StripeCustomer, StripeCustomerId, StripeMeter, StripePrice,
-    StripePriceId, StripePriceRecurring, StripeSubscription, StripeSubscriptionId,
-    StripeSubscriptionItem, StripeSubscriptionItemId, UpdateSubscriptionParams,
+    CreateCustomerParams, StripeCheckoutSession, StripeCheckoutSessionMode,
+    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
+    StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams, StripeCustomer,
+    StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripePriceRecurring,
+    StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
+    StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
+    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionParams,
 };
 
 pub struct RealStripeClient {
@@ -129,6 +139,36 @@ impl StripeClient for RealStripeClient {
 
         Ok(response.data)
     }
+
+    async fn create_meter_event(&self, params: StripeCreateMeterEventParams<'_>) -> Result<()> {
+        let identifier = params.identifier;
+        match self.client.post_form("/billing/meter_events", params).await {
+            Ok(event) => Ok(event),
+            Err(stripe::StripeError::Stripe(error)) => {
+                if error.http_status == 400
+                    && error
+                        .message
+                        .as_ref()
+                        .map_or(false, |message| message.contains(identifier))
+                {
+                    Ok(())
+                } else {
+                    Err(anyhow!(stripe::StripeError::Stripe(error)))
+                }
+            }
+            Err(error) => Err(anyhow!(error)),
+        }
+    }
+
+    async fn create_checkout_session(
+        &self,
+        params: StripeCreateCheckoutSessionParams<'_>,
+    ) -> Result<StripeCheckoutSession> {
+        let params = params.try_into()?;
+        let session = CheckoutSession::create(&self.client, params).await?;
+
+        Ok(session.into())
+    }
 }
 
 impl From<CustomerId> for StripeCustomerId {
@@ -141,6 +181,14 @@ impl TryFrom<StripeCustomerId> for CustomerId {
     type Error = anyhow::Error;
 
     fn try_from(value: StripeCustomerId) -> Result<Self, Self::Error> {
+        Self::from_str(value.0.as_ref()).context("failed to parse Stripe customer ID")
+    }
+}
+
+impl TryFrom<&StripeCustomerId> for CustomerId {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &StripeCustomerId) -> Result<Self, Self::Error> {
         Self::from_str(value.0.as_ref()).context("failed to parse Stripe customer ID")
     }
 }
@@ -192,38 +240,34 @@ impl From<SubscriptionItem> for StripeSubscriptionItem {
     }
 }
 
-impl From<crate::stripe_client::UpdateSubscriptionTrialSettings>
-    for UpdateSubscriptionTrialSettings
-{
-    fn from(value: crate::stripe_client::UpdateSubscriptionTrialSettings) -> Self {
+impl From<StripeSubscriptionTrialSettings> for UpdateSubscriptionTrialSettings {
+    fn from(value: StripeSubscriptionTrialSettings) -> Self {
         Self {
             end_behavior: value.end_behavior.into(),
         }
     }
 }
 
-impl From<crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehavior>
+impl From<StripeSubscriptionTrialSettingsEndBehavior>
     for UpdateSubscriptionTrialSettingsEndBehavior
 {
-    fn from(value: crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehavior) -> Self {
+    fn from(value: StripeSubscriptionTrialSettingsEndBehavior) -> Self {
         Self {
             missing_payment_method: value.missing_payment_method.into(),
         }
     }
 }
 
-impl From<crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod>
+impl From<StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod>
     for UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod
 {
-    fn from(
-        value: crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
-    ) -> Self {
+    fn from(value: StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod) -> Self {
         match value {
-            crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel => Self::Cancel,
-            crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::CreateInvoice => {
+            StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel => Self::Cancel,
+            StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::CreateInvoice => {
                 Self::CreateInvoice
             }
-            crate::stripe_client::UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Pause => Self::Pause,
+            StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Pause => Self::Pause,
         }
     }
 }
@@ -256,5 +300,105 @@ impl From<Price> for StripePrice {
 impl From<Recurring> for StripePriceRecurring {
     fn from(value: Recurring) -> Self {
         Self { meter: value.meter }
+    }
+}
+
+impl<'a> TryFrom<StripeCreateCheckoutSessionParams<'a>> for CreateCheckoutSession<'a> {
+    type Error = anyhow::Error;
+
+    fn try_from(value: StripeCreateCheckoutSessionParams<'a>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            customer: value
+                .customer
+                .map(|customer_id| customer_id.try_into())
+                .transpose()?,
+            client_reference_id: value.client_reference_id,
+            mode: value.mode.map(Into::into),
+            line_items: value
+                .line_items
+                .map(|line_items| line_items.into_iter().map(Into::into).collect()),
+            payment_method_collection: value.payment_method_collection.map(Into::into),
+            subscription_data: value.subscription_data.map(Into::into),
+            success_url: value.success_url,
+            ..Default::default()
+        })
+    }
+}
+
+impl From<StripeCheckoutSessionMode> for CheckoutSessionMode {
+    fn from(value: StripeCheckoutSessionMode) -> Self {
+        match value {
+            StripeCheckoutSessionMode::Payment => Self::Payment,
+            StripeCheckoutSessionMode::Setup => Self::Setup,
+            StripeCheckoutSessionMode::Subscription => Self::Subscription,
+        }
+    }
+}
+
+impl From<StripeCreateCheckoutSessionLineItems> for CreateCheckoutSessionLineItems {
+    fn from(value: StripeCreateCheckoutSessionLineItems) -> Self {
+        Self {
+            price: value.price,
+            quantity: value.quantity,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<StripeCheckoutSessionPaymentMethodCollection> for CheckoutSessionPaymentMethodCollection {
+    fn from(value: StripeCheckoutSessionPaymentMethodCollection) -> Self {
+        match value {
+            StripeCheckoutSessionPaymentMethodCollection::Always => Self::Always,
+            StripeCheckoutSessionPaymentMethodCollection::IfRequired => Self::IfRequired,
+        }
+    }
+}
+
+impl From<StripeCreateCheckoutSessionSubscriptionData> for CreateCheckoutSessionSubscriptionData {
+    fn from(value: StripeCreateCheckoutSessionSubscriptionData) -> Self {
+        Self {
+            trial_period_days: value.trial_period_days,
+            trial_settings: value.trial_settings.map(Into::into),
+            metadata: value.metadata,
+            ..Default::default()
+        }
+    }
+}
+
+impl From<StripeSubscriptionTrialSettings> for CreateCheckoutSessionSubscriptionDataTrialSettings {
+    fn from(value: StripeSubscriptionTrialSettings) -> Self {
+        Self {
+            end_behavior: value.end_behavior.into(),
+        }
+    }
+}
+
+impl From<StripeSubscriptionTrialSettingsEndBehavior>
+    for CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior
+{
+    fn from(value: StripeSubscriptionTrialSettingsEndBehavior) -> Self {
+        Self {
+            missing_payment_method: value.missing_payment_method.into(),
+        }
+    }
+}
+
+impl From<StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod>
+    for CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod
+{
+    fn from(value: StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod) -> Self {
+        match value {
+            StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel => Self::Cancel,
+            StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::CreateInvoice => {
+                Self::CreateInvoice
+            }
+            StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Pause => Self::Pause,
+        }
+    }
+}
+
+impl From<CheckoutSession> for StripeCheckoutSession {
+    fn from(value: CheckoutSession) -> Self {
+        Self { url: value.url }
     }
 }
