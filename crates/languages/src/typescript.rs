@@ -36,8 +36,7 @@ const TYPESCRIPT_JEST_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JEST"));
 const TYPESCRIPT_MOCHA_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_MOCHA"));
-const TYPESCRIPT_CHAI_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_CHAI"));
+
 const TYPESCRIPT_VITEST_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_VITEST"));
 const TYPESCRIPT_JASMINE_TASK_VARIABLE: VariableName =
@@ -60,7 +59,6 @@ struct PackageJson {
 struct PackageJsonData {
     jest: bool,
     mocha: bool,
-    chai: bool,
     vitest: bool,
     jasmine: bool,
     build_script: bool,
@@ -87,13 +85,11 @@ impl PackageJsonData {
 
         let mut jest = false;
         let mut mocha = false;
-        let mut chai = false;
         let mut vitest = false;
         let mut jasmine = false;
         if let Some(serde_json::Value::Object(dependencies)) = package_json.get("devDependencies") {
             jest |= dependencies.contains_key("jest");
             mocha |= dependencies.contains_key("mocha");
-            chai |= dependencies.contains_key("chai");
             vitest |= dependencies.contains_key("vitest");
             jasmine |= dependencies.contains_key("jasmine");
         }
@@ -101,7 +97,6 @@ impl PackageJsonData {
         {
             jest |= dev_dependencies.contains_key("jest");
             mocha |= dev_dependencies.contains_key("mocha");
-            chai |= dev_dependencies.contains_key("chai");
             vitest |= dev_dependencies.contains_key("vitest");
             jasmine |= dev_dependencies.contains_key("jasmine");
         }
@@ -116,7 +111,6 @@ impl PackageJsonData {
         Self {
             jest,
             mocha,
-            chai,
             vitest,
             jasmine,
             build_script,
@@ -138,9 +132,6 @@ impl PackageJsonData {
         }
         if self.mocha {
             variables.insert(TYPESCRIPT_MOCHA_TASK_VARIABLE, "mocha".to_owned());
-        }
-        if self.chai {
-            variables.insert(TYPESCRIPT_CHAI_TASK_VARIABLE, "chai".to_owned());
         }
         if self.vitest {
             variables.insert(TYPESCRIPT_VITEST_TASK_VARIABLE, "vitest".to_owned());
@@ -169,50 +160,156 @@ impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Option<TaskTemplates> {
         let mut task_templates = TaskTemplates(Vec::new());
 
-        for test_framework in [
-            TYPESCRIPT_JEST_TASK_VARIABLE,
-            TYPESCRIPT_MOCHA_TASK_VARIABLE,
-            TYPESCRIPT_CHAI_TASK_VARIABLE,
-            TYPESCRIPT_VITEST_TASK_VARIABLE,
-            TYPESCRIPT_JASMINE_TASK_VARIABLE,
-        ] {
-            task_templates.0.push(TaskTemplate {
-                label: format!("{} file test", test_framework.template_value()),
-                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec![
-                    test_framework.template_value(),
-                    VariableName::File.template_value(),
-                ],
-                ..TaskTemplate::default()
-            });
-            task_templates.0.push(TaskTemplate {
-                label: format!("{} test $ZED_SYMBOL", test_framework.template_value()),
-                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-                args: vec![
-                    test_framework.template_value(),
-                    "--testNamePattern".to_owned(),
-                    format!("\"{}\"", VariableName::Symbol.template_value()),
-                    VariableName::File.template_value(),
-                ],
-                tags: vec![
-                    "ts-test".to_owned(),
-                    "js-test".to_owned(),
-                    "tsx-test".to_owned(),
-                ],
-                ..TaskTemplate::default()
-            });
-        }
+        // Jest tasks
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} file test",
+                TYPESCRIPT_JEST_TASK_VARIABLE.template_value()
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
+                VariableName::File.template_value(),
+            ],
+            ..TaskTemplate::default()
+        });
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} test {}",
+                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
+                "--testNamePattern".to_owned(),
+                format!("\"{}\"", VariableName::Symbol.template_value()),
+                VariableName::File.template_value(),
+            ],
+            tags: vec![
+                "ts-test".to_owned(),
+                "js-test".to_owned(),
+                "tsx-test".to_owned(),
+            ],
+            ..TaskTemplate::default()
+        });
+
+        // Vitest tasks
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} file test",
+                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value()
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
+                "run".to_owned(),
+                VariableName::File.template_value(),
+            ],
+            ..TaskTemplate::default()
+        });
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} test {}",
+                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
+                "run".to_owned(),
+                "--testNamePattern".to_owned(),
+                format!("\"{}\"", VariableName::Symbol.template_value()),
+                VariableName::File.template_value(),
+            ],
+            tags: vec![
+                "ts-test".to_owned(),
+                "js-test".to_owned(),
+                "tsx-test".to_owned(),
+            ],
+            ..TaskTemplate::default()
+        });
+
+        // Mocha tasks
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} file test",
+                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value()
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
+                VariableName::File.template_value(),
+            ],
+            ..TaskTemplate::default()
+        });
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} test {}",
+                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
+                "--grep".to_owned(),
+                format!("\"{}\"", VariableName::Symbol.template_value()),
+                VariableName::File.template_value(),
+            ],
+            tags: vec![
+                "ts-test".to_owned(),
+                "js-test".to_owned(),
+                "tsx-test".to_owned(),
+            ],
+            ..TaskTemplate::default()
+        });
+
+        // Jasmine tasks
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} file test",
+                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value()
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
+                VariableName::File.template_value(),
+            ],
+            ..TaskTemplate::default()
+        });
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} test {}",
+                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
+                format!("--filter={}", VariableName::Symbol.template_value()),
+                VariableName::File.template_value(),
+            ],
+            tags: vec![
+                "ts-test".to_owned(),
+                "js-test".to_owned(),
+                "tsx-test".to_owned(),
+            ],
+            ..TaskTemplate::default()
+        });
 
         for package_json_script in [
             TYPESCRIPT_TEST_SCRIPT_TASK_VARIABLE,
             TYPESCRIPT_BUILD_SCRIPT_TASK_VARIABLE,
         ] {
             task_templates.0.push(TaskTemplate {
-                label: format!("package script {}", package_json_script.template_value()),
+                label: format!(
+                    "package.json script {}",
+                    package_json_script.template_value()
+                ),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
                     "--prefix".to_owned(),
-                    "$ZED_DIRNAME".to_owned(),
+                    VariableName::WorktreeRoot.template_value(),
                     "run".to_owned(),
                     package_json_script.template_value(),
                 ],
@@ -222,7 +319,10 @@ impl ContextProvider for TypeScriptContextProvider {
         }
 
         task_templates.0.push(TaskTemplate {
-            label: "execute selection $ZED_SELECTED_TEXT".to_owned(),
+            label: format!(
+                "execute selection {}",
+                VariableName::SelectedText.template_value()
+            ),
             command: "node".to_owned(),
             args: vec![
                 "-e".to_owned(),
