@@ -662,7 +662,7 @@ impl Render for NewSessionModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
-                                .last(),
+                                .first(),
                             )
                             .child(
                                 ToggleButton::new(
@@ -677,7 +677,7 @@ impl Render for NewSessionModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
-                                .first(),
+                                .middle(),
                             )
                             .child(
                                 ToggleButton::new(
@@ -701,7 +701,7 @@ impl Render for NewSessionModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
-                                .last(),
+                                .middle(),
                             )
                             .child(
                                 ToggleButton::new(
