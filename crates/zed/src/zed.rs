@@ -98,6 +98,54 @@ fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState
     Some(app_state)
 }
 
+fn execute_open_settings(window: &mut Window, cx: &mut Context<Workspace>) {
+    open_settings_file(
+        paths::settings_file(),
+        || settings::initial_user_settings_content().as_ref().into(),
+        window,
+        cx,
+    );
+}
+
+fn execute_open_keymap(window: &mut Window, cx: &mut Context<Workspace>) {
+    open_settings_file(
+        paths::keymap_file(),
+        || settings::initial_keymap_content().as_ref().into(),
+        window,
+        cx,
+    );
+}
+
+fn execute_open_default_settings(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    open_bundled_file(
+        workspace,
+        settings::default_settings(),
+        "Default Settings",
+        "JSON",
+        window,
+        cx,
+    );
+}
+
+fn execute_open_default_keymap(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    open_bundled_file(
+        workspace,
+        settings::default_keymap(),
+        "Default Key Bindings",
+        "JSON",
+        window,
+        cx,
+    );
+}
+
+fn execute_theme_selector_toggle(action: &theme_selector::Toggle, window: &mut Window, cx: &mut Context<Workspace>) {
+    window.dispatch_action(action.boxed_clone(), cx);
+}
+
+fn execute_icon_theme_selector_toggle(action: &icon_theme_selector::Toggle, window: &mut Window, cx: &mut Context<Workspace>) {
+    window.dispatch_action(action.boxed_clone(), cx);
+}
+
 actions!(
     zed,
     [
@@ -144,12 +192,7 @@ pub fn init(cx: &mut App) {
             app_state,
             cx,
             |_workspace, window, cx| {
-                open_settings_file(
-                    paths::settings_file(),
-                    || settings::initial_user_settings_content().as_ref().into(),
-                    window,
-                    cx,
-                );
+                execute_open_settings(window, cx);
             },
         )
         .detach();
@@ -165,12 +208,7 @@ pub fn init(cx: &mut App) {
             app_state,
             cx,
             |_workspace, window, cx| {
-                open_settings_file(
-                    paths::keymap_file(),
-                    || settings::initial_keymap_content().as_ref().into(),
-                    window,
-                    cx,
-                );
+                execute_open_keymap(window, cx);
             },
         )
         .detach();
@@ -186,14 +224,7 @@ pub fn init(cx: &mut App) {
             app_state,
             cx,
             |workspace, window, cx| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_settings(),
-                    "Default Settings",
-                    "JSON",
-                    window,
-                    cx,
-                );
+                execute_open_default_settings(workspace, window, cx);
             },
         )
         .detach();
@@ -209,14 +240,7 @@ pub fn init(cx: &mut App) {
             app_state,
             cx,
             |workspace, window, cx| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_keymap(),
-                    "Default Key Bindings",
-                    "JSON",
-                    window,
-                    cx,
-                );
+                execute_open_default_keymap(workspace, window, cx);
             },
         )
         .detach();
@@ -233,7 +257,7 @@ pub fn init(cx: &mut App) {
             app_state,
             cx,
             move |_workspace, window, cx| {
-                window.dispatch_action(action.boxed_clone(), cx);
+                execute_theme_selector_toggle(&action, window, cx);
             },
         )
         .detach();
@@ -250,7 +274,7 @@ pub fn init(cx: &mut App) {
             app_state,
             cx,
             move |_workspace, window, cx| {
-                window.dispatch_action(action.boxed_clone(), cx);
+                execute_icon_theme_selector_toggle(&action, window, cx);
             },
         )
         .detach();
@@ -867,43 +891,19 @@ fn register_actions(
             );
         })
         .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
-            open_settings_file(
-                paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
-                window,
-                cx,
-            );
+            execute_open_settings(window, cx);
         })
         .register_action(
             move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
-                open_settings_file(
-                    paths::keymap_file(),
-                    || settings::initial_keymap_content().as_ref().into(),
-                    window,
-                    cx,
-                );
+                execute_open_keymap(window, cx);
             },
         )
         .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
-            open_bundled_file(
-                workspace,
-                settings::default_settings(),
-                "Default Settings",
-                "JSON",
-                window,
-                cx,
-            );
+            execute_open_default_settings(workspace, window, cx);
         })
         .register_action(
             move |workspace, _: &zed_actions::OpenDefaultKeymap, window, cx| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_keymap(),
-                    "Default Key Bindings",
-                    "JSON",
-                    window,
-                    cx,
-                );
+                execute_open_default_keymap(workspace, window, cx);
             },
         )
         .register_action(open_project_settings_file)
@@ -914,7 +914,7 @@ fn register_actions(
              action: &theme_selector::Toggle,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
-                window.dispatch_action(action.boxed_clone(), cx);
+                execute_theme_selector_toggle(action, window, cx);
             },
         )
         .register_action(
@@ -922,7 +922,7 @@ fn register_actions(
              action: &icon_theme_selector::Toggle,
              window: &mut Window,
              cx: &mut Context<Workspace>| {
-                window.dispatch_action(action.boxed_clone(), cx);
+                execute_icon_theme_selector_toggle(action, window, cx);
             },
         )
         .register_action(

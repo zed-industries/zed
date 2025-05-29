@@ -52,6 +52,10 @@ fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState
     Some(app_state)
 }
 
+fn execute_open_recent(workspace: &mut Workspace, create_new_window: bool, window: &mut Window, cx: &mut Context<Workspace>) {
+    RecentProjects::open(workspace, create_new_window, window, cx);
+}
+
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
     cx.observe_new(RecentProjects::register).detach();
@@ -71,7 +75,7 @@ pub fn init(cx: &mut App) {
                 app_state,
                 cx,
                 move |workspace, window, cx| {
-                    RecentProjects::open(workspace, create_new_window, window, cx);
+                    execute_open_recent(workspace, create_new_window, window, cx);
                 },
             )
             .detach();
@@ -134,7 +138,7 @@ impl RecentProjects {
     ) {
         workspace.register_action(|workspace, open_recent: &OpenRecent, window, cx| {
             let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, open_recent.create_new_window, window, cx);
+                execute_open_recent(workspace, open_recent.create_new_window, window, cx);
                 return;
             };
 

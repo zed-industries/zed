@@ -74,6 +74,15 @@ fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState
 
     Some(app_state)
 }
+
+fn execute_open_remote(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+    let handle = cx.entity().downgrade();
+    let fs = workspace.app_state().fs.clone();
+    workspace.toggle_modal(window, cx, |window, cx| {
+        RemoteServerProjects::new(fs, window, cx, handle)
+    });
+}
+
 use crate::ssh_connections::SshConnection;
 use crate::ssh_connections::SshConnectionHeader;
 use crate::ssh_connections::SshConnectionModal;
@@ -381,11 +390,7 @@ pub fn init(cx: &mut App) {
                 app_state,
                 cx,
                 |workspace, window, cx| {
-                    let handle = cx.entity().downgrade();
-                    let fs = workspace.app_state().fs.clone();
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        RemoteServerProjects::new(fs, window, cx, handle)
-                    });
+                    execute_open_remote(workspace, window, cx);
                 },
             )
             .detach();
@@ -404,9 +409,7 @@ impl RemoteServerProjects {
                 cx.propagate();
                 return;
             }
-            let handle = cx.entity().downgrade();
-            let fs = workspace.project().read(cx).fs().clone();
-            workspace.toggle_modal(window, cx, |window, cx| Self::new(fs, window, cx, handle))
+            execute_open_remote(workspace, window, cx)
         });
     }
 
