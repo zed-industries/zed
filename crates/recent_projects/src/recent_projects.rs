@@ -26,33 +26,17 @@ use std::{
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    AppState, CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation,
-    WORKSPACE_DB, Workspace, WorkspaceId, open_new,
+    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
+    Workspace, WorkspaceId, get_app_state_or_quit, open_new,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
-fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState>> {
-    let Some(weak_app_state) = AppState::try_global(cx) else {
-        log::error!(
-            "AppState not initialized when handling {} - critical bug in app startup",
-            action_name
-        );
-        cx.quit();
-        return None;
-    };
-
-    let Some(app_state) = weak_app_state.upgrade() else {
-        log::debug!(
-            "AppState dropped when handling {} - app likely shutting down",
-            action_name
-        );
-        return None;
-    };
-
-    Some(app_state)
-}
-
-fn execute_open_recent(workspace: &mut Workspace, create_new_window: bool, window: &mut Window, cx: &mut Context<Workspace>) {
+fn execute_open_recent(
+    workspace: &mut Workspace,
+    create_new_window: bool,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     RecentProjects::open(workspace, create_new_window, window, cx);
 }
 

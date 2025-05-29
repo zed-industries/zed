@@ -46,7 +46,7 @@ use workspace::OpenOptions;
 use workspace::Toast;
 use workspace::notifications::NotificationId;
 use workspace::{
-    AppState, ModalView, Workspace, notifications::DetachAndPromptErr, open_new,
+    ModalView, Workspace, get_app_state_or_quit, notifications::DetachAndPromptErr, open_new,
     open_ssh_project_with_existing_connection,
 };
 
@@ -54,28 +54,11 @@ use crate::OpenRemote;
 use crate::ssh_config::parse_ssh_config_hosts;
 use crate::ssh_connections::RemoteSettingsContent;
 
-fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState>> {
-    let Some(weak_app_state) = AppState::try_global(cx) else {
-        log::error!(
-            "AppState not initialized when handling {} - critical bug in app startup",
-            action_name
-        );
-        cx.quit();
-        return None;
-    };
-
-    let Some(app_state) = weak_app_state.upgrade() else {
-        log::debug!(
-            "AppState dropped when handling {} - app likely shutting down",
-            action_name
-        );
-        return None;
-    };
-
-    Some(app_state)
-}
-
-fn execute_open_remote(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+fn execute_open_remote(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     let handle = cx.entity().downgrade();
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {

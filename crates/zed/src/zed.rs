@@ -67,8 +67,8 @@ use welcome::{BaseKeymap, DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
-    create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
-    open_new,
+    create_and_open_local_file, get_app_state_or_quit,
+    notifications::simple_message_notification::MessageNotification, open_new,
 };
 use workspace::{CloseIntent, RestoreBanner};
 use workspace::{Pane, notifications::DetachAndPromptErr};
@@ -76,27 +76,6 @@ use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
     icon_theme_selector, theme_selector,
 };
-
-fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState>> {
-    let Some(weak_app_state) = AppState::try_global(cx) else {
-        log::error!(
-            "AppState not initialized when handling {} - critical bug in app startup",
-            action_name
-        );
-        cx.quit();
-        return None;
-    };
-
-    let Some(app_state) = weak_app_state.upgrade() else {
-        log::debug!(
-            "AppState dropped when handling {} - app likely shutting down",
-            action_name
-        );
-        return None;
-    };
-
-    Some(app_state)
-}
 
 fn execute_open_settings(window: &mut Window, cx: &mut Context<Workspace>) {
     open_settings_file(
@@ -116,7 +95,11 @@ fn execute_open_keymap(window: &mut Window, cx: &mut Context<Workspace>) {
     );
 }
 
-fn execute_open_default_settings(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+fn execute_open_default_settings(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     open_bundled_file(
         workspace,
         settings::default_settings(),
@@ -127,7 +110,11 @@ fn execute_open_default_settings(workspace: &mut Workspace, window: &mut Window,
     );
 }
 
-fn execute_open_default_keymap(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+fn execute_open_default_keymap(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     open_bundled_file(
         workspace,
         settings::default_keymap(),
@@ -138,11 +125,19 @@ fn execute_open_default_keymap(workspace: &mut Workspace, window: &mut Window, c
     );
 }
 
-fn execute_theme_selector_toggle(action: &theme_selector::Toggle, window: &mut Window, cx: &mut Context<Workspace>) {
+fn execute_theme_selector_toggle(
+    action: &theme_selector::Toggle,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     window.dispatch_action(action.boxed_clone(), cx);
 }
 
-fn execute_icon_theme_selector_toggle(action: &icon_theme_selector::Toggle, window: &mut Window, cx: &mut Context<Workspace>) {
+fn execute_icon_theme_selector_toggle(
+    action: &icon_theme_selector::Toggle,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     window.dispatch_action(action.boxed_clone(), cx);
 }
 
