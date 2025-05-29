@@ -1,0 +1,73 @@
+[package]
+name = "speech"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+build = "build.rs"
+
+[[bin]]
+name = "whisper_transcribe"
+path = "bin/whisper_transcribe.rs"
+required-features = ["whisper-stt"]
+
+[features]
+default = []
+system-stt = []
+whisper-stt = ["dep:whisper-rs"]
+system-tts = ["dep:tts"]
+openai = ["dep:reqwest"]
+elevenlabs = ["dep:reqwest"]
+piper = []
+all = ["whisper-stt", "system-stt", "system-tts", "openai", "elevenlabs", "piper"]
+
+[dependencies]
+# Core dependencies
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+log.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+
+# Audio processing
+hound = "3.5"
+cpal = "0.15"
+rodio = "0.17"
+parking_lot = "0.12"
+
+# STT providers
+whisper-rs = { version = "0.12", optional = true }
+
+# TTS providers
+tts = { version = "0.26", optional = true }
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+# File system and utilities
+tempfile = "3.8"
+sha2 = "0.10"
+hex = "0.4"
+dirs = "5.0"
+
+[dev-dependencies]
+tokio-test = "0.4"
+env_logger = "0.10"
+
+[[example]]
+name = "speech_demo"
+required-features = ["whisper-stt"]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# macOS system speech frameworks
+objc = "0.2"
+cocoa = "0.24"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Windows SAPI
+windows = { version = "0.52", features = ["Win32_Media_Speech"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Linux speech-dispatcher
+speech-dispatcher = "0.9" 

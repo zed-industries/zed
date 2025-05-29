@@ -42,7 +42,7 @@ handlebars.workspace = true
 language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
-language_models.workspace = true
+language_models = { workspace = true, features = ["llamacpp"] }
 languages = { workspace = true, features = ["load-grammars"] }
 markdown.workspace = true
 node_runtime.workspace = true

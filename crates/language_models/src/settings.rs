@@ -16,12 +16,14 @@ use crate::provider::{
     copilot_chat::CopilotChatSettings,
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
-    llamacpp::LlamaCppSettings,
     lmstudio::LmStudioSettings,
     mistral::MistralSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
 };
+
+#[cfg(feature = "llamacpp")]
+use crate::provider::llamacpp::LlamaCppSettings;
 
 /// Initializes the language model settings.
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
@@ -68,6 +70,7 @@ pub struct AllLanguageModelSettings {
     pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
     pub mistral: MistralSettings,
+    #[cfg(feature = "llamacpp")]
     pub llamacpp: LlamaCppSettings,
 }
 
@@ -84,6 +87,7 @@ pub struct AllLanguageModelSettingsContent {
     pub deepseek: Option<DeepseekSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
+    #[cfg(feature = "llamacpp")]
     pub llamacpp: Option<LlamaCppSettingsContent>,
 }
 
@@ -199,6 +203,7 @@ pub struct MistralSettingsContent {
     pub available_models: Option<Vec<provider::mistral::AvailableModel>>,
 }
 
+#[cfg(feature = "llamacpp")]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct LlamaCppSettingsContent {
     pub models_directory: Option<String>,
@@ -464,53 +469,56 @@ impl settings::Settings for AllLanguageModelSettings {
             );
 
             // Llama.cpp
-            let llamacpp = value.llamacpp.clone();
-            if let Some(models_dir) = llamacpp.as_ref().and_then(|s| s.models_directory.clone()) {
-                settings.llamacpp.models_directory = std::path::PathBuf::from(models_dir);
+            #[cfg(feature = "llamacpp")]
+            {
+                let llamacpp = value.llamacpp.clone();
+                if let Some(models_dir) = llamacpp.as_ref().and_then(|s| s.models_directory.clone()) {
+                    settings.llamacpp.models_directory = std::path::PathBuf::from(models_dir);
+                }
+                merge(
+                    &mut settings.llamacpp.available_models,
+                    llamacpp.as_ref().and_then(|s| s.available_models.clone()),
+                );
+                merge(
+                    &mut settings.llamacpp.model_configurations,
+                    llamacpp.as_ref().and_then(|s| s.model_configurations.clone()),
+                );
+                merge(
+                    &mut settings.llamacpp.gpu_layers,
+                    llamacpp.as_ref().and_then(|s| s.gpu_layers),
+                );
+                if let Some(thread_count) = llamacpp.as_ref().and_then(|s| s.thread_count) {
+                    settings.llamacpp.thread_count = Some(thread_count);
+                }
+                merge(
+                    &mut settings.llamacpp.default_temperature,
+                    llamacpp.as_ref().and_then(|s| s.default_temperature),
+                );
+                merge(
+                    &mut settings.llamacpp.default_context_size,
+                    llamacpp.as_ref().and_then(|s| s.default_context_size),
+                );
+                merge(
+                    &mut settings.llamacpp.default_max_tokens,
+                    llamacpp.as_ref().and_then(|s| s.default_max_tokens),
+                );
+                merge(
+                    &mut settings.llamacpp.default_top_k,
+                    llamacpp.as_ref().and_then(|s| s.default_top_k),
+                );
+                merge(
+                    &mut settings.llamacpp.default_top_p,
+                    llamacpp.as_ref().and_then(|s| s.default_top_p),
+                );
+                merge(
+                    &mut settings.llamacpp.default_repetition_penalty,
+                    llamacpp.as_ref().and_then(|s| s.default_repetition_penalty),
+                );
+                merge(
+                    &mut settings.llamacpp.default_repetition_penalty_window,
+                    llamacpp.as_ref().and_then(|s| s.default_repetition_penalty_window),
+                );
             }
-            merge(
-                &mut settings.llamacpp.available_models,
-                llamacpp.as_ref().and_then(|s| s.available_models.clone()),
-            );
-            merge(
-                &mut settings.llamacpp.model_configurations,
-                llamacpp.as_ref().and_then(|s| s.model_configurations.clone()),
-            );
-            merge(
-                &mut settings.llamacpp.gpu_layers,
-                llamacpp.as_ref().and_then(|s| s.gpu_layers),
-            );
-            if let Some(thread_count) = llamacpp.as_ref().and_then(|s| s.thread_count) {
-                settings.llamacpp.thread_count = Some(thread_count);
-            }
-            merge(
-                &mut settings.llamacpp.default_temperature,
-                llamacpp.as_ref().and_then(|s| s.default_temperature),
-            );
-            merge(
-                &mut settings.llamacpp.default_context_size,
-                llamacpp.as_ref().and_then(|s| s.default_context_size),
-            );
-            merge(
-                &mut settings.llamacpp.default_max_tokens,
-                llamacpp.as_ref().and_then(|s| s.default_max_tokens),
-            );
-            merge(
-                &mut settings.llamacpp.default_top_k,
-                llamacpp.as_ref().and_then(|s| s.default_top_k),
-            );
-            merge(
-                &mut settings.llamacpp.default_top_p,
-                llamacpp.as_ref().and_then(|s| s.default_top_p),
-            );
-            merge(
-                &mut settings.llamacpp.default_repetition_penalty,
-                llamacpp.as_ref().and_then(|s| s.default_repetition_penalty),
-            );
-            merge(
-                &mut settings.llamacpp.default_repetition_penalty_window,
-                llamacpp.as_ref().and_then(|s| s.default_repetition_penalty_window),
-            );
         }
 
         Ok(settings)

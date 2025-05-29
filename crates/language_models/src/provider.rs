@@ -4,6 +4,7 @@ pub mod cloud;
 pub mod copilot_chat;
 pub mod deepseek;
 pub mod google;
+#[cfg(feature = "llamacpp")]
 pub mod llamacpp;
 pub mod lmstudio;
 pub mod mistral;

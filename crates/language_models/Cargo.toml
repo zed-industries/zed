@@ -11,6 +11,10 @@ workspace = true
 [lib]
 path = "src/language_models.rs"
 
+[features]
+default = ["llamacpp"]
+llamacpp = ["dep:llama-cpp-2"]
+
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
@@ -35,7 +39,7 @@ gpui_tokio.workspace = true
 http_client.workspace = true
 language_model.workspace = true
 language_model_repository.workspace = true
-llama-cpp-2.workspace = true
+llama-cpp-2 = { workspace = true, optional = true }
 lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
 menu.workspace = true

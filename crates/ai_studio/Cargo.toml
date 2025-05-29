@@ -18,7 +18,7 @@ gpui.workspace = true
 http_client.workspace = true
 language_model.workspace = true
 language_model_repository.workspace = true
-language_models.workspace = true
+language_models = { workspace = true, features = ["llamacpp"] }
 log.workspace = true
 reqwest_client.workspace = true
 schemars.workspace = true

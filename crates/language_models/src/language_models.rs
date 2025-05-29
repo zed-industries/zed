@@ -15,6 +15,7 @@ use crate::provider::bedrock::BedrockLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
+#[cfg(feature = "llamacpp")]
 use crate::provider::llamacpp::LlamaCppLanguageModelProvider;
 use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 use crate::provider::mistral::MistralLanguageModelProvider;
@@ -57,6 +58,7 @@ fn register_language_model_providers(
         LmStudioLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
+    #[cfg(feature = "llamacpp")]
     registry.register_provider(
         LlamaCppLanguageModelProvider::new(client.http_client(), cx),
         cx,

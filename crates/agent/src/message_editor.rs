@@ -45,6 +45,10 @@ use language_model::{
 };
 use language_model_selector::ToggleModelSelector;
 use media_player::{VoicePlayer, VoiceRecorder, VoiceRecording, VoicePlayerEvent};
+use speech::{
+    stt::{SpeechToText, create_provider},
+    config::{SttConfig, SttProvider},
+};
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
@@ -83,8 +87,11 @@ pub struct MessageEditor {
     // Voice recording and playback using media_player
     voice_player: VoicePlayer,
     voice_recorder: VoiceRecorder,
+    voice_recognizer: Option<Box<dyn SpeechToText>>,
     playback_update_task: Option<Task<()>>,
     playback_speed_menu_handle: PopoverMenuHandle<ContextMenu>,
+    // Transcription state tracking
+    transcribing_recordings: std::collections::HashSet<String>,
 }
 
 const MAX_EDITOR_LINES: usize = 8;
@@ -242,8 +249,10 @@ impl MessageEditor {
             _subscriptions: subscriptions,
             voice_player: VoicePlayer::with_executor(cx.background_executor().clone()),
             voice_recorder: VoiceRecorder::with_executor(cx.background_executor().clone()),
+            voice_recognizer: None,
             playback_update_task: None,
             playback_speed_menu_handle: PopoverMenuHandle::default(),
+            transcribing_recordings: std::collections::HashSet::new(),
         };
         
         instance
@@ -1393,6 +1402,7 @@ impl MessageEditor {
                                 let recording_id = recording.id.clone();
                                 let is_playing = self.voice_player.is_playing(&recording_id);
                                 let is_paused = self.voice_player.is_paused(&recording_id);
+                                let is_transcribing = self.transcribing_recordings.contains(&recording_id);
                                 
                                 let (progress, current_time) = self.voice_player.get_progress(&recording_id)
                                     .unwrap_or((0.0, Duration::ZERO));
@@ -1504,37 +1514,48 @@ impl MessageEditor {
                                                     .items_center()
                                                     .child(
                                                         // Transcribe button
-                                                        IconButton::new(("transcribe", index), IconName::FileText)
-                                                            .size(ButtonSize::Compact)
-                                                            .style(ButtonStyle::Subtle)
-                                                            .icon_color(Color::Accent)
-                                                            .tooltip(move |window, cx| {
-                                                                Tooltip::text("Transcribe recording")(window, cx)
-                                                            })
-                                                            .on_click({
-                                                                let recording_id = recording_id.clone();
-                                                                cx.listener(move |this, _event, _window, cx| {
-                                                                    this.transcribe_voice_recording(recording_id.clone(), cx);
+                                                        if is_transcribing {
+                                                            IconButton::new(("transcribe", index), IconName::ArrowCircle)
+                                                                .size(ButtonSize::Compact)
+                                                                .style(ButtonStyle::Subtle)
+                                                                .icon_color(Color::Muted)
+                                                                .disabled(true)
+                                                                .tooltip(move |window, cx| {
+                                                                    Tooltip::text("Transcribing...")(window, cx)
                                                                 })
-                                                            })
-                                                    )
-                                                    .child(
-                                                        // Remove button
-                                                        IconButton::new(("remove", index), IconName::Trash)
-                                                            .size(ButtonSize::Compact)
-                                                            .style(ButtonStyle::Subtle)
-                                                            .icon_color(Color::Error)
-                                                            .tooltip(move |window, cx| {
-                                                                Tooltip::text("Remove recording")(window, cx)
-                                                            })
-                                                            .on_click({
-                                                                let recording_id = recording_id.clone();
-                                                                cx.listener(move |this, _event, _window, cx| {
-                                                                    this.remove_voice_recording(recording_id.clone(), cx);
+                                                        } else {
+                                                            IconButton::new(("transcribe", index), IconName::FileText)
+                                                                .size(ButtonSize::Compact)
+                                                                .style(ButtonStyle::Subtle)
+                                                                .icon_color(Color::Accent)
+                                                                .tooltip(move |window, cx| {
+                                                                    Tooltip::text("Transcribe recording")(window, cx)
                                                                 })
-                                                            })
+                                                                .on_click({
+                                                                    let recording_id = recording_id.clone();
+                                                                    cx.listener(move |this, _event, _window, cx| {
+                                                                        this.transcribe_voice_recording(recording_id.clone(), cx);
+                                                                    })
+                                                                })
+                                                        }
                                                     )
                                             )
+                                    )
+                                    .child(
+                                        // Remove button
+                                        IconButton::new(("remove", index), IconName::Trash)
+                                            .size(ButtonSize::Compact)
+                                            .style(ButtonStyle::Subtle)
+                                            .icon_color(Color::Error)
+                                            .tooltip(move |window, cx| {
+                                                Tooltip::text("Remove recording")(window, cx)
+                                            })
+                                            .on_click({
+                                                let recording_id = recording_id.clone();
+                                                cx.listener(move |this, _event, _window, cx| {
+                                                    this.remove_voice_recording(recording_id.clone(), cx);
+                                                })
+                                            })
                                     )
                                     .child(
                                         // Progress bar
@@ -1869,26 +1890,122 @@ impl MessageEditor {
     fn transcribe_voice_recording(&mut self, recording_id: String, cx: &mut Context<Self>) {
         log::info!("🎤 Transcribing recording: {}", recording_id);
         
+        // Check if this recording is already being transcribed
+        if self.transcribing_recordings.contains(&recording_id) {
+            log::info!("⚠️ Recording {} is already being transcribed", recording_id);
+            return;
+        }
+        
         if let Some(recording) = self.voice_player.get_recording(&recording_id) {
             log::info!("📝 Starting transcription for recording {} ({:.1}s)", 
                 recording.id, recording.duration.as_secs_f32());
             
-            // For now, insert a placeholder text indicating transcription
-            // In the future, this could integrate with a transcription service
-            let placeholder_text = format!(
-                "[Transcription of voice recording {} ({:.1}s) - transcription service not yet implemented]",
-                recording.id,
-                recording.duration.as_secs_f32()
-            );
+            // Mark this recording as being transcribed
+            self.transcribing_recordings.insert(recording_id.clone());
+            cx.notify(); // Update UI to show transcribing state
             
-            // Insert the placeholder text into the editor
-            self.editor.update(cx, |editor, cx| {
-                let cursor_position = editor.selections.newest::<usize>(cx).head();
+            // Clone the recording data for async processing
+            let audio_data = recording.data.clone();
+            let transcription_recording_id = recording_id.clone();
+            
+            // Convert audio data to f32 samples for transcription
+            let samples: Vec<f32> = audio_data.iter()
+                .map(|&sample| sample as f32 / i16::MAX as f32)
+                .collect();
+            
+            log::info!("🔄 Processing {} samples", samples.len());
+            
+            // Phase 1: Background transcription work (no UI access)
+            let background_task = cx.background_spawn(async move {
+                log::info!("🔧 Initializing Whisper STT provider...");
+                let config = SttConfig {
+                    provider: SttProvider::Whisper,
+                    model_path: Some("/Users/vladislavstarshinov/ai/models/my/ggml-large-v3-turbo.bin".into()),
+                    language: "en".to_string(),
+                    api_key: None,
+                    api_url: None,
+                    chunk_duration_ms: 5000,
+                    enable_streaming: false,
+                };
                 
-                editor.edit([(cursor_position..cursor_position, placeholder_text)], cx);
+                // Initialize STT provider in background
+                let provider = match create_provider(config).await {
+                    Ok(provider) => {
+                        log::info!("✅ STT provider initialized successfully");
+                        provider
+                    }
+                    Err(e) => {
+                        log::error!("❌ Failed to initialize STT provider: {}", e);
+                        return Err(e);
+                    }
+                };
+                
+                // Perform transcription in background
+                let transcription_result = provider.transcribe_audio(&samples).await;
+                log::info!("🔄 Background transcription completed");
+                
+                Ok((provider, transcription_result))
             });
             
-            log::info!("✅ Transcription placeholder inserted for recording: {}", recording_id);
+            // Phase 2: Foreground UI updates
+            cx.spawn(async move |this, cx| {
+                match background_task.await {
+                    Ok((provider, transcription_result)) => {
+                        // Now we're back on the foreground thread and can safely update UI
+                        this.update(cx, |this, cx| {
+                            // Store the provider
+                            this.voice_recognizer = Some(provider);
+                            
+                            match transcription_result {
+                                Ok(result) => {
+                                    log::info!("✅ Transcription completed: \"{}\"", result.text);
+                                    
+                                    let transcribed_text = if result.text.trim().is_empty() {
+                                        "[No speech detected in recording]".to_string()
+                                    } else {
+                                        result.text.trim().to_string()
+                                    };
+                                    
+                                    // Update the editor with transcribed text
+                                    this.editor.update(cx, |editor, cx| {
+                                        let cursor_position = editor.selections.newest::<usize>(cx).head();
+                                        editor.edit([(cursor_position..cursor_position, transcribed_text)], cx);
+                                    });
+                                }
+                                Err(e) => {
+                                    log::error!("❌ Transcription failed: {}", e);
+                                    
+                                    // Insert error message
+                                    this.editor.update(cx, |editor, cx| {
+                                        let cursor_position = editor.selections.newest::<usize>(cx).head();
+                                        let error_text = format!("[Transcription failed: {}]", e);
+                                        editor.edit([(cursor_position..cursor_position, error_text)], cx);
+                                    });
+                                }
+                            }
+                            
+                            // Clear transcription state and notify UI
+                            this.transcribing_recordings.remove(&transcription_recording_id);
+                            cx.notify();
+                        }).log_err();
+                    }
+                    Err(e) => {
+                        log::error!("❌ Background transcription task failed: {}", e);
+                        
+                        // Handle initialization failure
+                        this.update(cx, |this, cx| {
+                            this.editor.update(cx, |editor, cx| {
+                                let cursor_position = editor.selections.newest::<usize>(cx).head();
+                                let error_text = format!("[STT initialization failed: {}]", e);
+                                editor.edit([(cursor_position..cursor_position, error_text)], cx);
+                            });
+                            this.transcribing_recordings.remove(&transcription_recording_id);
+                            cx.notify();
+                        }).log_err();
+                    }
+                }
+            }).detach();
+            
         } else {
             log::error!("❌ Recording not found for transcription: {}", recording_id);
         }
