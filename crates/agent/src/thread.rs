@@ -1356,7 +1356,7 @@ impl Thread {
             request.messages[message_ix_to_cache].cache = true;
         }
 
-        self.attached_tracked_files_state(&mut request.messages, cx);
+        self.attach_tracked_files_state(&mut request.messages, cx);
 
         request.tools = available_tools;
         request.mode = if model.supports_max_mode() {
@@ -1419,7 +1419,7 @@ impl Thread {
         request
     }
 
-    fn attached_tracked_files_state(
+    fn attach_tracked_files_state(
         &self,
         messages: &mut Vec<LanguageModelRequestMessage>,
         cx: &App,
@@ -1439,7 +1439,7 @@ impl Thread {
         }
 
         let content = MessageContent::Text(format!(
-            "[The following is an auto-generated notifcation; do not reply.]
+            "[The following is an auto-generated notification; do not reply]
 
 These files have changed since the last read:
 {stale_files}
@@ -1461,6 +1461,18 @@ These files have changed since the last read:
         };
 
         messages.insert(insert_position, request_message);
+
+        // It makes no sense to cache messages after this one:
+        // the cache will be invalidated after this message is gone.
+        // Move cache marker before this message.
+        let has_cached_messages_after = messages
+            .iter()
+            .skip(insert_position + 1)
+            .any(|message| message.cache);
+
+        if has_cached_messages_after {
+            messages[insert_position - 1].cache = true;
+        }
     }
 
     pub fn stream_completion(
@@ -3261,7 +3273,7 @@ fn main() {{
         assert_eq!(last_message.role, Role::User);
 
         // Check the exact content of the message
-        let expected_content = "[The following is an auto-generated notifcation; do not reply.]
+        let expected_content = "[The following is an auto-generated notification; do not reply]
 
 These files have changed since the last read:
 - code.rs
@@ -3271,6 +3283,14 @@ These files have changed since the last read:
             last_message.string_contents(),
             expected_content,
             "Last message should be exactly the stale buffer notification"
+        );
+
+        // The message before the notification should be cached
+        let index = new_request.messages.len() - 2;
+        let previous_message = new_request.messages.get(index).unwrap();
+        assert!(
+            previous_message.cache,
+            "Message before the stale buffer notification should be cached"
         );
     }
 
