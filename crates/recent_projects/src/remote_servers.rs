@@ -56,13 +56,19 @@ use crate::ssh_connections::RemoteSettingsContent;
 
 fn get_app_state_or_quit(cx: &mut App, action_name: &str) -> Option<Arc<AppState>> {
     let Some(weak_app_state) = AppState::try_global(cx) else {
-        log::error!("AppState not initialized when handling {} - critical bug in app startup", action_name);
+        log::error!(
+            "AppState not initialized when handling {} - critical bug in app startup",
+            action_name
+        );
         cx.quit();
         return None;
     };
 
     let Some(app_state) = weak_app_state.upgrade() else {
-        log::debug!("AppState dropped when handling {} - app likely shutting down", action_name);
+        log::debug!(
+            "AppState dropped when handling {} - app likely shutting down",
+            action_name
+        );
         return None;
     };
 
