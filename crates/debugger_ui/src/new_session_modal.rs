@@ -8,7 +8,7 @@ use std::{
     time::Duration,
     usize,
 };
-use tasks_ui::TasksModal;
+use tasks_ui::{TaskOverrides, TasksModal};
 
 use dap::{
     DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
@@ -22,7 +22,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
-use task::{DebugScenario, LaunchRequest, ZedDebugConfig};
+use task::{DebugScenario, LaunchRequest, RevealTarget, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -78,6 +78,7 @@ impl NewSessionModal {
         workspace: &mut Workspace,
         window: &mut Window,
         mode: NewSessionMode,
+        reveal_target: Option<RevealTarget>,
         cx: &mut Context<Workspace>,
     ) {
         let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
@@ -115,12 +116,14 @@ impl NewSessionModal {
                         });
                     }
 
+                    let task_overrides = Some(TaskOverrides { reveal_target });
+
                     let task_mode = TaskMode {
                         task_modal: cx.new(|cx| {
                             TasksModal::new(
                                 task_store.clone(),
                                 task_contexts,
-                                None,
+                                task_overrides,
                                 false,
                                 workspace_handle.clone(),
                                 window,

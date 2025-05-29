@@ -210,7 +210,7 @@ pub fn init(cx: &mut App) {
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    NewSessionModal::show(workspace, window, NewSessionMode::Launch, cx);
+                    NewSessionModal::show(workspace, window, NewSessionMode::Launch, None, cx);
                 })
                 .register_action(
                     |workspace: &mut Workspace, _: &RerunLastSession, window, cx| {
@@ -351,11 +351,14 @@ fn spawn_task_or_modal(
             )
             .detach_and_log_err(cx)
         }
-        Spawn::ViaModal {
-            reveal_target: _reveal_target,
-        } => {
-            // FIXME do something with the reveal target?
-            NewSessionModal::show(workspace, window, NewSessionMode::Task, cx);
+        Spawn::ViaModal { reveal_target } => {
+            NewSessionModal::show(
+                workspace,
+                window,
+                NewSessionMode::Task,
+                reveal_target.clone(),
+                cx,
+            );
         }
     }
 }

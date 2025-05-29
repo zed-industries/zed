@@ -175,6 +175,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
                 workspace,
                 window,
                 NewSessionMode::Launch,
+                None,
                 cx,
             );
         })
