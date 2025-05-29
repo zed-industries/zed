@@ -1084,9 +1084,23 @@ impl AgentPanel {
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
         match self.active_view {
             ActiveView::Configuration | ActiveView::History => {
-                self.active_view =
-                    ActiveView::thread(self.thread.read(cx).thread().clone(), window, cx);
-                self.message_editor.focus_handle(cx).focus(window);
+                if let Some(previous_view) = self.previous_view.take() {
+                    self.active_view = previous_view;
+
+                    match &self.active_view {
+                        ActiveView::Thread { .. } => {
+                            self.message_editor.focus_handle(cx).focus(window);
+                        }
+                        ActiveView::TextThread { context_editor, .. } => {
+                            context_editor.focus_handle(cx).focus(window);
+                        }
+                        _ => {}
+                    }
+                } else {
+                    self.active_view =
+                        ActiveView::thread(self.thread.read(cx).thread().clone(), window, cx);
+                    self.message_editor.focus_handle(cx).focus(window);
+                }
                 cx.notify();
             }
             _ => {}
@@ -1347,6 +1361,12 @@ impl AgentPanel {
         let current_is_history = matches!(self.active_view, ActiveView::History);
         let new_is_history = matches!(new_view, ActiveView::History);
 
+        let current_is_config = matches!(self.active_view, ActiveView::Configuration);
+        let new_is_config = matches!(new_view, ActiveView::Configuration);
+
+        let current_is_special = current_is_history || current_is_config;
+        let new_is_special = new_is_history || new_is_config;
+
         match &self.active_view {
             ActiveView::Thread { thread, .. } => {
                 if let Some(thread) = thread.upgrade() {
@@ -1387,12 +1407,12 @@ impl AgentPanel {
             _ => {}
         }
 
-        if current_is_history && !new_is_history {
+        if current_is_special && !new_is_special {
             self.active_view = new_view;
-        } else if !current_is_history && new_is_history {
+        } else if !current_is_special && new_is_special {
             self.previous_view = Some(std::mem::replace(&mut self.active_view, new_view));
         } else {
-            if !new_is_history {
+            if !new_is_special {
                 self.previous_view = None;
             }
             self.active_view = new_view;
