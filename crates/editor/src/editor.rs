@@ -18635,16 +18635,20 @@ impl Editor {
             }
 
             let minimap_settings = EditorSettings::get_global(cx).minimap;
-            if self.minimap_visibility.settings_visibility() != minimap_settings.minimap_enabled() {
-                self.set_minimap_visibility(
-                    MinimapVisibility::for_mode(self.mode(), cx),
-                    window,
-                    cx,
-                );
-            } else if let Some(minimap_entity) = self.minimap.as_ref() {
-                minimap_entity.update(cx, |minimap_editor, cx| {
-                    minimap_editor.update_minimap_configuration(minimap_settings, cx)
-                })
+            if self.minimap_visibility != MinimapVisibility::Disabled {
+                if self.minimap_visibility.settings_visibility()
+                    != minimap_settings.minimap_enabled()
+                {
+                    self.set_minimap_visibility(
+                        MinimapVisibility::for_mode(self.mode(), cx),
+                        window,
+                        cx,
+                    );
+                } else if let Some(minimap_entity) = self.minimap.as_ref() {
+                    minimap_entity.update(cx, |minimap_editor, cx| {
+                        minimap_editor.update_minimap_configuration(minimap_settings, cx)
+                    })
+                }
             }
         }
 
