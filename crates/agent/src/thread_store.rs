@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -534,7 +534,7 @@ impl ThreadStore {
         }
     }
 
-    pub fn load_profile(&self, profile: AgentProfile, cx: &mut Context<Self>) {
+    pub fn load_profile(&self, profile: AgentProfileSettings, cx: &mut Context<Self>) {
         self.tools.update(cx, |tools, cx| {
             tools.disable_all_tools(cx);
             tools.enable(

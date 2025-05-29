@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use agent_settings::{
-    AgentProfile, AgentProfileContent, AgentProfileId, AgentSettings, AgentSettingsContent,
+    AgentProfileContent, AgentProfileId, AgentProfileSettings, AgentSettings, AgentSettingsContent,
     ContextServerPresetContent,
 };
 use assistant_tool::{ToolSource, ToolWorkingSet};
@@ -75,7 +75,7 @@ pub struct ToolPickerDelegate {
     fs: Arc<dyn Fs>,
     items: Arc<Vec<PickerItem>>,
     profile_id: AgentProfileId,
-    profile: AgentProfile,
+    profile: AgentProfileSettings,
     filtered_items: Vec<PickerItem>,
     selected_index: usize,
     mode: ToolPickerMode,
@@ -88,7 +88,7 @@ impl ToolPickerDelegate {
         tool_set: Entity<ToolWorkingSet>,
         thread_store: WeakEntity<ThreadStore>,
         profile_id: AgentProfileId,
-        profile: AgentProfile,
+        profile: AgentProfileSettings,
         cx: &mut Context<ToolPicker>,
     ) -> Self {
         let items = Arc::new(Self::resolve_items(mode, &tool_set, cx));

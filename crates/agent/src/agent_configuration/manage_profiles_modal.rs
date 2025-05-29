@@ -2,7 +2,7 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
+use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings, builtin_profiles};
 use assistant_tool::ToolWorkingSet;
 use convert_case::{Case, Casing as _};
 use editor::Editor;
@@ -280,7 +280,7 @@ impl ManageProfilesModal {
                 let name = mode.name_editor.read(cx).text(cx);
                 let profile_id = AgentProfileId(name.to_case(Case::Kebab).into());
 
-                let profile = AgentProfile {
+                let profile = AgentProfileSettings {
                     name: name.into(),
                     tools: base_profile
                         .as_ref()
@@ -329,7 +329,7 @@ impl ManageProfilesModal {
     fn create_profile(
         &self,
         profile_id: AgentProfileId,
-        profile: AgentProfile,
+        profile: AgentProfileSettings,
         cx: &mut Context<Self>,
     ) {
         update_settings_file::<AgentSettings>(self.fs.clone(), cx, {

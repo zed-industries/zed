@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_settings::{
-    AgentDockPosition, AgentProfile, AgentProfileId, AgentSettings, GroupedAgentProfiles,
+    AgentDockPosition, AgentProfileId, AgentProfileSettings, AgentSettings, GroupedAgentProfiles,
     builtin_profiles,
 };
 use fs::Fs;
@@ -99,7 +99,7 @@ impl ProfileSelector {
     fn menu_entry_for_profile(
         &self,
         profile_id: AgentProfileId,
-        profile: &AgentProfile,
+        profile: &AgentProfileSettings,
         settings: &AgentSettings,
         _cx: &App,
     ) -> ContextMenuEntry {

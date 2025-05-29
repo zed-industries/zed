@@ -19,8 +19,8 @@ pub mod builtin_profiles {
 
 #[derive(Default)]
 pub struct GroupedAgentProfiles {
-    pub builtin: IndexMap<AgentProfileId, AgentProfile>,
-    pub custom: IndexMap<AgentProfileId, AgentProfile>,
+    pub builtin: IndexMap<AgentProfileId, AgentProfileSettings>,
+    pub custom: IndexMap<AgentProfileId, AgentProfileSettings>,
 }
 
 impl GroupedAgentProfiles {
@@ -63,7 +63,7 @@ impl Default for AgentProfileId {
 
 /// A profile for the Zed Agent that controls its behavior.
 #[derive(Debug, Clone)]
-pub struct AgentProfile {
+pub struct AgentProfileSettings {
     /// The name of the profile.
     pub name: SharedString,
     pub tools: IndexMap<Arc<str>, bool>,
