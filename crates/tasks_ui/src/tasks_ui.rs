@@ -157,6 +157,7 @@ pub fn toggle_modal(
                             reveal_target.map(|target| TaskOverrides {
                                 reveal_target: Some(target),
                             }),
+                            true,
                             workspace_handle,
                             window,
                             cx,

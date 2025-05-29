@@ -23,7 +23,7 @@ use workspace::{ModalView, Workspace};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
-pub(crate) struct TasksModalDelegate {
+pub struct TasksModalDelegate {
     task_store: Entity<TaskStore>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     task_overrides: Option<TaskOverrides>,
@@ -123,7 +123,7 @@ impl TasksModalDelegate {
 }
 
 pub struct TasksModal {
-    picker: Entity<Picker<TasksModalDelegate>>,
+    pub picker: Entity<Picker<TasksModalDelegate>>,
     _subscription: [Subscription; 2],
 }
 
@@ -132,6 +132,7 @@ impl TasksModal {
         task_store: Entity<TaskStore>,
         task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
+        is_modal: bool,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -142,6 +143,7 @@ impl TasksModal {
                 window,
                 cx,
             )
+            .modal(is_modal)
         });
         let _subscription = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {

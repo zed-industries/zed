@@ -116,11 +116,12 @@ impl NewSessionModal {
                     let configure_mode = ConfigureMode::new(None, window, cx);
 
                     let task_mode = TaskMode {
-                        task_picker: cx.new(|cx| {
+                        task_modal: cx.new(|cx| {
                             TasksModal::new(
                                 task_store.clone(),
                                 TaskContexts::default(),
                                 None,
+                                false,
                                 workspace_handle.clone(),
                                 window,
                                 cx,
@@ -162,7 +163,7 @@ impl NewSessionModal {
                                     cx.notify();
                                 });
 
-                                this.task_mode.task_picker.update(cx, |modal, cx| {
+                                this.task_mode.task_modal.update(cx, |modal, cx| {
                                     modal.task_contexts_loaded(task_contexts, window, cx)
                                 })
                             })
@@ -193,7 +194,13 @@ impl NewSessionModal {
     fn render_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let dap_menu = self.adapter_drop_down_menu(window, cx);
         match self.mode {
-            NewSessionMode::Task => self.task_mode.task_picker.clone().into_any_element(),
+            NewSessionMode::Task => self
+                .task_mode
+                .task_modal
+                .read(cx)
+                .picker
+                .clone()
+                .into_any_element(),
             NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
                 this.clone().render(window, cx).into_any_element()
             }),
@@ -209,7 +216,7 @@ impl NewSessionModal {
 
     fn mode_focus_handle(&self, cx: &App) -> FocusHandle {
         match self.mode {
-            NewSessionMode::Task => self.task_mode.task_picker.focus_handle(cx),
+            NewSessionMode::Task => self.task_mode.task_modal.focus_handle(cx),
             NewSessionMode::Attach => self.attach_mode.read(cx).attach_picker.focus_handle(cx),
             NewSessionMode::Configure => self.configure_mode.read(cx).program.focus_handle(cx),
             NewSessionMode::Launch => self.launch_picker.focus_handle(cx),
@@ -1008,7 +1015,7 @@ impl AttachMode {
 
 #[derive(Clone)]
 pub(super) struct TaskMode {
-    pub(super) task_picker: Entity<TasksModal>,
+    pub(super) task_modal: Entity<TasksModal>,
 }
 
 pub(super) struct DebugScenarioDelegate {
