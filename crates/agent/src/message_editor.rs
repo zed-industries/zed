@@ -2164,15 +2164,22 @@ impl MessageEditor {
         if let Some(ref tts_service) = self.tts_service {
             let service = tts_service.clone();
             let text = text.to_string();
+            let text_for_log = text.clone(); // Clone for logging
             
             self.tts_is_speaking = true;
             cx.notify(); // Update UI immediately
             
+            // Run TTS in background thread to avoid blocking UI
+            let background_task = cx.background_spawn(async move {
+                service.speak_text(&text).await
+            });
+            
+            // Handle the result on the foreground thread
             cx.spawn(async move |handle, cx| {
-                match service.speak_text(&text).await {
+                match background_task.await {
                     Ok(_) => {
                         log::info!("🔊 TTS started speaking: {}", 
-                            if text.len() > 50 { format!("{}...", &text[..50]) } else { text });
+                            if text_for_log.len() > 50 { format!("{}...", &text_for_log[..50]) } else { text_for_log });
                         // Speaking will finish automatically, reset state
                         handle.update(cx, |this: &mut MessageEditor, cx| {
                             this.tts_is_speaking = false;
@@ -2201,8 +2208,14 @@ impl MessageEditor {
             self.tts_is_speaking = false;
             cx.notify(); // Update UI immediately
             
+            // Run TTS stop in background thread to avoid blocking UI
+            let background_task = cx.background_spawn(async move {
+                service.stop_speaking().await
+            });
+            
+            // Handle the result on the foreground thread
             cx.spawn(async move |_handle, _cx| {
-                match service.stop_speaking().await {
+                match background_task.await {
                     Ok(_) => {
                         log::info!("🔇 TTS stopped speaking");
                     }
