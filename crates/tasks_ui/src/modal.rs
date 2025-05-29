@@ -33,7 +33,7 @@ pub(crate) struct TasksModalDelegate {
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
     prompt: String,
-    task_contexts: TaskContexts,
+    task_contexts: Arc<TaskContexts>,
     placeholder_text: Arc<str>,
 }
 
@@ -68,7 +68,7 @@ impl TasksModalDelegate {
             divider_index: None,
             selected_index: 0,
             prompt: String::default(),
-            task_contexts,
+            task_contexts: Arc::new(task_contexts),
             task_overrides,
             placeholder_text,
         }
@@ -157,6 +157,20 @@ impl TasksModal {
             picker,
             _subscription,
         }
+    }
+
+    pub fn task_contexts_loaded(
+        &mut self,
+        task_contexts: Arc<TaskContexts>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.task_contexts = task_contexts;
+            picker.delegate.candidates = None;
+            picker.refresh(window, cx);
+            cx.notify();
+        })
     }
 }
 

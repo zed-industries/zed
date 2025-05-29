@@ -149,9 +149,11 @@ impl NewSessionModal {
                                     this.debugger = None;
                                 }
 
+                                let task_contexts = Arc::new(task_contexts);
+
                                 this.launch_picker.update(cx, |picker, cx| {
                                     picker.delegate.task_contexts_loaded(
-                                        task_contexts,
+                                        task_contexts.clone(),
                                         languages,
                                         window,
                                         cx,
@@ -159,6 +161,10 @@ impl NewSessionModal {
                                     picker.refresh(window, cx);
                                     cx.notify();
                                 });
+
+                                this.task_mode.task_picker.update(cx, |modal, cx| {
+                                    modal.task_contexts_loaded(task_contexts, window, cx)
+                                })
                             })
                         }
                     })
@@ -1057,12 +1063,12 @@ impl DebugScenarioDelegate {
 
     pub fn task_contexts_loaded(
         &mut self,
-        task_contexts: TaskContexts,
+        task_contexts: Arc<TaskContexts>,
         languages: Arc<LanguageRegistry>,
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        self.task_contexts = Some(Arc::new(task_contexts));
+        self.task_contexts = Some(task_contexts);
 
         let (recent, scenarios) = self
             .task_store
