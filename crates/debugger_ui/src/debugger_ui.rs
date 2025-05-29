@@ -351,7 +351,9 @@ fn spawn_task_or_modal(
             )
             .detach_and_log_err(cx)
         }
-        Spawn::ViaModal { reveal_target } => {
+        Spawn::ViaModal {
+            reveal_target: _reveal_target,
+        } => {
             // FIXME do something with the reveal target?
             NewSessionModal::show(workspace, window, NewSessionMode::Task, cx);
         }

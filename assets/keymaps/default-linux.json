@@ -1018,5 +1018,13 @@
     "bindings": {
       "enter": "menu::Confirm"
     }
+  },
+  {
+    "context": "Tasks > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "tab": "pane::ActivateNextItem",
+      "shift-tab": "pane::ActivatePreviousItem"
+    }
   }
 ]

@@ -17,7 +17,7 @@ use editor::{Anchor, Editor, EditorElement, EditorStyle, scroll::Autoscroll};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Animation, AnimationExt as _, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Render, Subscription, TextStyle, Transformation, WeakEntity, percentage,
+    Focusable, KeyContext, Render, Subscription, TextStyle, Transformation, WeakEntity, percentage,
 };
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
@@ -624,37 +624,39 @@ impl Render for NewSessionModal {
         v_flex()
             .size_full()
             .w(rems(34.))
-            .key_context("Pane")
+            .key_context({
+                let mut key_context = KeyContext::new_with_defaults();
+                key_context.add("Pane");
+                key_context.add("Tasks");
+                key_context
+            })
             .elevation_3(cx)
             .bg(cx.theme().colors().elevated_surface_background)
             .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
                 cx.emit(DismissEvent);
             }))
+            .on_action(cx.listener(|this, _: &pane::ActivateNextItem, window, cx| {
+                this.mode = match this.mode {
+                    NewSessionMode::Task => NewSessionMode::Launch,
+                    NewSessionMode::Launch => NewSessionMode::Attach,
+                    NewSessionMode::Attach => NewSessionMode::Configure,
+                    NewSessionMode::Configure => NewSessionMode::Task,
+                };
+
+                this.mode_focus_handle(cx).focus(window);
+            }))
             .on_action(
                 cx.listener(|this, _: &pane::ActivatePreviousItem, window, cx| {
                     this.mode = match this.mode {
-                        NewSessionMode::Task => NewSessionMode::Launch,
-                        NewSessionMode::Launch => NewSessionMode::Attach,
-                        NewSessionMode::Attach => NewSessionMode::Configure,
-                        NewSessionMode::Configure => NewSessionMode::Task,
+                        NewSessionMode::Task => NewSessionMode::Configure,
+                        NewSessionMode::Launch => NewSessionMode::Task,
+                        NewSessionMode::Attach => NewSessionMode::Launch,
+                        NewSessionMode::Configure => NewSessionMode::Attach,
                     };
 
                     this.mode_focus_handle(cx).focus(window);
                 }),
             )
-            .on_action(cx.listener(|this, _: &pane::ActivateNextItem, window, cx| {
-                this.mode = match this.mode {
-                    NewSessionMode::Task => NewSessionMode::Configure,
-                    NewSessionMode::Launch => NewSessionMode::Attach,
-                    NewSessionMode::Attach => NewSessionMode::Launch,
-                    NewSessionMode::Configure => NewSessionMode::Attach,
-                    _ => {
-                        return;
-                    }
-                };
-
-                this.mode_focus_handle(cx).focus(window);
-            }))
             .child(
                 h_flex()
                     .w_full()
