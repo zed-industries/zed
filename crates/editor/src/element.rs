@@ -1780,7 +1780,8 @@ impl EditorElement {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
                     let hunk_bounds =
                         Self::diff_hunk_bounds(snapshot, line_height, gutter_hitbox.bounds, hunk);
-                    *hitbox = Some(window.insert_hitbox(hunk_bounds, HitboxFlags::OCCLUDE));
+                    *hitbox =
+                        Some(window.insert_hitbox(hunk_bounds, HitboxFlags::BLOCK_MOUSE_IN_FRONT));
                 }
             }
         }
@@ -6360,7 +6361,7 @@ impl EditorElement {
                     }
                 };
 
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.contains_mouse(window) {
                     delta = delta.coalesce(event.delta);
                     editor.update(cx, |editor, cx| {
                         let position_map: &PositionMap = &position_map;

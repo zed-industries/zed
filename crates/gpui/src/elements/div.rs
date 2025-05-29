@@ -124,7 +124,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && hitbox.is_hovered_and_can_click(window)
+                    && hitbox.is_hovered(window)
                 {
                     (listener)(event, window, cx)
                 }
@@ -141,7 +141,7 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_hovered_and_can_click(window) {
+                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -157,7 +157,7 @@ impl Interactivity {
     ) {
         self.mouse_down_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered_and_can_click(window) {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -176,7 +176,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Bubble
                     && event.button == button
-                    && hitbox.is_hovered_and_can_click(window)
+                    && hitbox.is_hovered(window)
                 {
                     (listener)(event, window, cx)
                 }
@@ -193,7 +193,7 @@ impl Interactivity {
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Capture && hitbox.is_hovered_and_can_click(window) {
+                if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -209,7 +209,7 @@ impl Interactivity {
     ) {
         self.mouse_up_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered_and_can_click(window) {
+                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                     (listener)(event, window, cx)
                 }
             }));
@@ -246,7 +246,7 @@ impl Interactivity {
             .push(Box::new(move |event, phase, hitbox, window, cx| {
                 if phase == DispatchPhase::Capture
                     && event.button == button
-                    && !hitbox.is_hovered_and_can_click(window)
+                    && !hitbox.is_hovered(window)
                 {
                     (listener)(event, window, cx);
                 }
@@ -313,7 +313,7 @@ impl Interactivity {
     ) {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered_and_can_scroll(window) {
+                if phase == DispatchPhase::Bubble && hitbox.contains_mouse(window) {
                     (listener)(event, window, cx);
                 }
             }));
@@ -570,21 +570,12 @@ impl Interactivity {
     /// Block the mouse from interacting with any elements over this element's hitbox.
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
-        self.hitbox_flags = HitboxFlags::OCCLUDE;
+        self.hitbox_flags = HitboxFlags::BLOCK_MOUSE_IN_FRONT;
     }
 
     /// todo! document
     pub fn block_mouse_except_scroll(&mut self) {
-        self.hitbox_flags = HitboxFlags::BLOCK_MOUSE.difference(HitboxFlags::BLOCK_SCROLL);
-    }
-
-    /// Registers event handles that stop propagation of mouse events for non-scroll events.
-    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
-    pub fn stop_mouse_events_except_scroll(&mut self) {
-        self.on_any_mouse_down(|_, _, cx| cx.stop_propagation());
-        self.on_any_mouse_up(|_, _, cx| cx.stop_propagation());
-        self.on_click(|_, _, cx| cx.stop_propagation());
-        self.on_hover(|_, _, cx| cx.stop_propagation());
+        self.hitbox_flags = HitboxFlags::BLOCK_HOVER_BEHIND;
     }
 }
 
@@ -954,7 +945,7 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with any elements under this element's hitbox.
+    /// Block the mouse from interacting with elements in front of this element's hitbox.
     /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
@@ -966,17 +957,10 @@ pub trait InteractiveElement: Sized {
         self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     }
 
-    /// Registers event handles that stop propagation of mouse events for non-scroll events.
+    /// todo! document
     /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
     fn block_mouse_except_scroll(mut self) -> Self {
         self.interactivity().block_mouse_except_scroll();
-        self
-    }
-
-    /// Registers event handles that stop propagation of mouse events for non-scroll events.
-    /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
-    fn stop_mouse_events_except_scroll(mut self) -> Self {
-        self.interactivity().stop_mouse_events_except_scroll();
         self
     }
 }
@@ -1862,7 +1846,7 @@ impl Interactivity {
                             move |e: &crate::MouseDownEvent, phase, window, cx| {
                                 if text_bounds.contains(&e.position)
                                     && phase.capture()
-                                    && hitbox.is_hovered_and_can_click(window)
+                                    && hitbox.is_hovered(window)
                                 {
                                     cx.stop_propagation();
                                     let Ok(dir) = std::env::current_dir() else {
@@ -1920,7 +1904,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _| {
                 if phase == DispatchPhase::Bubble
-                    && hitbox.is_hovered_and_can_click(window)
+                    && hitbox.is_hovered(window)
                     && !window.default_prevented()
                 {
                     window.focus(&focus_handle);
@@ -1985,8 +1969,7 @@ impl Interactivity {
             window.on_mouse_event({
                 move |_: &MouseUpEvent, phase, window, cx| {
                     if let Some(drag) = &cx.active_drag {
-                        if phase == DispatchPhase::Bubble && hitbox.is_hovered_and_can_click(window)
-                        {
+                        if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                             let drag_state_type = drag.value.as_ref().type_id();
                             for (drop_state_type, listener) in &drop_listeners {
                                 if *drop_state_type == drag_state_type {
@@ -2031,7 +2014,7 @@ impl Interactivity {
                     move |event: &MouseDownEvent, phase, window, _cx| {
                         if phase == DispatchPhase::Bubble
                             && event.button == MouseButton::Left
-                            && hitbox.is_hovered_and_can_click(window)
+                            && hitbox.is_hovered(window)
                         {
                             *pending_mouse_down.borrow_mut() = Some(event.clone());
                             window.refresh();
@@ -2086,9 +2069,7 @@ impl Interactivity {
                         // propagation.
                         DispatchPhase::Capture => {
                             let mut pending_mouse_down = pending_mouse_down.borrow_mut();
-                            if pending_mouse_down.is_some()
-                                && hitbox.is_hovered_and_can_click(window)
-                            {
+                            if pending_mouse_down.is_some() && hitbox.is_hovered(window) {
                                 captured_mouse_down = pending_mouse_down.take();
                                 window.refresh();
                             } else if pending_mouse_down.is_some() {
@@ -2205,10 +2186,9 @@ impl Interactivity {
                 window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
                         // todo! renames
-                        let group_hovered = active_group_hitbox.map_or(false, |group_hitbox_id| {
-                            group_hitbox_id.is_hovered_and_can_click(window)
-                        });
-                        let element_hovered = hitbox.is_hovered_and_can_click(window);
+                        let group_hovered = active_group_hitbox
+                            .map_or(false, |group_hitbox_id| group_hitbox_id.is_hovered(window));
+                        let element_hovered = hitbox.is_hovered(window);
                         if group_hovered || element_hovered {
                             // todo! probably wrong
                             *active_state.borrow_mut() = ElementClickedState {
@@ -2288,7 +2268,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered_and_can_scroll(window) {
+                if phase == DispatchPhase::Bubble && hitbox.contains_mouse(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);

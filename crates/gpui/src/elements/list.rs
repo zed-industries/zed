@@ -962,7 +962,7 @@ impl Element for List {
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered_and_can_scroll(window) {
+            if phase == DispatchPhase::Bubble && hitbox_id.contains_mouse(window) {
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,
