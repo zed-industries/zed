@@ -508,14 +508,14 @@ impl HitboxId {
         window.mouse_hit_test.0.contains(&self)
     }
 
-    fn next(self) -> HitboxId {
+    fn next(mut self) -> HitboxId {
         const INCREMENT: u64 = {
             let increment = HitboxFlags::all().bits() + 1;
             assert!(increment.count_ones() == 1);
             increment
         };
         debug_assert_eq!(self.get_flags(), HitboxFlags::empty());
-        HitboxId(self.0.wrapping_add(INCREMENT))
+        HitboxId((self.0 & !HitboxFlags::all().bits()).wrapping_add(INCREMENT))
     }
 
     fn add_flags(&mut self, flags: HitboxFlags) {
