@@ -59,6 +59,7 @@ impl GoDebugAdapter {
         if let Some(path) = self.shim_path.get().cloned() {
             return Ok(path);
         }
+
         let asset = Self::fetch_latest_adapter_version(delegate).await?;
         let ty = if consts::OS == "windows" {
             DownloadedFileType::Zip
@@ -72,10 +73,10 @@ impl GoDebugAdapter {
             delegate.as_ref(),
         )
         .await?;
-        dbg!(&asset);
+
         let path = paths::debug_adapters_dir()
             .join("delve-shim-dap")
-            .join(format!("delve-shim-dap_{}", asset.tag_name))
+            .join(format!("delve-shim-dap{}", asset.tag_name))
             .join("delve-shim-dap");
         self.shim_path.set(path.clone()).ok();
 
