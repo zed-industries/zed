@@ -114,113 +114,167 @@ pub fn init(cx: &mut App) {
     }
 
     cx.on_action(|_: &OpenSettings, cx: &mut App| {
-        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-            open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |_workspace, window, cx| {
-                    open_settings_file(
-                        paths::settings_file(),
-                        || settings::initial_user_settings_content().as_ref().into(),
-                        window,
-                        cx,
-                    );
-                },
-            )
-            .detach();
-        }
+        let Some(weak_app_state) = AppState::try_global(cx) else {
+            log::error!("AppState not initialized when handling OpenSettings - critical bug in app startup");
+            cx.quit();
+            return;
+        };
+
+        let Some(app_state) = weak_app_state.upgrade() else {
+            log::debug!("AppState dropped when handling OpenSettings - app likely shutting down");
+            return;
+        };
+
+        open_new(
+            Default::default(),
+            app_state,
+            cx,
+            |_workspace, window, cx| {
+                open_settings_file(
+                    paths::settings_file(),
+                    || settings::initial_user_settings_content().as_ref().into(),
+                    window,
+                    cx,
+                );
+            },
+        )
+        .detach();
     });
 
     cx.on_action(|_: &zed_actions::OpenKeymap, cx: &mut App| {
-        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-            open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |_workspace, window, cx| {
-                    open_settings_file(
-                        paths::keymap_file(),
-                        || settings::initial_keymap_content().as_ref().into(),
-                        window,
-                        cx,
-                    );
-                },
-            )
-            .detach();
-        }
+        let Some(weak_app_state) = AppState::try_global(cx) else {
+            log::error!("AppState not initialized when handling OpenKeymap - critical bug in app startup");
+            cx.quit();
+            return;
+        };
+
+        let Some(app_state) = weak_app_state.upgrade() else {
+            log::debug!("AppState dropped when handling OpenKeymap - app likely shutting down");
+            return;
+        };
+
+        open_new(
+            Default::default(),
+            app_state,
+            cx,
+            |_workspace, window, cx| {
+                open_settings_file(
+                    paths::keymap_file(),
+                    || settings::initial_keymap_content().as_ref().into(),
+                    window,
+                    cx,
+                );
+            },
+        )
+        .detach();
     });
 
     cx.on_action(|_: &OpenDefaultSettings, cx: &mut App| {
-        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-            open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    open_bundled_file(
-                        workspace,
-                        settings::default_settings(),
-                        "Default Settings",
-                        "JSON",
-                        window,
-                        cx,
-                    );
-                },
-            )
-            .detach();
-        }
+        let Some(weak_app_state) = AppState::try_global(cx) else {
+            log::error!("AppState not initialized when handling OpenDefaultSettings - critical bug in app startup");
+            cx.quit();
+            return;
+        };
+
+        let Some(app_state) = weak_app_state.upgrade() else {
+            log::debug!("AppState dropped when handling OpenDefaultSettings - app likely shutting down");
+            return;
+        };
+
+        open_new(
+            Default::default(),
+            app_state,
+            cx,
+            |workspace, window, cx| {
+                open_bundled_file(
+                    workspace,
+                    settings::default_settings(),
+                    "Default Settings",
+                    "JSON",
+                    window,
+                    cx,
+                );
+            },
+        )
+        .detach();
     });
 
     cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx: &mut App| {
-        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-            open_new(
-                Default::default(),
-                app_state,
-                cx,
-                |workspace, window, cx| {
-                    open_bundled_file(
-                        workspace,
-                        settings::default_keymap(),
-                        "Default Key Bindings",
-                        "JSON",
-                        window,
-                        cx,
-                    );
-                },
-            )
-            .detach();
-        }
+        let Some(weak_app_state) = AppState::try_global(cx) else {
+            log::error!("AppState not initialized when handling OpenDefaultKeymap - critical bug in app startup");
+            cx.quit();
+            return;
+        };
+
+        let Some(app_state) = weak_app_state.upgrade() else {
+            log::debug!("AppState dropped when handling OpenDefaultKeymap - app likely shutting down");
+            return;
+        };
+
+        open_new(
+            Default::default(),
+            app_state,
+            cx,
+            |workspace, window, cx| {
+                open_bundled_file(
+                    workspace,
+                    settings::default_keymap(),
+                    "Default Key Bindings",
+                    "JSON",
+                    window,
+                    cx,
+                );
+            },
+        )
+        .detach();
     });
 
     cx.on_action(|action: &theme_selector::Toggle, cx: &mut App| {
         let action = action.clone();
-        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-            open_new(
-                Default::default(),
-                app_state,
-                cx,
-                move |_workspace, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx);
-                },
-            )
-            .detach();
-        }
+        let Some(weak_app_state) = AppState::try_global(cx) else {
+            log::error!("AppState not initialized when handling theme selector - critical bug in app startup");
+            cx.quit();
+            return;
+        };
+
+        let Some(app_state) = weak_app_state.upgrade() else {
+            log::debug!("AppState dropped when handling theme selector - app likely shutting down");
+            return;
+        };
+
+        open_new(
+            Default::default(),
+            app_state,
+            cx,
+            move |_workspace, window, cx| {
+                window.dispatch_action(action.boxed_clone(), cx);
+            },
+        )
+        .detach();
     });
 
     cx.on_action(|action: &icon_theme_selector::Toggle, cx: &mut App| {
         let action = action.clone();
-        if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-            open_new(
-                Default::default(),
-                app_state,
-                cx,
-                move |_workspace, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx);
-                },
-            )
-            .detach();
-        }
+        let Some(weak_app_state) = AppState::try_global(cx) else {
+            log::error!("AppState not initialized when handling icon theme selector - critical bug in app startup");
+            cx.quit();
+            return;
+        };
+
+        let Some(app_state) = weak_app_state.upgrade() else {
+            log::debug!("AppState dropped when handling icon theme selector - app likely shutting down");
+            return;
+        };
+
+        open_new(
+            Default::default(),
+            app_state,
+            cx,
+            move |_workspace, window, cx| {
+                window.dispatch_action(action.boxed_clone(), cx);
+            },
+        )
+        .detach();
     });
 }
 

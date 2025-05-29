@@ -351,21 +351,30 @@ pub fn init(cx: &mut App) {
             if action.from_existing_connection {
                 return;
             }
-            if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-                open_new(
-                    Default::default(),
-                    app_state,
-                    cx,
-                    |workspace, window, cx| {
-                        let handle = cx.entity().downgrade();
-                        let fs = workspace.app_state().fs.clone();
-                        workspace.toggle_modal(window, cx, |window, cx| {
-                            RemoteServerProjects::new(fs, window, cx, handle)
-                        });
-                    },
-                )
-                .detach();
-            }
+            let Some(weak_app_state) = AppState::try_global(cx) else {
+                log::error!("AppState not initialized when handling OpenRemote - critical bug in app startup");
+                cx.quit();
+                return;
+            };
+
+            let Some(app_state) = weak_app_state.upgrade() else {
+                log::debug!("AppState dropped when handling OpenRemote - app likely shutting down");
+                return;
+            };
+
+            open_new(
+                Default::default(),
+                app_state,
+                cx,
+                |workspace, window, cx| {
+                    let handle = cx.entity().downgrade();
+                    let fs = workspace.app_state().fs.clone();
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        RemoteServerProjects::new(fs, window, cx, handle)
+                    });
+                },
+            )
+            .detach();
         }
     });
 }

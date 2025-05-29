@@ -41,17 +41,26 @@ pub fn init(cx: &mut App) {
     cx.on_action({
         move |action: &OpenRecent, cx: &mut App| {
             let create_new_window = action.create_new_window;
-            if let Some(app_state) = AppState::try_global(cx).and_then(|weak| weak.upgrade()) {
-                open_new(
-                    Default::default(),
-                    app_state,
-                    cx,
-                    move |workspace, window, cx| {
-                        RecentProjects::open(workspace, create_new_window, window, cx);
-                    },
-                )
-                .detach();
-            }
+            let Some(weak_app_state) = AppState::try_global(cx) else {
+                log::error!("AppState not initialized when handling OpenRecent - critical bug in app startup");
+                cx.quit();
+                return;
+            };
+
+            let Some(app_state) = weak_app_state.upgrade() else {
+                log::debug!("AppState dropped when handling OpenRecent - app likely shutting down");
+                return;
+            };
+
+            open_new(
+                Default::default(),
+                app_state,
+                cx,
+                move |workspace, window, cx| {
+                    RecentProjects::open(workspace, create_new_window, window, cx);
+                },
+            )
+            .detach();
         }
     });
 }
