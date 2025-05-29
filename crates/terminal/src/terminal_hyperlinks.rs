@@ -678,7 +678,7 @@ mod tests {
                 // The test uses Url::to_file_path(), but it seems that the Url crate doesn't
                 // support relative file IRIs.
                 #[test]
-                #[should_panic(expected = r#"Failed to interpret file IRI as a path"#)]
+                #[should_panic(expected = r#"Failed to interpret file IRI `file:/test/cool/index.rs` as a path: ()"#)]
                 fn issue_relative_file_iri() {
                     test_file_iri!("file:/test/cool/index.rs");
                     test_file_iri!("file:/test/cool/");
@@ -969,9 +969,9 @@ mod tests {
 
         if hyperlink_kind == HyperlinkKind::FileIri {
             iri_or_path = Url::parse(&iri_or_path)
-                .expect("Failed to parse file IRI `{iri_or_path}`")
+                .expect(&format!("Failed to parse file IRI `{iri_or_path}`"))
                 .to_file_path()
-                .expect("Failed to interpret file IRI `{iri_or_path}` as a path")
+                .expect(&format!("Failed to interpret file IRI `{iri_or_path}` as a path"))
                 .to_string_lossy()
                 .to_string();
         }
