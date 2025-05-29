@@ -119,7 +119,7 @@ impl NewSessionModal {
                         task_picker: cx.new(|cx| {
                             TasksModal::new(
                                 task_store.clone(),
-                                TaskContexts::default(), // TODO: update in a spawn
+                                TaskContexts::default(),
                                 None,
                                 workspace_handle.clone(),
                                 window,
@@ -633,11 +633,10 @@ impl Render for NewSessionModal {
             .on_action(
                 cx.listener(|this, _: &pane::ActivatePreviousItem, window, cx| {
                     this.mode = match this.mode {
-                        NewSessionMode::Attach => NewSessionMode::Launch,
+                        NewSessionMode::Task => NewSessionMode::Launch,
                         NewSessionMode::Launch => NewSessionMode::Attach,
-                        _ => {
-                            return;
-                        }
+                        NewSessionMode::Attach => NewSessionMode::Configure,
+                        NewSessionMode::Configure => NewSessionMode::Task,
                     };
 
                     this.mode_focus_handle(cx).focus(window);
@@ -645,8 +644,10 @@ impl Render for NewSessionModal {
             )
             .on_action(cx.listener(|this, _: &pane::ActivateNextItem, window, cx| {
                 this.mode = match this.mode {
-                    NewSessionMode::Attach => NewSessionMode::Launch,
+                    NewSessionMode::Task => NewSessionMode::Configure,
                     NewSessionMode::Launch => NewSessionMode::Attach,
+                    NewSessionMode::Attach => NewSessionMode::Launch,
+                    NewSessionMode::Configure => NewSessionMode::Attach,
                     _ => {
                         return;
                     }
