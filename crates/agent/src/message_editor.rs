@@ -495,8 +495,8 @@ impl MessageEditor {
         }
 
         let active_completion_mode = thread.completion_mode();
-        let max_mode_enabled = active_completion_mode == CompletionMode::Burn;
-        let icon = if max_mode_enabled {
+        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
+        let icon = if burn_mode_enabled {
             IconName::ZedBurnModeOn
         } else {
             IconName::ZedBurnMode
@@ -506,13 +506,13 @@ impl MessageEditor {
             IconButton::new("burn-mode", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .toggle_state(max_mode_enabled)
+                .toggle_state(burn_mode_enabled)
                 .selected_icon_color(Color::Error)
                 .on_click(cx.listener(|this, _event, window, cx| {
                     this.toggle_burn_mode(&ToggleBurnMode, window, cx);
                 }))
                 .tooltip(move |_window, cx| {
-                    cx.new(|_| MaxModeTooltip::new().selected(max_mode_enabled))
+                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
                         .into()
                 })
                 .into_any_element(),
