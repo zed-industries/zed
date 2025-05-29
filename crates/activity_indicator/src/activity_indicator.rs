@@ -330,7 +330,7 @@ impl ActivityIndicator {
                         )
                         .into_any_element(),
                 ),
-                message: format!("Debug: {}", session.read(cx).adapter().to_string()),
+                message: format!("Debug: {}", session.read(cx).adapter()),
                 tooltip_message: Some(session.read(cx).label().to_string()),
                 on_click: None,
             });
