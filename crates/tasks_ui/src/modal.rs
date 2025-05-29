@@ -47,7 +47,7 @@ pub struct TaskOverrides {
 impl TasksModalDelegate {
     fn new(
         task_store: Entity<TaskStore>,
-        task_contexts: TaskContexts,
+        task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -68,7 +68,7 @@ impl TasksModalDelegate {
             divider_index: None,
             selected_index: 0,
             prompt: String::default(),
-            task_contexts: Arc::new(task_contexts),
+            task_contexts,
             task_overrides,
             placeholder_text,
         }
@@ -130,7 +130,7 @@ pub struct TasksModal {
 impl TasksModal {
     pub fn new(
         task_store: Entity<TaskStore>,
-        task_contexts: TaskContexts,
+        task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
         is_modal: bool,
         workspace: WeakEntity<Workspace>,

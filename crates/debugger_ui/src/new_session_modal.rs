@@ -52,7 +52,7 @@ pub(super) struct NewSessionModal {
     task_mode: TaskMode,
     debugger: Option<DebugAdapterName>,
     save_scenario_state: Option<SaveScenarioState>,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 3],
 }
 
 fn suggested_label(request: &DebugRequest, debugger: &str) -> SharedString {
@@ -87,19 +87,47 @@ impl NewSessionModal {
         let languages = workspace.app_state().languages.clone();
 
         cx.spawn_in(window, async move |workspace, cx| {
+            let task_contexts = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    tasks_ui::task_contexts(workspace, window, cx)
+                })?
+                .await;
+            let task_contexts = Arc::new(task_contexts);
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = workspace.weak_handle();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let attach_mode = AttachMode::new(None, workspace_handle.clone(), window, cx);
 
                     let launch_picker = cx.new(|cx| {
-                        Picker::uniform_list(
-                            DebugScenarioDelegate::new(debug_panel.downgrade(), task_store.clone()),
-                            window,
-                            cx,
-                        )
-                        .modal(false)
+                        let mut delegate =
+                            DebugScenarioDelegate::new(debug_panel.downgrade(), task_store.clone());
+                        delegate.task_contexts_loaded(task_contexts.clone(), languages, window, cx);
+                        Picker::uniform_list(delegate, window, cx).modal(false)
                     });
+
+                    let configure_mode = ConfigureMode::new(None, window, cx);
+                    if let Some(active_cwd) = task_contexts
+                        .active_context()
+                        .and_then(|context| context.cwd.clone())
+                    {
+                        configure_mode.update(cx, |configure_mode, cx| {
+                            configure_mode.load(active_cwd, window, cx);
+                        });
+                    }
+
+                    let task_mode = TaskMode {
+                        task_modal: cx.new(|cx| {
+                            TasksModal::new(
+                                task_store.clone(),
+                                task_contexts,
+                                None,
+                                false,
+                                workspace_handle.clone(),
+                                window,
+                                cx,
+                            )
+                        }),
+                    };
 
                     let _subscriptions = [
                         cx.subscribe(&launch_picker, |_, _, _, cx| {
@@ -111,65 +139,10 @@ impl NewSessionModal {
                                 cx.emit(DismissEvent);
                             },
                         ),
-                    ];
-
-                    let configure_mode = ConfigureMode::new(None, window, cx);
-
-                    let task_mode = TaskMode {
-                        task_modal: cx.new(|cx| {
-                            TasksModal::new(
-                                task_store.clone(),
-                                TaskContexts::default(),
-                                None,
-                                false,
-                                workspace_handle.clone(),
-                                window,
-                                cx,
-                            )
+                        cx.subscribe(&task_mode.task_modal, |_, _, _: &DismissEvent, cx| {
+                            cx.emit(DismissEvent)
                         }),
-                    };
-
-                    cx.spawn_in(window, {
-                        let workspace_handle = workspace_handle.clone();
-                        async move |this, cx| {
-                            let task_contexts = workspace_handle
-                                .update_in(cx, |workspace, window, cx| {
-                                    tasks_ui::task_contexts(workspace, window, cx)
-                                })?
-                                .await;
-
-                            this.update_in(cx, |this, window, cx| {
-                                if let Some(active_cwd) = task_contexts
-                                    .active_context()
-                                    .and_then(|context| context.cwd.clone())
-                                {
-                                    this.configure_mode.update(cx, |configure, cx| {
-                                        configure.load(active_cwd, window, cx);
-                                    });
-
-                                    this.debugger = None;
-                                }
-
-                                let task_contexts = Arc::new(task_contexts);
-
-                                this.launch_picker.update(cx, |picker, cx| {
-                                    picker.delegate.task_contexts_loaded(
-                                        task_contexts.clone(),
-                                        languages,
-                                        window,
-                                        cx,
-                                    );
-                                    picker.refresh(window, cx);
-                                    cx.notify();
-                                });
-
-                                this.task_mode.task_modal.update(cx, |modal, cx| {
-                                    modal.task_contexts_loaded(task_contexts, window, cx)
-                                })
-                            })
-                        }
-                    })
-                    .detach();
+                    ];
 
                     Self {
                         launch_picker,

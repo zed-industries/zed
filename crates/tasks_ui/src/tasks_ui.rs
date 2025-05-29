@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use collections::HashMap;
 use editor::Editor;
@@ -147,7 +147,7 @@ pub fn toggle_modal(
     if can_open_modal {
         let task_contexts = task_contexts(workspace, window, cx);
         cx.spawn_in(window, async move |workspace, cx| {
-            let task_contexts = task_contexts.await;
+            let task_contexts = Arc::new(task_contexts.await);
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
