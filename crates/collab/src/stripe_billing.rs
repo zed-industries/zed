@@ -11,11 +11,13 @@ use crate::Result;
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_client::{
-    RealStripeClient, StripeClient, StripeCreateMeterEventParams, StripeCreateMeterEventPayload,
-    StripeCustomerId, StripeMeter, StripePrice, StripePriceId, StripeSubscription,
-    StripeSubscriptionId, UpdateSubscriptionItems, UpdateSubscriptionParams,
-    UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
-    UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
+    RealStripeClient, StripeCheckoutSessionMode, StripeClient,
+    StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
+    StripeCreateMeterEventParams, StripeCreateMeterEventPayload, StripeCustomerId, StripeMeter,
+    StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
+    StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
+    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
+    UpdateSubscriptionParams,
 };
 
 pub struct StripeBilling {
@@ -190,9 +192,9 @@ impl StripeBilling {
                     items: Some(vec![UpdateSubscriptionItems {
                         price: Some(price.id.clone()),
                     }]),
-                    trial_settings: Some(UpdateSubscriptionTrialSettings {
-                        end_behavior: UpdateSubscriptionTrialSettingsEndBehavior {
-                            missing_payment_method: UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel
+                    trial_settings: Some(StripeSubscriptionTrialSettings {
+                        end_behavior: StripeSubscriptionTrialSettingsEndBehavior {
+                            missing_payment_method: StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel
                         },
                     }),
                 },
@@ -228,24 +230,23 @@ impl StripeBilling {
 
     pub async fn checkout_with_zed_pro(
         &self,
-        customer_id: stripe::CustomerId,
+        customer_id: StripeCustomerId,
         github_login: &str,
         success_url: &str,
     ) -> Result<String> {
         let zed_pro_price_id = self.zed_pro_price_id().await?;
 
-        let mut params = stripe::CreateCheckoutSession::new();
-        params.mode = Some(stripe::CheckoutSessionMode::Subscription);
-        params.customer = Some(customer_id);
+        let mut params = StripeCreateCheckoutSessionParams::default();
+        params.mode = Some(StripeCheckoutSessionMode::Subscription);
+        params.customer = Some(&customer_id);
         params.client_reference_id = Some(github_login);
-        params.line_items = Some(vec![stripe::CreateCheckoutSessionLineItems {
+        params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
             price: Some(zed_pro_price_id.to_string()),
             quantity: Some(1),
-            ..Default::default()
         }]);
         params.success_url = Some(success_url);
 
-        let session = stripe::CheckoutSession::create(&self.real_client, params).await?;
+        let session = self.client.create_checkout_session(params).await?;
         Ok(session.url.context("no checkout session URL")?)
     }
 

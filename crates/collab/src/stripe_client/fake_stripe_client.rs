@@ -7,9 +7,9 @@ use parking_lot::Mutex;
 use uuid::Uuid;
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeClient, StripeCreateMeterEventParams, StripeCustomer,
-    StripeCustomerId, StripeMeter, StripeMeterId, StripePrice, StripePriceId, StripeSubscription,
-    StripeSubscriptionId, UpdateSubscriptionParams,
+    CreateCustomerParams, StripeCheckoutSession, StripeClient, StripeCreateCheckoutSessionParams,
+    StripeCreateMeterEventParams, StripeCustomer, StripeCustomerId, StripeMeter, StripeMeterId,
+    StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId, UpdateSubscriptionParams,
 };
 
 #[derive(Debug, Clone)]
@@ -118,5 +118,14 @@ impl StripeClient for FakeStripeClient {
             });
 
         Ok(())
+    }
+
+    async fn create_checkout_session(
+        &self,
+        _params: StripeCreateCheckoutSessionParams<'_>,
+    ) -> Result<StripeCheckoutSession> {
+        Ok(StripeCheckoutSession {
+            url: Some("https://checkout.stripe.com/c/pay/cs_test_1".to_string()),
+        })
     }
 }

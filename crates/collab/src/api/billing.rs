@@ -338,13 +338,11 @@ async fn create_billing_subscription(
     }
 
     let customer_id = if let Some(existing_customer) = &existing_billing_customer {
-        CustomerId::from_str(&existing_customer.stripe_customer_id)
-            .context("failed to parse customer ID")?
+        StripeCustomerId(existing_customer.stripe_customer_id.clone().into())
     } else {
         stripe_billing
             .find_or_create_customer_by_email(user.email_address.as_deref())
             .await?
-            .try_into()?
     };
 
     let success_url = format!(
@@ -372,7 +370,7 @@ async fn create_billing_subscription(
 
             stripe_billing
                 .checkout_with_zed_pro_trial(
-                    customer_id,
+                    customer_id.try_into()?,
                     &user.github_login,
                     feature_flags,
                     &success_url,
