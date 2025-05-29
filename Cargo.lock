@@ -8930,6 +8930,7 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
+ "chrono",
  "collections",
  "dap",
  "futures 0.3.31",
@@ -8983,6 +8984,7 @@ dependencies = [
  "tree-sitter-yaml",
  "unindent",
  "util",
+ "which 6.0.3",
  "workspace",
  "workspace-hack",
 ]

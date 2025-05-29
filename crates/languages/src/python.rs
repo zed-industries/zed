@@ -4,11 +4,11 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
+use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
@@ -367,18 +367,24 @@ impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
         variables: &task::TaskVariables,
-        location: &project::Location,
+        location: ContextLocation<'_>,
         _: Option<HashMap<String, String>>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target = match selected_test_runner(location.buffer.read(cx).file(), cx) {
-            TestRunner::UNITTEST => self.build_unittest_target(variables),
-            TestRunner::PYTEST => self.build_pytest_target(variables),
-        };
+        let test_target =
+            match selected_test_runner(location.file_location.buffer.read(cx).file(), cx) {
+                TestRunner::UNITTEST => self.build_unittest_target(variables),
+                TestRunner::PYTEST => self.build_pytest_target(variables),
+            };
 
         let module_target = self.build_module_target(variables);
-        let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
+        let worktree_id = location
+            .file_location
+            .buffer
+            .read(cx)
+            .file()
+            .map(|f| f.worktree_id(cx));
 
         cx.spawn(async move |cx| {
             let raw_toolchain = if let Some(worktree_id) = worktree_id {
