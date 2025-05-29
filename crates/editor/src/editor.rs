@@ -19430,7 +19430,6 @@ impl Editor {
 
         self.read_scroll_position_from_db(item_id, workspace_id, window, cx);
     }
-
 }
 
 fn vim_enabled(cx: &App) -> bool {

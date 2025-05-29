@@ -1,7 +1,7 @@
 mod actions;
-mod scroll_animation_manager;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
+mod scroll_animation_manager;
 
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
@@ -15,9 +15,9 @@ pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
 use gpui::{App, Axis, Context, Global, Pixels, Task, Window, point, px};
 use language::{Bias, Point};
-use scroll_animation_manager::{Anim, ScrollAnimationManager};
-pub(crate) use scroll_animation_manager::UpdateResponse;
 pub use scroll_amount::ScrollAmount;
+pub(crate) use scroll_animation_manager::UpdateResponse;
+use scroll_animation_manager::{Anim, ScrollAnimationManager};
 use settings::{Settings, SettingsStore};
 use std::{
     cmp::Ordering,
@@ -172,13 +172,10 @@ impl ScrollManager {
         cx.observe_global::<SettingsStore>(move |editor, cx| {
             if EditorSettings::get_global(cx).smooth_scroll {
                 if let Some(ref mut anim_manager) = editor.scroll_manager.animation_manager {
-                    anim_manager.set_duration(
-                        EditorSettings::get_global(cx).smooth_scroll_duration
-                    );
+                    anim_manager
+                        .set_duration(EditorSettings::get_global(cx).smooth_scroll_duration);
                 } else {
-                    editor.scroll_manager.animation_manager = Some(
-                        ScrollAnimationManager::new(cx)
-                    );
+                    editor.scroll_manager.animation_manager = Some(ScrollAnimationManager::new(cx));
                 }
             } else {
                 editor.scroll_manager.animation_manager = None;
@@ -234,36 +231,39 @@ impl ScrollManager {
     pub(crate) fn requires_animation_update(&self) -> bool {
         match &self.animation_manager {
             None => false,
-            Some(animation_manager) => animation_manager.has_anim()
+            Some(animation_manager) => animation_manager.has_anim(),
         }
     }
-    
-    pub(crate) fn update_animation(&mut self, window: &mut Window, cx: &mut Context<Editor>) -> UpdateResponse {
+
+    pub(crate) fn update_animation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> UpdateResponse {
         let update_response = match self.animation_manager {
             Some(ref mut animation_manager) => animation_manager.update(),
             None => UpdateResponse::Nothing,
         };
 
         let update_values = match update_response {
-            UpdateResponse::RequiresAnimationFrame { ref intermediate_anchor, intermediate_top_row } => {
-                Some(
-                    (
-                        *intermediate_anchor,
-                        intermediate_top_row,
-                        self.animation_manager.as_ref().unwrap().get_state().unwrap()
-                    )
-                )
-            },
-            UpdateResponse::Finished { ref destination_anchor, destination_top_row, ref state } => { 
-                Some(
-                    (
-                        *destination_anchor,
-                        destination_top_row,
-                        state.clone(),
-                    )
-                )
-            }
-            UpdateResponse::Nothing => None
+            UpdateResponse::RequiresAnimationFrame {
+                ref intermediate_anchor,
+                intermediate_top_row,
+            } => Some((
+                *intermediate_anchor,
+                intermediate_top_row,
+                self.animation_manager
+                    .as_ref()
+                    .unwrap()
+                    .get_state()
+                    .unwrap(),
+            )),
+            UpdateResponse::Finished {
+                ref destination_anchor,
+                destination_top_row,
+                ref state,
+            } => Some((*destination_anchor, destination_top_row, state.clone())),
+            UpdateResponse::Nothing => None,
         };
 
         if let Some((anchor, top_row, state)) = update_values {
@@ -274,7 +274,7 @@ impl ScrollManager {
                 state.autoscroll,
                 state.workspace_id,
                 window,
-                cx
+                cx,
             );
         }
 
@@ -289,12 +289,9 @@ impl ScrollManager {
         local: bool,
         autoscroll: bool,
         workspace_id: Option<WorkspaceId>,
-        cx: &mut Context<Editor>
+        cx: &mut Context<Editor>,
     ) -> bool {
-        let ret = 
-        if
-            self.animation_manager.is_some() &&
-            self.ongoing.try_use_anim {
+        let ret = if self.animation_manager.is_some() && self.ongoing.try_use_anim {
             let current = self.scroll_position(map);
             let anim = Anim::new(
                 current,
@@ -303,7 +300,7 @@ impl ScrollManager {
                 map.clone(),
                 workspace_id,
                 local,
-                autoscroll
+                autoscroll,
             );
             self.animation_manager.as_mut().unwrap().start(anim);
             cx.notify();
@@ -312,7 +309,7 @@ impl ScrollManager {
             false
         };
 
-        // not that ideal but OngoingScroll has nowhere 
+        // not that ideal but OngoingScroll has nowhere
         // where it's reset and the scroll event marked as treated
         self.ongoing.try_use_anim = true;
 
@@ -386,7 +383,7 @@ impl ScrollManager {
             local,
             autoscroll,
             workspace_id,
-            cx
+            cx,
         ) {
             self.set_anchor(
                 new_anchor,
@@ -749,9 +746,9 @@ impl Editor {
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
 
-        let snapshot = self.display_map.update(cx, |display_map, cx| {
-            display_map.snapshot(cx)
-        });
+        let snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
 
         if !self.scroll_manager.try_start_anim(
             scroll_anchor,
@@ -760,7 +757,7 @@ impl Editor {
             true,
             false,
             workspace_id,
-            cx
+            cx,
         ) {
             self.scroll_manager.set_anchor(
                 scroll_anchor,
@@ -789,7 +786,9 @@ impl Editor {
         }
         let top_row = scroll_anchor.anchor.to_point(snapshot).row;
 
-        let snapshot = self.display_map.update(cx, |display_map, cx| display_map.snapshot(cx));
+        let snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
 
         if !self.scroll_manager.try_start_anim(
             scroll_anchor,
@@ -798,7 +797,7 @@ impl Editor {
             false,
             false,
             workspace_id,
-            cx
+            cx,
         ) {
             self.scroll_manager.set_anchor(
                 scroll_anchor,

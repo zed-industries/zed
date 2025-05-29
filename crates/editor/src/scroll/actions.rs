@@ -31,7 +31,8 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.scroll_manager.update_ongoing_scroll(axis, try_use_anim);
+        self.scroll_manager
+            .update_ongoing_scroll(axis, try_use_anim);
         self.set_scroll_position(scroll_position, window, cx);
     }
 

@@ -28,7 +28,9 @@ use crate::{
     inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
-    scroll::{ActiveScrollbarState, ScrollbarThumbState, scroll_amount::ScrollAmount, UpdateResponse},
+    scroll::{
+        ActiveScrollbarState, ScrollbarThumbState, UpdateResponse, scroll_amount::ScrollAmount,
+    },
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
@@ -7715,12 +7717,13 @@ impl Element for EditorElement {
                         snapshot = editor.snapshot(window, cx);
 
                         if editor.scroll_manager.requires_animation_update() {
-                            let update_response = editor.scroll_manager.update_animation(window, cx);
+                            let update_response =
+                                editor.scroll_manager.update_animation(window, cx);
                             match update_response {
-                                UpdateResponse::RequiresAnimationFrame {..} => {
+                                UpdateResponse::RequiresAnimationFrame { .. } => {
                                     window.request_animation_frame();
-                                },
-                                _ => ()
+                                }
+                                _ => (),
                             };
                         }
                     });
