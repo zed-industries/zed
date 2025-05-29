@@ -357,6 +357,9 @@ const PYTHON_TEST_TARGET_TASK_VARIABLE: VariableName =
 const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
 
+const PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN_RAW"));
+
 const PYTHON_MODULE_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_MODULE_NAME"));
 
@@ -378,24 +381,25 @@ impl ContextProvider for PythonContextProvider {
         let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
 
         cx.spawn(async move |cx| {
-            let active_toolchain = if let Some(worktree_id) = worktree_id {
+            let raw_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
                     .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
                     .await
                     .map_or_else(
-                        || "python3".to_owned(),
-                        |toolchain| format!("\"{}\"", toolchain.path),
+                        || String::from("python3"),
+                        |toolchain| toolchain.path.to_string(),
                     )
             } else {
                 String::from("python3")
             };
+            let active_toolchain = format!("\"{raw_toolchain}\"");
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-
+            let raw_toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
                     .chain(module_target.into_iter())
-                    .chain([toolchain]),
+                    .chain([toolchain, raw_toolchain]),
             ))
         })
     }
@@ -416,6 +420,7 @@ impl ContextProvider for PythonContextProvider {
                     "-c".to_owned(),
                     VariableName::SelectedText.template_value_with_whitespace(),
                 ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
             // Execute an entire file
@@ -423,6 +428,7 @@ impl ContextProvider for PythonContextProvider {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
             // Execute a file as module
@@ -433,6 +439,7 @@ impl ContextProvider for PythonContextProvider {
                     "-m".to_owned(),
                     PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -450,6 +457,7 @@ impl ContextProvider for PythonContextProvider {
                             "unittest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
@@ -465,6 +473,7 @@ impl ContextProvider for PythonContextProvider {
                             "python-unittest-class".to_owned(),
                             "python-unittest-method".to_owned(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                 ]
@@ -480,6 +489,7 @@ impl ContextProvider for PythonContextProvider {
                             "pytest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
@@ -491,6 +501,7 @@ impl ContextProvider for PythonContextProvider {
                             "pytest".to_owned(),
                             PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         tags: vec![
                             "python-pytest-class".to_owned(),
                             "python-pytest-method".to_owned(),

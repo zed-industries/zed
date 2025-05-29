@@ -1465,7 +1465,10 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EditorScrollbars> {
-        if !self.editor.read(cx).show_scrollbars || self.style.scrollbar_width.is_zero() {
+        let show_scrollbars = self.editor.read(cx).show_scrollbars;
+        if (!show_scrollbars.horizontal && !show_scrollbars.vertical)
+            || self.style.scrollbar_width.is_zero()
+        {
             return None;
         }
 
@@ -1509,8 +1512,24 @@ impl EditorElement {
             ShowScrollbar::Never => return None,
         };
 
+        // The horizontal scrollbar is usually slightly offset to align nicely with
+        // indent guides. However, this offset is not needed if indent guides are
+        // disabled for the current editor.
+        let content_offset = self
+            .editor
+            .read(cx)
+            .show_indent_guides
+            .is_none_or(|should_show| should_show)
+            .then_some(content_offset)
+            .unwrap_or_default();
+
         Some(EditorScrollbars::from_scrollbar_axes(
-            scrollbar_settings.axes,
+            ScrollbarAxes {
+                horizontal: scrollbar_settings.axes.horizontal
+                    && self.editor.read(cx).show_scrollbars.horizontal,
+                vertical: scrollbar_settings.axes.vertical
+                    && self.editor.read(cx).show_scrollbars.vertical,
+            },
             scrollbar_layout_information,
             content_offset,
             scroll_position,
@@ -7558,7 +7577,7 @@ impl Element for EditorElement {
                     let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
                     let vertical_scrollbar_width = (scrollbars_shown
                         && settings.scrollbar.axes.vertical
-                        && self.editor.read(cx).show_scrollbars)
+                        && self.editor.read(cx).show_scrollbars.vertical)
                         .then_some(style.scrollbar_width)
                         .unwrap_or_default();
                     let minimap_width = self
@@ -7599,7 +7618,10 @@ impl Element for EditorElement {
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, window, cx);
 
-                        if matches!(editor.mode, EditorMode::Minimap { .. }) {
+                        if matches!(
+                            editor.mode,
+                            EditorMode::AutoHeight { .. } | EditorMode::Minimap { .. }
+                        ) {
                             snapshot
                         } else {
                             let wrap_width_for = |column: u32| (column as f32 * em_advance).ceil();
@@ -9618,7 +9640,6 @@ fn compute_auto_height_layout(
     let font_size = style.text.font_size.to_pixels(window.rem_size());
     let line_height = style.text.line_height_in_pixels(window.rem_size());
     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
-    let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
 
     let mut snapshot = editor.snapshot(window, cx);
     let gutter_dimensions = snapshot
@@ -9635,18 +9656,10 @@ fn compute_auto_height_layout(
     let overscroll = size(em_width, px(0.));
 
     let editor_width = text_width - gutter_dimensions.margin - overscroll.width - em_width;
-    let content_offset = point(gutter_dimensions.margin, Pixels::ZERO);
-    let editor_content_width = editor_width - content_offset.x;
-    let wrap_width_for = |column: u32| (column as f32 * em_advance).ceil();
-    let wrap_width = match editor.soft_wrap_mode(cx) {
-        SoftWrap::GitDiff => None,
-        SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
-        SoftWrap::EditorWidth => Some(editor_content_width),
-        SoftWrap::Column(column) => Some(wrap_width_for(column)),
-        SoftWrap::Bounded(column) => Some(editor_content_width.min(wrap_width_for(column))),
-    };
-    if editor.set_wrap_width(wrap_width, cx) {
-        snapshot = editor.snapshot(window, cx);
+    if !matches!(editor.soft_wrap_mode(cx), SoftWrap::None) {
+        if editor.set_wrap_width(Some(editor_width), cx) {
+            snapshot = editor.snapshot(window, cx);
+        }
     }
 
     let scroll_height = (snapshot.max_point().row().next_row().0 as f32) * line_height;

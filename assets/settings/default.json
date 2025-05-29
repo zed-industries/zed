@@ -714,7 +714,7 @@
     "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
-    /// What completion mode to start new threads in, if available. Can be 'normal' or 'max'.
+    /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
     "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
@@ -961,7 +961,15 @@
     // Default: true
     "skip_focus_for_active_in_search": true,
     // Whether to show the git status in the file finder.
-    "git_status": true
+    "git_status": true,
+    // Whether to use gitignored files when searching.
+    // Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    //
+    // Can accept 3 values:
+    //   * `true`: Use all gitignored files
+    //   * `false`: Use only the files Zed had indexed
+    //   * `null`: Be smart and search for ignored when called from a gitignored worktree
+    "include_ignored": null
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1306,7 +1314,17 @@
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
-    "enabled": true
+    "enabled": true,
+    // Use LSP tasks over Zed language extension ones.
+    // If no LSP tasks are returned due to error/timeout or regular execution,
+    // Zed language extension tasks will be used instead.
+    //
+    // Other Zed tasks will still be shown:
+    // * Zed task from either of the task config file
+    // * Zed task from history (e.g. one-off task was spawned before)
+    //
+    // Default: true
+    "prefer_lsp": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -1444,9 +1462,7 @@
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
     "Git Commit": {
-      "allow_rewrap": "anywhere",
-      "preferred_line_length": 72,
-      "soft_wrap": "bounded"
+      "allow_rewrap": "anywhere"
     },
     "Go": {
       "code_actions_on_format": {

@@ -29,6 +29,7 @@ use crate::db::billing_subscription::{
 use crate::llm::db::subscription_usage_meter::CompletionMode;
 use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND};
 use crate::rpc::{ResultExt as _, Server};
+use crate::stripe_client::{StripeCustomerId, StripeSubscriptionId};
 use crate::{AppState, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
 use crate::{
@@ -282,7 +283,6 @@ async fn list_billing_subscriptions(
 enum ProductCode {
     ZedPro,
     ZedProTrial,
-    ZedFree,
 }
 
 #[derive(Debug, Deserialize)]
@@ -338,8 +338,7 @@ async fn create_billing_subscription(
     }
 
     let customer_id = if let Some(existing_customer) = &existing_billing_customer {
-        CustomerId::from_str(&existing_customer.stripe_customer_id)
-            .context("failed to parse customer ID")?
+        StripeCustomerId(existing_customer.stripe_customer_id.clone().into())
     } else {
         stripe_billing
             .find_or_create_customer_by_email(user.email_address.as_deref())
@@ -354,7 +353,7 @@ async fn create_billing_subscription(
     let checkout_session_url = match body.product {
         ProductCode::ZedPro => {
             stripe_billing
-                .checkout_with_zed_pro(customer_id, &user.github_login, &success_url)
+                .checkout_with_zed_pro(&customer_id, &user.github_login, &success_url)
                 .await?
         }
         ProductCode::ZedProTrial => {
@@ -371,16 +370,11 @@ async fn create_billing_subscription(
 
             stripe_billing
                 .checkout_with_zed_pro_trial(
-                    customer_id,
+                    &customer_id,
                     &user.github_login,
                     feature_flags,
                     &success_url,
                 )
-                .await?
-        }
-        ProductCode::ZedFree => {
-            stripe_billing
-                .checkout_with_zed_free(customer_id, &user.github_login, &success_url)
                 .await?
         }
     };
@@ -498,8 +492,10 @@ async fn manage_billing_subscription(
     let flow = match body.intent {
         ManageSubscriptionIntent::ManageSubscription => None,
         ManageSubscriptionIntent::UpgradeToPro => {
-            let zed_pro_price_id = stripe_billing.zed_pro_price_id().await?;
-            let zed_free_price_id = stripe_billing.zed_free_price_id().await?;
+            let zed_pro_price_id: stripe::PriceId =
+                stripe_billing.zed_pro_price_id().await?.try_into()?;
+            let zed_free_price_id: stripe::PriceId =
+                stripe_billing.zed_free_price_id().await?.try_into()?;
 
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
@@ -1515,6 +1511,12 @@ async fn sync_model_request_usage_with_stripe(
     let claude_sonnet_4_max = stripe_billing
         .find_price_by_lookup_key("claude-sonnet-4-requests-max")
         .await?;
+    let claude_opus_4 = stripe_billing
+        .find_price_by_lookup_key("claude-opus-4-requests")
+        .await?;
+    let claude_opus_4_max = stripe_billing
+        .find_price_by_lookup_key("claude-opus-4-requests-max")
+        .await?;
     let claude_3_5_sonnet = stripe_billing
         .find_price_by_lookup_key("claude-3-5-sonnet-requests")
         .await?;
@@ -1536,18 +1538,18 @@ async fn sync_model_request_usage_with_stripe(
                 );
             };
 
-            let stripe_customer_id = billing_customer
-                .stripe_customer_id
-                .parse::<stripe::CustomerId>()
-                .context("failed to parse Stripe customer ID from database")?;
-            let stripe_subscription_id = billing_subscription
-                .stripe_subscription_id
-                .parse::<stripe::SubscriptionId>()
-                .context("failed to parse Stripe subscription ID from database")?;
+            let stripe_customer_id =
+                StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
+            let stripe_subscription_id =
+                StripeSubscriptionId(billing_subscription.stripe_subscription_id.clone().into());
 
             let model = llm_db.model_by_id(usage_meter.model_id)?;
 
             let (price, meter_event_name) = match model.name.as_str() {
+                "claude-opus-4" => match usage_meter.mode {
+                    CompletionMode::Normal => (&claude_opus_4, "claude_opus_4/requests"),
+                    CompletionMode::Max => (&claude_opus_4_max, "claude_opus_4/requests/max"),
+                },
                 "claude-sonnet-4" => match usage_meter.mode {
                     CompletionMode::Normal => (&claude_sonnet_4, "claude_sonnet_4/requests"),
                     CompletionMode::Max => (&claude_sonnet_4_max, "claude_sonnet_4/requests/max"),

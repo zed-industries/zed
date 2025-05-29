@@ -270,7 +270,11 @@ pub fn task_contexts(
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)
                 .map_or(false, |worktree| is_visible_directory(&worktree, cx))
-        });
+        })
+        .or(workspace
+            .visible_worktrees(cx)
+            .next()
+            .map(|tree| tree.read(cx).id()));
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 
@@ -505,6 +509,7 @@ mod tests {
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
                     (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
                     (VariableName::WorktreeRoot, path!("/dir").into()),
@@ -536,6 +541,7 @@ mod tests {
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
                     (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
                     (VariableName::WorktreeRoot, path!("/dir").into()),
@@ -564,6 +570,7 @@ mod tests {
                     (VariableName::File, path!("/dir/a.ts").into()),
                     (VariableName::Filename, "a.ts".into()),
                     (VariableName::RelativeFile, "a.ts".into()),
+                    (VariableName::RelativeDir, ".".into()),
                     (VariableName::Dirname, path!("/dir").into()),
                     (VariableName::Stem, "a".into()),
                     (VariableName::WorktreeRoot, path!("/dir").into()),
