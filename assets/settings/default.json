@@ -479,7 +479,7 @@
   // to both the horizontal and vertical delta values while scrolling. Fast scrolling
   // happens when a user holds the alt or option key while scrolling.
   "fast_scroll_sensitivity": 4.0,
-  // Wether to scroll smoothly or instantaneously
+  // Whether to scroll smoothly or instantaneously
   "smooth_scroll": false,
   // How much time in seconds it takes for a scrolling when smooth_scroll is enabled
   "smooth_scroll_duration": 0.25,

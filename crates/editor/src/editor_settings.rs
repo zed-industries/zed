@@ -415,7 +415,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 4.0
     pub fast_scroll_sensitivity: Option<f32>,
-    /// Wether to scroll smoothly or instantaneously
+    /// Whether to scroll smoothly or instantaneously
     ///
     /// Default: false
     pub smooth_scroll: Option<bool>,
