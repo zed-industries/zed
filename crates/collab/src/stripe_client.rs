@@ -33,6 +33,7 @@ pub struct StripeSubscriptionId(pub Arc<str>);
 #[derive(Debug, PartialEq, Clone)]
 pub struct StripeSubscription {
     pub id: StripeSubscriptionId,
+    pub customer: StripeCustomerId,
     // TODO: Create our own version of this enum.
     pub status: stripe::SubscriptionStatus,
     pub current_period_end: i64,

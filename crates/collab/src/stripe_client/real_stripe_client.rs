@@ -268,6 +268,7 @@ impl From<Subscription> for StripeSubscription {
     fn from(value: Subscription) -> Self {
         Self {
             id: value.id.into(),
+            customer: value.customer.id().into(),
             status: value.status,
             current_period_start: value.current_period_start,
             current_period_end: value.current_period_end,

@@ -91,7 +91,15 @@ impl StripeClient for FakeStripeClient {
         &self,
         customer_id: &StripeCustomerId,
     ) -> Result<Vec<StripeSubscription>> {
-        Ok(vec![])
+        let subscriptions = self
+            .subscriptions
+            .lock()
+            .values()
+            .filter(|subscription| subscription.customer == *customer_id)
+            .cloned()
+            .collect();
+
+        Ok(subscriptions)
     }
 
     async fn get_subscription(
@@ -113,6 +121,7 @@ impl StripeClient for FakeStripeClient {
 
         let subscription = StripeSubscription {
             id: StripeSubscriptionId(format!("sub_{}", Uuid::new_v4()).into()),
+            customer: params.customer,
             status: stripe::SubscriptionStatus::Active,
             current_period_start: now.timestamp(),
             current_period_end: (now + Duration::days(30)).timestamp(),

@@ -167,6 +167,7 @@ async fn test_subscribe_to_price() {
     let now = Utc::now();
     let subscription = StripeSubscription {
         id: StripeSubscriptionId("sub_test".into()),
+        customer: StripeCustomerId("cus_test".into()),
         status: stripe::SubscriptionStatus::Active,
         current_period_start: now.timestamp(),
         current_period_end: (now + Duration::days(30)).timestamp(),
@@ -202,6 +203,7 @@ async fn test_subscribe_to_price() {
         let now = Utc::now();
         let subscription = StripeSubscription {
             id: StripeSubscriptionId("sub_test".into()),
+            customer: StripeCustomerId("cus_test".into()),
             status: stripe::SubscriptionStatus::Active,
             current_period_start: now.timestamp(),
             current_period_end: (now + Duration::days(30)).timestamp(),
@@ -270,6 +272,7 @@ async fn test_subscribe_to_zed_free() {
         let now = Utc::now();
         let existing_subscription = StripeSubscription {
             id: StripeSubscriptionId("sub_existing_active".into()),
+            customer: customer_id.clone(),
             status: stripe::SubscriptionStatus::Active,
             current_period_start: now.timestamp(),
             current_period_end: (now + Duration::days(30)).timestamp(),
@@ -298,6 +301,7 @@ async fn test_subscribe_to_zed_free() {
         let now = Utc::now();
         let existing_subscription = StripeSubscription {
             id: StripeSubscriptionId("sub_existing_trial".into()),
+            customer: customer_id.clone(),
             status: stripe::SubscriptionStatus::Trialing,
             current_period_start: now.timestamp(),
             current_period_end: (now + Duration::days(14)).timestamp(),
