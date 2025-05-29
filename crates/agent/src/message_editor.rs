@@ -481,8 +481,8 @@ impl MessageEditor {
             let active_completion_mode = thread.completion_mode();
 
             thread.set_completion_mode(match active_completion_mode {
-                CompletionMode::Max => CompletionMode::Normal,
-                CompletionMode::Normal => CompletionMode::Max,
+                CompletionMode::Burn => CompletionMode::Normal,
+                CompletionMode::Normal => CompletionMode::Burn,
             });
         });
     }
@@ -495,7 +495,7 @@ impl MessageEditor {
         }
 
         let active_completion_mode = thread.completion_mode();
-        let max_mode_enabled = active_completion_mode == CompletionMode::Max;
+        let max_mode_enabled = active_completion_mode == CompletionMode::Burn;
         let icon = if max_mode_enabled {
             IconName::ZedBurnModeOn
         } else {

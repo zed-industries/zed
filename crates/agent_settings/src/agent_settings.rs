@@ -689,14 +689,14 @@ pub struct AgentSettingsContentV2 {
 pub enum CompletionMode {
     #[default]
     Normal,
-    Max,
+    Burn,
 }
 
 impl From<CompletionMode> for zed_llm_client::CompletionMode {
     fn from(value: CompletionMode) -> Self {
         match value {
             CompletionMode::Normal => zed_llm_client::CompletionMode::Normal,
-            CompletionMode::Max => zed_llm_client::CompletionMode::Max,
+            CompletionMode::Burn => zed_llm_client::CompletionMode::Max,
         }
     }
 }

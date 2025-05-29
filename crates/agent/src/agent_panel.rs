@@ -1315,8 +1315,8 @@ impl AgentPanel {
                 let current_mode = thread.completion_mode();
 
                 thread.set_completion_mode(match current_mode {
-                    CompletionMode::Max => CompletionMode::Normal,
-                    CompletionMode::Normal => CompletionMode::Max,
+                    CompletionMode::Burn => CompletionMode::Normal,
+                    CompletionMode::Normal => CompletionMode::Burn,
                 });
             });
         });
@@ -2681,7 +2681,7 @@ impl AgentPanel {
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.thread.update(cx, |active_thread, cx| {
                                         active_thread.thread().update(cx, |thread, _cx| {
-                                            thread.set_completion_mode(CompletionMode::Max);
+                                            thread.set_completion_mode(CompletionMode::Burn);
                                         });
                                     });
                                     this.continue_conversation(window, cx);
@@ -3078,7 +3078,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(|this, _: &ContinueWithBurnMode, window, cx| {
                 this.thread.update(cx, |active_thread, cx| {
                     active_thread.thread().update(cx, |thread, _cx| {
-                        thread.set_completion_mode(CompletionMode::Max);
+                        thread.set_completion_mode(CompletionMode::Burn);
                     });
                 });
                 this.continue_conversation(window, cx);

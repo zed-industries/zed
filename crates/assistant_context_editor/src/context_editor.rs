@@ -2071,7 +2071,7 @@ impl ContextEditor {
         }
 
         let active_completion_mode = context.completion_mode();
-        let max_mode_enabled = active_completion_mode == CompletionMode::Max;
+        let max_mode_enabled = active_completion_mode == CompletionMode::Burn;
         let icon = if max_mode_enabled {
             IconName::ZedBurnModeOn
         } else {
@@ -2087,8 +2087,8 @@ impl ContextEditor {
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.context().update(cx, |context, _cx| {
                         context.set_completion_mode(match active_completion_mode {
-                            CompletionMode::Max => CompletionMode::Normal,
-                            CompletionMode::Normal => CompletionMode::Max,
+                            CompletionMode::Burn => CompletionMode::Normal,
+                            CompletionMode::Normal => CompletionMode::Burn,
                         });
                     });
                 }))
