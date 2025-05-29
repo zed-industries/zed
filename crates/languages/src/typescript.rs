@@ -47,10 +47,9 @@ const TYPESCRIPT_TEST_SCRIPT_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_TEST_SCRIPT"));
 
 #[derive(Clone, Default)]
-struct PackageJsonContents(Arc<RwLock<Option<PackageJson>>>);
+struct PackageJsonContents(Arc<RwLock<HashMap<PathBuf, PackageJson>>>);
 
 struct PackageJson {
-    abs_path: PathBuf,
     mtime: DateTime<Local>,
     data: PackageJsonData,
 }
@@ -373,8 +372,7 @@ async fn package_json_variables(
     let existing_data = {
         let contents = package_json_contents.0.read().await;
         contents
-            .as_ref()
-            .filter(|package_json| package_json.abs_path == package_json_path)
+            .get(&package_json_path)
             .filter(|package_json| package_json.mtime == mtime)
             .map(|package_json| package_json.data)
     };
@@ -394,11 +392,13 @@ async fn package_json_variables(
         new_data.fill_variables(&mut variables);
         {
             let mut contents = package_json_contents.0.write().await;
-            *contents = Some(PackageJson {
-                abs_path: package_json_path,
-                mtime,
-                data: new_data,
-            });
+            contents.insert(
+                package_json_path,
+                PackageJson {
+                    mtime,
+                    data: new_data,
+                },
+            );
         }
     }
 
