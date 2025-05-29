@@ -39,9 +39,9 @@ pub(crate) struct TasksModalDelegate {
 
 /// Task template amendments to do before resolving the context.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TaskOverrides {
+pub struct TaskOverrides {
     /// See [`RevealTarget`].
-    pub(crate) reveal_target: Option<RevealTarget>,
+    pub reveal_target: Option<RevealTarget>,
 }
 
 impl TasksModalDelegate {
@@ -128,7 +128,7 @@ pub struct TasksModal {
 }
 
 impl TasksModal {
-    pub(crate) fn new(
+    pub fn new(
         task_store: Entity<TaskStore>,
         task_contexts: TaskContexts,
         task_overrides: Option<TaskOverrides>,
@@ -568,6 +568,7 @@ impl PickerDelegate for TasksModalDelegate {
             Vec::new()
         }
     }
+
     fn render_footer(
         &self,
         window: &mut Window,

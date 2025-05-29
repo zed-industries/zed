@@ -2,88 +2,90 @@ use std::path::Path;
 
 use collections::HashMap;
 use editor::Editor;
+use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt as _};
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
-use modal::TaskOverrides;
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
 use workspace::Workspace;
 
 mod modal;
 
-pub use modal::{Rerun, ShowAttachModal, Spawn, TasksModal};
+pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
-        |workspace: &mut Workspace, _: Option<&mut Window>, _: &mut Context<Workspace>| {
-            workspace
-                .register_action(spawn_task_or_modal)
-                .register_action(move |workspace, action: &modal::Rerun, window, cx| {
-                    if let Some((task_source_kind, mut last_scheduled_task)) = workspace
-                        .project()
-                        .read(cx)
-                        .task_store()
-                        .read(cx)
-                        .task_inventory()
-                        .and_then(|inventory| {
-                            inventory.read(cx).last_scheduled_task(
-                                action
-                                    .task_id
-                                    .as_ref()
-                                    .map(|id| TaskId(id.clone()))
-                                    .as_ref(),
-                            )
-                        })
-                    {
-                        if action.reevaluate_context {
-                            let mut original_task = last_scheduled_task.original_task().clone();
-                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                original_task.allow_concurrent_runs = allow_concurrent_runs;
-                            }
-                            if let Some(use_new_terminal) = action.use_new_terminal {
-                                original_task.use_new_terminal = use_new_terminal;
-                            }
-                            let task_contexts = task_contexts(workspace, window, cx);
-                            cx.spawn_in(window, async move |workspace, cx| {
-                                let task_contexts = task_contexts.await;
-                                let default_context = TaskContext::default();
-                                workspace
-                                    .update_in(cx, |workspace, window, cx| {
-                                        workspace.schedule_task(
-                                            task_source_kind,
-                                            &original_task,
-                                            task_contexts
-                                                .active_context()
-                                                .unwrap_or(&default_context),
-                                            false,
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .ok()
-                            })
-                            .detach()
-                        } else {
-                            let resolved = &mut last_scheduled_task.resolved;
-
-                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                resolved.allow_concurrent_runs = allow_concurrent_runs;
-                            }
-                            if let Some(use_new_terminal) = action.use_new_terminal {
-                                resolved.use_new_terminal = use_new_terminal;
-                            }
-
-                            workspace.schedule_resolved_task(
-                                task_source_kind,
-                                last_scheduled_task,
-                                false,
-                                window,
-                                cx,
-                            );
+        |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
+            let Some(window) = window else {
+                return;
+            };
+            cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |workspace, _, _| {
+                workspace.register_action(spawn_task_or_modal);
+            });
+            workspace.register_action(move |workspace, action: &modal::Rerun, window, cx| {
+                if let Some((task_source_kind, mut last_scheduled_task)) = workspace
+                    .project()
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .task_inventory()
+                    .and_then(|inventory| {
+                        inventory.read(cx).last_scheduled_task(
+                            action
+                                .task_id
+                                .as_ref()
+                                .map(|id| TaskId(id.clone()))
+                                .as_ref(),
+                        )
+                    })
+                {
+                    if action.reevaluate_context {
+                        let mut original_task = last_scheduled_task.original_task().clone();
+                        if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+                            original_task.allow_concurrent_runs = allow_concurrent_runs;
                         }
+                        if let Some(use_new_terminal) = action.use_new_terminal {
+                            original_task.use_new_terminal = use_new_terminal;
+                        }
+                        let task_contexts = task_contexts(workspace, window, cx);
+                        cx.spawn_in(window, async move |workspace, cx| {
+                            let task_contexts = task_contexts.await;
+                            let default_context = TaskContext::default();
+                            workspace
+                                .update_in(cx, |workspace, window, cx| {
+                                    workspace.schedule_task(
+                                        task_source_kind,
+                                        &original_task,
+                                        task_contexts.active_context().unwrap_or(&default_context),
+                                        false,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .ok()
+                        })
+                        .detach()
                     } else {
-                        toggle_modal(workspace, None, window, cx).detach();
-                    };
-                });
+                        let resolved = &mut last_scheduled_task.resolved;
+
+                        if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+                            resolved.allow_concurrent_runs = allow_concurrent_runs;
+                        }
+                        if let Some(use_new_terminal) = action.use_new_terminal {
+                            resolved.use_new_terminal = use_new_terminal;
+                        }
+
+                        workspace.schedule_resolved_task(
+                            task_source_kind,
+                            last_scheduled_task,
+                            false,
+                            window,
+                            cx,
+                        );
+                    }
+                } else {
+                    toggle_modal(workspace, None, window, cx).detach();
+                };
+            });
         },
     )
     .detach();
@@ -166,7 +168,7 @@ pub fn toggle_modal(
     }
 }
 
-fn spawn_tasks_filtered<F>(
+pub fn spawn_tasks_filtered<F>(
     mut predicate: F,
     overrides: Option<TaskOverrides>,
     window: &mut Window,

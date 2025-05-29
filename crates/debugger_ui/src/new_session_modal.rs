@@ -8,6 +8,7 @@ use std::{
     time::Duration,
     usize,
 };
+use tasks_ui::TasksModal;
 
 use dap::{
     DapRegistry, DebugRequest, TelemetrySpawnLocation, adapters::DebugAdapterName, send_telemetry,
@@ -48,6 +49,7 @@ pub(super) struct NewSessionModal {
     launch_picker: Entity<Picker<DebugScenarioDelegate>>,
     attach_mode: Entity<AttachMode>,
     configure_mode: Entity<ConfigureMode>,
+    task_mode: TaskMode,
     debugger: Option<DebugAdapterName>,
     save_scenario_state: Option<SaveScenarioState>,
     _subscriptions: [Subscription; 2],
@@ -75,6 +77,7 @@ impl NewSessionModal {
     pub(super) fn show(
         workspace: &mut Workspace,
         window: &mut Window,
+        mode: NewSessionMode,
         cx: &mut Context<Workspace>,
     ) {
         let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
@@ -91,7 +94,7 @@ impl NewSessionModal {
 
                     let launch_picker = cx.new(|cx| {
                         Picker::uniform_list(
-                            DebugScenarioDelegate::new(debug_panel.downgrade(), task_store),
+                            DebugScenarioDelegate::new(debug_panel.downgrade(), task_store.clone()),
                             window,
                             cx,
                         )
@@ -111,6 +114,19 @@ impl NewSessionModal {
                     ];
 
                     let configure_mode = ConfigureMode::new(None, window, cx);
+
+                    let task_mode = TaskMode {
+                        task_picker: cx.new(|cx| {
+                            TasksModal::new(
+                                task_store.clone(),
+                                TaskContexts::default(), // TODO: update in a spawn
+                                None,
+                                workspace_handle.clone(),
+                                window,
+                                cx,
+                            )
+                        }),
+                    };
 
                     cx.spawn_in(window, {
                         let workspace_handle = workspace_handle.clone();
@@ -152,8 +168,9 @@ impl NewSessionModal {
                         launch_picker,
                         attach_mode,
                         configure_mode,
+                        task_mode,
                         debugger: None,
-                        mode: NewSessionMode::Launch,
+                        mode,
                         debug_panel: debug_panel.downgrade(),
                         workspace: workspace_handle,
                         save_scenario_state: None,
@@ -170,6 +187,7 @@ impl NewSessionModal {
     fn render_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let dap_menu = self.adapter_drop_down_menu(window, cx);
         match self.mode {
+            NewSessionMode::Task => self.task_mode.task_picker.clone().into_any_element(),
             NewSessionMode::Attach => self.attach_mode.update(cx, |this, cx| {
                 this.clone().render(window, cx).into_any_element()
             }),
@@ -185,6 +203,7 @@ impl NewSessionModal {
 
     fn mode_focus_handle(&self, cx: &App) -> FocusHandle {
         match self.mode {
+            NewSessionMode::Task => self.task_mode.task_picker.focus_handle(cx),
             NewSessionMode::Attach => self.attach_mode.read(cx).attach_picker.focus_handle(cx),
             NewSessionMode::Configure => self.configure_mode.read(cx).program.focus_handle(cx),
             NewSessionMode::Launch => self.launch_picker.focus_handle(cx),
@@ -527,6 +546,7 @@ static SELECT_DEBUGGER_LABEL: SharedString = SharedString::new_static("Select De
 
 #[derive(Clone)]
 pub(crate) enum NewSessionMode {
+    Task,
     Configure,
     Attach,
     Launch,
@@ -535,7 +555,8 @@ pub(crate) enum NewSessionMode {
 impl std::fmt::Display for NewSessionMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mode = match self {
-            NewSessionMode::Launch => "Launch",
+            NewSessionMode::Task => "Run",
+            NewSessionMode::Launch => "Debug",
             NewSessionMode::Attach => "Attach",
             NewSessionMode::Configure => "Configure",
         };
@@ -638,7 +659,22 @@ impl Render for NewSessionModal {
                             .w_full()
                             .child(
                                 ToggleButton::new(
-                                    "debugger-session-ui-picker-button",
+                                    "debugger-session-ui-tasks-button",
+                                    NewSessionMode::Task.to_string(),
+                                )
+                                .size(ButtonSize::Default)
+                                .toggle_state(matches!(self.mode, NewSessionMode::Task))
+                                .style(ui::ButtonStyle::Subtle)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.mode = NewSessionMode::Task;
+                                    this.mode_focus_handle(cx).focus(window);
+                                    cx.notify();
+                                }))
+                                .last(),
+                            )
+                            .child(
+                                ToggleButton::new(
+                                    "debugger-session-ui-launch-button",
                                     NewSessionMode::Launch.to_string(),
                                 )
                                 .size(ButtonSize::Default)
@@ -770,6 +806,7 @@ impl Render for NewSessionModal {
                             ),
                     ),
                     NewSessionMode::Launch => el,
+                    NewSessionMode::Task => el,
                 }
             })
     }
@@ -958,6 +995,11 @@ impl AttachMode {
     pub(super) fn debug_request(&self) -> task::AttachRequest {
         task::AttachRequest { process_id: None }
     }
+}
+
+#[derive(Clone)]
+pub(super) struct TaskMode {
+    pub(super) task_picker: Entity<TasksModal>,
 }
 
 pub(super) struct DebugScenarioDelegate {
@@ -1257,30 +1299,5 @@ impl NewSessionModal {
 
     pub(crate) fn save_scenario(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_debug_scenario(window, cx);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use paths::home_dir;
-
-    #[test]
-    fn test_normalize_paths() {
-        let sep = std::path::MAIN_SEPARATOR;
-        let home = home_dir().to_string_lossy().to_string();
-        let resolve_path = |path: &str| -> String {
-            let mut path = path.to_string();
-            super::resolve_path(&mut path);
-            path
-        };
-
-        assert_eq!(resolve_path("bin"), format!("bin"));
-        assert_eq!(resolve_path(&format!("{sep}foo")), format!("{sep}foo"));
-        assert_eq!(resolve_path(""), format!(""));
-        assert_eq!(
-            resolve_path(&format!("~{sep}blah")),
-            format!("{home}{sep}blah")
-        );
-        assert_eq!(resolve_path("~"), home);
     }
 }

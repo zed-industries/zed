@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use task::{DebugRequest, DebugScenario, LaunchRequest, TaskContext, VariableName, ZedDebugConfig};
 use util::path;
 
+use crate::new_session_modal::NewSessionMode;
 use crate::tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -170,7 +171,12 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
 
     workspace
         .update(cx, |workspace, window, cx| {
-            crate::new_session_modal::NewSessionModal::show(workspace, window, cx);
+            crate::new_session_modal::NewSessionModal::show(
+                workspace,
+                window,
+                NewSessionMode::Launch,
+                cx,
+            );
         })
         .unwrap();
 
