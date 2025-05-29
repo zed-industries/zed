@@ -2,11 +2,15 @@ use std::sync::Arc;
 
 use pretty_assertions::assert_eq;
 
+use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_billing::StripeBilling;
 use crate::stripe_client::{
-    FakeStripeClient, StripeCustomerId, StripeMeter, StripeMeterId, StripePrice, StripePriceId,
-    StripePriceRecurring, StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem,
-    StripeSubscriptionItemId, UpdateSubscriptionItems,
+    FakeStripeClient, StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection,
+    StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionSubscriptionData,
+    StripeCustomerId, StripeMeter, StripeMeterId, StripePrice, StripePriceId, StripePriceRecurring,
+    StripeSubscription, StripeSubscriptionId, StripeSubscriptionItem, StripeSubscriptionItemId,
+    StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
+    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
 };
 
 fn make_stripe_billing() -> (StripeBilling, Arc<FakeStripeClient>) {
@@ -240,4 +244,205 @@ async fn test_bill_model_request_usage() {
         "some_model/requests"
     );
     assert_eq!(create_meter_event_calls[0].value, 73);
+}
+
+#[gpui::test]
+async fn test_checkout_with_zed_pro() {
+    let (stripe_billing, stripe_client) = make_stripe_billing();
+
+    let customer_id = StripeCustomerId("cus_test".into());
+    let github_login = "zeduser1";
+    let success_url = "https://example.com/success";
+
+    // It returns an error when the Zed Pro price doesn't exist.
+    {
+        let result = stripe_billing
+            .checkout_with_zed_pro(&customer_id, github_login, success_url)
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            r#"no price ID found for "zed-pro""#
+        );
+    }
+
+    // Successful checkout.
+    {
+        let price = StripePrice {
+            id: StripePriceId("price_1".into()),
+            unit_amount: Some(2000),
+            lookup_key: Some("zed-pro".to_string()),
+            recurring: None,
+        };
+        stripe_client
+            .prices
+            .lock()
+            .insert(price.id.clone(), price.clone());
+
+        stripe_billing.initialize().await.unwrap();
+
+        let checkout_url = stripe_billing
+            .checkout_with_zed_pro(&customer_id, github_login, success_url)
+            .await
+            .unwrap();
+
+        assert!(checkout_url.starts_with("https://checkout.stripe.com/c/pay"));
+
+        let create_checkout_session_calls = stripe_client
+            .create_checkout_session_calls
+            .lock()
+            .drain(..)
+            .collect::<Vec<_>>();
+        assert_eq!(create_checkout_session_calls.len(), 1);
+        let call = create_checkout_session_calls.into_iter().next().unwrap();
+        assert_eq!(call.customer, Some(customer_id));
+        assert_eq!(call.client_reference_id.as_deref(), Some(github_login));
+        assert_eq!(call.mode, Some(StripeCheckoutSessionMode::Subscription));
+        assert_eq!(
+            call.line_items,
+            Some(vec![StripeCreateCheckoutSessionLineItems {
+                price: Some(price.id.to_string()),
+                quantity: Some(1)
+            }])
+        );
+        assert_eq!(call.payment_method_collection, None);
+        assert_eq!(call.subscription_data, None);
+        assert_eq!(call.success_url.as_deref(), Some(success_url));
+    }
+}
+
+#[gpui::test]
+async fn test_checkout_with_zed_pro_trial() {
+    let (stripe_billing, stripe_client) = make_stripe_billing();
+
+    let customer_id = StripeCustomerId("cus_test".into());
+    let github_login = "zeduser1";
+    let success_url = "https://example.com/success";
+
+    // It returns an error when the Zed Pro price doesn't exist.
+    {
+        let result = stripe_billing
+            .checkout_with_zed_pro_trial(&customer_id, github_login, Vec::new(), success_url)
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            r#"no price ID found for "zed-pro""#
+        );
+    }
+
+    let price = StripePrice {
+        id: StripePriceId("price_1".into()),
+        unit_amount: Some(2000),
+        lookup_key: Some("zed-pro".to_string()),
+        recurring: None,
+    };
+    stripe_client
+        .prices
+        .lock()
+        .insert(price.id.clone(), price.clone());
+
+    stripe_billing.initialize().await.unwrap();
+
+    // Successful checkout.
+    {
+        let checkout_url = stripe_billing
+            .checkout_with_zed_pro_trial(&customer_id, github_login, Vec::new(), success_url)
+            .await
+            .unwrap();
+
+        assert!(checkout_url.starts_with("https://checkout.stripe.com/c/pay"));
+
+        let create_checkout_session_calls = stripe_client
+            .create_checkout_session_calls
+            .lock()
+            .drain(..)
+            .collect::<Vec<_>>();
+        assert_eq!(create_checkout_session_calls.len(), 1);
+        let call = create_checkout_session_calls.into_iter().next().unwrap();
+        assert_eq!(call.customer.as_ref(), Some(&customer_id));
+        assert_eq!(call.client_reference_id.as_deref(), Some(github_login));
+        assert_eq!(call.mode, Some(StripeCheckoutSessionMode::Subscription));
+        assert_eq!(
+            call.line_items,
+            Some(vec![StripeCreateCheckoutSessionLineItems {
+                price: Some(price.id.to_string()),
+                quantity: Some(1)
+            }])
+        );
+        assert_eq!(
+            call.payment_method_collection,
+            Some(StripeCheckoutSessionPaymentMethodCollection::IfRequired)
+        );
+        assert_eq!(
+            call.subscription_data,
+            Some(StripeCreateCheckoutSessionSubscriptionData {
+                trial_period_days: Some(14),
+                trial_settings: Some(StripeSubscriptionTrialSettings {
+                    end_behavior: StripeSubscriptionTrialSettingsEndBehavior {
+                        missing_payment_method:
+                            StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
+                    },
+                }),
+                metadata: None,
+            })
+        );
+        assert_eq!(call.success_url.as_deref(), Some(success_url));
+    }
+
+    // Successful checkout with extended trial.
+    {
+        let checkout_url = stripe_billing
+            .checkout_with_zed_pro_trial(
+                &customer_id,
+                github_login,
+                vec![AGENT_EXTENDED_TRIAL_FEATURE_FLAG.to_string()],
+                success_url,
+            )
+            .await
+            .unwrap();
+
+        assert!(checkout_url.starts_with("https://checkout.stripe.com/c/pay"));
+
+        let create_checkout_session_calls = stripe_client
+            .create_checkout_session_calls
+            .lock()
+            .drain(..)
+            .collect::<Vec<_>>();
+        assert_eq!(create_checkout_session_calls.len(), 1);
+        let call = create_checkout_session_calls.into_iter().next().unwrap();
+        assert_eq!(call.customer, Some(customer_id));
+        assert_eq!(call.client_reference_id.as_deref(), Some(github_login));
+        assert_eq!(call.mode, Some(StripeCheckoutSessionMode::Subscription));
+        assert_eq!(
+            call.line_items,
+            Some(vec![StripeCreateCheckoutSessionLineItems {
+                price: Some(price.id.to_string()),
+                quantity: Some(1)
+            }])
+        );
+        assert_eq!(
+            call.payment_method_collection,
+            Some(StripeCheckoutSessionPaymentMethodCollection::IfRequired)
+        );
+        assert_eq!(
+            call.subscription_data,
+            Some(StripeCreateCheckoutSessionSubscriptionData {
+                trial_period_days: Some(60),
+                trial_settings: Some(StripeSubscriptionTrialSettings {
+                    end_behavior: StripeSubscriptionTrialSettingsEndBehavior {
+                        missing_payment_method:
+                            StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
+                    },
+                }),
+                metadata: Some(std::collections::HashMap::from_iter([(
+                    "promo_feature_flag".into(),
+                    AGENT_EXTENDED_TRIAL_FEATURE_FLAG.into()
+                )])),
+            })
+        );
+        assert_eq!(call.success_url.as_deref(), Some(success_url));
+    }
 }
