@@ -414,16 +414,86 @@ pub(crate) struct CursorStyleRequest {
     pub(crate) style: CursorStyle,
 }
 
+#[derive(Default, Eq, PartialEq)]
+pub(crate) struct HitTest {
+    pub(crate) ids: SmallVec<[HitboxId; 8]>,
+    pub(crate) hover_hitbox_count: usize,
+}
+
 /// An identifier for a [Hitbox] which also includes [HitboxFlags].
-#[derive(Copy, Clone, Default, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct HitboxId(u64);
 
-impl Debug for HitboxId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("HitboxId")
-            .field(&self.0)
-            .field(&self.get_flags())
-            .finish()
+impl HitboxId {
+    /// Checks if the hitbox with this ID is currently hovered. Except when handling
+    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
+    /// events or paint hover styles.
+    ///
+    /// See [`Hitbox::is_hovered`] for details.
+    pub fn is_hovered(self, window: &Window) -> bool {
+        let hit_test = &window.mouse_hit_test;
+        for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
+            if self == *id {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Checks if the hitbox with this ID contains the mouse. Typically this should only be used
+    /// when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be used. See the
+    /// documentation of `Hitbox::is_hovered` for details.
+    pub fn should_handle_scroll(self, window: &Window) -> bool {
+        window.mouse_hit_test.ids.contains(&self)
+    }
+
+    fn next(mut self) -> HitboxId {
+        HitboxId(self.0.wrapping_add(1))
+    }
+}
+
+/// A rectangular region that potentially blocks hitboxes inserted prior.
+/// See [Window::insert_hitbox] for more details.
+#[derive(Clone, Debug, Deref)]
+pub struct Hitbox {
+    /// A unique identifier for the hitbox.
+    pub id: HitboxId,
+    /// The bounds of the hitbox.
+    #[deref]
+    pub bounds: Bounds<Pixels>,
+    /// The content mask when the hitbox was inserted.
+    pub content_mask: ContentMask<Pixels>,
+    /// Flags that specify hitbox behavior.
+    pub flags: HitboxFlags,
+}
+
+impl Hitbox {
+    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent`, this is
+    /// typically what you want when determining whether to handle mouse events or paint hover
+    /// styles.
+    ///
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`) or
+    /// `HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL` (`InteractiveElement::block_mouse_except_scroll`).
+    ///
+    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
+    /// Concretely, this is due to use-cases like overlays that cause the elements under to be
+    /// non-interactive while stilll allowing scrolling. More abstractly, this is because
+    /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
+    /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
+    /// container.
+    pub fn is_hovered(&self, window: &Window) -> bool {
+        self.id.is_hovered(window)
+    }
+
+    /// Checks if the hitbox with this ID contains the mouse. Typically this should only be used
+    /// when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be used. See the
+    /// documentation of `Hitbox::is_hovered` for details.
+    ///
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`).
+    pub fn should_handle_scroll(&self, window: &Window) -> bool {
+        self.id.should_handle_scroll(window)
     }
 }
 
@@ -482,100 +552,6 @@ bitflags! {
         const BLOCK_MOUSE_EXCEPT_SCROLL = 1 << 1;
     }
 }
-
-impl HitboxId {
-    /// Checks if the hitbox with this ID is currently hovered. Except when handling
-    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
-    /// events or paint hover styles.
-    ///
-    /// See [`Hitbox::is_hovered`] for details.
-    pub fn is_hovered(self, window: &Window) -> bool {
-        for id in window.mouse_hit_test.0.iter() {
-            if self == *id {
-                return true;
-            }
-            if id.has_flags(HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    /// Checks if the hitbox with this ID contains the mouse. Typically this should only be used
-    /// when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be used. See the
-    /// documentation of `Hitbox::is_hovered` for details.
-    pub fn should_handle_scroll(self, window: &Window) -> bool {
-        window.mouse_hit_test.0.contains(&self)
-    }
-
-    fn next(mut self) -> HitboxId {
-        const INCREMENT: u64 = {
-            let increment = HitboxFlags::all().bits() + 1;
-            assert!(increment.count_ones() == 1);
-            increment
-        };
-        debug_assert_eq!(self.get_flags(), HitboxFlags::empty());
-        HitboxId((self.0 & !HitboxFlags::all().bits()).wrapping_add(INCREMENT))
-    }
-
-    fn add_flags(&mut self, flags: HitboxFlags) {
-        self.0 |= flags.bits();
-    }
-
-    fn get_flags(self) -> HitboxFlags {
-        HitboxFlags::from_bits_truncate(self.0)
-    }
-
-    fn has_flags(self, flags: HitboxFlags) -> bool {
-        self.get_flags().contains(flags)
-    }
-}
-
-/// A rectangular region that potentially blocks hitboxes inserted prior.
-/// See [Window::insert_hitbox] for more details.
-#[derive(Clone, Debug, Deref)]
-pub struct Hitbox {
-    /// A unique identifier for the hitbox.
-    pub id: HitboxId,
-    /// The bounds of the hitbox.
-    #[deref]
-    pub bounds: Bounds<Pixels>,
-    /// The content mask when the hitbox was inserted.
-    pub content_mask: ContentMask<Pixels>,
-}
-
-impl Hitbox {
-    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent`, this is
-    /// typically what you want when determining whether to handle mouse events or paint hover
-    /// styles.
-    ///
-    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
-    /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`) or
-    /// `HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL` (`InteractiveElement::block_mouse_except_scroll`).
-    ///
-    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
-    /// Concretely, this is due to use-cases like overlays that cause the elements under to be
-    /// non-interactive while stilll allowing scrolling. More abstractly, this is because
-    /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
-    /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
-    /// container.
-    pub fn is_hovered(&self, window: &Window) -> bool {
-        self.id.is_hovered(window)
-    }
-
-    /// Checks if the hitbox with this ID contains the mouse. Typically this should only be used
-    /// when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be used. See the
-    /// documentation of `Hitbox::is_hovered` for details.
-    ///
-    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
-    /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`).
-    pub fn should_handle_scroll(&self, window: &Window) -> bool {
-        self.id.should_handle_scroll(window)
-    }
-}
-
-#[derive(Default, Eq, PartialEq)]
-pub(crate) struct HitTest(pub(crate) SmallVec<[HitboxId; 8]>);
 
 /// An identifier for a tooltip.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -706,15 +682,27 @@ impl Frame {
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
+        let mut set_hover_hitbox_count = false;
         let mut hit_test = HitTest::default();
         for hitbox in self.hitboxes.iter().rev() {
             let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
             if bounds.contains(&position) {
-                hit_test.0.push(hitbox.id);
-                if hitbox.id.has_flags(HitboxFlags::BLOCK_MOUSE) {
+                hit_test.ids.push(hitbox.id);
+                if !set_hover_hitbox_count
+                    && hitbox
+                        .flags
+                        .contains(HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL)
+                {
+                    hit_test.hover_hitbox_count = hit_test.ids.len();
+                    set_hover_hitbox_count = true;
+                }
+                if hitbox.flags.contains(HitboxFlags::BLOCK_MOUSE) {
                     break;
                 }
             }
+        }
+        if !set_hover_hitbox_count {
+            hit_test.hover_hitbox_count = hit_test.ids.len();
         }
         hit_test
     }
@@ -1055,7 +1043,7 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
-            next_hitbox_id: HitboxId::default(),
+            next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -3004,11 +2992,11 @@ impl Window {
         let content_mask = self.content_mask();
         let mut id = self.next_hitbox_id;
         self.next_hitbox_id = self.next_hitbox_id.next();
-        id.add_flags(flags);
         let hitbox = Hitbox {
             id,
             bounds,
             content_mask,
+            flags,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
@@ -4170,7 +4158,7 @@ impl Window {
                 inspector.update(cx, |inspector, _cx| {
                     if let Some(depth) = inspector.pick_depth.as_mut() {
                         *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
-                        let max_depth = self.mouse_hit_test.0.len() as f32 - 0.5;
+                        let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
                         if *depth < 0.0 {
                             *depth = 0.0;
                         } else if *depth > max_depth {
@@ -4195,9 +4183,9 @@ impl Window {
     ) -> Option<(HitboxId, crate::InspectorElementId)> {
         if let Some(pick_depth) = inspector.pick_depth {
             let depth = (pick_depth as i64).try_into().unwrap_or(0);
-            let max_skipped = self.mouse_hit_test.0.len().saturating_sub(1);
+            let max_skipped = self.mouse_hit_test.ids.len().saturating_sub(1);
             let skip_count = (depth as usize).min(max_skipped);
-            for hitbox_id in self.mouse_hit_test.0.iter().skip(skip_count) {
+            for hitbox_id in self.mouse_hit_test.ids.iter().skip(skip_count) {
                 if let Some(inspector_id) = frame.inspector_hitboxes.get(hitbox_id) {
                     return Some((*hitbox_id, inspector_id.clone()));
                 }
