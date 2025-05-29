@@ -474,14 +474,15 @@ impl RemoteServerProjects {
         .prompt_err("Failed to connect", window, cx, |_, _, _| None);
 
         let address_editor = editor.clone();
-        let creating = cx.spawn(async move |this, cx| {
+        let creating = cx.spawn_in(window, async move |this, cx| {
             match connection.await {
                 Some(Some(client)) => this
-                    .update(cx, |this, cx| {
+                    .update_in(cx, |this, window, cx| {
                         telemetry::event!("SSH Server Created");
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::default_mode(cx);
+                        this.focus_handle(cx).focus(window);
                         cx.notify()
                     })
                     .log_err(),
