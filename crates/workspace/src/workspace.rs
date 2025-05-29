@@ -157,6 +157,10 @@ pub trait DebuggerProvider {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     );
+
+    fn task_scheduled(&self, cx: &mut App);
+    fn debug_scenario_scheduled(&self, cx: &mut App);
+    fn debug_scenario_scheduled_last(&self, cx: &App) -> bool;
 }
 
 actions!(

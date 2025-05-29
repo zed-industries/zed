@@ -65,6 +65,7 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    debug_scenario_scheduled_last: bool,
     pub(crate) thread_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
@@ -103,6 +104,7 @@ impl DebugPanel {
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
                 _subscriptions: [focus_subscription],
+                debug_scenario_scheduled_last: true,
             }
         })
     }
@@ -264,6 +266,7 @@ impl DebugPanel {
                 cx,
             )
         });
+        self.debug_scenario_scheduled_last = true;
         if let Some(inventory) = self
             .project
             .read(cx)
@@ -1387,5 +1390,21 @@ impl workspace::DebuggerProvider for DebuggerProvider {
         cx: &mut Context<Workspace>,
     ) {
         spawn_task_or_modal(workspace, action, window, cx);
+    }
+
+    fn debug_scenario_scheduled(&self, cx: &mut App) {
+        self.0.update(cx, |this, _| {
+            this.debug_scenario_scheduled_last = true;
+        });
+    }
+
+    fn task_scheduled(&self, cx: &mut App) {
+        self.0.update(cx, |this, _| {
+            this.debug_scenario_scheduled_last = false;
+        })
+    }
+
+    fn debug_scenario_scheduled_last(&self, cx: &App) -> bool {
+        self.0.read(cx).debug_scenario_scheduled_last
     }
 }
