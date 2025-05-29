@@ -70,6 +70,4 @@ To override these settings, use the following:
 }
 ```
 
-
-
 See [the TypeScript language server `package.json`](https://github.com/microsoft/vscode/blob/main/extensions/typescript-language-features/package.json) for more information.
