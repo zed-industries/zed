@@ -547,7 +547,7 @@ impl std::fmt::Display for NewSessionMode {
             NewSessionMode::Task => "Run",
             NewSessionMode::Launch => "Debug",
             NewSessionMode::Attach => "Attach",
-            NewSessionMode::Configure => "Configure",
+            NewSessionMode::Configure => "Configure Debugger",
         };
 
         write!(f, "{}", mode)
