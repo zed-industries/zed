@@ -432,7 +432,7 @@ bitflags! {
     #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
     pub struct HitboxFlags: u64 {
         /// All hitboxes behind this hitbox will be ignored and so will have `hitbox.is_hovered() ==
-        /// false` and `hitbox.contains_mouse() == false`. Typically for elements this causes
+        /// false` and `hitbox.should_handle_scroll() == false`. Typically for elements this causes
         /// skipping of all mouse events, hover styles, and tooltips. This flag is set by
         /// [`InteractiveElement::occlude`].
         ///
@@ -441,7 +441,7 @@ bitflags! {
         ///
         /// ```
         /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
-        ///     if phase == DispatchPhase::Bubble && hitbox.contains_mouse(window) {
+        ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
         ///         cx.stop_propagation();
         ///     }
         /// }
@@ -454,7 +454,7 @@ bitflags! {
         /// be hovered.
         const BLOCK_MOUSE = 1 << 0;
         /// All hitboxes behind this hitbox will have `hitbox.is_hovered() == false`, even when
-        /// `hitbox.contains_mouse() == true`. Typically for elements this causes all mouse
+        /// `hitbox.should_handle_scroll() == true`. Typically for elements this causes all mouse
         /// interaction except scroll events to be ignored - see the documentation of
         /// [`Hitbox::is_hovered`] for details. This flag is set by
         /// [`InteractiveElement::block_mouse_except_scroll`].
@@ -464,7 +464,7 @@ bitflags! {
         ///
         /// ```
         /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
-        ///     if phase == DispatchPhase::Bubble && hitbox.contains_mouse(window) {
+        ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
         ///         cx.stop_propagation();
         ///     }
         /// }
@@ -504,7 +504,7 @@ impl HitboxId {
     /// Checks if the hitbox with this ID contains the mouse. Typically this should only be used
     /// when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be used. See the
     /// documentation of `Hitbox::is_hovered` for details.
-    pub fn contains_mouse(self, window: &Window) -> bool {
+    pub fn should_handle_scroll(self, window: &Window) -> bool {
         window.mouse_hit_test.0.contains(&self)
     }
 
@@ -553,11 +553,12 @@ impl Hitbox {
     /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`) or
     /// `HitboxFlags::BLOCK_MOUSE_EXCEPT_SCROLL` (`InteractiveElement::block_mouse_except_scroll`).
     ///
-    /// Handling of `ScrollWheelEvent` should typically use `contains_mouse` instead. Concretely,
-    /// this is due to use-cases like overlays that cause the elements under to be non-interactive
-    /// while stilll allowing scrolling. More abstractly, this is because `is_hovered` is about
-    /// element interactions directly under the mouse - mouse moves, clicks, hover styling, etc. In
-    /// contrast, scrolling is about finding the current outer scrollable container.
+    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
+    /// Concretely, this is due to use-cases like overlays that cause the elements under to be
+    /// non-interactive while stilll allowing scrolling. More abstractly, this is because
+    /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
+    /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
+    /// container.
     pub fn is_hovered(&self, window: &Window) -> bool {
         self.id.is_hovered(window)
     }
@@ -568,8 +569,8 @@ impl Hitbox {
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
     /// this sets `HitboxFlags::BLOCK_MOUSE` (`InteractiveElement::occlude`).
-    pub fn contains_mouse(&self, window: &Window) -> bool {
-        self.id.contains_mouse(window)
+    pub fn should_handle_scroll(&self, window: &Window) -> bool {
+        self.id.should_handle_scroll(window)
     }
 }
 

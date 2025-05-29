@@ -6360,7 +6360,7 @@ impl EditorElement {
                     }
                 };
 
-                if phase == DispatchPhase::Bubble && hitbox.contains_mouse(window) {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     delta = delta.coalesce(event.delta);
                     editor.update(cx, |editor, cx| {
                         let position_map: &PositionMap = &position_map;
