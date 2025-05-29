@@ -45,6 +45,7 @@ use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
+use zed_llm_client::CompletionIntent;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -2272,6 +2273,7 @@ impl AssistantContext {
         let mut completion_request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: Some(CompletionIntent::UserPrompt),
             mode: None,
             messages: Vec::new(),
             tools: Vec::new(),

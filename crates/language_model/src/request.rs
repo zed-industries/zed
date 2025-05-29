@@ -12,7 +12,7 @@ use gpui::{
 use image::codecs::png::PngEncoder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
-use zed_llm_client::CompletionMode;
+use zed_llm_client::{CompletionIntent, CompletionMode};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct LanguageModelImage {
@@ -281,6 +281,7 @@ pub enum LanguageModelToolChoice {
 pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
     pub prompt_id: Option<String>,
+    pub intent: Option<CompletionIntent>,
     pub mode: Option<CompletionMode>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,
