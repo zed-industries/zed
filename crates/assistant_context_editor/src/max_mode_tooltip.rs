@@ -1,4 +1,4 @@
-use gpui::{Context, IntoElement, Render, Window};
+use gpui::{Context, FontWeight, IntoElement, Render, Window};
 use ui::{prelude::*, tooltip_container};
 
 pub struct MaxModeTooltip {
@@ -18,39 +18,40 @@ impl MaxModeTooltip {
 
 impl Render for MaxModeTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let icon = if self.selected {
-            IconName::ZedBurnModeOn
+        let (icon, color) = if self.selected {
+            (IconName::ZedBurnModeOn, Color::Error)
         } else {
-            IconName::ZedBurnMode
+            (IconName::ZedBurnMode, Color::Default)
         };
 
+        let turned_on = h_flex()
+            .h_4()
+            .px_1()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().text_accent.opacity(0.1))
+            .rounded_sm()
+            .child(
+                Label::new("ON")
+                    .size(LabelSize::XSmall)
+                    .weight(FontWeight::SEMIBOLD)
+                    .color(Color::Accent),
+            );
+
         let title = h_flex()
-            .gap_1()
-            .child(Icon::new(icon).size(IconSize::Small))
-            .child(Label::new("Burn Mode"));
+            .gap_1p5()
+            .child(Icon::new(icon).size(IconSize::Small).color(color))
+            .child(Label::new("Burn Mode"))
+            .when(self.selected, |title| title.child(turned_on));
 
         tooltip_container(window, cx, |this, _, _| {
-            this.gap_0p5()
-                .map(|header| if self.selected {
-                    header.child(
-                        h_flex()
-                            .justify_between()
-                            .child(title)
-                            .child(
-                                h_flex()
-                                    .gap_0p5()
-                                    .child(Icon::new(IconName::Check).size(IconSize::XSmall).color(Color::Accent))
-                                    .child(Label::new("Turned On").size(LabelSize::XSmall).color(Color::Accent))
-                            )
-                    )
-                } else {
-                    header.child(title)
-                })
+            this
+                .child(title)
                 .child(
                     div()
-                        .max_w_72()
+                        .max_w_64()
                         .child(
-                            Label::new("Enables models to use large context windows, unlimited tool calls, and other capabilities for expanded reasoning, offering an unfettered agentic experience.")
+                            Label::new("Enables models to use large context windows, unlimited tool calls, and other capabilities for expanded reasoning.")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted)
                         )

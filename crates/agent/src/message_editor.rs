@@ -51,7 +51,7 @@ use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
     ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, NewThread,
-    OpenAgentDiff, RemoveAllContext, ToggleContextPicker, ToggleProfileSelector,
+    OpenAgentDiff, RemoveAllContext, ToggleBurnMode, ToggleContextPicker, ToggleProfileSelector,
     register_agent_preview,
 };
 
@@ -471,6 +471,22 @@ impl MessageEditor {
         }
     }
 
+    pub fn toggle_burn_mode(
+        &mut self,
+        _: &ToggleBurnMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.thread.update(cx, |thread, _cx| {
+            let active_completion_mode = thread.completion_mode();
+
+            thread.set_completion_mode(match active_completion_mode {
+                CompletionMode::Burn => CompletionMode::Normal,
+                CompletionMode::Normal => CompletionMode::Burn,
+            });
+        });
+    }
+
     fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.thread.read(cx);
         let model = thread.configured_model();
@@ -479,8 +495,8 @@ impl MessageEditor {
         }
 
         let active_completion_mode = thread.completion_mode();
-        let max_mode_enabled = active_completion_mode == CompletionMode::Max;
-        let icon = if max_mode_enabled {
+        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
+        let icon = if burn_mode_enabled {
             IconName::ZedBurnModeOn
         } else {
             IconName::ZedBurnMode
@@ -490,18 +506,13 @@ impl MessageEditor {
             IconButton::new("burn-mode", icon)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
-                .toggle_state(max_mode_enabled)
+                .toggle_state(burn_mode_enabled)
                 .selected_icon_color(Color::Error)
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.thread.update(cx, |thread, _cx| {
-                        thread.set_completion_mode(match active_completion_mode {
-                            CompletionMode::Max => CompletionMode::Normal,
-                            CompletionMode::Normal => CompletionMode::Max,
-                        });
-                    });
+                .on_click(cx.listener(|this, _event, window, cx| {
+                    this.toggle_burn_mode(&ToggleBurnMode, window, cx);
                 }))
                 .tooltip(move |_window, cx| {
-                    cx.new(|_| MaxModeTooltip::new().selected(max_mode_enabled))
+                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
                         .into()
                 })
                 .into_any_element(),
@@ -596,6 +607,7 @@ impl MessageEditor {
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
             .on_action(cx.listener(Self::expand_message_editor))
+            .on_action(cx.listener(Self::toggle_burn_mode))
             .capture_action(cx.listener(Self::paste))
             .gap_2()
             .p_2()
