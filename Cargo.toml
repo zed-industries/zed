@@ -617,7 +617,8 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.3"
+# zed_llm_client = "0.8.3"
+zed_llm_client = { path = "../zed-monorepo/crates/zed_llm_client" }
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]

@@ -38,7 +38,7 @@ use thiserror::Error;
 use ui::Window;
 use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::CompletionRequestStatus;
+use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
 
 use crate::ThreadStore;
 use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
@@ -1184,6 +1184,7 @@ impl Thread {
     pub fn send_to_model(
         &mut self,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Self>,
     ) {
@@ -1193,7 +1194,7 @@ impl Thread {
 
         self.remaining_turns -= 1;
 
-        let request = self.to_completion_request(model.clone(), cx);
+        let request = self.to_completion_request(model.clone(), intent, cx);
 
         self.stream_completion(request, model, window, cx);
     }
@@ -1213,11 +1214,13 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         model: Arc<dyn LanguageModel>,
+        intent: CompletionIntent,
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
         let mut request = LanguageModelRequest {
             thread_id: Some(self.id.to_string()),
             prompt_id: Some(self.last_prompt_id.to_string()),
+            intent: Some(intent),
             mode: None,
             messages: vec![],
             tools: Vec::new(),
@@ -1377,6 +1380,7 @@ impl Thread {
         let mut request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: Some(CompletionIntent::ThreadSummarization),
             mode: None,
             messages: vec![],
             tools: Vec::new(),
@@ -2047,7 +2051,8 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request = Arc::new(self.to_completion_request(model.clone(), cx));
+        let request =
+            Arc::new(self.to_completion_request(model.clone(), CompletionIntent::ToolResults, cx));
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()
@@ -2243,7 +2248,7 @@ impl Thread {
         if self.all_tools_finished() {
             if let Some(ConfiguredModel { model, .. }) = self.configured_model.as_ref() {
                 if !canceled {
-                    self.send_to_model(model.clone(), window, cx);
+                    self.send_to_model(model.clone(), CompletionIntent::ToolResults, window, cx);
                 }
                 self.auto_capture_telemetry(cx);
             }
@@ -2934,7 +2939,7 @@ fn main() {{
 
         // Check message in request
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 2);
@@ -3029,7 +3034,7 @@ fn main() {{
 
         // Check entire request to make sure all contexts are properly included
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         // The request should contain all 3 messages
@@ -3136,7 +3141,7 @@ fn main() {{
 
         // Check message in request
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 2);
@@ -3162,7 +3167,7 @@ fn main() {{
 
         // Check that both messages appear in the request
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         assert_eq!(request.messages.len(), 3);
@@ -3207,7 +3212,7 @@ fn main() {{
 
         // Create a request and check that it doesn't have a stale buffer warning yet
         let initial_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         // Make sure we don't have a stale file warning yet
@@ -3243,7 +3248,7 @@ fn main() {{
 
         // Create a new request and check for the stale buffer warning
         let new_request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
 
         // We should have a stale file warning as the last message
@@ -3293,7 +3298,7 @@ fn main() {{
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -3313,7 +3318,7 @@ fn main() {{
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -3333,7 +3338,7 @@ fn main() {{
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, Some(0.66));
 
@@ -3353,7 +3358,7 @@ fn main() {{
         });
 
         let request = thread.update(cx, |thread, cx| {
-            thread.to_completion_request(model.clone(), cx)
+            thread.to_completion_request(model.clone(), CompletionIntent::UserPrompt, cx)
         });
         assert_eq!(request.temperature, None);
     }
@@ -3385,7 +3390,12 @@ fn main() {{
         // Send a message
         thread.update(cx, |thread, cx| {
             thread.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
-            thread.send_to_model(model.clone(), None, cx);
+            thread.send_to_model(
+                model.clone(),
+                CompletionIntent::ThreadSummarization,
+                None,
+                cx,
+            );
         });
 
         let fake_model = model.as_fake();
@@ -3480,7 +3490,7 @@ fn main() {{
                 vec![],
                 cx,
             );
-            thread.send_to_model(model.clone(), None, cx);
+            thread.send_to_model(model.clone(), CompletionIntent::UserPrompt, None, cx);
         });
 
         let fake_model = model.as_fake();
@@ -3518,7 +3528,12 @@ fn main() {{
     ) {
         thread.update(cx, |thread, cx| {
             thread.insert_user_message("Hi!", ContextLoadResult::default(), None, vec![], cx);
-            thread.send_to_model(model.clone(), None, cx);
+            thread.send_to_model(
+                model.clone(),
+                CompletionIntent::ThreadSummarization,
+                None,
+                cx,
+            );
         });
 
         let fake_model = model.as_fake();
