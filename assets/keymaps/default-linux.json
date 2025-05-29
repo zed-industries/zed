@@ -127,9 +127,7 @@
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-shift-e": "editor::ToggleEditPrediction",
       "f9": "editor::ToggleBreakpoint",
-      "shift-f9": "editor::EditLogBreakpoint",
-      "ctrl-shift-backspace": "editor::GoToPreviousChange",
-      "ctrl-shift-alt-backspace": "editor::GoToNextChange"
+      "shift-f9": "editor::EditLogBreakpoint"
     }
   },
   {
@@ -148,6 +146,8 @@
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
       "ctrl-alt-e": "editor::SelectEnclosingSymbol",
+      "ctrl-shift-backspace": "editor::GoToPreviousChange",
+      "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
