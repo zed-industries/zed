@@ -1352,7 +1352,7 @@ impl Thread {
                 }
                 request.messages.push(tool_results_message);
             }
-        } // end for message
+        }
 
         // https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching
         if let Some(message_ix_to_cache) = message_ix_to_cache {
