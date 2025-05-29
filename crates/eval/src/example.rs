@@ -11,8 +11,8 @@ use crate::{
     assertions::{AssertionsReport, RanAssertion, RanAssertionResult},
 };
 use agent::{ContextLoadResult, Thread, ThreadEvent};
+use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
-use assistant_settings::AgentProfileId;
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
 use collections::HashMap;
@@ -230,6 +230,10 @@ impl ExampleContext {
                     }
                     Ok(StopReason::MaxTokens) => {
                         tx.try_send(Err(anyhow!("Exceeded maximum tokens"))).ok();
+                    }
+                    Ok(StopReason::Refusal) => {
+                        tx.try_send(Err(anyhow!("Model refused to generate content")))
+                            .ok();
                     }
                     Err(err) => {
                         tx.try_send(Err(anyhow!(err.clone()))).ok();

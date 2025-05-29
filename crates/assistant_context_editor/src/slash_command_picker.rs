@@ -338,7 +338,7 @@ where
 
         let handle = self
             .active_context_editor
-            .update(cx, |this, _| this.slash_menu_handle.clone())
+            .read_with(cx, |this, _| this.slash_menu_handle.clone())
             .ok();
         PopoverMenu::new("model-switcher")
             .menu(move |_window, _cx| Some(picker_view.clone()))

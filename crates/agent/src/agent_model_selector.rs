@@ -1,12 +1,12 @@
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
 
 use crate::Thread;
-use language_model::{ConfiguredModel, LanguageModelRegistry};
-use language_model_selector::{
+use assistant_context_editor::language_model_selector::{
     LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
+use language_model::{ConfiguredModel, LanguageModelRegistry};
 use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{PopoverMenuHandle, Tooltip, prelude::*};
@@ -63,7 +63,7 @@ impl AgentModelSelector {
                                         );
                                     }
                                 });
-                                update_settings_file::<AssistantSettings>(
+                                update_settings_file::<AgentSettings>(
                                     fs.clone(),
                                     cx,
                                     move |settings, _cx| {
@@ -72,7 +72,7 @@ impl AgentModelSelector {
                                 );
                             }
                             ModelType::InlineAssistant => {
-                                update_settings_file::<AssistantSettings>(
+                                update_settings_file::<AgentSettings>(
                                     fs.clone(),
                                     cx,
                                     move |settings, _cx| {

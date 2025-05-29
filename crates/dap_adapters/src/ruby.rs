@@ -3,15 +3,16 @@ use async_trait::async_trait;
 use dap::{
     DebugRequest, StartDebuggingRequestArguments,
     adapters::{
-        self, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
+        DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition,
     },
 };
 use gpui::{AsyncApp, SharedString};
 use language::LanguageName;
-use std::{path::PathBuf, sync::Arc};
+use serde_json::json;
+use std::path::PathBuf;
+use std::sync::Arc;
+use task::{DebugScenario, ZedDebugConfig};
 use util::command::new_smol_command;
-
-use crate::ToDap;
 
 #[derive(Default)]
 pub(crate) struct RubyDebugAdapter;
@@ -28,6 +29,187 @@ impl DebugAdapter for RubyDebugAdapter {
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
         Some(SharedString::new_static("Ruby").into())
+    }
+
+    async fn dap_schema(&self) -> serde_json::Value {
+        json!({
+            "oneOf": [
+                {
+                    "allOf": [
+                        {
+                            "type": "object",
+                            "required": ["request"],
+                            "properties": {
+                                "request": {
+                                    "type": "string",
+                                    "enum": ["launch"],
+                                    "description": "Request to launch a new process"
+                                }
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "required": ["script"],
+                            "properties": {
+                                "command": {
+                                    "type": "string",
+                                    "description": "Command name (ruby, rake, bin/rails, bundle exec ruby, etc)",
+                                    "default": "ruby"
+                                },
+                                "script": {
+                                    "type": "string",
+                                    "description": "Absolute path to a Ruby file."
+                                },
+                                "cwd": {
+                                    "type": "string",
+                                    "description": "Directory to execute the program in",
+                                    "default": "${ZED_WORKTREE_ROOT}"
+                                },
+                                "args": {
+                                    "type": "array",
+                                    "description": "Command line arguments passed to the program",
+                                    "items": {
+                                        "type": "string"
+                                    },
+                                    "default": []
+                                },
+                                "env": {
+                                    "type": "object",
+                                    "description": "Additional environment variables to pass to the debugging (and debugged) process",
+                                    "default": {}
+                                },
+                                "showProtocolLog": {
+                                    "type": "boolean",
+                                    "description": "Show a log of DAP requests, events, and responses",
+                                    "default": false
+                                },
+                                "useBundler": {
+                                    "type": "boolean",
+                                    "description": "Execute Ruby programs with `bundle exec` instead of directly",
+                                    "default": false
+                                },
+                                "bundlePath": {
+                                    "type": "string",
+                                    "description": "Location of the bundle executable"
+                                },
+                                "rdbgPath": {
+                                    "type": "string",
+                                    "description": "Location of the rdbg executable"
+                                },
+                                "askParameters": {
+                                    "type": "boolean",
+                                    "description": "Ask parameters at first."
+                                },
+                                "debugPort": {
+                                    "type": "string",
+                                    "description": "UNIX domain socket name or TPC/IP host:port"
+                                },
+                                "waitLaunchTime": {
+                                    "type": "number",
+                                    "description": "Wait time before connection in milliseconds"
+                                },
+                                "localfs": {
+                                    "type": "boolean",
+                                    "description": "true if the VSCode and debugger run on a same machine",
+                                    "default": false
+                                },
+                                "useTerminal": {
+                                    "type": "boolean",
+                                    "description": "Create a new terminal and then execute commands there",
+                                    "default": false
+                                }
+                            }
+                        }
+                    ]
+                },
+                {
+                    "allOf": [
+                        {
+                            "type": "object",
+                            "required": ["request"],
+                            "properties": {
+                                "request": {
+                                    "type": "string",
+                                    "enum": ["attach"],
+                                    "description": "Request to attach to an existing process"
+                                }
+                            }
+                        },
+                        {
+                            "type": "object",
+                            "properties": {
+                                "rdbgPath": {
+                                    "type": "string",
+                                    "description": "Location of the rdbg executable"
+                                },
+                                "debugPort": {
+                                    "type": "string",
+                                    "description": "UNIX domain socket name or TPC/IP host:port"
+                                },
+                                "showProtocolLog": {
+                                    "type": "boolean",
+                                    "description": "Show a log of DAP requests, events, and responses",
+                                    "default": false
+                                },
+                                "localfs": {
+                                    "type": "boolean",
+                                    "description": "true if the VSCode and debugger run on a same machine",
+                                    "default": false
+                                },
+                                "localfsMap": {
+                                    "type": "string",
+                                    "description": "Specify pairs of remote root path and local root path like `/remote_dir:/local_dir`. You can specify multiple pairs like `/rem1:/loc1,/rem2:/loc2` by concatenating with `,`."
+                                },
+                                "env": {
+                                    "type": "object",
+                                    "description": "Additional environment variables to pass to the rdbg process",
+                                    "default": {}
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        })
+    }
+
+    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+        let mut config = serde_json::Map::new();
+
+        match &zed_scenario.request {
+            DebugRequest::Launch(launch) => {
+                config.insert("request".to_string(), json!("launch"));
+                config.insert("script".to_string(), json!(launch.program));
+                config.insert("command".to_string(), json!("ruby"));
+
+                if !launch.args.is_empty() {
+                    config.insert("args".to_string(), json!(launch.args));
+                }
+
+                if !launch.env.is_empty() {
+                    config.insert("env".to_string(), json!(launch.env));
+                }
+
+                if let Some(cwd) = &launch.cwd {
+                    config.insert("cwd".to_string(), json!(cwd));
+                }
+
+                // Ruby stops on entry so there's no need to handle that case
+            }
+            DebugRequest::Attach(attach) => {
+                config.insert("request".to_string(), json!("attach"));
+
+                config.insert("processId".to_string(), json!(attach.process_id));
+            }
+        }
+
+        Ok(DebugScenario {
+            adapter: zed_scenario.adapter,
+            label: zed_scenario.label,
+            config: serde_json::Value::Object(config),
+            tcp_connection: None,
+            build: None,
+        })
     }
 
     async fn get_binary(
@@ -66,34 +248,25 @@ impl DebugAdapter for RubyDebugAdapter {
         let tcp_connection = definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let DebugRequest::Launch(launch) = definition.request.clone() else {
-            anyhow::bail!("rdbg does not yet support attaching");
-        };
-
-        let mut arguments = vec![
+        let arguments = vec![
             "--open".to_string(),
             format!("--port={}", port),
             format!("--host={}", host),
         ];
-        if delegate.which(launch.program.as_ref()).await.is_some() {
-            arguments.push("--command".to_string())
-        }
-        arguments.push(launch.program);
-        arguments.extend(launch.args);
 
         Ok(DebugAdapterBinary {
             command: rdbg_path.to_string_lossy().to_string(),
             arguments,
-            connection: Some(adapters::TcpArguments {
+            connection: Some(dap::adapters::TcpArguments {
                 host,
                 port,
                 timeout,
             }),
-            cwd: launch.cwd,
-            envs: launch.env.into_iter().collect(),
+            cwd: None,
+            envs: std::collections::HashMap::default(),
             request_args: StartDebuggingRequestArguments {
-                configuration: serde_json::Value::Object(Default::default()),
-                request: definition.request.to_dap(),
+                request: self.validate_config(&definition.config)?,
+                configuration: definition.config.clone(),
             },
         })
     }

@@ -19,7 +19,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, MessageContent, RateLimiter, Role, WrappedTextContent,
+    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -240,8 +240,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::Claude3_7Sonnet,
-            anthropic::Model::Claude3_7SonnetThinking,
+            anthropic::Model::ClaudeSonnet4,
+            anthropic::Model::ClaudeSonnet4Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -350,11 +350,7 @@ pub fn count_anthropic_tokens(
                         // TODO: Estimate token usage from tool uses.
                     }
                     MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text)
-                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                            text,
-                            ..
-                        }) => {
+                        LanguageModelToolResultContent::Text(text) => {
                             string_contents.push_str(text);
                         }
                         LanguageModelToolResultContent::Image(image) => {
@@ -592,10 +588,9 @@ pub fn into_anthropic(
                                 tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
                                 content: match tool_result.content {
-                                    LanguageModelToolResultContent::Text(text)
-                                    | LanguageModelToolResultContent::WrappedText(
-                                        WrappedTextContent { text, .. },
-                                    ) => ToolResultContent::Plain(text.to_string()),
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        ToolResultContent::Plain(text.to_string())
+                                    }
                                     LanguageModelToolResultContent::Image(image) => {
                                         ToolResultContent::Multipart(vec![ToolResultPart::Image {
                                             source: anthropic::ImageSource {
@@ -825,6 +820,7 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
+                        "refusal" => StopReason::Refusal,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn
