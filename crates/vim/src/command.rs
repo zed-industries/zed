@@ -166,7 +166,15 @@ struct VimSave {
     pub filename: String,
 }
 
-actions!(vim, [VisualCommand, CountCommand, ShellCommand]);
+actions!(
+    vim,
+    [
+        VisualCommand,
+        HelixSearchSelection,
+        CountCommand,
+        ShellCommand
+    ]
+);
 impl_internal_actions!(
     vim,
     [
@@ -227,6 +235,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         };
         workspace.update(cx, |workspace, cx| {
             command_palette::CommandPalette::toggle(workspace, "'<,'>", window, cx);
+        })
+    });
+    Vim::action(editor, cx, |vim, _: &HelixSearchSelection, window, cx| {
+        let Some(workspace) = vim.workspace(window) else {
+            return;
+        };
+        vim.create_visual_marks(vim.mode, window, cx);
+        workspace.update(cx, |workspace, cx| {
+            command_palette::CommandPalette::toggle(workspace, "'<,'>/", window, cx);
         })
     });
 
@@ -702,7 +719,7 @@ impl Position {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Deserialize, JsonSchema)]
 pub(crate) struct CommandRange {
     start: Position,
     end: Option<Position>,
@@ -1044,10 +1061,16 @@ pub fn command_interceptor(mut input: &str, cx: &App) -> Vec<CommandInterceptRes
             .boxed_clone(),
         )
     } else if query.starts_with('/') || query.starts_with('?') {
+        // let range = range.clone().unwrap_or(CommandRange {
+        //     start: Position::CurrentLine { offset: 0 },
+        //     end: None,
+        // });
+        let range = range.clone();
         Some(
             FindCommand {
                 query: query[1..].to_string(),
                 backwards: query.starts_with('?'),
+                range,
             }
             .boxed_clone(),
         )

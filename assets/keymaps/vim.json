@@ -379,7 +379,7 @@
       "u": "vim::Undo",
       "ctrl-r": "vim::Redo",
       "r": "vim::PushReplace",
-      "s": "vim::Substitute",
+      "s": "vim::HelixSearchSelection",
       "shift-s": "vim::SubstituteLine",
       ">": "vim::Indent",
       "<": "vim::Outdent",
