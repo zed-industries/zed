@@ -49,6 +49,7 @@ pub struct ExampleMetadata {
     pub max_assertions: Option<usize>,
     pub profile_id: AgentProfileId,
     pub existing_thread_json: Option<String>,
+    pub max_turns: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
