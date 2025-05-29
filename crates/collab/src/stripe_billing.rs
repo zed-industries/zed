@@ -24,7 +24,6 @@ use crate::stripe_client::{
 
 pub struct StripeBilling {
     state: RwLock<StripeBillingState>,
-    real_client: Arc<stripe::Client>,
     client: Arc<dyn StripeClient>,
 }
 
@@ -39,7 +38,6 @@ impl StripeBilling {
     pub fn new(client: Arc<stripe::Client>) -> Self {
         Self {
             client: Arc::new(RealStripeClient::new(client.clone())),
-            real_client: client,
             state: RwLock::default(),
         }
     }
@@ -47,8 +45,6 @@ impl StripeBilling {
     #[cfg(test)]
     pub fn test(client: Arc<crate::stripe_client::FakeStripeClient>) -> Self {
         Self {
-            // This is just temporary until we can remove all usages of the real Stripe client.
-            real_client: Arc::new(stripe::Client::new("sk_test")),
             client,
             state: RwLock::default(),
         }
