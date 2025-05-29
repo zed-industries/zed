@@ -39,14 +39,14 @@ pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
                 format!("\"{}\"", VariableName::Symbol.template_value()),
                 VariableName::File.template_value(),
             ],
-            tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
-            arg_variable_processor: Some(|name, value| {
+            args_variables_processor: Some(|name, value| {
                 if name == "ZED_SYMBOL" {
                     Some(replace_test_name_parameters(&value))
                 } else {
                     None
                 }
             }),
+            tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
             ..TaskTemplate::default()
         },
         TaskTemplate {

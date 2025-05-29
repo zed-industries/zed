@@ -29,7 +29,7 @@
                 property: (property_identifier) @_property
             )
             (#any-of? @_name "it" "test" "describe" "context" "suite")
-            (#any-of? @_property "each" "only" "skip" "concurrent" "todo")
+            (#any-of? @_property "each")
         )
         arguments: (
             arguments . (string (string_fragment) @run)

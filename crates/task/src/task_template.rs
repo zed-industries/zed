@@ -29,6 +29,9 @@ pub struct TaskTemplate {
     /// Arguments to the command.
     #[serde(default)]
     pub args: Vec<String>,
+    /// It allows to dynamically decide what to do with variables in the command line arguments.
+    #[serde(skip)]
+    pub args_variables_processor: Option<fn(name: &str, value: String) -> Option<String>>,
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -72,8 +75,6 @@ pub struct TaskTemplate {
     /// Whether to show the command line in the task output.
     #[serde(default = "default_true")]
     pub show_command: bool,
-    #[serde(skip)]
-    pub arg_variable_processor: Option<fn(name: &str, value: String) -> Option<String>>,
 }
 
 #[derive(Deserialize, Eq, PartialEq, Clone, Debug)]
@@ -216,13 +217,13 @@ impl TaskTemplate {
             None,
         )?;
 
-        let args = match self.arg_variable_processor {
-            Some(arg_variable_processor) => substitute_all_template_variables_in_vec(
+        let args = match self.args_variables_processor {
+            Some(args_variables_processor) => substitute_all_template_variables_in_vec(
                 &self.args,
                 &task_variables,
                 &variable_names,
                 &mut substituted_variables,
-                Some(arg_variable_processor),
+                Some(args_variables_processor),
             )?,
             None => self.args.clone(),
         };
