@@ -353,7 +353,7 @@ async fn create_billing_subscription(
     let checkout_session_url = match body.product {
         ProductCode::ZedPro => {
             stripe_billing
-                .checkout_with_zed_pro(customer_id, &user.github_login, &success_url)
+                .checkout_with_zed_pro(&customer_id, &user.github_login, &success_url)
                 .await?
         }
         ProductCode::ZedProTrial => {
@@ -370,7 +370,7 @@ async fn create_billing_subscription(
 
             stripe_billing
                 .checkout_with_zed_pro_trial(
-                    customer_id,
+                    &customer_id,
                     &user.github_login,
                     feature_flags,
                     &success_url,

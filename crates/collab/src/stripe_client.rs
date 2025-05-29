@@ -56,12 +56,12 @@ pub struct UpdateSubscriptionItems {
     pub price: Option<StripePriceId>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripeSubscriptionTrialSettings {
     pub end_behavior: StripeSubscriptionTrialSettingsEndBehavior,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripeSubscriptionTrialSettingsEndBehavior {
     pub missing_payment_method: StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 }
@@ -123,26 +123,26 @@ pub struct StripeCreateCheckoutSessionParams<'a> {
     pub success_url: Option<&'a str>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StripeCheckoutSessionMode {
     Payment,
     Setup,
     Subscription,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripeCreateCheckoutSessionLineItems {
     pub price: Option<String>,
     pub quantity: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum StripeCheckoutSessionPaymentMethodCollection {
     Always,
     IfRequired,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct StripeCreateCheckoutSessionSubscriptionData {
     pub metadata: Option<HashMap<String, String>>,
     pub trial_period_days: Option<u32>,

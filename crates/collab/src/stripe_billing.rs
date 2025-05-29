@@ -231,7 +231,7 @@ impl StripeBilling {
 
     pub async fn checkout_with_zed_pro(
         &self,
-        customer_id: StripeCustomerId,
+        customer_id: &StripeCustomerId,
         github_login: &str,
         success_url: &str,
     ) -> Result<String> {
@@ -239,7 +239,7 @@ impl StripeBilling {
 
         let mut params = StripeCreateCheckoutSessionParams::default();
         params.mode = Some(StripeCheckoutSessionMode::Subscription);
-        params.customer = Some(&customer_id);
+        params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
         params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
             price: Some(zed_pro_price_id.to_string()),
@@ -253,7 +253,7 @@ impl StripeBilling {
 
     pub async fn checkout_with_zed_pro_trial(
         &self,
-        customer_id: StripeCustomerId,
+        customer_id: &StripeCustomerId,
         github_login: &str,
         feature_flags: Vec<String>,
         success_url: &str,
@@ -292,7 +292,7 @@ impl StripeBilling {
         params.mode = Some(StripeCheckoutSessionMode::Subscription);
         params.payment_method_collection =
             Some(StripeCheckoutSessionPaymentMethodCollection::IfRequired);
-        params.customer = Some(&customer_id);
+        params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
         params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
             price: Some(zed_pro_price_id.to_string()),
