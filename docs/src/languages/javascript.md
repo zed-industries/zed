@@ -7,7 +7,10 @@ JavaScript support is available natively in Zed.
 
 ## Code formatting
 
-Formatting on save is enabled by default for JavaScript, using TypeScript's built-in code formatting. But many JavaScript projects use other command-line code-formatting tools, such as [Prettier](https://prettier.io/). You can use one of these tools by specifying an _external_ code formatter for JavaScript in your settings. See [the configuration docs](../configuring-zed.md) for more information.
+Formatting on save is enabled by default for JavaScript, using TypeScript's built-in code formatting.
+But many JavaScript projects use other command-line code-formatting tools, such as [Prettier](https://prettier.io/).
+You can use one of these tools by specifying an _external_ code formatter for JavaScript in your settings.
+See [the configuration docs](../configuring-zed.md) for more information.
 
 For example, if you have Prettier installed and on your `PATH`, you can use it to format JavaScript files by adding the following to your `settings.json`:
 
@@ -34,12 +37,12 @@ In JSX strings, the [`tailwindcss-language-server`](./tailwindcss.md) is used pr
 
 ## JSDoc
 
-Zed supports JSDoc syntax in JavaScript and TypeScript comments that match the JSDoc syntax. Zed uses [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc) for parsing and highlighting JSDoc.
+Zed supports JSDoc syntax in JavaScript and TypeScript comments that match the JSDoc syntax.
+Zed uses [tree-sitter/tree-sitter-jsdoc](https://github.com/tree-sitter/tree-sitter-jsdoc) for parsing and highlighting JSDoc.
 
 ## ESLint
 
-You can configure Zed to format code using `eslint --fix` by running the ESLint
-code action when formatting:
+You can configure Zed to format code using `eslint --fix` by running the ESLint code action when formatting:
 
 ```json
 {
