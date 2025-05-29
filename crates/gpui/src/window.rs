@@ -439,9 +439,10 @@ impl HitboxId {
         return false;
     }
 
-    /// Checks if the hitbox with this ID contains the mouse. Typically this should only be used
-    /// when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be used. See the
-    /// documentation of `Hitbox::is_hovered` for details.
+    /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
+    /// Typically this should only be used when handling `ScrollWheelEvent`, and otherwise
+    /// `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for details about
+    /// this distinction.
     pub fn should_handle_scroll(self, window: &Window) -> bool {
         window.mouse_hit_test.ids.contains(&self)
     }
@@ -485,9 +486,9 @@ impl Hitbox {
         self.id.is_hovered(window)
     }
 
-    /// Checks if the hitbox with this ID contains the mouse. Typically this should only be used
-    /// when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be used. See the
-    /// documentation of `Hitbox::is_hovered` for details.
+    /// Checks if the hitbox contains the mouse and should handle scroll events. Typically this
+    /// should only be used when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be
+    /// used. See the documentation of `Hitbox::is_hovered` for details about this distinction.
     ///
     /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
     /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
