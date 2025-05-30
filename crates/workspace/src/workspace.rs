@@ -3415,10 +3415,10 @@ impl Workspace {
                 let position = dock.read(cx).position();
                 println!("focused dock {:?}", position);
                 if let Some(bounds) = self.bounding_box_for_dock(dock, window, cx) {
-                    println!("origin bounds from dock {:?}: {:?}", position, bounds);
+                    println!("FOO origin bounds from dock {:?}: {:?}", position, bounds);
                     bounds
                 } else {
-                    println!("dock {:?} has no bounds, falling back to active pane", position);
+                    println!("FOO dock {:?} has no bounds, falling back to active pane", position);
                     match self.bounding_box_for_pane(&self.active_pane) {
                         Some(bounds) => bounds,
                         None => return,
@@ -3428,7 +3428,7 @@ impl Workspace {
                 println!("no dock focused, using active pane");
                 match self.bounding_box_for_pane(&self.active_pane) {
                     Some(bounds) => {
-                        println!("origin bounds from active pane: {:?}", bounds);
+                        println!("FOO origin bounds from active pane: {:?}", bounds);
                         bounds
                     },
                     None => return,
@@ -3483,7 +3483,7 @@ impl Workspace {
         overlap_width >= min_width * 0.25
     }
 
-    /// Helper function to check if two bounds have significant vertical overlap (for circular navigation)  
+    /// Helper function to check if two bounds have significant vertical overlap (for circular navigation)
     fn significant_vertical_overlap(bounds1: Bounds<Pixels>, bounds2: Bounds<Pixels>) -> bool {
         let overlap_start = bounds1.top().max(bounds2.top());
         let overlap_end = bounds1.bottom().min(bounds2.bottom());
@@ -3610,7 +3610,7 @@ impl Workspace {
 
         // No target found in the intended direction, try circular navigation
         println!("no direct target found, trying circular navigation");
-        
+
         let mut best: Option<FocusTarget> = None;
         let mut best_extreme_pos = match direction {
             SplitDirection::Right => f32::MAX,  // looking for leftmost (minimum x)
@@ -3715,7 +3715,7 @@ impl Workspace {
         } else {
             println!("no circular target found either - staying in place");
         }
-        
+
         best
     }
 
