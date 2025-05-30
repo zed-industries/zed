@@ -26,7 +26,7 @@ impl JsDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
-            &format!("{}/{}", "microsoft", Self::ADAPTER_NPM_NAME),
+            &format!("microsoft/{}", Self::ADAPTER_NPM_NAME),
             true,
             false,
             delegate.http_client(),
@@ -71,7 +71,7 @@ impl JsDebugAdapter {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
-        let ret = DebugAdapterBinary {
+        Ok(DebugAdapterBinary {
             command: delegate
                 .node_runtime()
                 .binary_path()
@@ -97,8 +97,7 @@ impl JsDebugAdapter {
                 configuration: task_definition.config.clone(),
                 request: self.validate_config(&task_definition.config)?,
             },
-        };
-        Ok(dbg!(ret))
+        })
     }
 }
 

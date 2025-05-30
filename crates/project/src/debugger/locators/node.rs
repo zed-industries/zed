@@ -25,27 +25,27 @@ impl DapLocator for NodeLocator {
         resolved_label: &str,
         adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
+        // TODO(debugger) fix issues with `await` breakpoint step
+        if cfg!(not(debug_assertions)) {
+            return None;
+        }
+
         if adapter.as_ref() != "JavaScript" {
             return None;
         }
-        // TODO kb debug npm commands too?
         if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value() {
             return None;
         }
-        let Some(test_library) = build_config.args.first() else {
-            return None;
-        };
+        let test_library = build_config.args.first()?;
         let program_path = Path::new("$ZED_WORKTREE_ROOT")
             .join("node_modules")
             .join(".bin")
             .join(test_library);
-        let args = Some("--runInBand".to_owned())
-            .into_iter()
-            .chain(build_config.args[1..].iter().cloned())
-            .collect::<Vec<_>>();
+        let args = build_config.args[1..].to_vec();
 
         let config = serde_json::json!({
             "request": "launch",
+            "type": "pwa-node",
             "program": program_path,
             "args": args,
             "cwd": build_config.cwd.clone(),
