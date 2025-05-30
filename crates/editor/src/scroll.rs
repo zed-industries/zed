@@ -547,6 +547,20 @@ impl Editor {
         );
     }
 
+    /// Scrolls the editor horizontally by the provided offset.
+    pub fn set_scroll_horizontal(
+        &mut self,
+        offset: f32,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let mut anchor = self.scroll_manager.anchor();
+        let x = (anchor.offset.x + offset).max(0.0);
+
+        anchor.offset = gpui::Point::new(x, 0.0);
+        self.set_scroll_anchor(anchor, window, cx);
+    }
+
     pub(crate) fn set_scroll_position_internal(
         &mut self,
         scroll_position: gpui::Point<f32>,

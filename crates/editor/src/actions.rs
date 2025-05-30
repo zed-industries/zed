@@ -387,6 +387,8 @@ actions!(
         ScrollCursorCenter,
         ScrollCursorCenterTopBottom,
         ScrollCursorTop,
+        ScrollCursorRight,
+        ScrollCursorLeft,
         SelectAll,
         SelectAllMatches,
         SelectToStartOfExcerpt,

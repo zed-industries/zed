@@ -2,7 +2,8 @@ use super::Axis;
 use crate::{
     Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
-    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow,
+    ScrollCursorCenterTopBottom, ScrollCursorLeft, ScrollCursorRight, ScrollCursorTop,
+    display_map::DisplayRow,
 };
 use gpui::{Context, Point, Window};
 
@@ -105,5 +106,23 @@ impl Editor {
         let new_screen_top =
             new_screen_top.saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
         self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
+    }
+
+    pub fn scroll_cursor_right(
+        &mut self,
+        _: &ScrollCursorRight,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.set_scroll_horizontal(20.0, window, cx);
+    }
+
+    pub fn scroll_cursor_left(
+        &mut self,
+        _: &ScrollCursorLeft,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.set_scroll_horizontal(-20.0, window, cx);
     }
 }
