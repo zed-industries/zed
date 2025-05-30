@@ -130,7 +130,8 @@ impl PickerDelegate for LspPickerDelegate {
                             Label::new(format!("TODO kb status: {}", lsp_status.message))
                                 .color(Color::Warning),
                         )
-                    }),
+                    })
+                    .cursor_default(),
                 LspItem::Item() => h_flex()
                     .gap_2()
                     .justify_between()
@@ -165,11 +166,11 @@ impl PickerDelegate for LspPickerDelegate {
 
     fn render_editor(
         &self,
-        _: &Entity<Editor>,
+        editor: &Entity<Editor>,
         _: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Div {
-        div()
+        div().child(div().track_focus(&editor.focus_handle(cx)))
     }
 
     fn render_footer(
@@ -310,7 +311,6 @@ impl StatusItemView for LspTool {
 impl Render for LspTool {
     // TODO kb add a setting to remove this button out of the status bar
     // TODO kb add scrollbar + max width and height
-    // TODO kb does not disappear when clicked
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         if self
             .lsp_picker
