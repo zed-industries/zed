@@ -66,7 +66,7 @@ const PROMPT_PATHS = [
   "crates/git_ui/src/commit_message_prompt.txt",
 ];
 
-const PROMPT_CHANGE_ATTESTATION = "I have updated the LLM Worker to work with these prompt changes.";
+const PROMPT_CHANGE_ATTESTATION = "I have ensured the LLM Worker works with these prompt changes.";
 
 const modifiedPrompts = danger.git.modified_files.filter((file) =>
   PROMPT_PATHS.some((promptPath) => file.includes(promptPath)),
@@ -78,14 +78,14 @@ if (!!modifiedPrompts.length) {
       message(
         [
           `This PR contains changes to "${promptPath}".`,
-          "The author has attested the corresponding changes have been made in the LLM Worker.",
+          "The author has attested the LLM Worker works with the changes to this prompt.",
         ].join("\n"),
       );
     } else {
       fail(
         [
-          `Modifying the "${promptPath}" prompt requires corresponding changes in the LLM Worker.`,
-          `Once you have made the changes, add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
+          `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
+          `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
         ].join("\n"),
       );
     }
