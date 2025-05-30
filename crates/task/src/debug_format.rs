@@ -482,7 +482,7 @@ mod tests {
         let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
         match deserialized {
             BuildTaskDefinition::Template { task_template, .. } => {
-                assert_eq!("", task_template.label);
+                assert_eq!("debug-build", task_template.label);
                 assert_eq!("cargo", task_template.command);
                 assert_eq!(vec!["build", "--release"], task_template.args);
             }
