@@ -1428,6 +1428,7 @@ impl Thread {
         messages: &mut Vec<LanguageModelRequestMessage>,
         cx: &App,
     ) {
+        // NOTE: Changes to this prompt require a symmetric update in monorepo/request_kind.rs
         const STALE_FILES_HEADER: &str = "These files changed since last read:";
 
         let mut stale_message = String::new();
@@ -1854,6 +1855,7 @@ impl Thread {
             return;
         }
 
+        // NOTE: Changes to this prompt require a symmetric update in monorepo/request_kind.rs
         let added_user_message = "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
             Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
             If the conversation is about a specific subject, include it in the title. \
@@ -1958,6 +1960,7 @@ impl Thread {
             return;
         }
 
+        // NOTE: Changes to this prompt require a symmetric update in monorepo/request_kind.rs
         let added_user_message = "Generate a detailed summary of this conversation. Include:\n\
              1. A brief overview of what was discussed\n\
              2. Key facts or information discovered\n\

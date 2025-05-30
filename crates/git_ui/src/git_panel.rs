@@ -1761,6 +1761,7 @@ impl GitPanel {
                     format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
                 };
 
+                // NOTE: Changes to this prompt require a symmetric update in monorepo/request_kind.rs
                 const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
                 let request = LanguageModelRequest {
