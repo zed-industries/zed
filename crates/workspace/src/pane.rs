@@ -4387,21 +4387,21 @@ mod tests {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.pin_tab_at(ix, window, cx);
         });
-        assert_item_labels(&pane, ["A*"], cx);
+        assert_item_labels(&pane, ["A*!"], cx);
 
         let item_b = add_labeled_item(&pane, "B", false, cx);
         pane.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
             pane.pin_tab_at(ix, window, cx);
         });
-        assert_item_labels(&pane, ["A", "B*"], cx);
+        assert_item_labels(&pane, ["A!", "B*!"], cx);
 
         add_labeled_item(&pane, "C", false, cx);
-        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+        assert_item_labels(&pane, ["A!", "B!", "C*"], cx);
 
         add_labeled_item(&pane, "D", false, cx);
         add_labeled_item(&pane, "E", false, cx);
-        assert_item_labels(&pane, ["A", "B", "C", "D", "E*"], cx);
+        assert_item_labels(&pane, ["A!", "B!", "C", "D", "E*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
             pane.close_inactive_items(
@@ -4416,7 +4416,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A", "B", "E*"], cx);
+        assert_item_labels(&pane, ["A!", "B!", "E*"], cx);
     }
 
     #[gpui::test]
@@ -4535,7 +4535,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A*"], cx);
+        assert_item_labels(&pane, ["A*!"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
@@ -4715,7 +4715,7 @@ mod tests {
             );
         });
         // Non-pinned tab should be active
-        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+        assert_item_labels(&pane, ["A!", "B*", "C"], cx);
     }
 
     #[gpui::test]
@@ -4836,6 +4836,9 @@ mod tests {
                     }
                     if item.is_dirty(cx) {
                         state.push('^');
+                    }
+                    if pane.is_tab_pinned(ix) {
+                        state.push('!');
                     }
                     state
                 })
