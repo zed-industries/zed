@@ -40,6 +40,36 @@ use sqlez::{
     statement::Statement,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DataType {
+    #[serde(rename = "json")]
+    Json,
+    #[serde(rename = "zstd")]
+    Zstd,
+}
+
+impl Bind for DataType {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let value = match self {
+            DataType::Json => "json",
+            DataType::Zstd => "zstd",
+        };
+        value.bind(statement, start_index)
+    }
+}
+
+impl Column for DataType {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (value, next_index) = String::column(statement, start_index)?;
+        let data_type = match value.as_str() {
+            "json" => DataType::Json,
+            "zstd" => DataType::Zstd,
+            _ => anyhow::bail!("Unknown data type: {}", value),
+        };
+        Ok((data_type, next_index))
+    }
+}
+
 const RULES_FILE_NAMES: [&'static str; 6] = [
     ".rules",
     ".cursorrules",
@@ -947,9 +977,10 @@ impl ThreadsDatabase {
             let executor_clone = executor.clone();
             executor
                 .spawn(async move {
+                    log::info!("Starting threads.db migration");
                     Self::migrate_from_heed(&mdb_path, db_connection, executor_clone)?;
-                    log::info!("Migration from Heed to SQLite completed");
-                    // std::fs::remove_dir_all(mdb_path)?;
+                    std::fs::remove_dir_all(mdb_path)?;
+                    log::info!("threads.db migrated to sqlite");
                     Ok::<(), anyhow::Error>(())
                 })
                 .detach();
@@ -1003,18 +1034,15 @@ impl ThreadsDatabase {
             .ok_or_else(|| anyhow!("threads database not found"))?;
 
         let iter = threads.iter(&txn)?;
-        let mut migrated_count = 0;
 
         let all_threads: Vec<_> = iter.collect::<Result<Vec<_>, _>>()?;
 
         for (thread_id, thread_heed) in all_threads {
             Self::save_thread_sync(&connection, thread_id, thread_heed.0)?;
-            migrated_count += 1;
         }
 
         drop(txn);
 
-        log::info!("Migrated {} threads from to SQLite", migrated_count);
         Ok(())
     }
 
@@ -1030,10 +1058,10 @@ impl ThreadsDatabase {
         let connection = connection.lock().unwrap();
 
         let compressed = zstd::encode_all(json_data.as_bytes(), Self::COMPRESSION_LEVEL)?;
-        let data_type = "zstd".to_string();
+        let data_type = DataType::Zstd;
         let data = compressed;
 
-        let mut insert = connection.exec_bound::<(ThreadId, String, String, String, Vec<u8>)>(indoc! {"
+        let mut insert = connection.exec_bound::<(ThreadId, String, String, DataType, Vec<u8>)>(indoc! {"
             INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
         "})?;
 
@@ -1072,19 +1100,18 @@ impl ThreadsDatabase {
 
         self.executor.spawn(async move {
             let connection = connection.lock().unwrap();
-            let mut select = connection.select_bound::<ThreadId, (String, Vec<u8>)>(indoc! {"
+            let mut select = connection.select_bound::<ThreadId, (DataType, Vec<u8>)>(indoc! {"
                 SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
             "})?;
 
             let rows = select(id)?;
             if let Some((data_type, data)) = rows.into_iter().next() {
-                let json_data = match data_type.as_str() {
-                    "zstd" => {
+                let json_data = match data_type {
+                    DataType::Zstd => {
                         let decompressed = zstd::decode_all(&data[..])?;
                         String::from_utf8(decompressed)?
                     }
-                    "json" => String::from_utf8(data)?,
-                    _ => anyhow::bail!("Unknown data type: {}", data_type),
+                    DataType::Json => String::from_utf8(data)?,
                 };
 
                 let thread = SerializedThread::from_json(json_data.as_bytes())?;
@@ -1102,10 +1129,10 @@ impl ThreadsDatabase {
             let data = serde_json::to_string(&thread)?;
             let summary = thread.summary.to_string();
             let updated_at = thread.updated_at.to_rfc3339();
-            let data_type = "thread-v1".to_string();
+            let data_type = DataType::Zstd;
             let connection = connection.lock().unwrap();
 
-            let mut insert = connection.exec_bound::<(ThreadId, String, String, String, String)>(indoc! {"
+            let mut insert = connection.exec_bound::<(ThreadId, String, String, DataType, String)>(indoc! {"
                 INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
             "})?;
 
