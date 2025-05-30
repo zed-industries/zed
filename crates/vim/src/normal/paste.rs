@@ -28,6 +28,7 @@ impl Vim {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
 
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -247,6 +248,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -258,7 +260,13 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        motion.expand_selection(map, selection, times, &text_layout_details);
+                        motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
                     });
                 });
 
@@ -909,7 +917,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("g r i w");
+        cx.simulate_keystrokes("g shift-r i w");
         cx.assert_state(
             indoc! {"
                 fish fisˇh
@@ -917,7 +925,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("j b g r e");
+        cx.simulate_keystrokes("j b g shift-r e");
         cx.assert_state(
             indoc! {"
             fish fish
@@ -937,7 +945,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("v i w g r");
+        cx.simulate_keystrokes("v i w g shift-r");
         cx.assert_state(
             indoc! {"
                 fish fisˇh
@@ -945,7 +953,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("g r r");
+        cx.simulate_keystrokes("g shift-r r");
         cx.assert_state(
             indoc! {"
                 fisˇh
@@ -953,7 +961,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("j w g r $");
+        cx.simulate_keystrokes("j w g shift-r $");
         cx.assert_state(
             indoc! {"
                 fish
@@ -978,7 +986,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("g r i w");
+        cx.simulate_keystrokes("g shift-r i w");
         cx.assert_state(
             indoc! {"
                 fish fisˇh

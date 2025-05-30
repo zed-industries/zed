@@ -1,3 +1,5 @@
+use editor::EditorSettings;
+use settings::Settings as _;
 use ui::{
     ButtonCommon, ButtonLike, Clickable, Color, Context, Icon, IconName, IconSize, ParentElement,
     Render, Styled, Tooltip, Window, h_flex,
@@ -14,7 +16,12 @@ impl SearchButton {
 
 impl Render for SearchButton {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        h_flex().gap_2().child(
+        let button = h_flex().gap_2();
+        if !EditorSettings::get_global(cx).search.button {
+            return button;
+        }
+
+        button.child(
             ButtonLike::new("project-search-indicator")
                 .child(
                     Icon::new(IconName::MagnifyingGlass)

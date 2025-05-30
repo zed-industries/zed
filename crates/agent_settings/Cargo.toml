@@ -1,0 +1,39 @@
+[package]
+name = "agent_settings"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/agent_settings.rs"
+
+[dependencies]
+anthropic = { workspace = true, features = ["schemars"] }
+anyhow.workspace = true
+collections.workspace = true
+gpui.workspace = true
+indexmap.workspace = true
+language_model.workspace = true
+lmstudio = { workspace = true, features = ["schemars"] }
+log.workspace = true
+ollama = { workspace = true, features = ["schemars"] }
+open_ai = { workspace = true, features = ["schemars"] }
+deepseek = { workspace = true, features = ["schemars"] }
+mistral = { workspace = true, features = ["schemars"] }
+schemars.workspace = true
+serde.workspace = true
+settings.workspace = true
+workspace-hack.workspace = true
+zed_llm_client.workspace = true
+
+[dev-dependencies]
+fs.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+paths.workspace = true
+serde_json_lenient.workspace = true
+serde_json.workspace = true
+settings = { workspace = true, features = ["test-support"] }

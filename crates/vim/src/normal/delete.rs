@@ -18,6 +18,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -33,9 +34,13 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let original_head = selection.head();
                         original_columns.insert(selection.id, original_head.column());
-                        let kind =
-                            motion.expand_selection(map, selection, times, &text_layout_details);
-
+                        let kind = motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
                         ranges_to_copy
                             .push(selection.start.to_point(map)..selection.end.to_point(map));
 
@@ -341,6 +346,29 @@ mod test {
             The quick
             ˇ
             brown fox"},
+        )
+        .await
+        .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_delete_end_of_paragraph(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate(
+            "d }",
+            indoc! {"
+            ˇhello world.
+
+            hello world."},
+        )
+        .await
+        .assert_matches();
+
+        cx.simulate(
+            "d }",
+            indoc! {"
+            ˇhello world.
+            hello world."},
         )
         .await
         .assert_matches();

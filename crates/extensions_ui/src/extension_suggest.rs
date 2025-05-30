@@ -49,6 +49,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("log", &["log"]),
     ("lua", &["lua"]),
     ("make", &["Makefile"]),
+    ("nim", &["nim"]),
     ("nix", &["nix"]),
     ("nu", &["nu"]),
     ("ocaml", &["ml", "mli"]),

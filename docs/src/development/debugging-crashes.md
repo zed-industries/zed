@@ -27,7 +27,7 @@ The output contains the source file and line number, and the demangled symbol in
 
 ## Panics
 
-When the app panics at the rust level, Zed creates a file in `~/Library/Logs/Zed` or `$XDG_DATA_HOME/logs` with the text of the panic, and a summary of the backtrace. On boot, if you have telemetry enabled, we upload these panics so we can keep track of them.
+When the app panics at the rust level, Zed creates a file in `~/Library/Logs/Zed` or `$XDG_DATA_HOME/zed/logs` with the text of the panic, and a summary of the backtrace. On boot, if you have telemetry enabled, we upload these panics so we can keep track of them.
 
 A panic is also considered a crash, and so for most panics we get both the crash report and the panic.
 

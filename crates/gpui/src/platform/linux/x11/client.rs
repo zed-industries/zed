@@ -59,9 +59,10 @@ use crate::platform::{
 };
 use crate::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, DisplayId, FileDropEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform, PlatformDisplay,
-    PlatformInput, Point, RequestFrameOptions, ScaledPixels, ScreenCaptureSource, ScrollDelta,
-    Size, TouchPhase, WindowParams, X11Window, modifiers_from_xinput_info, point, px,
+    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, Platform,
+    PlatformDisplay, PlatformInput, PlatformKeyboardLayout, Point, RequestFrameOptions,
+    ScaledPixels, ScreenCaptureSource, ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
+    modifiers_from_xinput_info, point, px,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -839,6 +840,14 @@ impl X11Client {
                         state.xkb_device_id,
                     )
                 };
+                let depressed_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_DEPRESSED);
+                let latched_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_LATCHED);
+                let locked_layout = xkb_state.serialize_layout(xkbc::ffi::XKB_STATE_LAYOUT_LOCKED);
+                state.previous_xkb_state = XKBStateNotiy {
+                    depressed_layout,
+                    latched_layout,
+                    locked_layout,
+                };
                 state.xkb = xkb_state;
             }
             Event::XkbStateNotify(event) => {
@@ -1282,14 +1291,16 @@ impl LinuxClient for X11Client {
         f(&mut self.0.borrow_mut().common)
     }
 
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
         let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
-        state
-            .xkb
-            .get_keymap()
-            .layout_get_name(layout_idx)
-            .to_string()
+        Box::new(LinuxKeyboardLayout::new(
+            state
+                .xkb
+                .get_keymap()
+                .layout_get_name(layout_idx)
+                .to_string(),
+        ))
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -1452,7 +1463,7 @@ impl LinuxClient for X11Client {
                     CursorStyle::None => create_invisible_cursor(&state.xcb_connection).log_err(),
                     _ => state
                         .cursor_handle
-                        .load_cursor(&state.xcb_connection, &style.to_icon_name())
+                        .load_cursor(&state.xcb_connection, style.to_icon_name())
                         .log_err(),
                 }) else {
                     return;

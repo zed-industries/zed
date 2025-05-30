@@ -14,10 +14,7 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
-    UI::{
-        StartScreen::{JumpList, JumpListItem},
-        ViewManagement::UISettings,
-    },
+    UI::ViewManagement::UISettings,
     Win32::{
         Foundation::*,
         Graphics::{
@@ -36,8 +33,8 @@ use crate::{platform::blade::BladeContext, *};
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
-    gpu_context: BladeContext,
     // The below members will never change throughout the entire lifecycle of the app.
+    gpu_context: BladeContext,
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
@@ -52,7 +49,7 @@ pub(crate) struct WindowsPlatform {
 pub(crate) struct WindowsPlatformState {
     callbacks: PlatformCallbacks,
     menus: Vec<OwnedMenu>,
-    dock_menu_actions: Vec<Box<dyn Action>>,
+    jump_list: JumpList,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
 }
@@ -65,17 +62,18 @@ struct PlatformCallbacks {
     app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     will_open_app_menu: Option<Box<dyn FnMut()>>,
     validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    keyboard_layout_change: Option<Box<dyn FnMut()>>,
 }
 
 impl WindowsPlatformState {
     fn new() -> Self {
         let callbacks = PlatformCallbacks::default();
-        let dock_menu_actions = Vec::new();
+        let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
 
         Self {
             callbacks,
-            dock_menu_actions,
+            jump_list,
             current_cursor,
             menus: Vec::new(),
         }
@@ -189,9 +187,10 @@ impl WindowsPlatform {
         let mut lock = self.state.borrow_mut();
         if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
             let Some(action) = lock
-                .dock_menu_actions
+                .jump_list
+                .dock_menus
                 .get(action_idx)
-                .map(|action| action.boxed_clone())
+                .map(|dock_menu| dock_menu.action.boxed_clone())
             else {
                 lock.callbacks.app_menu_action = Some(callback);
                 log::error!("Dock menu for index {action_idx} not found");
@@ -203,6 +202,19 @@ impl WindowsPlatform {
         }
     }
 
+    fn handle_input_lang_change(&self) {
+        let mut lock = self.state.borrow_mut();
+        if let Some(mut callback) = lock.callbacks.keyboard_layout_change.take() {
+            drop(lock);
+            callback();
+            self.state
+                .borrow_mut()
+                .callbacks
+                .keyboard_layout_change
+                .get_or_insert(callback);
+        }
+    }
+
     // Returns true if the app should quit.
     fn handle_events(&self) -> bool {
         let mut msg = MSG::default();
@@ -210,7 +222,8 @@ impl WindowsPlatform {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
-                    WM_GPUI_CLOSE_ONE_WINDOW
+                    WM_INPUTLANGCHANGE
+                    | WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
                     | WM_GPUI_DOCK_MENU_ACTION => {
                         if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
@@ -249,38 +262,41 @@ impl WindowsPlatform {
             }
             WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
+            WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
             _ => unreachable!(),
         }
         false
     }
 
-    fn configure_jump_list(&self, menus: Vec<MenuItem>) -> Result<()> {
-        let jump_list = JumpList::LoadCurrentAsync()?.get()?;
-        let items = jump_list.Items()?;
-        items.Clear()?;
+    fn set_dock_menus(&self, menus: Vec<MenuItem>) {
         let mut actions = Vec::new();
-        for item in menus.into_iter() {
-            let item = match item {
-                MenuItem::Separator => JumpListItem::CreateSeparator()?,
-                MenuItem::Submenu(_) => {
-                    log::error!("Set `MenuItemSubmenu` for dock menu on Windows is not supported.");
-                    continue;
-                }
-                MenuItem::Action { name, action, .. } => {
-                    let idx = actions.len();
-                    actions.push(action.boxed_clone());
-                    let item_args = format!("--dock-action {}", idx);
-                    JumpListItem::CreateWithArguments(
-                        &HSTRING::from(item_args),
-                        &HSTRING::from(name.as_ref()),
-                    )?
-                }
-            };
-            items.Append(&item)?;
-        }
-        jump_list.SaveAsync()?.get()?;
-        self.state.borrow_mut().dock_menu_actions = actions;
-        Ok(())
+        menus.into_iter().for_each(|menu| {
+            if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
+                actions.push(dock_menu);
+            }
+        });
+        let mut lock = self.state.borrow_mut();
+        lock.jump_list.dock_menus = actions;
+        update_jump_list(&lock.jump_list).log_err();
+    }
+
+    fn update_jump_list(
+        &self,
+        menus: Vec<MenuItem>,
+        entries: Vec<SmallVec<[PathBuf; 2]>>,
+    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+        let mut actions = Vec::new();
+        menus.into_iter().for_each(|menu| {
+            if let Some(dock_menu) = DockMenuItem::new(menu).log_err() {
+                actions.push(dock_menu);
+            }
+        });
+        let mut lock = self.state.borrow_mut();
+        lock.jump_list.dock_menus = actions;
+        lock.jump_list.recent_workspaces = entries;
+        update_jump_list(&lock.jump_list)
+            .log_err()
+            .unwrap_or_default()
     }
 }
 
@@ -297,12 +313,16 @@ impl Platform for WindowsPlatform {
         self.text_system.clone()
     }
 
-    fn keyboard_layout(&self) -> String {
-        "unknown".into()
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+        Box::new(
+            WindowsKeyboardLayout::new()
+                .log_err()
+                .unwrap_or(WindowsKeyboardLayout::unknown()),
+        )
     }
 
-    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
-        // todo(windows)
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+        self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
@@ -535,7 +555,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
-        self.configure_jump_list(menus).log_err();
+        self.set_dock_menus(menus);
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
@@ -556,7 +576,7 @@ impl Platform for WindowsPlatform {
 
     // todo(windows)
     fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
-        Err(anyhow!("not yet implemented"))
+        anyhow::bail!("not yet implemented");
     }
 
     fn set_cursor_style(&self, style: CursorStyle) {
@@ -672,6 +692,14 @@ impl Platform for WindowsPlatform {
             )
             .log_err();
         }
+    }
+
+    fn update_jump_list(
+        &self,
+        menus: Vec<MenuItem>,
+        entries: Vec<SmallVec<[PathBuf; 2]>>,
+    ) -> Vec<SmallVec<[PathBuf; 2]>> {
+        self.update_jump_list(menus, entries)
     }
 }
 

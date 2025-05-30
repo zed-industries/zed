@@ -161,7 +161,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("user is not in the room"))?;
+                .context("user is not in the room")?;
 
             let called_user_role = match caller.role.unwrap_or(ChannelRole::Member) {
                 ChannelRole::Admin | ChannelRole::Member => ChannelRole::Member,
@@ -193,7 +193,7 @@ impl Database {
 
             let room = self.get_room(room_id, &tx).await?;
             let incoming_call = Self::build_incoming_call(&room, called_user_id)
-                .ok_or_else(|| anyhow!("failed to build incoming call"))?;
+                .context("failed to build incoming call")?;
             Ok((room, incoming_call))
         })
         .await
@@ -279,7 +279,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no call to cancel"))?;
+                .context("no call to cancel")?;
 
             room_participant::Entity::delete(participant.into_active_model())
                 .exec(&*tx)
@@ -310,7 +310,7 @@ impl Database {
                 .into_values::<_, QueryChannelId>()
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such room"))?;
+                .context("no such room")?;
 
             if channel_id.is_some() {
                 Err(anyhow!("tried to join channel call directly"))?
@@ -462,7 +462,7 @@ impl Database {
         }
 
         let (channel, room) = self.get_channel_room(room_id, tx).await?;
-        let channel = channel.ok_or_else(|| anyhow!("no channel for room"))?;
+        let channel = channel.context("no channel for room")?;
         Ok(JoinRoom {
             room,
             channel: Some(channel),
@@ -505,7 +505,7 @@ impl Database {
                 let project = project::Entity::find_by_id(project_id)
                     .one(&*tx)
                     .await?
-                    .ok_or_else(|| anyhow!("project does not exist"))?;
+                    .context("project does not exist")?;
                 if project.host_user_id != Some(user_id) {
                     return Err(anyhow!("no such project"))?;
                 }
@@ -519,7 +519,7 @@ impl Database {
                     .position(|collaborator| {
                         collaborator.user_id == user_id && collaborator.is_host
                     })
-                    .ok_or_else(|| anyhow!("host not found among collaborators"))?;
+                    .context("host not found among collaborators")?;
                 let host = collaborators.swap_remove(host_ix);
                 let old_connection_id = host.connection();
 
@@ -755,6 +755,13 @@ impl Database {
                         .transpose()?
                         .unwrap_or_default();
 
+                    let head_commit_details = db_repository
+                        .head_commit_details
+                        .as_ref()
+                        .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                        .transpose()?
+                        .unwrap_or_default();
+
                     let entry_ids = serde_json::from_str(&db_repository.entry_ids)
                         .context("failed to deserialize repository's entry ids")?;
 
@@ -778,6 +785,7 @@ impl Database {
                             removed_statuses,
                             current_merge_conflicts,
                             branch_summary,
+                            head_commit_details,
                             project_id: project_id.to_proto(),
                             id: db_repository.id as u64,
                             abs_path: db_repository.abs_path,
@@ -1043,11 +1051,7 @@ impl Database {
             let tx = tx;
             let location_kind;
             let location_project_id;
-            match location
-                .variant
-                .as_ref()
-                .ok_or_else(|| anyhow!("invalid location"))?
-            {
+            match location.variant.as_ref().context("invalid location")? {
                 proto::participant_location::Variant::SharedProject(project) => {
                     location_kind = 0;
                     location_project_id = Some(ProjectId::from_proto(project.id));
@@ -1111,7 +1115,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("only admins can set participant role"))?;
+                .context("only admins can set participant role")?;
 
             if role.requires_cla() {
                 self.check_user_has_signed_cla(user_id, room_id, &tx)
@@ -1148,7 +1152,7 @@ impl Database {
         let channel = room::Entity::find_by_id(room_id)
             .one(tx)
             .await?
-            .ok_or_else(|| anyhow!("could not find room"))?
+            .context("could not find room")?
             .find_related(channel::Entity)
             .one(tx)
             .await?;
@@ -1289,7 +1293,7 @@ impl Database {
         let db_room = room::Entity::find_by_id(room_id)
             .one(tx)
             .await?
-            .ok_or_else(|| anyhow!("could not find room"))?;
+            .context("could not find room")?;
 
         let mut db_participants = db_room
             .find_related(room_participant::Entity)

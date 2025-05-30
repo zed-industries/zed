@@ -158,6 +158,8 @@ Depending on the kind of setting you want to make, which settings file you shoul
 - Server settings should be used for things that affect the server: paths to language servers, etc.
 - Local settings should be used for things that affect the UI: font size, etc.
 
+In addition any extensions you have installed locally will be propagated to the remote server. This means that language servers, etc. will run correctly.
+
 ## Initializing the remote server
 
 Once you provide the SSH options, Zed shells out to `ssh` on your local machine to create a ControlMaster connection with the options you provide.
@@ -168,7 +170,7 @@ Once the master connection is established, Zed will check to see if the remote s
 
 If it is not there or the version mismatches, Zed will try to download the latest version. By default, it will download from `https://zed.dev` directly, but if you set: `{"upload_binary_over_ssh":true}` in your settings for that server, it will download the binary to your local machine and then upload it to the remote server.
 
-If you'd like to maintain the server binary yourself you can. You can either download our prebuilt versions from [Github](https://github.com/zed-industries/zed/releases), or [build your own](https://zed.dev/docs/development) with `cargo build -p remote_server --release`. If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_CHANNEL}-{OS}-{ARCH}` on the server, for example `.zed-server/zed-remote-server-preview-linux-x86_64`. The version must exactly match the version of Zed itself you are using.
+If you'd like to maintain the server binary yourself you can. You can either download our prebuilt versions from [Github](https://github.com/zed-industries/zed/releases), or [build your own](https://zed.dev/docs/development) with `cargo build -p remote_server --release`. If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_CHANNEL}-{VERSION}` on the server, for example `~/.zed_server/zed-remote-server-stable-0.181.6`. The version must exactly match the version of Zed itself you are using.
 
 ## Maintaining the SSH connection
 
@@ -200,7 +202,6 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 ## Known Limitations
 
-- Zed extensions are not yet supported on remotes, so languages that need them for support do not work.
 - You can't open files from the remote Terminal by typing the `zed` command.
 
 ## Feedback

@@ -6,16 +6,16 @@ pub mod env;
 pub mod executor;
 pub mod llm;
 pub mod migrations;
-mod rate_limiter;
 pub mod rpc;
 pub mod seed;
 pub mod stripe_billing;
+pub mod stripe_client;
 pub mod user_backfiller;
 
 #[cfg(test)]
 mod tests;
 
-use anyhow::anyhow;
+use anyhow::Context as _;
 use aws_config::{BehaviorVersion, Region};
 use axum::{
     http::{HeaderMap, StatusCode},
@@ -25,7 +25,6 @@ pub use cents::*;
 use db::{ChannelId, Database};
 use executor::Executor;
 use llm::db::LlmDatabase;
-pub use rate_limiter::*;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
@@ -253,7 +252,6 @@ impl Config {
 pub enum ServiceMode {
     Api,
     Collab,
-    Llm,
     All,
 }
 
@@ -265,10 +263,6 @@ impl ServiceMode {
     pub fn is_api(&self) -> bool {
         matches!(self, Self::Api | Self::All)
     }
-
-    pub fn is_llm(&self) -> bool {
-        matches!(self, Self::Llm | Self::All)
-    }
 }
 
 pub struct AppState {
@@ -278,7 +272,6 @@ pub struct AppState {
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub stripe_client: Option<Arc<stripe::Client>>,
     pub stripe_billing: Option<Arc<StripeBilling>>,
-    pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
     pub kinesis_client: Option<::aws_sdk_kinesis::Client>,
     pub config: Config,
@@ -331,7 +324,6 @@ impl AppState {
                 .clone()
                 .map(|stripe_client| Arc::new(StripeBilling::new(stripe_client))),
             stripe_client,
-            rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             kinesis_client: if config.kinesis_access_key.is_some() {
                 build_kinesis_client(&config).await.log_err()
@@ -348,7 +340,7 @@ fn build_stripe_client(config: &Config) -> anyhow::Result<stripe::Client> {
     let api_key = config
         .stripe_api_key
         .as_ref()
-        .ok_or_else(|| anyhow!("missing stripe_api_key"))?;
+        .context("missing stripe_api_key")?;
     Ok(stripe::Client::new(api_key))
 }
 
@@ -357,11 +349,11 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
         config
             .blob_store_access_key
             .clone()
-            .ok_or_else(|| anyhow!("missing blob_store_access_key"))?,
+            .context("missing blob_store_access_key")?,
         config
             .blob_store_secret_key
             .clone()
-            .ok_or_else(|| anyhow!("missing blob_store_secret_key"))?,
+            .context("missing blob_store_secret_key")?,
         None,
         None,
         "env",
@@ -372,13 +364,13 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
             config
                 .blob_store_url
                 .as_ref()
-                .ok_or_else(|| anyhow!("missing blob_store_url"))?,
+                .context("missing blob_store_url")?,
         )
         .region(Region::new(
             config
                 .blob_store_region
                 .clone()
-                .ok_or_else(|| anyhow!("missing blob_store_region"))?,
+                .context("missing blob_store_region")?,
         ))
         .credentials_provider(keys)
         .load()
@@ -392,11 +384,11 @@ async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis
         config
             .kinesis_access_key
             .clone()
-            .ok_or_else(|| anyhow!("missing kinesis_access_key"))?,
+            .context("missing kinesis_access_key")?,
         config
             .kinesis_secret_key
             .clone()
-            .ok_or_else(|| anyhow!("missing kinesis_secret_key"))?,
+            .context("missing kinesis_secret_key")?,
         None,
         None,
         "env",
@@ -407,7 +399,7 @@ async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis
             config
                 .kinesis_region
                 .clone()
-                .ok_or_else(|| anyhow!("missing kinesis_region"))?,
+                .context("missing kinesis_region")?,
         ))
         .credentials_provider(keys)
         .load()

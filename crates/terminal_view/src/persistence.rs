@@ -261,6 +261,7 @@ async fn deserialize_pane_group(
                             workspace.clone(),
                             Some(workspace_id),
                             project.downgrade(),
+                            false,
                             window,
                             cx,
                         )
@@ -429,6 +430,9 @@ impl TerminalDb {
         workspace_id: WorkspaceId,
         working_directory: PathBuf,
     ) -> Result<()> {
+        log::debug!(
+            "Saving working directory {working_directory:?} for item {item_id} in workspace {workspace_id:?}"
+        );
         let query =
             "INSERT INTO terminals(item_id, workspace_id, working_directory, working_directory_path)
             VALUES (?1, ?2, ?3, ?4)
@@ -455,31 +459,5 @@ impl TerminalDb {
             FROM terminals
             WHERE item_id = ? AND workspace_id = ?
         }
-    }
-
-    pub async fn delete_unloaded_items(
-        &self,
-        workspace: WorkspaceId,
-        alive_items: Vec<ItemId>,
-    ) -> Result<()> {
-        let placeholders = alive_items
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<&str>>()
-            .join(", ");
-
-        let query = format!(
-            "DELETE FROM terminals WHERE workspace_id = ? AND item_id NOT IN ({placeholders})"
-        );
-
-        self.write(move |conn| {
-            let mut statement = Statement::prepare(conn, query)?;
-            let mut next_index = statement.bind(&workspace, 1)?;
-            for id in alive_items {
-                next_index = statement.bind(&id, next_index)?;
-            }
-            statement.exec()
-        })
-        .await
     }
 }

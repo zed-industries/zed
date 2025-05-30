@@ -18,6 +18,7 @@ doctest = false
 [dependencies]
 anyhow.workspace = true
 async-recursion.workspace = true
+assistant_slash_command.workspace = true
 breadcrumbs.workspace = true
 collections.workspace = true
 db.workspace = true
@@ -29,6 +30,7 @@ itertools.workspace = true
 language.workspace = true
 log.workspace = true
 project.workspace = true
+regex.workspace = true
 task.workspace = true
 schemars.workspace = true
 search.workspace = true

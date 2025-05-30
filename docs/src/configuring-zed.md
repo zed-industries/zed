@@ -75,6 +75,46 @@ Non-negative `float` values
 
 `float` values
 
+## Bottom Dock Layout
+
+- Description: Control the layout of the bottom dock, relative to the left and right docks
+- Setting: `bottom_dock_layout`
+- Default: `"contained"`
+
+**Options**
+
+1. Contain the bottom dock, giving the full height of the window to the left and right docks
+
+```json
+{
+  "bottom_dock_layout": "contained"
+}
+```
+
+2. Give the bottom dock the full width of the window, truncating the left and right docks
+
+```json
+{
+  "bottom_dock_layout": "full"
+}
+```
+
+3. Left align the bottom dock, truncating the left dock and giving the right dock the full height of the window
+
+```json
+{
+  "bottom_dock_layout": "left_aligned"
+}
+```
+
+3. Right align the bottom dock, giving the left dock the full height of the window and truncating the right dock.
+
+```json
+{
+  "bottom_dock_layout": "right_aligned"
+}
+```
+
 ## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
@@ -496,13 +536,6 @@ List of `string` values
 - Setting: `selection_highlight`
 - Default: `true`
 
-## Selection Highlight Debounce
-
-- Description: The debounce delay before querying highlights based on the selected text.
-
-- Setting: `selection_highlight_debounce`
-- Default: `50`
-
 ## LSP Highlight Debounce
 
 - Description: The debounce delay before querying highlights from the language server based on the current cursor location.
@@ -559,7 +592,49 @@ List of `string` values
 
 **Options**
 
-`boolean` values
+1. Never hide the mouse cursor:
+
+```json
+"hide_mouse": "never"
+```
+
+2. Hide only when typing:
+
+```json
+"hide_mouse": "on_typing"
+```
+
+3. Hide on both typing and cursor movement:
+
+```json
+"hide_mouse": "on_typing_and_movement"
+```
+
+## Snippet Sort Order
+
+- Description: Determines how snippets are sorted relative to other completion items.
+- Setting: `snippet_sort_order`
+- Default: `inline`
+
+**Options**
+
+1. Place snippets at the top of the completion list:
+
+```json
+"snippet_sort_order": "top"
+```
+
+2. Place snippets normally without any preference:
+
+```json
+"snippet_sort_order": "inline"
+```
+
+3. Place snippets at the bottom of the completion list:
+
+```json
+"snippet_sort_order": "bottom"
+```
 
 ## Editor Scrollbar
 
@@ -756,6 +831,185 @@ List of `string` values
 
 `boolean` values
 
+## Minimap
+
+- Description: Settings related to the editor's minimap, which provides an overview of your document.
+- Setting: `minimap`
+- Default:
+
+```json
+{
+  "minimap": {
+    "show": "never",
+    "thumb": "always",
+    "thumb_border": "left_open",
+    "current_line_highlight": null
+  }
+}
+```
+
+### Show Mode
+
+- Description: When to show the minimap in the editor.
+- Setting: `show`
+- Default: `never`
+
+**Options**
+
+1. Always show the minimap:
+
+```json
+{
+  "show": "always"
+}
+```
+
+2. Show the minimap if the editor's scrollbars are visible:
+
+```json
+{
+  "show": "auto"
+}
+```
+
+3. Never show the minimap:
+
+```json
+{
+  "show": "never"
+}
+```
+
+### Thumb Display
+
+- Description: When to show the minimap thumb (the visible editor area) in the minimap.
+- Setting: `thumb`
+- Default: `always`
+
+**Options**
+
+1. Show the minimap thumb when hovering over the minimap:
+
+```json
+{
+  "thumb": "hover"
+}
+```
+
+2. Always show the minimap thumb:
+
+```json
+{
+  "thumb": "always"
+}
+```
+
+### Thumb Border
+
+- Description: How the minimap thumb border should look.
+- Setting: `thumb_border`
+- Default: `left_open`
+
+**Options**
+
+1. Display a border on all sides of the thumb:
+
+```json
+{
+  "thumb_border": "full"
+}
+```
+
+2. Display a border on all sides except the left side:
+
+```json
+{
+  "thumb_border": "left_open"
+}
+```
+
+3. Display a border on all sides except the right side:
+
+```json
+{
+  "thumb_border": "right_open"
+}
+```
+
+4. Display a border only on the left side:
+
+```json
+{
+  "thumb_border": "left_only"
+}
+```
+
+5. Display the thumb without any border:
+
+```json
+{
+  "thumb_border": "none"
+}
+```
+
+### Current Line Highlight
+
+- Description: How to highlight the current line in the minimap.
+- Setting: `current_line_highlight`
+- Default: `null`
+
+**Options**
+
+1. Inherit the editor's current line highlight setting:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": null
+  }
+}
+```
+
+2. Highlight the current line in the minimap:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "line"
+  }
+}
+```
+
+or
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "all"
+  }
+}
+```
+
+3. Do not highlight the current line in the minimap:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "gutter"
+  }
+}
+```
+
+or
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "none"
+  }
+}
+```
+
 ## Editor Tab Bar
 
 - Description: Settings related to the editor's tab bar.
@@ -949,6 +1203,16 @@ List of `string` values
 }
 ```
 
+### Show Inline Code Actions
+
+- Description: Whether to show code action button at start of buffer line.
+- Setting: `inline_code_actions`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
@@ -959,7 +1223,9 @@ List of `string` values
 "toolbar": {
   "breadcrumbs": true,
   "quick_actions": true,
-  "selections_menu": true
+  "selections_menu": true,
+  "agent_review": true,
+  "code_actions": false
 },
 ```
 
@@ -1095,7 +1361,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
+3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
 
 WARNING: `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
 
@@ -1311,10 +1577,10 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "include_warnings": true,
     "inline": {
       "enabled": false
-    }
+    },
     "update_with_cursor": false,
     "primary_only": false,
-    "use_rendered": false,
+    "use_rendered": false
   }
 }
 ```
@@ -1487,42 +1753,6 @@ Example:
 }
 ```
 
-### Hunk Style
-
-- Description: What styling we should use for the diff hunks.
-- Setting: `hunk_style`
-- Default:
-
-```json
-{
-  "git": {
-    "hunk_style": "staged_hollow"
-  }
-}
-```
-
-**Options**
-
-1. Show the staged hunks faded out and with a border:
-
-```json
-{
-  "git": {
-    "hunk_style": "staged_hollow"
-  }
-}
-```
-
-2. Show unstaged hunks faded out and with a border:
-
-```json
-{
-  "git": {
-    "hunk_style": "unstaged_hollow"
-  }
-}
-```
-
 **Options**
 
 1. Disable inline git blame:
@@ -1572,6 +1802,42 @@ Example:
       "enabled": true,
       "min_column": 80
     }
+  }
+}
+```
+
+### Hunk Style
+
+- Description: What styling we should use for the diff hunks.
+- Setting: `hunk_style`
+- Default:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+**Options**
+
+1. Show the staged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+2. Show unstaged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "unstaged_hollow"
   }
 }
 ```
@@ -1664,6 +1930,16 @@ Example:
 **Options**
 
 `boolean` values
+
+## Hover Popover Delay
+
+- Description: Time to wait in milliseconds before showing the informational hover box.
+- Setting: `hover_popover_delay`
+- Default: `300`
+
+**Options**
+
+`integer` values representing milliseconds
 
 ## Icon Theme
 
@@ -1962,11 +2238,23 @@ Or to set a `socks5` proxy:
 
 ## File Finder
 
+### File Icons
+
+- Description: Whether to show file icons in the file finder.
+- Setting: `file_icons`
+- Default: `true`
+
 ### Modal Max Width
 
 - Description: Max-width of the file finder modal. It can take one of these values: `small`, `medium`, `large`, `xlarge`, and `full`.
 - Setting: `modal_max_width`
 - Default: `small`
+
+### Skip Focus For Active In Search
+
+- Description: Determines whether the file finder should skip focus for the active file in search results.
+- Setting: `skip_focus_for_active_in_search`
+- Default: `true`
 
 ## Preferred Line Length
 
@@ -2145,7 +2433,7 @@ Examples:
 
 ## Show Whitespaces
 
-- Description: Whether or not to show render whitespace characters in the editor.
+- Description: Whether or not to render whitespace characters in the editor.
 - Setting: `show_whitespaces`
 - Default: `selection`
 
@@ -2982,28 +3270,30 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-## Assistant Panel
+## Agent
 
-- Description: Customize assistant panel
-- Setting: `assistant`
+- Description: Customize agent behavior
+- Setting: `agent`
 - Default:
 
 ```json
-"assistant": {
+"agent": {
   "version": "2",
   "enabled": true,
   "button": true,
   "dock": "right",
   "default_width": 640,
   "default_height": 320,
+  "default_view": "thread",
   "default_model": {
     "provider": "zed.dev",
-    "model": "claude-3-5-sonnet-latest"
+    "model": "claude-sonnet-4"
   },
   "editor_model": {
     "provider": "zed.dev",
-    "model": "claude-3-5-sonnet-latest"
-  }
+    "model": "claude-sonnet-4"
+  },
+  "single_file_review": true,
 }
 ```
 

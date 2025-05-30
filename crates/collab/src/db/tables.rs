@@ -28,7 +28,6 @@ pub mod project;
 pub mod project_collaborator;
 pub mod project_repository;
 pub mod project_repository_statuses;
-pub mod rate_buckets;
 pub mod room;
 pub mod room_participant;
 pub mod server;

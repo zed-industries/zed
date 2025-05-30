@@ -1,5 +1,5 @@
 use crate::{
-    AppState, Config, RateLimiter,
+    AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
     executor::Executor,
     rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
@@ -14,7 +14,7 @@ use client::{
 use clock::FakeSystemClock;
 use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
-use dap::DapRegistry;
+
 use fs::FakeFs;
 use futures::{StreamExt as _, channel::oneshot};
 use git::GitHostingProviderRegistry;
@@ -52,11 +52,11 @@ use livekit_client::test::TestServer as LivekitTestServer;
 pub struct TestServer {
     pub app_state: Arc<AppState>,
     pub test_livekit_server: Arc<LivekitTestServer>,
+    pub test_db: TestDb,
     server: Arc<Server>,
     next_github_user_id: i32,
     connection_killers: Arc<Mutex<HashMap<PeerId, Arc<AtomicBool>>>>,
     forbid_connections: Arc<AtomicBool>,
-    _test_db: TestDb,
 }
 
 pub struct TestClient {
@@ -117,7 +117,7 @@ impl TestServer {
             connection_killers: Default::default(),
             forbid_connections: Default::default(),
             next_github_user_id: 0,
-            _test_db: test_db,
+            test_db,
             test_livekit_server: livekit_server,
         }
     }
@@ -241,7 +241,12 @@ impl TestServer {
                         let user = db
                             .get_user_by_id(user_id)
                             .await
-                            .expect("retrieving user failed")
+                            .map_err(|e| {
+                                EstablishConnectionError::Other(anyhow!(
+                                    "retrieving user failed: {}",
+                                    e
+                                ))
+                            })?
                             .unwrap();
                         cx.background_spawn(server.handle_connection(
                             server_conn,
@@ -275,14 +280,12 @@ impl TestServer {
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let debug_adapters = Arc::new(DapRegistry::default());
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
             workspace_store,
             languages: language_registry,
-            debug_adapters,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
             node_runtime: NodeRuntime::unavailable(),
@@ -309,11 +312,13 @@ impl TestServer {
             );
             language_model::LanguageModelRegistry::test(cx);
             assistant_context_editor::init(client.clone(), cx);
+            agent_settings::init(cx);
         });
 
         client
             .authenticate_and_connect(false, &cx.to_async())
             .await
+            .into_response()
             .unwrap();
 
         let client = TestClient {
@@ -519,7 +524,6 @@ impl TestServer {
             blob_store_client: None,
             stripe_client: None,
             stripe_billing: None,
-            rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             kinesis_client: None,
             config: Config {
@@ -712,6 +716,7 @@ impl TestClient {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
+        cx.run_until_parked();
         (project, worktree.read_with(cx, |tree, _| tree.id()))
     }
 
@@ -795,7 +800,6 @@ impl TestClient {
                 self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),
                 self.app_state.languages.clone(),
-                self.app_state.debug_adapters.clone(),
                 self.app_state.fs.clone(),
                 None,
                 cx,

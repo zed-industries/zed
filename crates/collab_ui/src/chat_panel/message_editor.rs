@@ -34,8 +34,10 @@ static MENTIONS_SEARCH: LazyLock<SearchQuery> = LazyLock::new(|| {
         false,
         false,
         false,
+        false,
         Default::default(),
         Default::default(),
+        false,
         None,
     )
     .unwrap()
@@ -105,11 +107,12 @@ impl MessageEditor {
         let this = cx.entity().downgrade();
         editor.update(cx, |editor, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor.set_offset_content(false, cx);
             editor.set_use_autoclose(false);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Some(Box::new(MessageEditorCompletionProvider(this))));
+            editor.set_completion_provider(Some(Rc::new(MessageEditorCompletionProvider(this))));
             editor.set_auto_replace_emoji_shortcode(
                 MessageEditorSettings::get_global(cx)
                     .auto_replace_emoji_shortcode
@@ -349,7 +352,7 @@ impl MessageEditor {
     ) -> Option<(Anchor, String, Vec<StringMatchCandidate>)> {
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let query = buffer.update(cx, |buffer, _| {
+        let query = buffer.read_with(cx, |buffer, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == '@' {
@@ -407,7 +410,7 @@ impl MessageEditor {
 
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let query = buffer.update(cx, |buffer, _| {
+        let query = buffer.read_with(cx, |buffer, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == ':' {

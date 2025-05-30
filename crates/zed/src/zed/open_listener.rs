@@ -1,6 +1,6 @@
 use crate::handle_open_request;
 use crate::restorable_workspace_locations;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use cli::{CliRequest, CliResponse, ipc::IpcSender};
 use cli::{IpcHandshake, ipc};
 use client::parse_zed_link;
@@ -74,13 +74,14 @@ impl OpenRequest {
         let url = url::Url::parse(file)?;
         let host = url
             .host()
-            .ok_or_else(|| anyhow!("missing host in ssh url: {}", file))?
+            .with_context(|| format!("missing host in ssh url: {file}"))?
             .to_string();
         let username = Some(url.username().to_string()).filter(|s| !s.is_empty());
         let port = url.port();
-        if !self.open_paths.is_empty() {
-            return Err(anyhow!("cannot open both local and ssh paths"));
-        }
+        anyhow::ensure!(
+            self.open_paths.is_empty(),
+            "cannot open both local and ssh paths"
+        );
         let mut connection_options = SshSettings::get_global(cx).connection_options_for(
             host.clone(),
             port,
@@ -90,9 +91,10 @@ impl OpenRequest {
             connection_options.password = Some(password.to_string());
         }
         if let Some(ssh_connection) = &self.ssh_connection {
-            if *ssh_connection != connection_options {
-                return Err(anyhow!("cannot open multiple ssh connections"));
-            }
+            anyhow::ensure!(
+                *ssh_connection == connection_options,
+                "cannot open multiple ssh connections"
+            );
         }
         self.ssh_connection = Some(connection_options);
         self.parse_file_path(url.path());
@@ -123,7 +125,7 @@ impl OpenRequest {
                 }
             }
         }
-        Err(anyhow!("invalid zed url: {}", request_path))
+        anyhow::bail!("invalid zed url: {request_path}")
     }
 }
 
@@ -141,7 +143,7 @@ impl OpenListener {
     pub fn open_urls(&self, urls: Vec<String>) {
         self.0
             .unbounded_send(urls)
-            .map_err(|_| anyhow!("no listener for open requests"))
+            .context("no listener for open requests")
             .log_err();
     }
 }
@@ -151,7 +153,7 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
     use release_channel::RELEASE_CHANNEL_NAME;
     use std::os::unix::net::UnixDatagram;
 
-    let sock_path = paths::support_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
+    let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
     if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
         if e.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -191,7 +193,7 @@ fn connect_to_cli(
                 break;
             }
         }
-        Ok::<_, anyhow::Error>(())
+        anyhow::Ok(())
     });
 
     Ok((async_request_rx, response_tx))
@@ -261,6 +263,7 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 env,
+                user_data_dir: _, // Ignore user_data_dir
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
@@ -400,9 +403,7 @@ async fn open_workspaces(
             }
         }
 
-        if errored {
-            return Err(anyhow!("failed to open a workspace"));
-        }
+        anyhow::ensure!(!errored, "failed to open a workspace");
     }
 
     Ok(())
@@ -529,8 +530,8 @@ pub async fn derive_paths_with_position(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
+    use super::*;
+    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
     use cli::{
         CliResponse,
         ipc::{self},
@@ -538,10 +539,33 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use serde_json::json;
+    use std::sync::Arc;
     use util::path;
     use workspace::{AppState, Workspace};
 
-    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
+    #[gpui::test]
+    fn test_parse_ssh_url(cx: &mut TestAppContext) {
+        let _app_state = init_test(cx);
+        cx.update(|cx| {
+            SshSettings::register(cx);
+        });
+        let request =
+            cx.update(|cx| OpenRequest::parse(vec!["ssh://me@localhost:/".into()], cx).unwrap());
+        assert_eq!(
+            request.ssh_connection.unwrap(),
+            SshConnectionOptions {
+                host: "localhost".into(),
+                username: Some("me".into()),
+                port: None,
+                password: None,
+                args: None,
+                port_forwards: None,
+                nickname: None,
+                upload_binary_over_ssh: false,
+            }
+        );
+        assert_eq!(request.open_paths, vec!["/"]);
+    }
 
     #[gpui::test]
     async fn test_open_workspace_with_directory(cx: &mut TestAppContext) {
