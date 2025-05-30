@@ -1,8 +1,8 @@
 use crate::db::billing_subscription::SubscriptionKind;
-use crate::db::{billing_subscription, user};
+use crate::db::{billing_customer, billing_subscription, user};
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::{Config, db::billing_preference};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use chrono::{NaiveDateTime, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,8 @@ pub struct LlmTokenClaims {
     pub enable_model_request_overages: bool,
     pub model_request_overages_spend_limit_in_cents: u32,
     pub can_use_web_search_tool: bool,
+    #[serde(default)]
+    pub has_overdue_invoices: bool,
 }
 
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
@@ -40,6 +42,7 @@ impl LlmTokenClaims {
     pub fn create(
         user: &user::Model,
         is_staff: bool,
+        billing_customer: billing_customer::Model,
         billing_preferences: Option<billing_preference::Model>,
         feature_flags: &Vec<String>,
         subscription: billing_subscription::Model,
@@ -49,7 +52,7 @@ impl LlmTokenClaims {
         let secret = config
             .llm_api_secret
             .as_ref()
-            .ok_or_else(|| anyhow!("no LLM API secret"))?;
+            .context("no LLM API secret")?;
 
         let plan = if is_staff {
             Plan::ZedPro
@@ -63,7 +66,7 @@ impl LlmTokenClaims {
         let subscription_period =
             billing_subscription::Model::current_period(Some(subscription), is_staff)
                 .map(|(start, end)| (start.naive_utc(), end.naive_utc()))
-                .ok_or_else(|| anyhow!("A plan is required to use Zed's hosted models or edit predictions. Visit https://zed.dev/account to get started."))?;
+                .context("A plan is required to use Zed's hosted models or edit predictions. Visit https://zed.dev/account to get started.")?;
 
         let now = Utc::now();
         let claims = Self {
@@ -99,6 +102,7 @@ impl LlmTokenClaims {
                 .map_or(0, |preferences| {
                     preferences.model_request_overages_spend_limit_in_cents as u32
                 }),
+            has_overdue_invoices: billing_customer.has_overdue_invoices,
         };
 
         Ok(jsonwebtoken::encode(
@@ -112,7 +116,7 @@ impl LlmTokenClaims {
         let secret = config
             .llm_api_secret
             .as_ref()
-            .ok_or_else(|| anyhow!("no LLM API secret"))?;
+            .context("no LLM API secret")?;
 
         match jsonwebtoken::decode::<Self>(
             token,

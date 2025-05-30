@@ -264,7 +264,6 @@ impl Drop for SemanticDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::anyhow;
     use chunking::Chunk;
     use embedding_index::{ChunkedFile, EmbeddingIndex};
     use feature_flags::FeatureFlagAppExt;
@@ -281,7 +280,7 @@ mod tests {
     use util::separator;
 
     fn init_test(cx: &mut TestAppContext) {
-        env_logger::try_init().ok();
+        zlog::init_test();
 
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
@@ -446,15 +445,15 @@ mod tests {
         cx.executor().allow_parking();
 
         let provider = Arc::new(TestEmbeddingProvider::new(3, |text| {
-            if text.contains('g') {
-                Err(anyhow!("cannot embed text containing a 'g' character"))
-            } else {
-                Ok(Embedding::new(
-                    ('a'..='z')
-                        .map(|char| text.chars().filter(|c| *c == char).count() as f32)
-                        .collect(),
-                ))
-            }
+            anyhow::ensure!(
+                !text.contains('g'),
+                "cannot embed text containing a 'g' character"
+            );
+            Ok(Embedding::new(
+                ('a'..='z')
+                    .map(|char| text.chars().filter(|c| *c == char).count() as f32)
+                    .collect(),
+            ))
         }));
 
         let (indexing_progress_tx, _) = channel::unbounded();

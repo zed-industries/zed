@@ -111,6 +111,12 @@ impl_actions!(
     ]
 );
 
+pub mod dev {
+    use gpui::actions;
+
+    actions!(dev, [ToggleInspector]);
+}
+
 pub mod workspace {
     use gpui::action_with_deprecated_aliases;
 
@@ -333,3 +339,5 @@ pub mod outline {
 
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
 actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
+
+actions!(debugger, [ToggleEnableBreakpoint, UnsetBreakpoint]);

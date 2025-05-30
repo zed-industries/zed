@@ -3,7 +3,7 @@ use crate::{
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
@@ -58,7 +58,7 @@ impl PaneGroup {
                     self.root = Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
                     Ok(())
                 } else {
-                    Err(anyhow!("Pane not found"))
+                    anyhow::bail!("Pane not found");
                 }
             }
             Member::Axis(axis) => axis.split(old_pane, new_pane, direction),
@@ -538,7 +538,7 @@ impl PaneAxis {
                 }
             }
         }
-        Err(anyhow!("Pane not found"))
+        anyhow::bail!("Pane not found");
     }
 
     fn remove(&mut self, pane_to_remove: &Entity<Pane>) -> Result<Option<Member>> {
@@ -579,7 +579,7 @@ impl PaneAxis {
                 Ok(None)
             }
         } else {
-            Err(anyhow!("Pane not found"))
+            anyhow::bail!("Pane not found");
         }
     }
 
@@ -902,9 +902,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakEntity, Window, px, relative, size,
+        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId,
+        HitboxBehavior, IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+        Pixels, Point, Size, Style, WeakEntity, Window, px, relative, size,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -1091,7 +1091,7 @@ mod element {
             };
 
             PaneAxisHandleLayout {
-                hitbox: window.insert_hitbox(handle_bounds, true),
+                hitbox: window.insert_hitbox(handle_bounds, HitboxBehavior::BlockMouse),
                 divider_bounds,
             }
         }
@@ -1113,9 +1113,14 @@ mod element {
             Some(self.basis.into())
         }
 
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -1132,6 +1137,7 @@ mod element {
         fn prepaint(
             &mut self,
             global_id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
             window: &mut Window,
@@ -1224,6 +1230,7 @@ mod element {
         fn paint(
             &mut self,
             _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,

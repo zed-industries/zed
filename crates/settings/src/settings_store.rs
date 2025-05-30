@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
@@ -635,13 +635,10 @@ impl SettingsStore {
         cx: &mut App,
     ) -> Result<()> {
         let settings: Value = parse_json_with_comments(default_settings_content)?;
-        if settings.is_object() {
-            self.raw_default_settings = settings;
-            self.recompute_values(None, cx)?;
-            Ok(())
-        } else {
-            Err(anyhow!("settings must be an object"))
-        }
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_default_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
     }
 
     /// Sets the user settings via a JSON string.
@@ -1525,6 +1522,8 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
 
 #[cfg(test)]
 mod tests {
+    use crate::VsCodeSettingsSource;
+
     use super::*;
     use serde_derive::Deserialize;
     use unindent::Unindent;
@@ -2007,7 +2006,10 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old, cx).ok();
-        let new = store.get_vscode_edits(old, &VsCodeSettings::from_str(&vscode).unwrap());
+        let new = store.get_vscode_edits(
+            old,
+            &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
+        );
         pretty_assertions::assert_eq!(new, expected);
     }
 

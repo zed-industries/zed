@@ -14,7 +14,7 @@ use language::{Buffer, CodeLabel, ToOffset};
 use menu::Confirm;
 use project::{
     Completion,
-    debugger::session::{CompletionsQuery, OutputToken, Session},
+    debugger::session::{CompletionsQuery, OutputToken, Session, SessionEvent},
 };
 use settings::Settings;
 use std::{cell::RefCell, rc::Rc, usize};
@@ -72,14 +72,19 @@ impl Console {
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Some(Box::new(ConsoleQueryBarCompletionProvider(this))));
+            editor.set_completion_provider(Some(Rc::new(ConsoleQueryBarCompletionProvider(this))));
 
             editor
         });
 
         let _subscriptions = vec![
             cx.subscribe(&stack_frame_list, Self::handle_stack_frame_list_events),
-            cx.on_focus_in(&focus_handle, window, |console, window, cx| {
+            cx.subscribe_in(&session, window, |this, _, event, window, cx| {
+                if let SessionEvent::ConsoleOutput = event {
+                    this.update_output(window, cx)
+                }
+            }),
+            cx.on_focus(&focus_handle, window, |console, window, cx| {
                 if console.is_running(cx) {
                     console.query_bar.focus_handle(cx).focus(window);
                 }
@@ -105,7 +110,7 @@ impl Console {
     }
 
     fn is_running(&self, cx: &Context<Self>) -> bool {
-        self.session.read(cx).is_local()
+        self.session.read(cx).is_running()
     }
 
     fn handle_stack_frame_list_events(
@@ -171,16 +176,18 @@ impl Console {
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
-        EditorElement::new(&self.console, self.editor_style(cx))
+        EditorElement::new(&self.console, Self::editor_style(&self.console, cx))
     }
 
-    fn editor_style(&self, cx: &Context<Self>) -> EditorStyle {
+    fn editor_style(editor: &Entity<Editor>, cx: &Context<Self>) -> EditorStyle {
+        let is_read_only = editor.read(cx).read_only(cx);
         let settings = ThemeSettings::get_global(cx);
+        let theme = cx.theme();
         let text_style = TextStyle {
-            color: if self.console.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
+            color: if is_read_only {
+                theme.colors().text_muted
             } else {
-                cx.theme().colors().text
+                theme.colors().text
             },
             font_family: settings.buffer_font.family.clone(),
             font_features: settings.buffer_font.features.clone(),
@@ -190,22 +197,21 @@ impl Console {
             ..Default::default()
         };
         EditorStyle {
-            background: cx.theme().colors().editor_background,
-            local_player: cx.theme().players().local(),
+            background: theme.colors().editor_background,
+            local_player: theme.players().local(),
             text: text_style,
             ..Default::default()
         }
     }
 
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        EditorElement::new(&self.query_bar, self.editor_style(cx))
+        EditorElement::new(&self.query_bar, Self::editor_style(&self.query_bar, cx))
     }
-}
 
-impl Render for Console {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn update_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let session = self.session.clone();
         let token = self.last_token;
+
         self.update_output_task = cx.spawn_in(window, async move |this, cx| {
             _ = session.update_in(cx, move |session, window, cx| {
                 let (output, last_processed_token) = session.output(token);
@@ -220,7 +226,11 @@ impl Render for Console {
                 });
             });
         });
+    }
+}
 
+impl Render for Console {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("DebugConsole")
@@ -278,7 +288,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         _completion_indices: Vec<usize>,
         _completions: Rc<RefCell<Box<[Completion]>>>,
         _cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<bool>> {
+    ) -> gpui::Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))
     }
 
@@ -289,7 +299,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         _completion_index: usize,
         _push_to_history: bool,
         _cx: &mut Context<Editor>,
-    ) -> gpui::Task<gpui::Result<Option<language::Transaction>>> {
+    ) -> gpui::Task<anyhow::Result<Option<language::Transaction>>> {
         Task::ready(Ok(None))
     }
 

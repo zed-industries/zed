@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context as _;
 use sea_orm::sea_query::Query;
 
 impl Database {
@@ -51,7 +52,7 @@ impl Database {
             Ok(access_token::Entity::find_by_id(access_token_id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such access token"))?)
+                .context("no such access token")?)
         })
         .await
     }

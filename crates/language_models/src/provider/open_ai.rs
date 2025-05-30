@@ -265,7 +265,7 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
+            let api_key = api_key.context("Missing OpenAI API Key")?;
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
@@ -400,7 +400,7 @@ pub fn into_open_ai(
                         tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
-                            content: open_ai::MessageContent::empty(),
+                            content: None,
                             tool_calls: vec![tool_call],
                         });
                     }
@@ -470,7 +470,13 @@ fn add_message_content_part(
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_ai::RequestMessage::User { content }))
-        | (Role::Assistant, Some(open_ai::RequestMessage::Assistant { content, .. }))
+        | (
+            Role::Assistant,
+            Some(open_ai::RequestMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        )
         | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
             content.push_part(new_part);
         }
@@ -480,7 +486,7 @@ fn add_message_content_part(
                     content: open_ai::MessageContent::from(vec![new_part]),
                 },
                 Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: open_ai::MessageContent::from(vec![new_part]),
+                    content: Some(open_ai::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                 },
                 Role::System => open_ai::RequestMessage::System {
@@ -854,6 +860,7 @@ mod tests {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: None,
             mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
