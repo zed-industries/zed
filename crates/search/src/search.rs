@@ -37,6 +37,7 @@ actions!(
         PreviousHistoryQuery,
         ReplaceAll,
         ReplaceNext,
+        ToggleTodoFixme,
     ]
 );
 
@@ -48,6 +49,7 @@ bitflags! {
         const CASE_SENSITIVE = 0b010;
         const INCLUDE_IGNORED = 0b100;
         const REGEX = 0b1000;
+        const TODO_FIXME = 0b1000000;
         const ONE_MATCH_PER_LINE = 0b100000;
         /// If set, reverse direction when finding the active match
         const BACKWARDS = 0b10000;
@@ -61,6 +63,7 @@ impl SearchOptions {
             SearchOptions::CASE_SENSITIVE => "Match Case Sensitively",
             SearchOptions::INCLUDE_IGNORED => "Also search files ignored by configuration",
             SearchOptions::REGEX => "Use Regular Expressions",
+            SearchOptions::TODO_FIXME => "Find TODOs/FIXMEs",
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -71,6 +74,7 @@ impl SearchOptions {
             SearchOptions::CASE_SENSITIVE => ui::IconName::CaseSensitive,
             SearchOptions::INCLUDE_IGNORED => ui::IconName::Sliders,
             SearchOptions::REGEX => ui::IconName::Regex,
+            SearchOptions::TODO_FIXME => ui::IconName::Warning,
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }
@@ -81,6 +85,7 @@ impl SearchOptions {
             SearchOptions::CASE_SENSITIVE => Box::new(ToggleCaseSensitive),
             SearchOptions::INCLUDE_IGNORED => Box::new(ToggleIncludeIgnored),
             SearchOptions::REGEX => Box::new(ToggleRegex),
+            SearchOptions::TODO_FIXME => Box::new(ToggleTodoFixme),
             _ => panic!("{:?} is not a named SearchOption", self),
         }
     }

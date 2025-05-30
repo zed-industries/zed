@@ -43,6 +43,7 @@ pub struct SearchOptions {
     pub replacement: bool,
     pub selection: bool,
     pub find_in_results: bool,
+    pub todo_fixme: bool,
 }
 
 pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
@@ -56,6 +57,7 @@ pub trait SearchableItem: Item + EventEmitter<SearchEvent> {
             replacement: true,
             selection: true,
             find_in_results: false,
+            todo_fixme: true,
         }
     }
 

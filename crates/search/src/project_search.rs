@@ -1,7 +1,7 @@
 use crate::{
     BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
     SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
-    ToggleRegex, ToggleReplace, ToggleWholeWord, buffer_search::Deploy,
+    ToggleRegex, ToggleReplace, ToggleWholeWord, ToggleTodoFixme, buffer_search::Deploy,
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -89,6 +89,12 @@ pub fn init(cx: &mut App) {
             workspace,
             move |search_bar, action: &ToggleReplace, window, cx| {
                 search_bar.toggle_replace(action, window, cx)
+            },
+        );
+        register_workspace_action(
+            workspace,
+            move |search_bar, _: &ToggleTodoFixme, window, cx| {
+                search_bar.toggle_search_option(SearchOptions::TODO_FIXME, window, cx);
             },
         );
         register_workspace_action(
@@ -381,11 +387,38 @@ impl EventEmitter<ViewEvent> for ProjectSearchView {}
 impl Render for ProjectSearchView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.has_matches() {
+            let should_show_todo_fixme_popup = self.search_options.contains(SearchOptions::TODO_FIXME);
+            let todo_fixme_popup = should_show_todo_fixme_popup.then(|| {
+                h_flex()
+                .absolute()
+                .bottom_8()
+                .right_4()
+                .bg(cx.theme().colors().surface_background) 
+                .border_1()
+                .border_color(cx.theme().colors().border) 
+                .rounded_sm()
+                .shadow_sm()
+                .px_2()
+                .py_2()
+                .items_center()
+                .child(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .color(Color::Muted)
+                )
+                .child(
+                    Label::new("Searching for TODO/FIXME")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+            });
+
             div()
                 .flex_1()
                 .size_full()
                 .track_focus(&self.focus_handle(cx))
                 .child(self.results_editor.clone())
+                .children(todo_fixme_popup)
         } else {
             let model = self.entity.read(cx);
             let has_no_results = model.no_results.unwrap_or(false);
@@ -654,6 +687,7 @@ impl ProjectSearchView {
     }
 
     fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut Context<Self>) {
+        let was_enabled = self.search_options.contains(option);
         self.search_options.toggle(option);
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
@@ -662,6 +696,19 @@ impl ProjectSearchView {
             );
         });
         self.adjust_query_regex_language(cx);
+        // Immediately trigger a search when TODO_FIXME is enabled
+        if option == SearchOptions::TODO_FIXME {
+            if self.search_options.contains(SearchOptions::TODO_FIXME) {
+                self.search(cx);
+            } else if was_enabled {
+                // Clear the search when TODO_FIXME is disabled
+                self.entity.update(cx, |model, cx| {
+                    model.match_ranges.clear();
+                    model.last_search_query_text = None;
+                    cx.notify();
+                });
+            }
+        }
     }
 
     fn toggle_opened_only(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -1116,7 +1163,11 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
-        let text = self.query_editor.read(cx).text(cx);
+        let text = if self.search_options.contains(SearchOptions::TODO_FIXME) {
+            r"\b(TODO|FIXME|Todo|FixMe|ToDo)\b.*".to_string()
+        } else {
+            self.query_editor.read(cx).text(cx)
+        };
         let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
         } else {
@@ -1181,7 +1232,8 @@ impl ProjectSearchView {
             .count()
             > 1;
 
-        let query = if self.search_options.contains(SearchOptions::REGEX) {
+        let query = if self.search_options.contains(SearchOptions::REGEX)
+            || self.search_options.contains(SearchOptions::TODO_FIXME) {
             match SearchQuery::regex(
                 text,
                 self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -1480,6 +1532,21 @@ impl ProjectSearchView {
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleWholeWord.boxed_clone(), cx)
+                    }),
+            )
+            .child(
+                Button::new("todo-fixme", "Search TODO/FIXME")
+                    .icon(IconName::Warning)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .key_binding(KeyBinding::for_action_in(
+                        &ToggleTodoFixme,
+                        &focus_handle,
+                        window,
+                        cx,
+                    ))
+                    .on_click(|_event, window, cx| {
+                        window.dispatch_action(ToggleTodoFixme.boxed_clone(), cx)
                     }),
             )
     }
@@ -1984,6 +2051,13 @@ impl Render for ProjectSearchBar {
                         focus_handle.clone(),
                         cx.listener(|this, _, window, cx| {
                             this.toggle_search_option(SearchOptions::REGEX, window, cx);
+                        }),
+                    ))
+                    .child(SearchOptions::TODO_FIXME.as_button(
+                        self.is_option_enabled(SearchOptions::TODO_FIXME, cx),
+                        focus_handle.clone(),
+                        cx.listener(|this, _, window, cx| {
+                            this.toggle_search_option(SearchOptions::TODO_FIXME, window, cx);
                         }),
                     )),
             );
@@ -4215,6 +4289,101 @@ pub mod tests {
                 "Project search should take the query from the buffer search bar since it got focused and had a query inside"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_search_todo_fixme(cx: &mut TestAppContext) {
+        init_test(cx);
+        // Setup a test project with a file containing TODO and FIXME comments
+        let file_content = r#"
+        // TODO: Refactor this function
+        let x = 42;
+        // FIXME: This is a bug
+        // NOTE: This is not a todo
+        // TODO another todo without colon
+        "#;
+
+        // Create fake filesystem and project
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "main.rs": file_content,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| workspace::Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+
+        // Create a ProjectSearchBar and ProjectSearchView
+        let search_bar = window.build_entity(cx, |_, _| ProjectSearchBar::new());
+        window.update(cx, |workspace, window, cx| {
+            workspace.panes()[0].update(cx, |pane, cx| {
+                pane.toolbar().update(cx, |toolbar, cx| toolbar.add_item(search_bar.clone(), window, cx))
+            });
+            ProjectSearchView::new_search(workspace, &workspace::NewSearch, window, cx)
+        }).unwrap();
+
+        let search_view = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        // Enable TODO_FIXME search option and search
+        window.update(cx, |_, window, cx| {
+            search_bar.update(cx, |search_bar, cx| {
+                search_bar.focus_search(window, cx);
+                search_bar.toggle_search_option(SearchOptions::TODO_FIXME, window, cx);
+            });
+        }).unwrap();
+
+        cx.background_executor.run_until_parked();
+
+        // Check that the search results contain all TODO and FIXME comments
+        window.update(cx, |_, _, cx| {
+            search_view.update(cx, |search_view, cx| {
+                let matches = search_view.get_matches(cx);
+                assert_eq!(
+                    matches.len(),
+                    3,
+                    "Should find all TODO and FIXME comments in project search"
+                );
+            });
+        }).unwrap();
+
+        // Check that the match count in the search bar is correct
+        window.update(cx, |_, _, cx| {
+            search_view.update(cx, |search_view, _| {
+                assert_eq!(
+                    search_view.active_match_index,
+                    Some(0),
+                    "First TODO/FIXME match should be active"
+                );
+            });
+        }).unwrap();
+
+        // Select next match and check index
+        window.update(cx, |_, window, cx| {
+            search_bar.update(cx, |search_bar, cx| {
+                search_bar.select_next_match(&SelectNextMatch, window, cx);
+            });
+        }).unwrap();
+        window.update(cx, |_, _, cx| {
+            search_view.update(cx, |search_view, _| {
+                assert_eq!(
+                    search_view.active_match_index,
+                    Some(1),
+                    "Second TODO/FIXME match should be active"
+                );
+            });
+        }).unwrap();
+
     }
 
     fn init_test(cx: &mut TestAppContext) {

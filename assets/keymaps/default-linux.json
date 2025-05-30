@@ -432,7 +432,8 @@
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex",
       "alt-r": "search::ToggleRegex",
-      "ctrl-k shift-enter": "pane::TogglePinTab"
+      "ctrl-k shift-enter": "pane::TogglePinTab",
+      "alt-q": "search::ToggleTodoFixme"
     }
   },
   // Bindings from VS Code

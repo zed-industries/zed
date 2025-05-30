@@ -809,6 +809,7 @@ impl SearchableItem for DapLogView {
             word: true,
             regex: true,
             find_in_results: true,
+            todo_fixme: true,
             // DAP log is read-only.
             replacement: false,
             selection: false,

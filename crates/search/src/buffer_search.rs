@@ -3,7 +3,7 @@ mod registrar;
 use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
     SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
-    ToggleReplace, ToggleSelection, ToggleWholeWord, search_bar::render_nav_button,
+    ToggleReplace, ToggleSelection, ToggleWholeWord, ToggleTodoFixme, search_bar::render_nav_button,
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
@@ -158,6 +158,12 @@ impl BufferSearchBar {
     pub fn query_editor_focused(&self) -> bool {
         self.query_editor_focused
     }
+
+    fn should_show_todo_fixme_popup(&self) -> bool {
+       self.search_options.contains(SearchOptions::TODO_FIXME)
+            && self.query_editor_focused
+            && !self.dismissed
+    }
 }
 
 impl EventEmitter<Event> for BufferSearchBar {}
@@ -194,7 +200,7 @@ impl Render for BufferSearchBar {
             .active_searchable_item
             .as_ref()
             .and_then(|searchable_item| {
-                if self.query(cx).is_empty() {
+                if self.query(cx).is_empty() && !self.search_options.contains(SearchOptions::TODO_FIXME) {
                     return None;
                 }
                 let matches_count = self
@@ -213,6 +219,7 @@ impl Render for BufferSearchBar {
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(window);
 
+        let should_show_todo_fixme_popup = self.should_show_todo_fixme_popup();       
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
         if in_replace {
@@ -282,6 +289,15 @@ impl Render for BufferSearchBar {
                                         focus_handle.clone(),
                                         cx.listener(|this, _, window, cx| {
                                             this.toggle_regex(&ToggleRegex, window, cx)
+                                        }),
+                                    )
+                                }))
+                                .children(supported_options.todo_fixme.then(|| {
+                                    self.render_search_option_button(
+                                        SearchOptions::TODO_FIXME,
+                                        focus_handle.clone(),
+                                        cx.listener(|this, _, window, cx| {
+                                            this.toggle_todo_fixme(&ToggleTodoFixme, window, cx)
                                         }),
                                     )
                                 })),
@@ -470,6 +486,32 @@ impl Render for BufferSearchBar {
                 )
         });
 
+        let todo_fixme_popup = should_show_todo_fixme_popup.then(|| {
+            h_flex()
+            .absolute()
+            .bottom_8()
+            .right(px(248.))
+            .gap_2()
+            .bg(cx.theme().colors().surface_background) 
+            .border_1()
+            .border_color(cx.theme().colors().border) 
+            .rounded_sm()
+            .shadow_sm()
+            .px_2()
+            .py_2()
+            .items_center()
+            .child(
+                Icon::new(IconName::Warning)
+                    .size(IconSize::Small)
+                    .color(Color::Muted)
+            )
+            .child(
+                Label::new("Searching for TODO/FIXME")
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            )
+        });
+
         v_flex()
             .id("buffer_search")
             .gap_2()
@@ -507,6 +549,9 @@ impl Render for BufferSearchBar {
             .when(self.supported_options(cx).selection, |this| {
                 this.on_action(cx.listener(Self::toggle_selection))
             })
+            .when(self.supported_options(cx).todo_fixme, |this| {
+                this.on_action(cx.listener(Self::toggle_todo_fixme))
+            })
             .child(h_flex().relative().child(search_line.w_full()).when(
                 !narrow_mode && !supported_options.find_in_results,
                 |div| {
@@ -526,6 +571,7 @@ impl Render for BufferSearchBar {
                 },
             ))
             .children(replace_line)
+            .children(todo_fixme_popup)
     }
 }
 
@@ -614,6 +660,13 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, action: &ToggleReplace, window, cx| {
             if this.supported_options(cx).replacement {
                 this.toggle_replace(action, window, cx);
+            } else {
+                cx.propagate();
+            }
+        }));
+        registrar.register_handler(ForDeployed(|this, action: &ToggleTodoFixme, window, cx| {
+            if this.supported_options(cx).todo_fixme {
+                this.toggle_todo_fixme(action, window, cx);
             } else {
                 cx.propagate();
             }
@@ -928,7 +981,7 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let options = options.unwrap_or(self.default_options);
-        let updated = query != self.query(cx) || self.search_options != options;
+        let updated = query != self.query(cx) || self.search_options != options || options.contains(SearchOptions::TODO_FIXME);
         if updated {
             self.query_editor.update(cx, |query_editor, cx| {
                 query_editor.buffer().update(cx, |query_buffer, cx| {
@@ -1189,6 +1242,10 @@ impl BufferSearchBar {
         self.toggle_search_option(SearchOptions::REGEX, window, cx)
     }
 
+    fn toggle_todo_fixme(&mut self, _: &ToggleTodoFixme, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_search_option(SearchOptions::TODO_FIXME, window, cx);
+    }
+
     fn clear_active_searchable_item_matches(&mut self, window: &mut Window, cx: &mut App) {
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             self.active_match_index = None;
@@ -1227,7 +1284,11 @@ impl BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<()> {
         let (done_tx, done_rx) = oneshot::channel();
-        let query = self.query(cx);
+        let query = if self.search_options.contains(SearchOptions::TODO_FIXME) {
+            r"\b(TODO|FIXME|Todo|FixMe|ToDo)\b.*".to_string()
+        } else {
+            self.query(cx)
+        };
         self.pending_search.take();
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
@@ -1242,7 +1303,8 @@ impl BufferSearchBar {
                 {
                     search
                 } else {
-                    if self.search_options.contains(SearchOptions::REGEX) {
+                    if self.search_options.contains(SearchOptions::REGEX) 
+                        || self.search_options.contains(SearchOptions::TODO_FIXME) {
                         match SearchQuery::regex(
                             query,
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
@@ -1514,7 +1576,7 @@ impl BufferSearchBar {
     }
 
     fn adjust_query_regex_language(&self, cx: &mut App) {
-        let enable = self.search_options.contains(SearchOptions::REGEX);
+        let enable = self.search_options.contains(SearchOptions::REGEX) || self.search_options.contains(SearchOptions::TODO_FIXME);
         let query_buffer = self
             .query_editor
             .read(cx)
@@ -2898,4 +2960,71 @@ mod tests {
             });
         });
     }
+    
+    #[gpui::test]
+    async fn test_search_todo_fixme(cx: &mut TestAppContext) {
+        init_globals(cx);
+        let buffer_text = r#"
+        // TODO: Refactor this function
+        let x = 42;
+        // FIXME: This is a bug
+        // NOTE: This is not a todo
+        // TODO another todo without colon
+        "#.unindent();
+        let buffer = cx.new(|cx| Buffer::local(buffer_text, cx));
+        let cx = cx.add_empty_window();
+
+        let editor =
+            cx.new_window_entity(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+
+        let search_bar = cx.new_window_entity(|window, cx| {
+            let mut search_bar = BufferSearchBar::new(None, window, cx);
+            search_bar.set_active_pane_item(Some(&editor), window, cx);
+            search_bar.show(window, cx);
+            search_bar
+        });
+
+        // Enable TODO_FIXME search option and search
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.enable_search_option(SearchOptions::TODO_FIXME, window, cx);
+        });
+
+        // Wait for search to complete and check highlights
+        search_bar
+            .update_in(cx, |search_bar, window, cx| {
+                search_bar.search("", Some(SearchOptions::TODO_FIXME), window, cx)
+            })
+            .await
+            .unwrap();
+
+        editor.update_in(cx, |editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            let display_points_of = |background_highlights: Vec<(std::ops::Range<DisplayPoint>, Hsla)>| {
+                background_highlights
+                    .into_iter()
+                    .map(|(range, _)| range)
+                    .collect::<Vec<_>>()
+            };
+            // There should be 3 matches for TODO/FIXME
+            assert_eq!(
+                display_points_of(highlights).len(),
+                3,
+                "Should highlight all TODO and FIXME comments"
+            );
+        });
+
+        // Select all matches and check selections
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.select_all_matches(&SelectAllMatches, window, cx);
+        });
+        search_bar.update(cx, |_, cx| {
+            let all_selections =
+                editor.update(cx, |editor, cx| editor.selections.display_ranges(cx));
+            assert_eq!(
+                all_selections.len(),
+                3,
+                "Should select all TODO/FIXME matches"
+            );
+        });
+    }  
 }
