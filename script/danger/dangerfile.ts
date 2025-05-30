@@ -59,12 +59,32 @@ if (includesIssueUrl) {
 }
 
 const PROMPT_PATHS = [
+  "assets/prompts/content_prompt.hbs",
+  "assets/prompts/terminal_assistant_prompt.hbs",
   "crates/assistant_tools/src/templates/create_file_prompt.hbs",
   "crates/assistant_tools/src/templates/edit_file_prompt.hbs",
+  "crates/git_ui/src/commit_message_prompt.txt",
 ];
 
-for (const promptPath of PROMPT_PATHS) {
-  if (danger.git.modified_files.some((file) => file.includes(promptPath))) {
-    fail([`Modifying the '${promptPath}' prompt requires corresponding changes in the LLM Worker.`].join("\n"));
+const PROMPT_CHANGE_ATTESTATION = "I have updated the LLM Worker to work with these prompt changes.";
+
+const modifiedPrompts = danger.git.modified_files.filter((file) =>
+  PROMPT_PATHS.some((promptPath) => file.includes(promptPath)),
+);
+
+if (!!modifiedPrompts.length) {
+  for (const promptPath of modifiedPrompts) {
+    if (body.includes(PROMPT_CHANGE_ATTESTATION)) {
+      message(
+        [`This PR contains changes to "${promptPath}" that have been accounted for in the LLM Worker.`].join("\n"),
+      );
+    } else {
+      fail(
+        [
+          `Modifying the "${promptPath}" prompt requires corresponding changes in the LLM Worker.`,
+          `Once you have made the changes, add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
+        ].join("\n"),
+      );
+    }
   }
 }
