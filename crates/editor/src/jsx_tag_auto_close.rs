@@ -316,6 +316,10 @@ pub(crate) fn refresh_enabled_in_any_buffer(
         let multi_buffer = multi_buffer.read(cx);
         let mut found_enabled = false;
         multi_buffer.for_each_buffer(|buffer| {
+            if found_enabled {
+                return;
+            }
+
             let buffer = buffer.read(cx);
             let snapshot = buffer.snapshot();
             for syntax_layer in snapshot.syntax_layers() {
@@ -454,13 +458,12 @@ pub(crate) fn handle_from(
             let ensure_no_edits_since_start = || -> Option<()> {
                 let has_edits_since_start = this
                     .read_with(cx, |this, cx| {
-                        this.buffer.read_with(cx, |buffer, cx| {
-                            buffer.buffer(buffer_id).map_or(true, |buffer| {
-                                buffer.read_with(cx, |buffer, _| {
-                                    buffer.has_edits_since(&buffer_version_initial)
-                                })
+                        this.buffer
+                            .read(cx)
+                            .buffer(buffer_id)
+                            .map_or(true, |buffer| {
+                                buffer.read(cx).has_edits_since(&buffer_version_initial)
                             })
-                        })
                     })
                     .ok()?;
 
@@ -503,9 +506,7 @@ pub(crate) fn handle_from(
             ensure_no_edits_since_start()?;
 
             let multi_buffer_snapshot = this
-                .read_with(cx, |this, cx| {
-                    this.buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx))
-                })
+                .read_with(cx, |this, cx| this.buffer.read(cx).snapshot(cx))
                 .ok()?;
 
             let mut base_selections = Vec::new();
@@ -599,7 +600,7 @@ pub(crate) fn handle_from(
                     })
                     .collect::<Vec<_>>();
                 this.update_in(cx, |this, window, cx| {
-                    this.change_selections_inner(None, false, window, cx, |s| {
+                    this.change_selections_without_showing_completions(None, window, cx, |s| {
                         s.select(base_selections);
                     });
                 })

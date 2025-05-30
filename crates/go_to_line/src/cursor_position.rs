@@ -91,7 +91,8 @@ impl CursorPosition {
                         cursor_position.selected_count.selections = editor.selections.count();
                         match editor.mode() {
                             editor::EditorMode::AutoHeight { .. }
-                            | editor::EditorMode::SingleLine { .. } => {
+                            | editor::EditorMode::SingleLine { .. }
+                            | editor::EditorMode::Minimap { .. } => {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
                             }
@@ -280,10 +281,6 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-/// Whether or not to automatically check for updates.
-///
-/// Values: short, long
-/// Default: short
 #[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
@@ -301,4 +298,6 @@ impl Settings for LineIndicatorFormat {
 
         Ok(format.0)
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

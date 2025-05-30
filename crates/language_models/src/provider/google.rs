@@ -11,8 +11,9 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModelCompletionEvent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, StopReason,
+    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -23,7 +24,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{self, AtomicU64},
+};
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
@@ -275,7 +279,7 @@ impl GoogleLanguageModel {
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let api_key = api_key.context("Missing Google API key")?;
             let request = google_ai::stream_generate_content(
                 http_client.as_ref(),
                 &api_url,
@@ -309,6 +313,18 @@ impl LanguageModel for GoogleLanguageModel {
         true
     }
 
+    fn supports_images(&self) -> bool {
+        true
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
+        }
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchemaSubset
     }
@@ -326,7 +342,8 @@ impl LanguageModel for GoogleLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        let request = into_google(request, self.model.id().to_string());
+        let model_id = self.model.id().to_string();
+        let request = into_google(request, model_id.clone());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -334,13 +351,13 @@ impl LanguageModel for GoogleLanguageModel {
         let api_url = settings.api_url.clone();
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let api_key = api_key.context("Missing Google API key")?;
             let response = google_ai::count_tokens(
                 http_client.as_ref(),
                 &api_url,
                 &api_key,
                 google_ai::CountTokensRequest {
-                    contents: request.contents,
+                    generate_content_request: request,
                 },
             )
             .await?;
@@ -355,13 +372,20 @@ impl LanguageModel for GoogleLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<futures::stream::BoxStream<'static, Result<LanguageModelCompletionEvent>>>,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+        >,
     > {
         let request = into_google(request, self.model.id().to_string());
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
-            Ok(map_to_language_model_completion_events(response))
+            let response = request
+                .await
+                .map_err(|err| LanguageModelCompletionError::Other(anyhow!(err)))?;
+            Ok(GoogleEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -369,41 +393,73 @@ impl LanguageModel for GoogleLanguageModel {
 
 pub fn into_google(
     mut request: LanguageModelRequest,
-    model: String,
+    model_id: String,
 ) -> google_ai::GenerateContentRequest {
     fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
         content
             .into_iter()
-            .filter_map(|content| match content {
+            .flat_map(|content| match content {
                 language_model::MessageContent::Text(text)
                 | language_model::MessageContent::Thinking { text, .. } => {
                     if !text.is_empty() {
-                        Some(Part::TextPart(google_ai::TextPart { text }))
+                        vec![Part::TextPart(google_ai::TextPart { text })]
                     } else {
-                        None
+                        vec![]
                     }
                 }
-                language_model::MessageContent::RedactedThinking(_) => None,
-                language_model::MessageContent::Image(_) => None,
+                language_model::MessageContent::RedactedThinking(_) => vec![],
+                language_model::MessageContent::Image(image) => {
+                    vec![Part::InlineDataPart(google_ai::InlineDataPart {
+                        inline_data: google_ai::GenerativeContentBlob {
+                            mime_type: "image/png".to_string(),
+                            data: image.source.to_string(),
+                        },
+                    })]
+                }
                 language_model::MessageContent::ToolUse(tool_use) => {
-                    Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
+                    vec![Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
                             args: tool_use.input,
                         },
-                    }))
+                    })]
                 }
-                language_model::MessageContent::ToolResult(tool_result) => Some(
-                    Part::FunctionResponsePart(google_ai::FunctionResponsePart {
-                        function_response: google_ai::FunctionResponse {
-                            name: tool_result.tool_name.to_string(),
-                            // The API expects a valid JSON object
-                            response: serde_json::json!({
-                                "output": tool_result.content
-                            }),
-                        },
-                    }),
-                ),
+                language_model::MessageContent::ToolResult(tool_result) => {
+                    match tool_result.content {
+                        language_model::LanguageModelToolResultContent::Text(text) => {
+                            vec![Part::FunctionResponsePart(
+                                google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        // The API expects a valid JSON object
+                                        response: serde_json::json!({
+                                            "output": text
+                                        }),
+                                    },
+                                },
+                            )]
+                        }
+                        language_model::LanguageModelToolResultContent::Image(image) => {
+                            vec![
+                                Part::FunctionResponsePart(google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        // The API expects a valid JSON object
+                                        response: serde_json::json!({
+                                            "output": "Tool responded with an image"
+                                        }),
+                                    },
+                                }),
+                                Part::InlineDataPart(google_ai::InlineDataPart {
+                                    inline_data: google_ai::GenerativeContentBlob {
+                                        mime_type: "image/png".to_string(),
+                                        data: image.source.to_string(),
+                                    },
+                                }),
+                            ]
+                        }
+                    }
+                }
             })
             .collect()
     }
@@ -422,18 +478,25 @@ pub fn into_google(
     };
 
     google_ai::GenerateContentRequest {
-        model,
+        model: google_ai::ModelName { model_id },
         system_instruction: system_instructions,
         contents: request
             .messages
             .into_iter()
-            .map(|message| google_ai::Content {
-                parts: map_content(message.content),
-                role: match message.role {
-                    Role::User => google_ai::Role::User,
-                    Role::Assistant => google_ai::Role::Model,
-                    Role::System => google_ai::Role::User, // Google AI doesn't have a system role
-                },
+            .filter_map(|message| {
+                let parts = map_content(message.content);
+                if parts.is_empty() {
+                    None
+                } else {
+                    Some(google_ai::Content {
+                        parts,
+                        role: match message.role {
+                            Role::User => google_ai::Role::User,
+                            Role::Assistant => google_ai::Role::Model,
+                            Role::System => google_ai::Role::User, // Google AI doesn't have a system role
+                        },
+                    })
+                }
             })
             .collect(),
         generation_config: Some(google_ai::GenerationConfig {
@@ -458,104 +521,117 @@ pub fn into_google(
                     .collect(),
             }]
         }),
-        tool_config: None,
+        tool_config: request.tool_choice.map(|choice| google_ai::ToolConfig {
+            function_calling_config: google_ai::FunctionCallingConfig {
+                mode: match choice {
+                    LanguageModelToolChoice::Auto => google_ai::FunctionCallingMode::Auto,
+                    LanguageModelToolChoice::Any => google_ai::FunctionCallingMode::Any,
+                    LanguageModelToolChoice::None => google_ai::FunctionCallingMode::None,
+                },
+                allowed_function_names: None,
+            },
+        }),
     }
 }
 
-pub fn map_to_language_model_completion_events(
-    events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
-) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
-    use std::sync::atomic::{AtomicU64, Ordering};
+pub struct GoogleEventMapper {
+    usage: UsageMetadata,
+    stop_reason: StopReason,
+}
 
-    static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    struct State {
-        events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
-        usage: UsageMetadata,
-        stop_reason: StopReason,
-    }
-
-    futures::stream::unfold(
-        State {
-            events,
+impl GoogleEventMapper {
+    pub fn new() -> Self {
+        Self {
             usage: UsageMetadata::default(),
             stop_reason: StopReason::EndTurn,
-        },
-        |mut state| async move {
-            if let Some(event) = state.events.next().await {
-                match event {
-                    Ok(event) => {
-                        let mut events: Vec<Result<LanguageModelCompletionEvent>> = Vec::new();
-                        let mut wants_to_use_tool = false;
-                        if let Some(usage_metadata) = event.usage_metadata {
-                            update_usage(&mut state.usage, &usage_metadata);
-                            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
-                                convert_usage(&state.usage),
-                            )))
-                        }
-                        if let Some(candidates) = event.candidates {
-                            for candidate in candidates {
-                                if let Some(finish_reason) = candidate.finish_reason.as_deref() {
-                                    state.stop_reason = match finish_reason {
-                                        "STOP" => StopReason::EndTurn,
-                                        "MAX_TOKENS" => StopReason::MaxTokens,
-                                        _ => {
-                                            log::error!(
-                                                "Unexpected google finish_reason: {finish_reason}"
-                                            );
-                                            StopReason::EndTurn
-                                        }
-                                    };
-                                }
-                                candidate
-                                    .content
-                                    .parts
-                                    .into_iter()
-                                    .for_each(|part| match part {
-                                        Part::TextPart(text_part) => events.push(Ok(
-                                            LanguageModelCompletionEvent::Text(text_part.text),
-                                        )),
-                                        Part::InlineDataPart(_) => {}
-                                        Part::FunctionCallPart(function_call_part) => {
-                                            wants_to_use_tool = true;
-                                            let name: Arc<str> =
-                                                function_call_part.function_call.name.into();
-                                            let next_tool_id =
-                                                TOOL_CALL_COUNTER.fetch_add(1, Ordering::SeqCst);
-                                            let id: LanguageModelToolUseId =
-                                                format!("{}-{}", name, next_tool_id).into();
+        }
+    }
 
-                                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
-                                                LanguageModelToolUse {
-                                                    id,
-                                                    name,
-                                                    input: function_call_part.function_call.args,
-                                                },
-                                            )));
-                                        }
-                                        Part::FunctionResponsePart(_) => {}
-                                    });
-                            }
-                        }
+    pub fn map_stream(
+        mut self,
+        events: Pin<Box<dyn Send + Stream<Item = Result<GenerateContentResponse>>>>,
+    ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events
+            .map(Some)
+            .chain(futures::stream::once(async { None }))
+            .flat_map(move |event| {
+                futures::stream::iter(match event {
+                    Some(Ok(event)) => self.map_event(event),
+                    Some(Err(error)) => {
+                        vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))]
+                    }
+                    None => vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))],
+                })
+            })
+    }
 
-                        // Even when Gemini wants to use a Tool, the API
-                        // responds with `finish_reason: STOP`
-                        if wants_to_use_tool {
-                            state.stop_reason = StopReason::ToolUse;
+    pub fn map_event(
+        &mut self,
+        event: GenerateContentResponse,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        static TOOL_CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        let mut events: Vec<_> = Vec::new();
+        let mut wants_to_use_tool = false;
+        if let Some(usage_metadata) = event.usage_metadata {
+            update_usage(&mut self.usage, &usage_metadata);
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(
+                convert_usage(&self.usage),
+            )))
+        }
+        if let Some(candidates) = event.candidates {
+            for candidate in candidates {
+                if let Some(finish_reason) = candidate.finish_reason.as_deref() {
+                    self.stop_reason = match finish_reason {
+                        "STOP" => StopReason::EndTurn,
+                        "MAX_TOKENS" => StopReason::MaxTokens,
+                        _ => {
+                            log::error!("Unexpected google finish_reason: {finish_reason}");
+                            StopReason::EndTurn
                         }
-                        events.push(Ok(LanguageModelCompletionEvent::Stop(state.stop_reason)));
-                        return Some((events, state));
-                    }
-                    Err(err) => {
-                        return Some((vec![Err(anyhow!(err))], state));
-                    }
+                    };
                 }
-            }
+                candidate
+                    .content
+                    .parts
+                    .into_iter()
+                    .for_each(|part| match part {
+                        Part::TextPart(text_part) => {
+                            events.push(Ok(LanguageModelCompletionEvent::Text(text_part.text)))
+                        }
+                        Part::InlineDataPart(_) => {}
+                        Part::FunctionCallPart(function_call_part) => {
+                            wants_to_use_tool = true;
+                            let name: Arc<str> = function_call_part.function_call.name.into();
+                            let next_tool_id =
+                                TOOL_CALL_COUNTER.fetch_add(1, atomic::Ordering::SeqCst);
+                            let id: LanguageModelToolUseId =
+                                format!("{}-{}", name, next_tool_id).into();
 
-            None
-        },
-    )
-    .flat_map(futures::stream::iter)
+                            events.push(Ok(LanguageModelCompletionEvent::ToolUse(
+                                LanguageModelToolUse {
+                                    id,
+                                    name,
+                                    is_input_complete: true,
+                                    raw_input: function_call_part.function_call.args.to_string(),
+                                    input: function_call_part.function_call.args,
+                                },
+                            )));
+                        }
+                        Part::FunctionResponsePart(_) => {}
+                    });
+            }
+        }
+
+        // Even when Gemini wants to use a Tool, the API
+        // responds with `finish_reason: STOP`
+        if wants_to_use_tool {
+            self.stop_reason = StopReason::ToolUse;
+            events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+        }
+        events
+    }
 }
 
 pub fn count_google_tokens(

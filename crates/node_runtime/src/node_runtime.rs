@@ -1,25 +1,22 @@
-mod archive;
-
-use anyhow::{Context, Result, anyhow, bail};
-pub use archive::extract_zip;
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::AsyncReadExt;
-use http_client::{HttpClient, Uri};
+use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use http_client::{HttpClient, Url};
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
-use std::env;
-use std::ffi::OsString;
-use std::io;
-use std::process::{Output, Stdio};
 use std::{
-    env::consts,
+    env::{self, consts},
+    ffi::OsString,
+    io,
     path::{Path, PathBuf},
+    process::{Output, Stdio},
     sync::Arc,
 };
 use util::ResultExt;
+use util::archive::extract_zip;
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
@@ -38,11 +35,13 @@ struct NodeRuntimeState {
     instance: Option<Box<dyn NodeRuntimeTrait>>,
     last_options: Option<NodeBinaryOptions>,
     options: async_watch::Receiver<Option<NodeBinaryOptions>>,
+    shell_env_loaded: Shared<oneshot::Receiver<()>>,
 }
 
 impl NodeRuntime {
     pub fn new(
         http: Arc<dyn HttpClient>,
+        shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: async_watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
@@ -50,6 +49,7 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options,
+            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
         })))
     }
 
@@ -59,6 +59,7 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options: async_watch::channel(Some(NodeBinaryOptions::default())).1,
+            shell_env_loaded: oneshot::channel().1.shared(),
         })))
     }
 
@@ -83,6 +84,7 @@ impl NodeRuntime {
         }
 
         if options.allow_path_lookup {
+            state.shell_env_loaded.clone().await.ok();
             if let Some(instance) = SystemNodeRuntime::detect().await {
                 state.instance = Some(instance.boxed_clone());
                 return Ok(instance);
@@ -153,7 +155,7 @@ impl NodeRuntime {
         info.dist_tags
             .latest
             .or_else(|| info.versions.pop())
-            .ok_or_else(|| anyhow!("no version found for npm package {}", name))
+            .with_context(|| format!("no version found for npm package {name}"))
     }
 
     pub async fn npm_install_packages(
@@ -247,7 +249,7 @@ trait NodeRuntimeTrait: Send + Sync {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output>;
@@ -276,23 +278,6 @@ impl ManagedNodeRuntime {
     const NPM_PATH: &str = "bin/npm";
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
-
-    async fn node_environment_path(&self) -> Result<OsString> {
-        let node_binary = self.installation_path.join(Self::NODE_PATH);
-        let mut env_path = vec![
-            node_binary
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf(),
-        ];
-
-        if let Some(existing_path) = std::env::var_os("PATH") {
-            let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
-            env_path.append(&mut paths);
-        }
-
-        std::env::join_paths(env_path).context("failed to create PATH env variable")
-    }
 
     async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Box<dyn NodeRuntimeTrait>> {
         log::info!("Node runtime install_if_needed");
@@ -366,7 +351,7 @@ impl ManagedNodeRuntime {
                     let archive = Archive::new(decompressed_bytes);
                     archive.unpack(&node_containing_dir).await?;
                 }
-                ArchiveType::Zip => archive::extract_zip(&node_containing_dir, body).await?,
+                ArchiveType::Zip => extract_zip(&node_containing_dir, body).await?,
             }
         }
 
@@ -378,6 +363,27 @@ impl ManagedNodeRuntime {
         anyhow::Ok(Box::new(ManagedNodeRuntime {
             installation_path: node_dir,
         }))
+    }
+}
+
+fn path_with_node_binary_prepended(node_binary: &Path) -> Option<OsString> {
+    let existing_path = env::var_os("PATH");
+    let node_bin_dir = node_binary.parent().map(|dir| dir.as_os_str());
+    match (existing_path, node_bin_dir) {
+        (Some(existing_path), Some(node_bin_dir)) => {
+            if let Ok(joined) = env::join_paths(
+                [PathBuf::from(node_bin_dir)]
+                    .into_iter()
+                    .chain(env::split_paths(&existing_path)),
+            ) {
+                Some(joined)
+            } else {
+                Some(existing_path)
+            }
+        }
+        (Some(existing_path), None) => Some(existing_path),
+        (None, Some(node_bin_dir)) => Some(node_bin_dir.to_owned()),
+        _ => None,
     }
 }
 
@@ -394,22 +400,23 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
         let attempt = || async move {
             let node_binary = self.installation_path.join(Self::NODE_PATH);
             let npm_file = self.installation_path.join(Self::NPM_PATH);
-            let env_path = self.node_environment_path().await?;
+            let env_path = path_with_node_binary_prepended(&node_binary).unwrap_or_default();
 
-            if smol::fs::metadata(&node_binary).await.is_err() {
-                return Err(anyhow!("missing node binary file"));
-            }
-
-            if smol::fs::metadata(&npm_file).await.is_err() {
-                return Err(anyhow!("missing npm file"));
-            }
+            anyhow::ensure!(
+                smol::fs::metadata(&node_binary).await.is_ok(),
+                "missing node binary file"
+            );
+            anyhow::ensure!(
+                smol::fs::metadata(&npm_file).await.is_ok(),
+                "missing npm file"
+            );
 
             let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
@@ -435,22 +442,20 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         let mut output = attempt().await;
         if output.is_err() {
             output = attempt().await;
-            if output.is_err() {
-                return Err(anyhow!(
-                    "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
-                    output.err()
-                ));
-            }
+            anyhow::ensure!(
+                output.is_ok(),
+                "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
+                output.err()
+            );
         }
 
         if let Ok(output) = &output {
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         output.map_err(|e| anyhow!("{e}"))
@@ -535,29 +540,28 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
         let mut command = util::command::new_smol_command(self.npm.clone());
+        let path = path_with_node_binary_prepended(&self.node).unwrap_or_default();
         command
             .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("PATH", path)
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(output)
     }
 
@@ -613,7 +617,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         _: Option<&Path>,
-        _: Option<&Uri>,
+        _: Option<&Url>,
         _: &str,
         _: &[&str],
     ) -> anyhow::Result<Output> {
@@ -632,7 +636,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
 fn configure_npm_command(
     command: &mut smol::process::Command,
     directory: Option<&Path>,
-    proxy: Option<&Uri>,
+    proxy: Option<&Url>,
 ) {
     if let Some(directory) = directory {
         command.current_dir(directory);
@@ -655,14 +659,14 @@ fn configure_npm_command(
     #[cfg(windows)]
     {
         // SYSTEMROOT is a critical environment variables for Windows.
-        if let Some(val) = std::env::var("SYSTEMROOT")
+        if let Some(val) = env::var("SYSTEMROOT")
             .context("Missing environment variable: SYSTEMROOT!")
             .log_err()
         {
             command.env("SYSTEMROOT", val);
         }
         // Without ComSpec, the post-install will always fail.
-        if let Some(val) = std::env::var("ComSpec")
+        if let Some(val) = env::var("ComSpec")
             .context("Missing environment variable: ComSpec!")
             .log_err()
         {

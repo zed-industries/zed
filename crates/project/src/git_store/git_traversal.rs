@@ -244,9 +244,8 @@ mod tests {
     use git::status::{FileStatus, StatusCode, TrackedSummary, UnmergedStatus, UnmergedStatusCode};
     use gpui::TestAppContext;
     use serde_json::json;
-    use settings::{Settings as _, SettingsStore};
+    use settings::SettingsStore;
     use util::path;
-    use worktree::WorktreeSettings;
 
     const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
         first_head: UnmergedStatusCode::Updated,
@@ -675,14 +674,12 @@ mod tests {
     }
 
     fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            WorktreeSettings::register(cx);
+            Project::init_settings(cx);
         });
     }
 

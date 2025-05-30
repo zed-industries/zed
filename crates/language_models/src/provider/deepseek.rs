@@ -9,9 +9,10 @@ use gpui::{
 };
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, RateLimiter, Role,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -250,7 +251,7 @@ impl DeepSeekLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing DeepSeek API Key"))?;
+            let api_key = api_key.context("Missing DeepSeek API Key")?;
             let request =
                 deepseek::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
@@ -279,6 +280,14 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
+        false
+    }
+
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
+    }
+
+    fn supports_images(&self) -> bool {
         false
     }
 
@@ -324,7 +333,12 @@ impl LanguageModel for DeepSeekLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let request = into_deepseek(
             request,
             self.model.id().to_string(),
@@ -336,20 +350,22 @@ impl LanguageModel for DeepSeekLanguageModel {
             let stream = stream.await?;
             Ok(stream
                 .map(|result| {
-                    result.and_then(|response| {
-                        response
-                            .choices
-                            .first()
-                            .ok_or_else(|| anyhow!("Empty response"))
-                            .map(|choice| {
-                                choice
-                                    .delta
-                                    .content
-                                    .clone()
-                                    .unwrap_or_default()
-                                    .map(LanguageModelCompletionEvent::Text)
-                            })
-                    })
+                    result
+                        .and_then(|response| {
+                            response
+                                .choices
+                                .first()
+                                .context("Empty response")
+                                .map(|choice| {
+                                    choice
+                                        .delta
+                                        .content
+                                        .clone()
+                                        .unwrap_or_default()
+                                        .map(LanguageModelCompletionEvent::Text)
+                                })
+                        })
+                        .map_err(LanguageModelCompletionError::Other)
                 })
                 .boxed())
         }

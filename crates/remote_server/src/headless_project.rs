@@ -1,6 +1,6 @@
 use ::proto::{FromProto, ToProto};
-use anyhow::{Result, anyhow};
-use dap::DapRegistry;
+use anyhow::{Context as _, Result, anyhow};
+
 use extension::ExtensionHostProxy;
 use extension_host::headless_host::HeadlessExtensionStore;
 use fs::Fs;
@@ -41,6 +41,7 @@ pub struct HeadlessProject {
     pub buffer_store: Entity<BufferStore>,
     pub lsp_store: Entity<LspStore>,
     pub task_store: Entity<TaskStore>,
+    pub dap_store: Entity<DapStore>,
     pub settings_observer: Entity<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
@@ -54,7 +55,6 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
-    pub debug_adapters: Arc<DapRegistry>,
     pub extension_host_proxy: Arc<ExtensionHostProxy>,
 }
 
@@ -72,11 +72,11 @@ impl HeadlessProject {
             http_client,
             node_runtime,
             languages,
-            debug_adapters: _debug_adapters,
             extension_host_proxy: proxy,
         }: HeadlessAppState,
         cx: &mut Context<Self>,
     ) -> Self {
+        debug_adapter_extension::init(proxy.clone(), cx);
         language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
@@ -107,16 +107,18 @@ impl HeadlessProject {
             cx.new(|_| BreakpointStore::local(worktree_store.clone(), buffer_store.clone()));
 
         let dap_store = cx.new(|cx| {
-            DapStore::new_local(
+            let mut dap_store = DapStore::new_local(
                 http_client.clone(),
                 node_runtime.clone(),
                 fs.clone(),
-                languages.clone(),
                 environment.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
+                worktree_store.clone(),
                 breakpoint_store.clone(),
                 cx,
-            )
+            );
+            dap_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
+            dap_store
         });
 
         let git_store = cx.new(|cx| {
@@ -245,7 +247,7 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
-        DapStore::init(&client);
+        DapStore::init(&client, cx);
         // todo(debugger): Re init breakpoint store when we set it up for collab
         // BreakpointStore::init(&client);
         GitStore::init(&client);
@@ -258,6 +260,7 @@ impl HeadlessProject {
             buffer_store,
             lsp_store,
             task_store,
+            dap_store,
             next_entry_id: Default::default(),
             languages,
             extensions,
@@ -365,7 +368,7 @@ impl HeadlessProject {
                 let mut parent = path
                     .parent()
                     .ok_or(e)
-                    .map_err(|_| anyhow!("{:?} does not exist", path))?;
+                    .with_context(|| format!("{path:?} does not exist"))?;
                 if parent == Path::new("") {
                     parent = util::paths::home_dir();
                 }
@@ -380,7 +383,7 @@ impl HeadlessProject {
         };
 
         let worktree = this
-            .update(&mut cx.clone(), |this, _| {
+            .read_with(&mut cx.clone(), |this, _| {
                 Worktree::local(
                     Arc::from(canonicalized.as_path()),
                     message.payload.visible,
@@ -391,11 +394,12 @@ impl HeadlessProject {
             })?
             .await?;
 
-        let response = this.update(&mut cx, |_, cx| {
-            worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
+        let response = this.read_with(&mut cx, |_, cx| {
+            let worktree = worktree.read(cx);
+            proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
                 canonicalized_path: canonicalized.to_proto(),
-            })
+            }
         })?;
 
         // We spawn this asynchronously, so that we can send the response back
@@ -533,7 +537,7 @@ impl HeadlessProject {
                 });
             }
 
-            let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+            let buffer_id = buffer.read(cx).remote_id();
 
             buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store
@@ -555,11 +559,7 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(
-            message
-                .query
-                .ok_or_else(|| anyhow!("missing query field"))?,
-        )?;
+        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
         let results = this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
@@ -573,7 +573,7 @@ impl HeadlessProject {
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
 
         while let Ok(buffer) = results.recv().await {
-            let buffer_id = buffer.update(&mut cx, |this, _| this.remote_id())?;
+            let buffer_id = buffer.read_with(&mut cx, |this, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store
                 .update(&mut cx, |buffer_store, cx| {

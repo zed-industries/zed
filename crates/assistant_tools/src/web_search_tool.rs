@@ -1,20 +1,23 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::schema::json_schema_for;
+use crate::ui::ToolCallCardHeader;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
-use futures::{FutureExt, TryFutureExt};
-use gpui::{
-    Animation, AnimationExt, App, AppContext, Context, Entity, IntoElement, Task, Window,
-    pulsating_between,
+use assistant_tool::{
+    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use futures::{Future, FutureExt, TryFutureExt};
+use gpui::{
+    AnyWindowHandle, App, AppContext, Context, Entity, IntoElement, Task, WeakEntity, Window,
+};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::{IconName, Tooltip, prelude::*};
 use web_search::WebSearchRegistry;
-use zed_llm_client::{WebSearchCitation, WebSearchResponse};
+use workspace::Workspace;
+use zed_llm_client::{WebSearchResponse, WebSearchResult};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {
@@ -22,7 +25,6 @@ pub struct WebSearchToolInput {
     query: String,
 }
 
-#[derive(RegisterComponent)]
 pub struct WebSearchTool;
 
 impl Tool for WebSearchTool {
@@ -47,15 +49,17 @@ impl Tool for WebSearchTool {
     }
 
     fn ui_text(&self, _input: &serde_json::Value) -> String {
-        "Web Search".to_string()
+        "Searching the Web".to_string()
     }
 
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let input = match serde_json::from_value::<WebSearchToolInput>(input) {
@@ -71,7 +75,13 @@ impl Tool for WebSearchTool {
             let search_task = search_task.clone();
             async move {
                 let response = search_task.await.map_err(|err| anyhow!(err))?;
-                serde_json::to_string(&response).context("Failed to serialize search results")
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Text(
+                        serde_json::to_string(&response)
+                            .context("Failed to serialize search results")?,
+                    ),
+                    output: Some(serde_json::to_value(response)?),
+                })
             }
         });
 
@@ -80,8 +90,21 @@ impl Tool for WebSearchTool {
             card: Some(cx.new(|cx| WebSearchToolCard::new(search_task, cx)).into()),
         }
     }
+
+    fn deserialize_card(
+        self: Arc<Self>,
+        output: serde_json::Value,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Option<assistant_tool::AnyToolCard> {
+        let output = serde_json::from_value::<WebSearchResponse>(output).ok()?;
+        let card = cx.new(|cx| WebSearchToolCard::new(Task::ready(Ok(output)), cx));
+        Some(card.into())
+    }
 }
 
+#[derive(RegisterComponent)]
 struct WebSearchToolCard {
     response: Option<Result<WebSearchResponse>>,
     _task: Task<()>,
@@ -113,113 +136,74 @@ impl ToolCard for WebSearchToolCard {
         &mut self,
         _status: &ToolUseStatus,
         _window: &mut Window,
+        _workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let header = h_flex()
-            .id("tool-label-container")
-            .gap_1p5()
-            .max_w_full()
-            .overflow_x_scroll()
-            .child(
-                Icon::new(IconName::Globe)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted),
-            )
-            .child(match self.response.as_ref() {
-                Some(Ok(response)) => {
-                    let text: SharedString = if response.citations.len() == 1 {
-                        "1 result".into()
-                    } else {
-                        format!("{} results", response.citations.len()).into()
-                    };
-                    h_flex()
-                        .gap_1p5()
-                        .child(Label::new("Searched the Web").size(LabelSize::Small))
-                        .child(
-                            div()
-                                .size(px(3.))
-                                .rounded_full()
-                                .bg(cx.theme().colors().text),
-                        )
-                        .child(Label::new(text).size(LabelSize::Small))
-                        .into_any_element()
-                }
-                Some(Err(error)) => div()
-                    .id("web-search-error")
-                    .child(Label::new("Web Search failed").size(LabelSize::Small))
-                    .tooltip(Tooltip::text(error.to_string()))
-                    .into_any_element(),
+        let header = match self.response.as_ref() {
+            Some(Ok(response)) => {
+                let text: SharedString = if response.results.len() == 1 {
+                    "1 result".into()
+                } else {
+                    format!("{} results", response.results.len()).into()
+                };
+                ToolCallCardHeader::new(IconName::Globe, "Searched the Web")
+                    .with_secondary_text(text)
+            }
+            Some(Err(error)) => {
+                ToolCallCardHeader::new(IconName::Globe, "Web Search").with_error(error.to_string())
+            }
+            None => ToolCallCardHeader::new(IconName::Globe, "Searching the Web").loading(),
+        };
 
-                None => Label::new("Searching the Web…")
-                    .size(LabelSize::Small)
-                    .with_animation(
-                        "web-search-label",
-                        Animation::new(Duration::from_secs(2))
-                            .repeat()
-                            .with_easing(pulsating_between(0.6, 1.)),
-                        |label, delta| label.alpha(delta),
-                    )
-                    .into_any_element(),
-            })
-            .into_any();
+        let content = self.response.as_ref().and_then(|response| match response {
+            Ok(response) => Some(
+                v_flex()
+                    .overflow_hidden()
+                    .ml_1p5()
+                    .pl(px(5.))
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .gap_1()
+                    .children(response.results.iter().enumerate().map(|(index, result)| {
+                        let title = result.title.clone();
+                        let url = result.url.clone();
 
-        let content =
-            self.response.as_ref().and_then(|response| match response {
-                Ok(response) => {
-                    Some(
-                        v_flex()
-                            .ml_1p5()
-                            .pl_1p5()
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border_variant)
-                            .gap_1()
-                            .children(response.citations.iter().enumerate().map(
-                                |(index, citation)| {
-                                    let title = citation.title.clone();
-                                    let url = citation.url.clone();
+                        Button::new(("result", index), title)
+                            .label_size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::End)
+                            .truncate(true)
+                            .tooltip({
+                                let url = url.clone();
+                                move |window, cx| {
+                                    Tooltip::with_meta(
+                                        "Web Search Result",
+                                        None,
+                                        url.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click({
+                                let url = url.clone();
+                                move |_, _, cx| cx.open_url(&url)
+                            })
+                    }))
+                    .into_any(),
+            ),
+            Err(_) => None,
+        });
 
-                                    Button::new(("citation", index), title)
-                                        .label_size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_position(IconPosition::End)
-                                        .truncate(true)
-                                        .tooltip({
-                                            let url = url.clone();
-                                            move |window, cx| {
-                                                Tooltip::with_meta(
-                                                    "Citation Link",
-                                                    None,
-                                                    url.clone(),
-                                                    window,
-                                                    cx,
-                                                )
-                                            }
-                                        })
-                                        .on_click({
-                                            let url = url.clone();
-                                            move |_, _, cx| cx.open_url(&url)
-                                        })
-                                },
-                            ))
-                            .into_any(),
-                    )
-                }
-                Err(_) => None,
-            });
-
-        v_flex().my_2().gap_1().child(header).children(content)
+        v_flex().mb_3().gap_1().child(header).children(content)
     }
 }
 
-impl Component for WebSearchTool {
+impl Component for WebSearchToolCard {
     fn scope() -> ComponentScope {
         ComponentScope::Agent
-    }
-
-    fn sort_name() -> &'static str {
-        "ToolWebSearch"
     }
 
     fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
@@ -253,8 +237,13 @@ impl Component for WebSearchTool {
                         div()
                             .size_full()
                             .child(in_progress_search.update(cx, |tool, cx| {
-                                tool.render(&ToolUseStatus::Pending, window, cx)
-                                    .into_any_element()
+                                tool.render(
+                                    &ToolUseStatus::Pending,
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
                             }))
                             .into_any_element(),
                     ),
@@ -263,8 +252,13 @@ impl Component for WebSearchTool {
                         div()
                             .size_full()
                             .child(successful_search.update(cx, |tool, cx| {
-                                tool.render(&ToolUseStatus::Finished("".into()), window, cx)
-                                    .into_any_element()
+                                tool.render(
+                                    &ToolUseStatus::Finished("".into()),
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
                             }))
                             .into_any_element(),
                     ),
@@ -273,8 +267,13 @@ impl Component for WebSearchTool {
                         div()
                             .size_full()
                             .child(error_search.update(cx, |tool, cx| {
-                                tool.render(&ToolUseStatus::Error("".into()), window, cx)
-                                    .into_any_element()
+                                tool.render(
+                                    &ToolUseStatus::Error("".into()),
+                                    window,
+                                    WeakEntity::new_invalid(),
+                                    cx,
+                                )
+                                .into_any_element()
                             }))
                             .into_any_element(),
                     ),
@@ -286,36 +285,39 @@ impl Component for WebSearchTool {
 
 fn example_search_response() -> WebSearchResponse {
     WebSearchResponse {
-        summary: r#"Toronto boasts a vibrant culinary scene with a diverse array of..."#
-            .to_string(),
-        citations: vec![
-            WebSearchCitation {
+        results: vec![
+            WebSearchResult {
                 title: "Alo".to_string(),
                 url: "https://www.google.com/maps/search/Alo%2C+Toronto%2C+Canada".to_string(),
-                range: Some(147..213),
+                text: "Alo is a popular restaurant in Toronto.".to_string(),
             },
-            WebSearchCitation {
+            WebSearchResult {
+                title: "Alo".to_string(),
+                url: "https://www.google.com/maps/search/Alo%2C+Toronto%2C+Canada".to_string(),
+                text: "Information about Alo restaurant in Toronto.".to_string(),
+            },
+            WebSearchResult {
                 title: "Edulis".to_string(),
                 url: "https://www.google.com/maps/search/Edulis%2C+Toronto%2C+Canada".to_string(),
-                range: Some(447..519),
+                text: "Details about Edulis restaurant in Toronto.".to_string(),
             },
-            WebSearchCitation {
+            WebSearchResult {
                 title: "Sushi Masaki Saito".to_string(),
                 url: "https://www.google.com/maps/search/Sushi+Masaki+Saito%2C+Toronto%2C+Canada"
                     .to_string(),
-                range: Some(776..872),
+                text: "Information about Sushi Masaki Saito in Toronto.".to_string(),
             },
-            WebSearchCitation {
+            WebSearchResult {
                 title: "Shoushin".to_string(),
                 url: "https://www.google.com/maps/search/Shoushin%2C+Toronto%2C+Canada".to_string(),
-                range: Some(1072..1148),
+                text: "Details about Shoushin restaurant in Toronto.".to_string(),
             },
-            WebSearchCitation {
+            WebSearchResult {
                 title: "Restaurant 20 Victoria".to_string(),
                 url:
                     "https://www.google.com/maps/search/Restaurant+20+Victoria%2C+Toronto%2C+Canada"
                         .to_string(),
-                range: Some(1291..1395),
+                text: "Information about Restaurant 20 Victoria in Toronto.".to_string(),
             },
         ],
     }

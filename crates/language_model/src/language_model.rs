@@ -8,7 +8,7 @@ mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake_provider;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
@@ -16,7 +16,6 @@ use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
 use http_client::http::{HeaderMap, HeaderValue};
 use icons::IconName;
 use parking_lot::Mutex;
-use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
@@ -26,7 +25,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use util::serde::is_default;
 use zed_llm_client::{
-    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+    CompletionRequestStatus, MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
+    MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 
 pub use crate::model::*;
@@ -39,17 +39,12 @@ pub use crate::telemetry::*;
 pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    registry::init(cx);
+    init_settings(cx);
     RefreshLlmTokenListener::register(client.clone(), cx);
 }
 
-/// The availability of a [`LanguageModel`].
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LanguageModelAvailability {
-    /// The language model is available to the general public.
-    Public,
-    /// The language model is available to users on the indicated plan.
-    RequiresPlan(Plan),
+pub fn init_settings(cx: &mut App) {
+    registry::init(cx);
 }
 
 /// Configuration for caching language model messages.
@@ -63,6 +58,7 @@ pub struct LanguageModelCacheConfiguration {
 /// A completion event from a language model.
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
 pub enum LanguageModelCompletionEvent {
+    StatusUpdate(CompletionRequestStatus),
     Stop(StopReason),
     Text(String),
     Thinking {
@@ -74,6 +70,19 @@ pub enum LanguageModelCompletionEvent {
         message_id: String,
     },
     UsageUpdate(TokenUsage),
+}
+
+#[derive(Error, Debug)]
+pub enum LanguageModelCompletionError {
+    #[error("received bad input JSON")]
+    BadInputJson {
+        id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        raw_input: Arc<str>,
+        json_parse_error: String,
+    },
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 /// Indicates the format used to define the input schema for a language model tool.
@@ -91,6 +100,7 @@ pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
+    Refusal,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -103,12 +113,16 @@ impl RequestUsage {
     pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
         let limit = headers
             .get(MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME)
-            .ok_or_else(|| anyhow!("missing {MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME:?} header"))?;
+            .with_context(|| {
+                format!("missing {MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME:?} header")
+            })?;
         let limit = UsageLimit::from_str(limit.to_str()?)?;
 
         let amount = headers
             .get(MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME)
-            .ok_or_else(|| anyhow!("missing {MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME:?} header"))?;
+            .with_context(|| {
+                format!("missing {MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME:?} header")
+            })?;
         let amount = amount.to_str()?.parse::<i32>()?;
 
         Ok(Self { limit, amount })
@@ -186,12 +200,14 @@ where
 pub struct LanguageModelToolUse {
     pub id: LanguageModelToolUseId,
     pub name: Arc<str>,
+    pub raw_input: String,
     pub input: serde_json::Value,
+    pub is_input_complete: bool,
 }
 
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
-    pub stream: BoxStream<'static, Result<String>>,
+    pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
     // Has complete token usage after the stream has finished
     pub last_token_usage: Arc<Mutex<TokenUsage>>,
 }
@@ -217,13 +233,19 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
-    /// Returns the availability of this language model.
-    fn availability(&self) -> LanguageModelAvailability {
-        LanguageModelAvailability::Public
-    }
+    /// Whether this model supports images
+    fn supports_images(&self) -> bool;
 
     /// Whether this model supports tools.
     fn supports_tools(&self) -> bool;
+
+    /// Whether this model supports choosing which tool to use.
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
+
+    /// Returns whether this model supports "burn mode";
+    fn supports_max_mode(&self) -> bool {
+        false
+    }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchema
@@ -244,43 +266,22 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>>;
-
-    fn stream_completion_with_usage(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
-        Result<(
-            BoxStream<'static, Result<LanguageModelCompletionEvent>>,
-            Option<RequestUsage>,
-        )>,
-    > {
-        self.stream_completion(request, cx)
-            .map(|result| result.map(|stream| (stream, None)))
-            .boxed()
-    }
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    >;
 
     fn stream_completion_text(
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
-        self.stream_completion_text_with_usage(request, cx)
-            .map(|result| result.map(|(stream, _usage)| stream))
-            .boxed()
-    }
-
-    fn stream_completion_text_with_usage(
-        &self,
-        request: LanguageModelRequest,
-        cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<(LanguageModelTextStream, Option<RequestUsage>)>> {
-        let future = self.stream_completion_with_usage(request, cx);
+        let future = self.stream_completion(request, cx);
 
         async move {
-            let (events, usage) = future.await?;
+            let events = future.await?;
             let mut events = events.fuse();
             let mut message_id = None;
             let mut first_item_text = None;
@@ -305,6 +306,7 @@ pub trait LanguageModel: Send + Sync {
                         let last_token_usage = last_token_usage.clone();
                         async move {
                             match result {
+                                Ok(LanguageModelCompletionEvent::StatusUpdate { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                                 Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                                 Ok(LanguageModelCompletionEvent::Thinking { .. }) => None,
@@ -321,14 +323,11 @@ pub trait LanguageModel: Send + Sync {
                 }))
                 .boxed();
 
-            Ok((
-                LanguageModelTextStream {
-                    message_id,
-                    stream,
-                    last_token_usage,
-                },
-                usage,
-            ))
+            Ok(LanguageModelTextStream {
+                message_id,
+                stream,
+                last_token_usage,
+            })
         }
         .boxed()
     }

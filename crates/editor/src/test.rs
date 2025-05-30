@@ -18,16 +18,14 @@ use gpui::{
 };
 use multi_buffer::ToPoint;
 use pretty_assertions::assert_eq;
-use project::Project;
+use project::{Project, project_settings::DiagnosticSeverity};
 use ui::{App, BorrowAppContext, px};
 use util::test::{marked_text_offsets, marked_text_ranges};
 
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 pub fn test_font() -> Font {
@@ -72,6 +70,7 @@ pub fn marked_display_snapshot(
             1,
             1,
             FoldPlaceholder::test(),
+            DiagnosticSeverity::Warning,
             cx,
         )
     });
@@ -199,6 +198,9 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                         lines[row.0 as usize].push_str("§ ");
                         lines[row.0 as usize].push_str(block_lines[0].trim_end());
                         for i in 1..height as usize {
+                            if row.0 as usize + i >= lines.len() {
+                                lines.push("".to_string());
+                            };
                             lines[row.0 as usize + i].push_str("§ ");
                             lines[row.0 as usize + i].push_str(block_lines[i].trim_end());
                         }

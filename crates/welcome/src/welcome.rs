@@ -1,7 +1,3 @@
-mod base_keymap_picker;
-mod base_keymap_setting;
-mod multibuffer_hint;
-
 use client::{TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
@@ -24,11 +20,15 @@ use workspace::{
 pub use base_keymap_setting::BaseKeymap;
 pub use multibuffer_hint::*;
 
+mod base_keymap_picker;
+mod base_keymap_setting;
+mod multibuffer_hint;
+mod welcome_ui;
+
 actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 pub fn init(cx: &mut App) {
     BaseKeymap::register(cx);
@@ -201,7 +201,8 @@ impl Render for WelcomePage {
                                                     zed_actions::OpenSettings,
                                                 ), cx);
                                             })),
-                                    ),
+                                    )
+
                             )
                             .child(
                                 v_flex()
@@ -252,16 +253,6 @@ impl Render for WelcomePage {
                                                 ), cx);
                                             })),
                                     )
-                                    .child(
-                                        Button::new("book-onboarding", "Book Onboarding")
-                                            .icon(IconName::PhoneIncoming)
-                                            .icon_size(IconSize::XSmall)
-                                            .icon_color(Color::Muted)
-                                            .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.open_url(BOOK_ONBOARDING);
-                                            })),
-                                    ),
                             ),
                     )
                     .child(
@@ -419,8 +410,8 @@ impl Focusable for WelcomePage {
 impl Item for WelcomePage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Welcome".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Welcome".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

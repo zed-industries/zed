@@ -1,13 +1,13 @@
 use super::{
-    BoolExt,
+    BoolExt, MacKeyboardLayout,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
     is_macos_version_at_least, renderer, screen_capture,
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher, MacDisplay,
-    MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
+    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
     SemanticVersion, Task, WindowAppearance, WindowParams, hash,
 };
@@ -36,6 +36,7 @@ use core_foundation::{
 };
 use ctor::ctor;
 use futures::channel::oneshot;
+use itertools::Itertools;
 use objc::{
     class,
     declare::ClassDecl,
@@ -46,7 +47,7 @@ use objc::{
 use parking_lot::Mutex;
 use ptr::null_mut;
 use std::{
-    cell::Cell,
+    cell::{Cell, LazyCell},
     convert::TryInto,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
@@ -293,6 +294,19 @@ impl MacPlatform {
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
+        const DEFAULT_CONTEXT: LazyCell<Vec<KeyContext>> = LazyCell::new(|| {
+            let mut workspace_context = KeyContext::new_with_defaults();
+            workspace_context.add("Workspace");
+            let mut pane_context = KeyContext::new_with_defaults();
+            pane_context.add("Pane");
+            let mut editor_context = KeyContext::new_with_defaults();
+            editor_context.add("Editor");
+
+            pane_context.extend(&editor_context);
+            workspace_context.extend(&pane_context);
+            vec![workspace_context]
+        });
+
         unsafe {
             match item {
                 MenuItem::Separator => NSMenuItem::separatorItem(nil),
@@ -301,10 +315,14 @@ impl MacPlatform {
                     action,
                     os_action,
                 } => {
-                    let keystrokes = crate::Keymap::binding_to_display_from_bindings_iterator(
-                        keymap.bindings_for_action(action.as_ref()),
-                    )
-                    .map(|binding| binding.keystrokes());
+                    let keystrokes = keymap
+                        .bindings_for_action(action.as_ref())
+                        .find_or_first(|binding| {
+                            binding
+                                .predicate()
+                                .is_none_or(|predicate| predicate.eval(&DEFAULT_CONTEXT))
+                        })
+                        .map(|binding| binding.keystrokes());
 
                     let selector = match os_action {
                         Some(crate::OsAction::Cut) => selector("cut:"),
@@ -638,7 +656,7 @@ impl Platform for MacPlatform {
                     Ok(())
                 } else {
                     let msg: id = msg_send![error, localizedDescription];
-                    Err(anyhow!("Failed to register: {:?}", msg))
+                    Err(anyhow!("Failed to register: {msg:?}"))
                 };
 
                 if let Some(done_tx) = done_tx.take() {
@@ -832,11 +850,8 @@ impl Platform for MacPlatform {
     fn app_path(&self) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
-            if bundle.is_null() {
-                Err(anyhow!("app is not running inside a bundle"))
-            } else {
-                Ok(path_from_objc(msg_send![bundle, bundlePath]))
-            }
+            anyhow::ensure!(!bundle.is_null(), "app is not running inside a bundle");
+            Ok(path_from_objc(msg_send![bundle, bundlePath]))
         }
     }
 
@@ -877,17 +892,11 @@ impl Platform for MacPlatform {
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
         unsafe {
             let bundle: id = NSBundle::mainBundle();
-            if bundle.is_null() {
-                Err(anyhow!("app is not running inside a bundle"))
-            } else {
-                let name = ns_string(name);
-                let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
-                if url.is_null() {
-                    Err(anyhow!("resource not found"))
-                } else {
-                    ns_url_to_path(url)
-                }
-            }
+            anyhow::ensure!(!bundle.is_null(), "app is not running inside a bundle");
+            let name = ns_string(name);
+            let url: id = msg_send![bundle, URLForAuxiliaryExecutable: name];
+            anyhow::ensure!(!url.is_null(), "resource not found");
+            ns_url_to_path(url)
         }
     }
 
@@ -1101,10 +1110,7 @@ impl Platform for MacPlatform {
                     verb = "creating";
                     status = SecItemAdd(attrs.as_concrete_TypeRef(), ptr::null_mut());
                 }
-
-                if status != errSecSuccess {
-                    return Err(anyhow!("{} password failed: {}", verb, status));
-                }
+                anyhow::ensure!(status == errSecSuccess, "{verb} password failed: {status}");
             }
             Ok(())
         })
@@ -1131,24 +1137,24 @@ impl Platform for MacPlatform {
                 match status {
                     security::errSecSuccess => {}
                     security::errSecItemNotFound | security::errSecUserCanceled => return Ok(None),
-                    _ => return Err(anyhow!("reading password failed: {}", status)),
+                    _ => anyhow::bail!("reading password failed: {status}"),
                 }
 
                 let result = CFType::wrap_under_create_rule(result)
                     .downcast::<CFDictionary>()
-                    .ok_or_else(|| anyhow!("keychain item was not a dictionary"))?;
+                    .context("keychain item was not a dictionary")?;
                 let username = result
                     .find(kSecAttrAccount as *const _)
-                    .ok_or_else(|| anyhow!("account was missing from keychain item"))?;
+                    .context("account was missing from keychain item")?;
                 let username = CFType::wrap_under_get_rule(*username)
                     .downcast::<CFString>()
-                    .ok_or_else(|| anyhow!("account was not a string"))?;
+                    .context("account was not a string")?;
                 let password = result
                     .find(kSecValueData as *const _)
-                    .ok_or_else(|| anyhow!("password was missing from keychain item"))?;
+                    .context("password was missing from keychain item")?;
                 let password = CFType::wrap_under_get_rule(*password)
                     .downcast::<CFData>()
-                    .ok_or_else(|| anyhow!("password was not a string"))?;
+                    .context("password was not a string")?;
 
                 Ok(Some((username.to_string(), password.bytes().to_vec())))
             }
@@ -1168,10 +1174,7 @@ impl Platform for MacPlatform {
                 query_attrs.set(kSecAttrServer as *const _, url.as_CFTypeRef());
 
                 let status = SecItemDelete(query_attrs.as_concrete_TypeRef());
-
-                if status != errSecSuccess {
-                    return Err(anyhow!("delete password failed: {}", status));
-                }
+                anyhow::ensure!(status == errSecSuccess, "delete password failed: {status}");
             }
             Ok(())
         })
@@ -1455,15 +1458,12 @@ unsafe fn ns_string(string: &str) -> id {
 
 unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
     let path: *mut c_char = msg_send![url, fileSystemRepresentation];
-    if path.is_null() {
-        Err(anyhow!("url is not a file path: {}", unsafe {
-            CStr::from_ptr(url.absoluteString().UTF8String()).to_string_lossy()
-        }))
-    } else {
-        Ok(PathBuf::from(OsStr::from_bytes(unsafe {
-            CStr::from_ptr(path).to_bytes()
-        })))
-    }
+    anyhow::ensure!(!path.is_null(), "url is not a file path: {}", unsafe {
+        CStr::from_ptr(url.absoluteString().UTF8String()).to_string_lossy()
+    });
+    Ok(PathBuf::from(OsStr::from_bytes(unsafe {
+        CStr::from_ptr(path).to_bytes()
+    })))
 }
 
 #[link(name = "Carbon", kind = "framework")]
@@ -1576,45 +1576,6 @@ impl UTType {
 
     fn inner_mut(&self) -> *mut Object {
         self.0 as *mut _
-    }
-}
-
-struct MacKeyboardLayout {
-    id: String,
-    name: String,
-}
-
-impl PlatformKeyboardLayout for MacKeyboardLayout {
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl MacKeyboardLayout {
-    fn new() -> Self {
-        unsafe {
-            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
-
-            let id: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyInputSourceID as *const c_void,
-            );
-            let id: *const std::os::raw::c_char = msg_send![id, UTF8String];
-            let id = CStr::from_ptr(id).to_str().unwrap().to_string();
-
-            let name: *mut Object = TISGetInputSourceProperty(
-                current_keyboard,
-                kTISPropertyLocalizedName as *const c_void,
-            );
-            let name: *const std::os::raw::c_char = msg_send![name, UTF8String];
-            let name = CStr::from_ptr(name).to_str().unwrap().to_string();
-
-            Self { id, name }
-        }
     }
 }
 

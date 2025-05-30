@@ -1,9 +1,9 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
-use gpui::{App, AppContext, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ impl Tool for DeletePathTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        true
+        false
     }
 
     fn description(&self) -> String {
@@ -59,9 +59,11 @@ impl Tool for DeletePathTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
+        _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
         let path_str = match serde_json::from_value::<DeletePathToolInput>(input) {
@@ -120,19 +122,17 @@ impl Tool for DeletePathTool {
                 }
             }
 
-            let delete = project.update(cx, |project, cx| {
-                project.delete_file(project_path, false, cx)
-            })?;
-
-            match delete {
-                Some(deletion_task) => match deletion_task.await {
-                    Ok(()) => Ok(format!("Deleted {path_str}")),
-                    Err(err) => Err(anyhow!("Failed to delete {path_str}: {err}")),
-                },
-                None => Err(anyhow!(
-                    "Couldn't delete {path_str} because that path isn't in this project."
-                )),
-            }
+            let deletion_task = project
+                .update(cx, |project, cx| {
+                    project.delete_file(project_path, false, cx)
+                })?
+                .with_context(|| {
+                    format!("Couldn't delete {path_str} because that path isn't in this project.")
+                })?;
+            deletion_task
+                .await
+                .with_context(|| format!("Deleting {path_str}"))?;
+            Ok(format!("Deleted {path_str}").into())
         })
         .into()
     }

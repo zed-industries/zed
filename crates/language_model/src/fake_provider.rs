@@ -1,7 +1,8 @@
 use crate::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice,
 };
 use futures::{FutureExt, StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
@@ -106,14 +107,18 @@ impl FakeLanguageModel {
         self.current_completion_txs.lock().len()
     }
 
-    pub fn stream_completion_response(&self, request: &LanguageModelRequest, chunk: String) {
+    pub fn stream_completion_response(
+        &self,
+        request: &LanguageModelRequest,
+        chunk: impl Into<String>,
+    ) {
         let current_completion_txs = self.current_completion_txs.lock();
         let tx = current_completion_txs
             .iter()
             .find(|(req, _)| req == request)
             .map(|(_, tx)| tx)
             .unwrap();
-        tx.unbounded_send(chunk).unwrap();
+        tx.unbounded_send(chunk.into()).unwrap();
     }
 
     pub fn end_completion_stream(&self, request: &LanguageModelRequest) {
@@ -122,7 +127,7 @@ impl FakeLanguageModel {
             .retain(|(req, _)| req != request);
     }
 
-    pub fn stream_last_completion_response(&self, chunk: String) {
+    pub fn stream_last_completion_response(&self, chunk: impl Into<String>) {
         self.stream_completion_response(self.pending_completions().last().unwrap(), chunk);
     }
 
@@ -152,6 +157,14 @@ impl LanguageModel for FakeLanguageModel {
         false
     }
 
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
+    }
+
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     fn telemetry_id(&self) -> String {
         "fake".to_string()
     }
@@ -168,7 +181,12 @@ impl LanguageModel for FakeLanguageModel {
         &self,
         request: LanguageModelRequest,
         _: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+        >,
+    > {
         let (tx, rx) = mpsc::unbounded();
         self.current_completion_txs.lock().push((request, tx));
         async move {

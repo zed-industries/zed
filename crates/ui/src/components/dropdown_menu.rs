@@ -1,6 +1,15 @@
-use gpui::{ClickEvent, Corner, CursorStyle, Entity, MouseButton};
+use gpui::{ClickEvent, Corner, CursorStyle, Entity, Hsla, MouseButton};
 
 use crate::{ContextMenu, PopoverMenu, prelude::*};
+
+use super::PopoverMenuHandle;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DropdownStyle {
+    #[default]
+    Solid,
+    Ghost,
+}
 
 enum LabelKind {
     Text(SharedString),
@@ -11,9 +20,11 @@ enum LabelKind {
 pub struct DropdownMenu {
     id: ElementId,
     label: LabelKind,
+    style: DropdownStyle,
     menu: Entity<ContextMenu>,
     full_width: bool,
     disabled: bool,
+    handle: Option<PopoverMenuHandle<ContextMenu>>,
 }
 
 impl DropdownMenu {
@@ -25,9 +36,11 @@ impl DropdownMenu {
         Self {
             id: id.into(),
             label: LabelKind::Text(label.into()),
+            style: DropdownStyle::default(),
             menu,
             full_width: false,
             disabled: false,
+            handle: None,
         }
     }
 
@@ -39,14 +52,26 @@ impl DropdownMenu {
         Self {
             id: id.into(),
             label: LabelKind::Element(label),
+            style: DropdownStyle::default(),
             menu,
             full_width: false,
             disabled: false,
+            handle: None,
         }
+    }
+
+    pub fn style(mut self, style: DropdownStyle) -> Self {
+        self.style = style;
+        self
     }
 
     pub fn full_width(mut self, full_width: bool) -> Self {
         self.full_width = full_width;
+        self
+    }
+
+    pub fn handle(mut self, handle: PopoverMenuHandle<ContextMenu>) -> Self {
+        self.handle = Some(handle);
         self
     }
 }
@@ -66,9 +91,11 @@ impl RenderOnce for DropdownMenu {
             .trigger(
                 DropdownMenuTrigger::new(self.label)
                     .full_width(self.full_width)
-                    .disabled(self.disabled),
+                    .disabled(self.disabled)
+                    .style(self.style),
             )
             .attach(Corner::BottomLeft)
+            .when_some(self.handle.clone(), |el, handle| el.with_handle(handle))
     }
 }
 
@@ -135,12 +162,29 @@ impl Component for DropdownMenu {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct DropdownTriggerStyle {
+    pub bg: Hsla,
+}
+
+impl DropdownTriggerStyle {
+    pub fn for_style(style: DropdownStyle, cx: &App) -> Self {
+        let colors = cx.theme().colors();
+        let bg = match style {
+            DropdownStyle::Solid => colors.editor_background,
+            DropdownStyle::Ghost => colors.ghost_element_background,
+        };
+        Self { bg }
+    }
+}
+
 #[derive(IntoElement)]
 struct DropdownMenuTrigger {
     label: LabelKind,
     full_width: bool,
     selected: bool,
     disabled: bool,
+    style: DropdownStyle,
     cursor_style: CursorStyle,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -152,6 +196,7 @@ impl DropdownMenuTrigger {
             full_width: false,
             selected: false,
             disabled: false,
+            style: DropdownStyle::default(),
             cursor_style: CursorStyle::default(),
             on_click: None,
         }
@@ -159,6 +204,11 @@ impl DropdownMenuTrigger {
 
     pub fn full_width(mut self, full_width: bool) -> Self {
         self.full_width = full_width;
+        self
+    }
+
+    pub fn style(mut self, style: DropdownStyle) -> Self {
+        self.style = style;
         self
     }
 }
@@ -193,11 +243,13 @@ impl RenderOnce for DropdownMenuTrigger {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let disabled = self.disabled;
 
+        let style = DropdownTriggerStyle::for_style(self.style, cx);
+
         h_flex()
             .id("dropdown-menu-trigger")
             .justify_between()
             .rounded_sm()
-            .bg(cx.theme().colors().editor_background)
+            .bg(style.bg)
             .pl_2()
             .pr_1p5()
             .py_0p5()

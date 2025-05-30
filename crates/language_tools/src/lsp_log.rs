@@ -201,7 +201,7 @@ pub(crate) struct LogMenuItem {
     pub server_kind: LanguageServerKind,
 }
 
-actions!(debug, [OpenLanguageServerLogs]);
+actions!(dev, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(LogStore::new);
@@ -702,15 +702,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Entity<Editor>, Vec<Subscription>) {
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::multi_line(window, cx);
-            editor.set_text(log_contents, window, cx);
-            editor.move_to_end(&MoveToEnd, window, cx);
-            editor.set_read_only(true);
-            editor.set_show_edit_predictions(Some(false), window, cx);
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor
-        });
+        let editor = initialize_new_editor(log_contents, true, window, cx);
         let editor_subscription = cx.subscribe(
             &editor,
             |_, _, event: &EditorEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
@@ -727,10 +719,8 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Entity<Editor>, Vec<Subscription>) {
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::multi_line(window, cx);
-            let server_info = format!(
-                "* Server: {NAME} (id {ID})
+        let server_info = format!(
+            "* Server: {NAME} (id {ID})
 
 * Binary: {BINARY:#?}
 
@@ -740,29 +730,24 @@ impl LspLogView {
 * Capabilities: {CAPABILITIES}
 
 * Configuration: {CONFIGURATION}",
-                NAME = server.name(),
-                ID = server.server_id(),
-                BINARY = server.binary(),
-                WORKSPACE_FOLDERS = server
-                    .workspace_folders()
-                    .iter()
-                    .filter_map(|path| path
-                        .to_file_path()
-                        .ok()
-                        .map(|path| path.to_string_lossy().into_owned()))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
-                    .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
-                CONFIGURATION = serde_json::to_string_pretty(server.configuration())
-                    .unwrap_or_else(|e| format!("Failed to serialize configuration: {e}")),
-            );
-            editor.set_text(server_info, window, cx);
-            editor.set_read_only(true);
-            editor.set_show_edit_predictions(Some(false), window, cx);
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor
-        });
+            NAME = server.name(),
+            ID = server.server_id(),
+            BINARY = server.binary(),
+            WORKSPACE_FOLDERS = server
+                .workspace_folders()
+                .iter()
+                .filter_map(|path| path
+                    .to_file_path()
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
+                .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
+            CONFIGURATION = serde_json::to_string_pretty(server.configuration())
+                .unwrap_or_else(|e| format!("Failed to serialize configuration: {e}")),
+        );
+        let editor = initialize_new_editor(server_info, false, window, cx);
         let editor_subscription = cx.subscribe(
             &editor,
             |_, _, event: &EditorEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
@@ -842,9 +827,10 @@ impl LspLogView {
     ) {
         let typ = self
             .log_store
-            .read_with(cx, |v, _| {
-                v.language_servers.get(&server_id).map(|v| v.log_level)
-            })
+            .read(cx)
+            .language_servers
+            .get(&server_id)
+            .map(|v| v.log_level)
             .unwrap_or(MessageType::LOG);
         let log_contents = self
             .log_store
@@ -1058,8 +1044,8 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("LSP Logs".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "LSP Logs".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1238,12 +1224,12 @@ impl Render for LspLogToolbarItemView {
             }
         });
         let available_language_servers: Vec<_> = menu_rows
-            .iter()
+            .into_iter()
             .map(|row| {
                 (
                     row.server_id,
-                    row.server_name.clone(),
-                    row.worktree_root_name.clone(),
+                    row.server_name,
+                    row.worktree_root_name,
                     row.selected_entry,
                 )
             })
@@ -1547,6 +1533,29 @@ impl Render for LspLogToolbarItemView {
                     .ml_2(),
             )
     }
+}
+
+fn initialize_new_editor(
+    content: String,
+    move_to_end: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
+    cx.new(|cx| {
+        let mut editor = Editor::multi_line(window, cx);
+        editor.hide_minimap_by_default(window, cx);
+        editor.set_text(content, window, cx);
+        editor.set_show_git_diff_gutter(false, cx);
+        editor.set_show_runnables(false, cx);
+        editor.set_show_breakpoints(false, cx);
+        editor.set_read_only(true);
+        editor.set_show_edit_predictions(Some(false), window, cx);
+        editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        if move_to_end {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        }
+        editor
+    })
 }
 
 const RPC_MESSAGES: &str = "RPC Messages";

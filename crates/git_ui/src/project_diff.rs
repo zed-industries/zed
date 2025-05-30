@@ -1,5 +1,7 @@
 use crate::{
+    conflict_view::ConflictAddon,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
+    git_panel_settings::GitPanelSettings,
     remote_button::{render_publish_button, render_push_button},
 };
 use anyhow::Result;
@@ -26,7 +28,9 @@ use project::{
     Project, ProjectPath,
     git_store::{GitStore, GitStoreEvent, RepositoryEvent},
 };
+use settings::{Settings, SettingsStore};
 use std::any::{Any, TypeId};
+use std::ops::Range;
 use theme::ActiveTheme;
 use ui::{KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt as _;
@@ -48,7 +52,6 @@ pub struct ProjectDiff {
     focus_handle: FocusHandle,
     update_needed: postage::watch::Sender<()>,
     pending_scroll: Option<PathKey>,
-    current_branch: Option<Branch>,
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
@@ -61,9 +64,9 @@ struct DiffBuffer {
     file_status: FileStatus,
 }
 
-const CONFLICT_NAMESPACE: u32 = 0;
-const TRACKED_NAMESPACE: u32 = 1;
-const NEW_NAMESPACE: u32 = 2;
+const CONFLICT_NAMESPACE: u32 = 1;
+const TRACKED_NAMESPACE: u32 = 2;
+const NEW_NAMESPACE: u32 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -145,6 +148,17 @@ impl ProjectDiff {
             });
             diff_display_editor
         });
+        window.defer(cx, {
+            let workspace = workspace.clone();
+            let editor = editor.clone();
+            move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    editor.update(cx, |editor, cx| {
+                        editor.added_to_workspace(workspace, window, cx);
+                    })
+                });
+            }
+        });
         cx.subscribe_in(&editor, window, Self::handle_editor_event)
             .detach();
 
@@ -154,12 +168,23 @@ impl ProjectDiff {
             window,
             move |this, _git_store, event, _window, _cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_)
-                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true) => {
+                | GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::Updated { .. }, true)
+                | GitStoreEvent::ConflictsUpdated => {
                     *this.update_needed.borrow_mut() = ();
                 }
                 _ => {}
             },
         );
+
+        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            if is_sort_by_path != was_sort_by_path {
+                *this.update_needed.borrow_mut() = ();
+            }
+            was_sort_by_path = is_sort_by_path
+        })
+        .detach();
 
         let (mut send, recv) = postage::watch::channel::<()>();
         let worker = window.spawn(cx, {
@@ -178,7 +203,6 @@ impl ProjectDiff {
             multibuffer,
             pending_scroll: None,
             update_needed: send,
-            current_branch: None,
             _task: worker,
             _subscription: git_store_subscription,
         }
@@ -195,7 +219,7 @@ impl ProjectDiff {
         };
         let repo = git_repo.read(cx);
 
-        let namespace = if repo.has_conflict(&entry.repo_path) {
+        let namespace = if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
             CONFLICT_NAMESPACE
         } else if entry.status.is_created() {
             NEW_NAMESPACE
@@ -346,7 +370,9 @@ impl ProjectDiff {
                 else {
                     continue;
                 };
-                let namespace = if repo.has_conflict(&entry.repo_path) {
+                let namespace = if GitPanelSettings::get_global(cx).sort_by_path {
+                    TRACKED_NAMESPACE
+                } else if repo.had_conflict_on_last_merge_head_change(&entry.repo_path) {
                     CONFLICT_NAMESPACE
                 } else if entry.status.is_created() {
                     NEW_NAMESPACE
@@ -395,11 +421,25 @@ impl ProjectDiff {
         let buffer = diff_buffer.buffer;
         let diff = diff_buffer.diff;
 
+        let conflict_addon = self
+            .editor
+            .read(cx)
+            .addon::<ConflictAddon>()
+            .expect("project diff editor should have a conflict addon");
+
         let snapshot = buffer.read(cx).snapshot();
         let diff = diff.read(cx);
         let diff_hunk_ranges = diff
             .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot, cx)
-            .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot))
+            .map(|diff_hunk| diff_hunk.buffer_range.clone());
+        let conflicts = conflict_addon
+            .conflict_set(snapshot.remote_id())
+            .map(|conflict_set| conflict_set.read(cx).snapshot().conflicts.clone())
+            .unwrap_or_default();
+        let conflicts = conflicts.iter().map(|conflict| conflict.range.clone());
+
+        let excerpt_ranges = merge_anchor_ranges(diff_hunk_ranges, conflicts, &snapshot)
+            .map(|range| range.to_point(&snapshot))
             .collect::<Vec<_>>();
 
         let (was_empty, is_excerpt_newly_added) = self.multibuffer.update(cx, |multibuffer, cx| {
@@ -407,7 +447,7 @@ impl ProjectDiff {
             let (_, is_newly_added) = multibuffer.set_excerpts_for_path(
                 path_key.clone(),
                 buffer,
-                diff_hunk_ranges,
+                excerpt_ranges,
                 editor::DEFAULT_MULTIBUFFER_CONTEXT,
                 cx,
             );
@@ -450,18 +490,6 @@ impl ProjectDiff {
         cx: &mut AsyncWindowContext,
     ) -> Result<()> {
         while let Some(_) = recv.next().await {
-            this.update(cx, |this, cx| {
-                let new_branch = this
-                    .git_store
-                    .read(cx)
-                    .active_repository()
-                    .and_then(|active_repository| active_repository.read(cx).branch.clone());
-                if new_branch != this.current_branch {
-                    this.current_branch = new_branch;
-                    cx.notify();
-                }
-            })?;
-
             let buffers_to_load = this.update(cx, |this, cx| this.load_buffers(cx))?;
             for buffer_to_load in buffers_to_load {
                 if let Some(buffer) = buffer_to_load.await.log_err() {
@@ -540,6 +568,10 @@ impl Item for ProjectDiff {
                 Color::Muted
             })
             .into_any_element()
+    }
+
+    fn tab_content_text(&self, _detail: usize, _: &App) -> SharedString {
+        "Uncommitted Changes".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -872,10 +904,8 @@ impl Render for ProjectDiffToolbar {
 
         h_group_xl()
             .my_neg_1()
-            .items_center()
             .py_1()
-            .pl_2()
-            .pr_1()
+            .items_center()
             .flex_wrap()
             .justify_between()
             .child(
@@ -1078,7 +1108,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             v_flex()
                                 .child(Headline::new(ahead_string).size(HeadlineSize::Small))
                                 .child(
-                                    Label::new(format!("Push your changes to {}", branch.name))
+                                    Label::new(format!("Push your changes to {}", branch.name()))
                                         .color(Color::Muted),
                                 ),
                         )
@@ -1092,7 +1122,7 @@ impl RenderOnce for ProjectDiffEmptyState {
                             v_flex()
                                 .child(Headline::new("Publish Branch").size(HeadlineSize::Small))
                                 .child(
-                                    Label::new(format!("Create {} on remote", branch.name))
+                                    Label::new(format!("Create {} on remote", branch.name()))
                                         .color(Color::Muted),
                                 ),
                         )
@@ -1126,47 +1156,6 @@ impl RenderOnce for ProjectDiffEmptyState {
         )
     }
 }
-
-// .when(self.can_push_and_pull, |this| {
-//     let remote_button = crate::render_remote_button(
-//         "project-diff-remote-button",
-//         &branch,
-//         self.focus_handle.clone(),
-//         false,
-//     );
-
-//     match remote_button {
-//         Some(button) => {
-//             this.child(h_flex().justify_around().child(button))
-//         }
-//         None => this.child(
-//             h_flex()
-//                 .justify_around()
-//                 .child(Label::new("Remote up to date")),
-//         ),
-//     }
-// }),
-//
-// // .map(|this| {
-//     this.child(h_flex().justify_around().mt_1().child(
-//         Button::new("project-diff-close-button", "Close").when_some(
-//             self.focus_handle.clone(),
-//             |this, focus_handle| {
-//                 this.key_binding(KeyBinding::for_action_in(
-//                     &CloseActiveItem::default(),
-//                     &focus_handle,
-//                     window,
-//                     cx,
-//                 ))
-//                 .on_click(move |_, window, cx| {
-//                     window.focus(&focus_handle);
-//                     window
-//                         .dispatch_action(Box::new(CloseActiveItem::default()), cx);
-//                 })
-//             },
-//         ),
-//     ))
-// }),
 
 mod preview {
     use git::repository::{
@@ -1203,7 +1192,7 @@ mod preview {
             fn branch(upstream: Option<UpstreamTracking>) -> Branch {
                 Branch {
                     is_head: true,
-                    name: "some-branch".into(),
+                    ref_name: "some-branch".into(),
                     upstream: upstream.map(|tracking| Upstream {
                         ref_name: "origin/some-branch".into(),
                         tracking,
@@ -1293,11 +1282,59 @@ mod preview {
     }
 }
 
+fn merge_anchor_ranges<'a>(
+    left: impl 'a + Iterator<Item = Range<Anchor>>,
+    right: impl 'a + Iterator<Item = Range<Anchor>>,
+    snapshot: &'a language::BufferSnapshot,
+) -> impl 'a + Iterator<Item = Range<Anchor>> {
+    let mut left = left.fuse().peekable();
+    let mut right = right.fuse().peekable();
+
+    std::iter::from_fn(move || {
+        let Some(left_range) = left.peek() else {
+            return right.next();
+        };
+        let Some(right_range) = right.peek() else {
+            return left.next();
+        };
+
+        let mut next_range = if left_range.start.cmp(&right_range.start, snapshot).is_lt() {
+            left.next().unwrap()
+        } else {
+            right.next().unwrap()
+        };
+
+        // Extend the basic range while there's overlap with a range from either stream.
+        loop {
+            if let Some(left_range) = left
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                left.next();
+                next_range.end = left_range.end;
+            } else if let Some(right_range) = right
+                .peek()
+                .filter(|range| range.start.cmp(&next_range.end, &snapshot).is_le())
+                .cloned()
+            {
+                right.next();
+                next_range.end = right_range.end;
+            } else {
+                break;
+            }
+        }
+
+        Some(next_range)
+    })
+}
+
 #[cfg(not(target_os = "windows"))]
 #[cfg(test)]
 mod tests {
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
+    use git::status::{UnmergedStatus, UnmergedStatusCode};
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
@@ -1310,7 +1347,7 @@ mod tests {
 
     #[ctor::ctor]
     fn init_logger() {
-        env_logger::init();
+        zlog::init_test();
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -1357,7 +1394,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let editor = diff.update(cx, |diff, _| diff.editor.clone());
+        let editor = diff.read_with(cx, |diff, _| diff.editor.clone());
         assert_state_with_diff(
             &editor,
             cx,
@@ -1489,7 +1526,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let diff_editor = diff.update(cx, |diff, _| diff.editor.clone());
+        let diff_editor = diff.read_with(cx, |diff, _| diff.editor.clone());
 
         assert_state_with_diff(
             &diff_editor,
@@ -1558,7 +1595,10 @@ mod tests {
         );
     }
 
-    use crate::project_diff::{self, ProjectDiff};
+    use crate::{
+        conflict_view::resolve_conflict,
+        project_diff::{self, ProjectDiff},
+    };
 
     #[gpui::test]
     async fn test_go_to_prev_hunk_multibuffer(cx: &mut TestAppContext) {
@@ -1568,7 +1608,7 @@ mod tests {
         fs.insert_tree(
             "/a",
             json!({
-                ".git":{},
+                ".git": {},
                 "a.txt": "created\n",
                 "b.txt": "really changed\n",
                 "c.txt": "unchanged\n"
@@ -1602,7 +1642,7 @@ mod tests {
             workspace.active_item_as::<ProjectDiff>(cx).unwrap()
         });
         cx.focus(&item);
-        let editor = item.update(cx, |item, _| item.editor.clone());
+        let editor = item.read_with(cx, |item, _| item.editor.clone());
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
@@ -1645,5 +1685,164 @@ mod tests {
             created
         "
         ));
+    }
+
+    #[gpui::test]
+    async fn test_excerpts_splitting_after_restoring_the_middle_excerpt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let git_contents = indoc! {r#"
+            #[rustfmt::skip]
+            fn main() {
+                let x = 0.0; // this line will be removed
+                // 1
+                // 2
+                // 3
+                let y = 0.0; // this line will be removed
+                // 1
+                // 2
+                // 3
+                let arr = [
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                    0.0, // this line will be removed
+                ];
+            }
+        "#};
+        let buffer_contents = indoc! {"
+            #[rustfmt::skip]
+            fn main() {
+                // 1
+                // 2
+                // 3
+                // 1
+                // 2
+                // 3
+                let arr = [
+                ];
+            }
+        "};
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".git": {},
+                "main.rs": buffer_contents,
+            }),
+        )
+        .await;
+
+        fs.set_git_content_for_repo(
+            Path::new("/a/.git"),
+            &[("main.rs".into(), git_contents.to_owned(), None)],
+        );
+
+        let project = Project::test(fs, [Path::new("/a")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.run_until_parked();
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(project_diff::Diff.boxed_clone(), cx);
+        });
+
+        cx.run_until_parked();
+
+        let item = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+        });
+        cx.focus(&item);
+        let editor = item.read_with(cx, |item, _| item.editor.clone());
+
+        let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
+
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+
+        cx.dispatch_action(editor::actions::GoToHunk);
+        cx.dispatch_action(editor::actions::GoToHunk);
+        cx.dispatch_action(git::Restore);
+        cx.dispatch_action(editor::actions::MoveToBeginning);
+
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+    }
+
+    #[gpui::test]
+    async fn test_saving_resolved_conflicts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "foo": "<<<<<<< x\nours\n=======\ntheirs\n>>>>>>> y\n",
+            }),
+        )
+        .await;
+        fs.set_status_for_repo(
+            Path::new(path!("/project/.git")),
+            &[(
+                Path::new("foo"),
+                UnmergedStatus {
+                    first_head: UnmergedStatusCode::Updated,
+                    second_head: UnmergedStatusCode::Updated,
+                }
+                .into(),
+            )],
+        );
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        cx.update(|window, cx| {
+            let editor = diff.read(cx).editor.clone();
+            let excerpt_ids = editor.read(cx).buffer().read(cx).excerpt_ids();
+            assert_eq!(excerpt_ids.len(), 1);
+            let excerpt_id = excerpt_ids[0];
+            let buffer = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .all_buffers()
+                .into_iter()
+                .next()
+                .unwrap();
+            let buffer_id = buffer.read(cx).remote_id();
+            let conflict_set = diff
+                .read(cx)
+                .editor
+                .read(cx)
+                .addon::<ConflictAddon>()
+                .unwrap()
+                .conflict_set(buffer_id)
+                .unwrap();
+            assert!(conflict_set.read(cx).has_conflict);
+            let snapshot = conflict_set.read(cx).snapshot();
+            assert_eq!(snapshot.conflicts.len(), 1);
+
+            let ours_range = snapshot.conflicts[0].ours.clone();
+
+            resolve_conflict(
+                editor.downgrade(),
+                excerpt_id,
+                snapshot.conflicts[0].clone(),
+                vec![ours_range],
+                window,
+                cx,
+            )
+        })
+        .await;
+
+        let contents = fs.read_file_sync(path!("/project/foo")).unwrap();
+        let contents = String::from_utf8(contents).unwrap();
+        assert_eq!(contents, "ours\n");
     }
 }

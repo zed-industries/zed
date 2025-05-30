@@ -1,14 +1,14 @@
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
+use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
@@ -23,8 +23,8 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
+use parking_lot::Mutex;
 use std::str::FromStr;
-use std::sync::Mutex;
 use std::{
     any::Any,
     borrow::Cow,
@@ -357,6 +357,9 @@ const PYTHON_TEST_TARGET_TASK_VARIABLE: VariableName =
 const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
 
+const PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN_RAW"));
+
 const PYTHON_MODULE_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_MODULE_NAME"));
 
@@ -364,38 +367,45 @@ impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
         variables: &task::TaskVariables,
-        location: &project::Location,
+        location: ContextLocation<'_>,
         _: Option<HashMap<String, String>>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target = match selected_test_runner(location.buffer.read(cx).file(), cx) {
-            TestRunner::UNITTEST => self.build_unittest_target(variables),
-            TestRunner::PYTEST => self.build_pytest_target(variables),
-        };
+        let test_target =
+            match selected_test_runner(location.file_location.buffer.read(cx).file(), cx) {
+                TestRunner::UNITTEST => self.build_unittest_target(variables),
+                TestRunner::PYTEST => self.build_pytest_target(variables),
+            };
 
         let module_target = self.build_module_target(variables);
-        let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
+        let worktree_id = location
+            .file_location
+            .buffer
+            .read(cx)
+            .file()
+            .map(|f| f.worktree_id(cx));
 
         cx.spawn(async move |cx| {
-            let active_toolchain = if let Some(worktree_id) = worktree_id {
+            let raw_toolchain = if let Some(worktree_id) = worktree_id {
                 toolchains
                     .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
                     .await
                     .map_or_else(
-                        || "python3".to_owned(),
-                        |toolchain| format!("\"{}\"", toolchain.path),
+                        || String::from("python3"),
+                        |toolchain| toolchain.path.to_string(),
                     )
             } else {
                 String::from("python3")
             };
+            let active_toolchain = format!("\"{raw_toolchain}\"");
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-
+            let raw_toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
                     .chain(module_target.into_iter())
-                    .chain([toolchain]),
+                    .chain([toolchain, raw_toolchain]),
             ))
         })
     }
@@ -416,6 +426,7 @@ impl ContextProvider for PythonContextProvider {
                     "-c".to_owned(),
                     VariableName::SelectedText.template_value_with_whitespace(),
                 ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
             // Execute an entire file
@@ -423,6 +434,7 @@ impl ContextProvider for PythonContextProvider {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
             // Execute a file as module
@@ -433,6 +445,7 @@ impl ContextProvider for PythonContextProvider {
                     "-m".to_owned(),
                     PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -450,6 +463,7 @@ impl ContextProvider for PythonContextProvider {
                             "unittest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
@@ -465,6 +479,7 @@ impl ContextProvider for PythonContextProvider {
                             "python-unittest-class".to_owned(),
                             "python-unittest-method".to_owned(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                 ]
@@ -480,6 +495,7 @@ impl ContextProvider for PythonContextProvider {
                             "pytest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
@@ -491,6 +507,7 @@ impl ContextProvider for PythonContextProvider {
                             "pytest".to_owned(),
                             PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         tags: vec![
                             "python-pytest-class".to_owned(),
                             "python-pytest-method".to_owned(),
@@ -696,7 +713,6 @@ impl ToolchainLister for PythonToolchainProvider {
         let mut toolchains = reporter
             .environments
             .lock()
-            .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
         let wr = worktree_root;
@@ -848,7 +864,7 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     }
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        if self.global_search_locations.lock().unwrap().is_empty() {
+        if self.global_search_locations.lock().is_empty() {
             let mut paths =
                 std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .collect::<Vec<PathBuf>>();
@@ -865,12 +881,9 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
                 .filter(|p| p.exists())
                 .collect::<Vec<PathBuf>>();
 
-            self.global_search_locations
-                .lock()
-                .unwrap()
-                .append(&mut paths);
+            self.global_search_locations.lock().append(&mut paths);
         }
-        self.global_search_locations.lock().unwrap().clone()
+        self.global_search_locations.lock().clone()
     }
 }
 
@@ -887,11 +900,11 @@ impl PyLspAdapter {
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
         let python_path = Self::find_base_python(delegate)
             .await
-            .ok_or_else(|| anyhow!("Could not find Python installation for PyLSP"))?;
+            .context("Could not find Python installation for PyLSP")?;
         let work_dir = delegate
             .language_server_download_dir(&Self::SERVER_NAME)
             .await
-            .ok_or_else(|| anyhow!("Could not get working directory for PyLSP"))?;
+            .context("Could not get working directory for PyLSP")?;
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
@@ -1240,7 +1253,7 @@ mod tests {
                 "def a():\n  \n  if a:\n    b()\n  else:\n    "
             );
 
-            // indent after an open paren. the closing  paren is not indented
+            // indent after an open paren. the closing paren is not indented
             // because there is another token before it on the same line.
             append(&mut buffer, "foo(\n1)", cx);
             assert_eq!(
@@ -1291,7 +1304,7 @@ mod tests {
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);
-            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
+            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n");
 
             buffer
         });

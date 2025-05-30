@@ -1,4 +1,0 @@
-url = "https://github.com/huggingface/candle.git"
-revision = "3164a19a5dc18f5e0f7a063ae85a0cfd289e98f1"
-language_extension = "rs"
-allow_preexisting_diagnostics = true
