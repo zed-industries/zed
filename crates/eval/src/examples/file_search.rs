@@ -19,6 +19,7 @@ impl Example for FileSearchExample {
             max_assertions: Some(3),
             profile_id: AgentProfileId::default(),
             existing_thread_json: None,
+            max_turns: None,
         }
     }
 
