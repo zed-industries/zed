@@ -28,7 +28,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfileId, AssistantSettings, LanguageModelSelection};
+use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use feature_flags::FeatureFlagAppExt as _;
@@ -69,6 +69,7 @@ actions!(
         AddContextServer,
         RemoveSelectedThread,
         Chat,
+        ChatWithFollow,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
         FocusUp,
@@ -86,6 +87,9 @@ actions!(
         Follow,
         ResetTrialUpsell,
         ResetTrialEndUpsell,
+        ContinueThread,
+        ContinueWithBurnMode,
+        ToggleBurnMode,
     ]
 );
 
@@ -120,7 +124,7 @@ pub fn init(
     is_eval: bool,
     cx: &mut App,
 ) {
-    AssistantSettings::register(cx);
+    AgentSettings::register(cx);
     SlashCommandSettings::register(cx);
 
     assistant_context_editor::init(client.clone(), cx);
@@ -173,7 +177,7 @@ fn init_language_model_settings(cx: &mut App) {
 }
 
 fn update_active_language_model_from_settings(cx: &mut App) {
-    let settings = AssistantSettings::get_global(cx);
+    let settings = AgentSettings::get_global(cx);
 
     fn to_selected_model(selection: &LanguageModelSelection) -> language_model::SelectedModel {
         language_model::SelectedModel {

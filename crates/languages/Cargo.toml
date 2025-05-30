@@ -38,6 +38,7 @@ anyhow.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
+chrono.workspace = true
 collections.workspace = true
 dap.workspace = true
 futures.workspace = true
@@ -59,8 +60,10 @@ project.workspace = true
 regex.workspace = true
 rope.workspace = true
 rust-embed.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_json_lenient.workspace = true
 settings.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
@@ -85,6 +88,7 @@ tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
+which.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

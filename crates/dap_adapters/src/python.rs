@@ -8,6 +8,7 @@ use gpui::{AsyncApp, SharedString};
 use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
 use serde_json::Value;
+use std::net::Ipv4Addr;
 use std::{
     collections::HashMap,
     ffi::OsStr,
@@ -26,6 +27,60 @@ impl PythonDebugAdapter {
     const ADAPTER_PACKAGE_NAME: &'static str = "debugpy";
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
+
+    async fn generate_debugpy_arguments(
+        &self,
+        host: &Ipv4Addr,
+        port: u16,
+        user_installed_path: Option<&Path>,
+        installed_in_venv: bool,
+    ) -> Result<Vec<String>> {
+        if let Some(user_installed_path) = user_installed_path {
+            log::debug!(
+                "Using user-installed debugpy adapter from: {}",
+                user_installed_path.display()
+            );
+            Ok(vec![
+                user_installed_path
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--host={}", host),
+                format!("--port={}", port),
+            ])
+        } else if installed_in_venv {
+            log::debug!("Using venv-installed debugpy");
+            Ok(vec![
+                "-m".to_string(),
+                "debugpy.adapter".to_string(),
+                format!("--host={}", host),
+                format!("--port={}", port),
+            ])
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
+
+            let debugpy_dir =
+                util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                    file_name.starts_with(&file_name_prefix)
+                })
+                .await
+                .context("Debugpy directory not found")?;
+
+            log::debug!(
+                "Using GitHub-downloaded debugpy adapter from: {}",
+                debugpy_dir.display()
+            );
+            Ok(vec![
+                debugpy_dir
+                    .join(Self::ADAPTER_PATH)
+                    .to_string_lossy()
+                    .to_string(),
+                format!("--host={}", host),
+                format!("--port={}", port),
+            ])
+        }
+    }
 
     fn request_args(
         &self,
@@ -93,23 +148,11 @@ impl PythonDebugAdapter {
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
         toolchain: Option<Toolchain>,
+        installed_in_venv: bool,
     ) -> Result<DebugAdapterBinary> {
         const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
         let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
-
-        let debugpy_dir = if let Some(user_installed_path) = user_installed_path {
-            user_installed_path
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-            let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .context("Debugpy directory not found")?
-        };
 
         let python_path = if let Some(toolchain) = toolchain {
             Some(toolchain.path.to_string())
@@ -128,16 +171,27 @@ impl PythonDebugAdapter {
             name
         };
 
+        let python_command = python_path.context("failed to find binary path for Python")?;
+        log::debug!("Using Python executable: {}", python_command);
+
+        let arguments = self
+            .generate_debugpy_arguments(
+                &host,
+                port,
+                user_installed_path.as_deref(),
+                installed_in_venv,
+            )
+            .await?;
+
+        log::debug!(
+            "Starting debugpy adapter with command: {} {}",
+            python_command,
+            arguments.join(" ")
+        );
+
         Ok(DebugAdapterBinary {
-            command: python_path.context("failed to find binary path for Python")?,
-            arguments: vec![
-                debugpy_dir
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-                format!("--port={}", port),
-                format!("--host={}", host),
-            ],
+            command: python_command,
+            arguments,
             connection: Some(adapters::TcpArguments {
                 host,
                 port,
@@ -558,6 +612,16 @@ impl DebugAdapter for PythonDebugAdapter {
         user_installed_path: Option<PathBuf>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
+        if let Some(local_path) = &user_installed_path {
+            log::debug!(
+                "Using user-installed debugpy adapter from: {}",
+                local_path.display()
+            );
+            return self
+                .get_installed_binary(delegate, &config, Some(local_path.clone()), None, false)
+                .await;
+        }
+
         let toolchain = delegate
             .toolchain_store()
             .active_toolchain(
@@ -571,13 +635,18 @@ impl DebugAdapter for PythonDebugAdapter {
         if let Some(toolchain) = &toolchain {
             if let Some(path) = Path::new(&toolchain.path.to_string()).parent() {
                 let debugpy_path = path.join("debugpy");
-                if smol::fs::metadata(&debugpy_path).await.is_ok() {
+                if delegate.fs().is_file(&debugpy_path).await {
+                    log::debug!(
+                        "Found debugpy in toolchain environment: {}",
+                        debugpy_path.display()
+                    );
                     return self
                         .get_installed_binary(
                             delegate,
                             &config,
-                            Some(debugpy_path.to_path_buf()),
+                            None,
                             Some(toolchain.clone()),
+                            true,
                         )
                         .await;
                 }
@@ -591,7 +660,49 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, user_installed_path, toolchain)
+        self.get_installed_binary(delegate, &config, None, toolchain, false)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{net::Ipv4Addr, path::PathBuf};
+
+    #[gpui::test]
+    async fn test_debugpy_install_path_cases() {
+        let adapter = PythonDebugAdapter::default();
+        let host = Ipv4Addr::new(127, 0, 0, 1);
+        let port = 5678;
+
+        // Case 1: User-defined debugpy path (highest precedence)
+        let user_path = PathBuf::from("/custom/path/to/debugpy");
+        let user_args = adapter
+            .generate_debugpy_arguments(&host, port, Some(&user_path), false)
+            .await
+            .unwrap();
+
+        // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
+        let venv_args = adapter
+            .generate_debugpy_arguments(&host, port, None, true)
+            .await
+            .unwrap();
+
+        assert!(user_args[0].ends_with("src/debugpy/adapter"));
+        assert_eq!(user_args[1], "--host=127.0.0.1");
+        assert_eq!(user_args[2], "--port=5678");
+
+        assert_eq!(venv_args[0], "-m");
+        assert_eq!(venv_args[1], "debugpy.adapter");
+        assert_eq!(venv_args[2], "--host=127.0.0.1");
+        assert_eq!(venv_args[3], "--port=5678");
+
+        // Note: Case 3 (GitHub-downloaded debugpy) is not tested since this requires mocking the Github API.
+    }
+
+    #[test]
+    fn test_adapter_path_constant() {
+        assert_eq!(PythonDebugAdapter::ADAPTER_PATH, "src/debugpy/adapter");
     }
 }

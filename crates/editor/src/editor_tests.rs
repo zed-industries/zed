@@ -9111,11 +9111,10 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
                 lsp::Url::from_file_path(path!("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
-            Ok(Some(vec![]))
+            Ok(Some(Vec::new()))
         })
         .next()
         .await;
-    cx.executor().start_waiting();
     save.await;
 }
 
@@ -16769,9 +16768,9 @@ fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -
 async fn test_indent_guide_single_line(cx: &mut TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
-    fn main() {
-        let a = 1;
-    }"
+        fn main() {
+            let a = 1;
+        }"
         .unindent(),
         cx,
     )
@@ -16784,10 +16783,10 @@ async fn test_indent_guide_single_line(cx: &mut TestAppContext) {
 async fn test_indent_guide_simple_block(cx: &mut TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
-    fn main() {
-        let a = 1;
-        let b = 2;
-    }"
+        fn main() {
+            let a = 1;
+            let b = 2;
+        }"
         .unindent(),
         cx,
     )
@@ -16800,14 +16799,14 @@ async fn test_indent_guide_simple_block(cx: &mut TestAppContext) {
 async fn test_indent_guide_nested(cx: &mut TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
-    fn main() {
-        let a = 1;
-        if a == 3 {
-            let b = 2;
-        } else {
-            let c = 3;
-        }
-    }"
+        fn main() {
+            let a = 1;
+            if a == 3 {
+                let b = 2;
+            } else {
+                let c = 3;
+            }
+        }"
         .unindent(),
         cx,
     )
@@ -16829,11 +16828,11 @@ async fn test_indent_guide_nested(cx: &mut TestAppContext) {
 async fn test_indent_guide_tab(cx: &mut TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
-    fn main() {
-        let a = 1;
-            let b = 2;
-        let c = 3;
-    }"
+        fn main() {
+            let a = 1;
+                let b = 2;
+            let c = 3;
+        }"
         .unindent(),
         cx,
     )
@@ -16957,6 +16956,72 @@ async fn test_indent_guide_ends_off_screen(cx: &mut TestAppContext) {
             indent_guide(buffer_id, 1, 9, 0),
             indent_guide(buffer_id, 6, 6, 1),
             indent_guide(buffer_id, 8, 8, 1),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_with_folds(cx: &mut TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        fn main() {
+            if a {
+                b(
+                    c,
+                    d,
+                )
+            } else {
+                e(
+                    f
+                )
+            }
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..11,
+        vec![
+            indent_guide(buffer_id, 1, 10, 0),
+            indent_guide(buffer_id, 2, 5, 1),
+            indent_guide(buffer_id, 7, 9, 1),
+            indent_guide(buffer_id, 3, 4, 2),
+            indent_guide(buffer_id, 8, 8, 2),
+        ],
+        None,
+        &mut cx,
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at(MultiBufferRow(2), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            "
+            fn main() {
+                if a {
+                    b(⋯
+                    )
+                } else {
+                    e(
+                        f
+                    )
+                }
+            }"
+            .unindent()
+        );
+    });
+
+    assert_indent_guides(
+        0..11,
+        vec![
+            indent_guide(buffer_id, 1, 10, 0),
+            indent_guide(buffer_id, 2, 5, 1),
+            indent_guide(buffer_id, 7, 9, 1),
+            indent_guide(buffer_id, 8, 8, 2),
         ],
         None,
         &mut cx,
@@ -20836,6 +20901,19 @@ async fn test_outdent_after_input_for_python(cx: &mut TestAppContext) {
                     break
             else:ˇ
     "});
+
+    // test does not outdent on typing after line with square brackets
+    cx.set_state(indoc! {"
+        def f() -> list[str]:
+            ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("a", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        def f() -> list[str]:
+            aˇ
+    "});
 }
 
 #[gpui::test]
@@ -20860,7 +20938,7 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
         ˇ
     "});
 
-    // test correct indent after newline in curly brackets
+    // test correct indent after newline in brackets
     cx.set_state(indoc! {"
         {ˇ}
     "});
@@ -20872,6 +20950,32 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
         {
             ˇ
         }
+    "});
+
+    cx.set_state(indoc! {"
+        (ˇ)
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        (
+            ˇ
+        )
+    "});
+
+    // do not indent after empty lists or dictionaries
+    cx.set_state(indoc! {"
+        a = []ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        a = []
+        ˇ
     "});
 }
 

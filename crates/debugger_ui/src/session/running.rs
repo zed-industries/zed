@@ -173,6 +173,10 @@ impl Item for SubView {
         self.kind.to_shared_string()
     }
 
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+        Some(self.kind.tab_tooltip())
+    }
+
     fn tab_content(
         &self,
         params: workspace::item::TabContentParams,
@@ -319,7 +323,7 @@ pub(crate) fn new_debugger_pane(
                 if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
                     let is_current_pane = tab.pane == cx.entity();
                     let Some(can_drag_away) = weak_running
-                        .update(cx, |running_state, _| {
+                        .read_with(cx, |running_state, _| {
                             let current_panes = running_state.panes.panes();
                             !current_panes.contains(&&tab.pane)
                                 || current_panes.len() > 1
@@ -399,6 +403,9 @@ pub(crate) fn new_debugger_pane(
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
+                                    .when_some(item.tab_tooltip_text(cx), |this, tooltip| {
+                                        this.tooltip(Tooltip::text(tooltip))
+                                    })
                                     .map(|this| {
                                         let theme = cx.theme();
                                         if selected {
@@ -496,13 +503,22 @@ pub(crate) fn new_debugger_pane(
 pub struct DebugTerminal {
     pub terminal: Option<Entity<TerminalView>>,
     focus_handle: FocusHandle,
+    _subscriptions: [Subscription; 1],
 }
 
 impl DebugTerminal {
-    fn empty(cx: &mut Context<Self>) -> Self {
+    fn empty(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+        let focus_subscription = cx.on_focus(&focus_handle, window, |this, window, cx| {
+            if let Some(terminal) = this.terminal.as_ref() {
+                terminal.focus_handle(cx).focus(window);
+            }
+        });
+
         Self {
             terminal: None,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
+            _subscriptions: [focus_subscription],
         }
     }
 }
@@ -538,6 +554,10 @@ impl RunningState {
                     .for_each(|value| Self::substitute_variables_in_config(value, context));
             }
             serde_json::Value::String(s) => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
                     *s = substituted;
                 }
@@ -562,6 +582,10 @@ impl RunningState {
                     .for_each(|value| Self::relativlize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 resolve_path(s);
 
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
@@ -588,7 +612,7 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
 
-        let debug_terminal = cx.new(DebugTerminal::empty);
+        let debug_terminal = cx.new(|cx| DebugTerminal::empty(window, cx));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
@@ -952,7 +976,7 @@ impl RunningState {
         let running = cx.entity();
         let Ok(project) = self
             .workspace
-            .update(cx, |workspace, _| workspace.project().clone())
+            .read_with(cx, |workspace, _| workspace.project().clone())
         else {
             return Task::ready(Err(anyhow!("no workspace")));
         };

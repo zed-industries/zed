@@ -216,7 +216,7 @@ impl LspAdapter for RustLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    extract_zip(&destination_path, BufReader::new(response.body_mut()))
+                    extract_zip(&destination_path, response.body_mut())
                         .await
                         .with_context(|| {
                             format!("unzipping {} to {:?}", version.url, destination_path)
@@ -557,12 +557,13 @@ impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
         task_variables: &TaskVariables,
-        location: &Location,
+        location: ContextLocation<'_>,
         project_env: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
+            .file_location
             .buffer
             .read(cx)
             .file()

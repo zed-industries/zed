@@ -47,13 +47,6 @@ impl PhpDebugAdapter {
         })
     }
 
-    fn validate_config(
-        &self,
-        _: &serde_json::Value,
-    ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        Ok(StartDebuggingRequestArgumentsRequest::Launch)
-    }
-
     async fn get_installed_binary(
         &self,
         delegate: &Arc<dyn DapDelegate>,
@@ -101,7 +94,7 @@ impl PhpDebugAdapter {
             envs: HashMap::default(),
             request_args: StartDebuggingRequestArguments {
                 configuration: task_definition.config.clone(),
-                request: self.validate_config(&task_definition.config)?,
+                request: <Self as DebugAdapter>::validate_config(self, &task_definition.config)?,
             },
         })
     }
@@ -156,22 +149,8 @@ impl DebugAdapter for PhpDebugAdapter {
                     "default": false
                 },
                 "pathMappings": {
-                    "type": "array",
-                    "description": "A list of server paths mapping to the local source paths on your machine for remote host debugging",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "serverPath": {
-                                "type": "string",
-                                "description": "Path on the server"
-                            },
-                            "localPath": {
-                                "type": "string",
-                                "description": "Corresponding path on the local machine"
-                            }
-                        },
-                        "required": ["serverPath", "localPath"]
-                    }
+                    "type": "object",
+                    "description": "A mapping of server paths to local paths.",
                 },
                 "log": {
                     "type": "boolean",
@@ -301,6 +280,13 @@ impl DebugAdapter for PhpDebugAdapter {
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
         Some(SharedString::new_static("PHP").into())
+    }
+
+    fn validate_config(
+        &self,
+        _: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        Ok(StartDebuggingRequestArgumentsRequest::Launch)
     }
 
     fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {

@@ -5,6 +5,7 @@ use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
 use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
+use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
@@ -2748,6 +2749,7 @@ async fn make_update_user_plan_message(
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
         trial_started_at: billing_customer
+            .as_ref()
             .and_then(|billing_customer| billing_customer.trial_started_at)
             .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
         is_usage_based_billing_enabled: if is_staff {
@@ -2762,6 +2764,8 @@ async fn make_update_user_plan_message(
             }
         }),
         account_too_young: Some(account_too_young),
+        has_overdue_invoices: billing_customer
+            .map(|billing_customer| billing_customer.has_overdue_invoices),
         usage: usage.map(|usage| {
             let plan = match plan {
                 proto::Plan::Free => zed_llm_client::Plan::ZedFree,
@@ -4030,31 +4034,26 @@ async fn get_llm_api_token(
         .as_ref()
         .context("failed to retrieve Stripe billing object")?;
 
-    let billing_customer =
-        if let Some(billing_customer) = db.get_billing_customer_by_user_id(user.id).await? {
-            billing_customer
-        } else {
-            let customer_id = stripe_billing
-                .find_or_create_customer_by_email(user.email_address.as_deref())
-                .await?;
+    let billing_customer = if let Some(billing_customer) =
+        db.get_billing_customer_by_user_id(user.id).await?
+    {
+        billing_customer
+    } else {
+        let customer_id = stripe_billing
+            .find_or_create_customer_by_email(user.email_address.as_deref())
+            .await?;
 
-            find_or_create_billing_customer(
-                &session.app_state,
-                &stripe_client,
-                stripe::Expandable::Id(customer_id),
-            )
+        find_or_create_billing_customer(&session.app_state, stripe_client.as_ref(), &customer_id)
             .await?
             .context("billing customer not found")?
-        };
+    };
 
     let billing_subscription =
         if let Some(billing_subscription) = db.get_active_billing_subscription(user.id).await? {
             billing_subscription
         } else {
-            let stripe_customer_id = billing_customer
-                .stripe_customer_id
-                .parse::<stripe::CustomerId>()
-                .context("failed to parse Stripe customer ID from database")?;
+            let stripe_customer_id =
+                StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
 
             let stripe_subscription = stripe_billing
                 .subscribe_to_zed_free(stripe_customer_id)
@@ -4077,6 +4076,7 @@ async fn get_llm_api_token(
     let token = LlmTokenClaims::create(
         &user,
         session.is_staff(),
+        billing_customer,
         billing_preferences,
         &flags,
         billing_subscription,

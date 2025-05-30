@@ -694,7 +694,7 @@ impl ProjectPanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| {
+            .read_with(cx, |workspace, _| {
                 ProjectPanel::serialization_key(workspace)
             })
             .ok()
@@ -3104,7 +3104,8 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let should_copy = window.modifiers().alt;
+        let should_copy = cfg!(target_os = "macos") && window.modifiers().alt
+            || cfg!(not(target_os = "macos")) && window.modifiers().control;
         if should_copy {
             let _ = maybe!({
                 let project = self.project.read(cx);
@@ -3456,7 +3457,7 @@ impl ProjectPanel {
             .read(cx)
             .repo_snapshots(cx);
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
-        worktree.update(cx, |tree, _| {
+        worktree.read_with(cx, |tree, _| {
             utils::ReversibleIterable::new(
                 GitTraversal::new(&repo_snapshots, tree.entries(true, 0usize)),
                 reverse_search,
@@ -3491,16 +3492,17 @@ impl ProjectPanel {
             let worktree = self
                 .project
                 .read(cx)
-                .worktree_for_id(start.worktree_id, cx)?;
+                .worktree_for_id(start.worktree_id, cx)?
+                .read(cx);
 
-            let search = worktree.update(cx, |tree, _| {
-                let entry = tree.entry_for_id(start.entry_id)?;
-                let root_entry = tree.root_entry()?;
-                let tree_id = tree.id();
+            let search = {
+                let entry = worktree.entry_for_id(start.entry_id)?;
+                let root_entry = worktree.root_entry()?;
+                let tree_id = worktree.id();
 
                 let mut first_iter = GitTraversal::new(
                     &repo_snapshots,
-                    tree.traverse_from_path(true, true, true, entry.path.as_ref()),
+                    worktree.traverse_from_path(true, true, true, entry.path.as_ref()),
                 );
 
                 if reverse_search {
@@ -3514,7 +3516,8 @@ impl ProjectPanel {
                     .find(|ele| predicate(*ele, tree_id))
                     .map(|ele| ele.to_owned());
 
-                let second_iter = GitTraversal::new(&repo_snapshots, tree.entries(true, 0usize));
+                let second_iter =
+                    GitTraversal::new(&repo_snapshots, worktree.entries(true, 0usize));
 
                 let second = if reverse_search {
                     second_iter
@@ -3535,7 +3538,7 @@ impl ProjectPanel {
                 } else {
                     Some((first, second))
                 }
-            });
+            };
 
             if let Some((first, second)) = search {
                 let first = first.map(|entry| SelectedEntry {
@@ -4340,19 +4343,7 @@ impl ProjectPanel {
         {
             return None;
         }
-
-        let scroll_handle = self.scroll_handle.0.borrow();
-        let longest_item_width = scroll_handle
-            .last_item_size
-            .filter(|size| size.contents.width > size.item.width)?
-            .contents
-            .width
-            .0 as f64;
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-            return None;
-        }
-
-        Some(
+        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
             div()
                 .occlude()
                 .id("project-panel-horizontal-scroll")
@@ -4389,12 +4380,8 @@ impl ProjectPanel {
                 .bottom_1()
                 .h(px(12.))
                 .cursor_default()
-                .when(self.width.is_some(), |this| {
-                    this.children(Scrollbar::horizontal(
-                        self.horizontal_scrollbar_state.clone(),
-                    ))
-                }),
-        )
+                .child(scrollbar)
+        })
     }
 
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {

@@ -298,6 +298,7 @@ pub async fn download_adapter_from_github(
         response.status().to_string()
     );
 
+    delegate.output_to_console("Download complete".to_owned());
     match file_type {
         DownloadedFileType::GzipTar => {
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
@@ -309,7 +310,7 @@ pub async fn download_adapter_from_github(
             let mut file = File::create(&zip_path).await?;
             futures::io::copy(response.body_mut(), &mut file).await?;
             let file = File::open(&zip_path).await?;
-            extract_zip(&version_path, BufReader::new(file))
+            extract_zip(&version_path, file)
                 .await
                 // we cannot check the status as some adapter include files with names that trigger `Illegal byte sequence`
                 .ok();
@@ -400,32 +401,6 @@ impl FakeAdapter {
     pub fn new() -> Self {
         Self {}
     }
-
-    fn request_args(
-        &self,
-        task_definition: &DebugTaskDefinition,
-    ) -> StartDebuggingRequestArguments {
-        use serde_json::json;
-
-        let obj = task_definition.config.as_object().unwrap();
-
-        let request_variant = obj["request"].as_str().unwrap();
-
-        let value = json!({
-            "request": request_variant,
-            "process_id": obj.get("process_id"),
-            "raw_request": serde_json::to_value(task_definition).unwrap()
-        });
-
-        StartDebuggingRequestArguments {
-            configuration: value,
-            request: match request_variant {
-                "launch" => dap_types::StartDebuggingRequestArgumentsRequest::Launch,
-                "attach" => dap_types::StartDebuggingRequestArgumentsRequest::Attach,
-                _ => unreachable!("Wrong fake adapter input for request field"),
-            },
-        }
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -473,7 +448,7 @@ impl DebugAdapter for FakeAdapter {
     async fn get_binary(
         &self,
         _: &Arc<dyn DapDelegate>,
-        config: &DebugTaskDefinition,
+        task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
@@ -483,7 +458,10 @@ impl DebugAdapter for FakeAdapter {
             connection: None,
             envs: HashMap::default(),
             cwd: None,
-            request_args: self.request_args(&config),
+            request_args: StartDebuggingRequestArguments {
+                request: self.validate_config(&task_definition.config)?,
+                configuration: task_definition.config.clone(),
+            },
         })
     }
 }
