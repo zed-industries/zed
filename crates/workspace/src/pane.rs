@@ -18,12 +18,13 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
+    Focusable, Hsla, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
-    actions, anchored, deferred, impl_actions, prelude::*,
+    actions, anchored, deferred, impl_actions, prelude::*, hsla,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
+use rand::Rng;
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
@@ -303,6 +304,8 @@ pub struct Pane {
     toolbar: Entity<Toolbar>,
     pub(crate) workspace: WeakEntity<Workspace>,
     project: WeakEntity<Project>,
+    #[cfg(debug_assertions)]
+    pub(crate) debug_color: Hsla,
     pub drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool>>,
     custom_drop_handle: Option<
@@ -346,6 +349,13 @@ pub struct ItemNavHistory {
     history: NavHistory,
     item: Arc<dyn WeakItemHandle>,
     is_preview: bool,
+}
+
+#[cfg(debug_assertions)]
+fn random_debug_color() -> Hsla {
+    let mut rng = rand::thread_rng();
+    let h: f32 = rng.gen();
+    hsla(h, 1.0, 0.5, 1.0)
 }
 
 #[derive(Clone)]
@@ -442,6 +452,8 @@ impl Pane {
             drag_split_direction: None,
             workspace,
             project: project.downgrade(),
+            #[cfg(debug_assertions)]
+            debug_color: random_debug_color(),
             can_drop_predicate,
             custom_drop_handle: None,
             can_split_predicate: None,
@@ -3193,12 +3205,23 @@ impl Render for Pane {
         };
         let is_local = project.read(cx).is_local();
 
-        v_flex()
+        #[cfg(debug_assertions)]
+        let root = v_flex()
             .key_context(key_context)
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .flex_none()
             .overflow_hidden()
+            .border_2()
+            .border_color(self.debug_color);
+        #[cfg(not(debug_assertions))]
+        let root = v_flex()
+            .key_context(key_context)
+            .track_focus(&self.focus_handle(cx))
+            .size_full()
+            .flex_none()
+            .overflow_hidden();
+        root
             .on_action(cx.listener(|pane, _: &AlternateFile, window, cx| {
                 pane.alternate_file(window, cx);
             }))

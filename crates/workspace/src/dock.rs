@@ -5,13 +5,14 @@ use anyhow::Context as _;
 use client::proto;
 use gpui::{
     Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent, ParentElement,
-    Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
-    px,
+    Focusable, Hsla, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
+    ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window,
+    deferred, div, hsla, px,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
+use rand::Rng;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
@@ -204,6 +205,8 @@ pub struct Dock {
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
+    #[cfg(debug_assertions)]
+    pub(crate) debug_color: Hsla,
 }
 
 impl Focusable for Dock {
@@ -246,6 +249,13 @@ pub struct PanelButtons {
     dock: Entity<Dock>,
 }
 
+#[cfg(debug_assertions)]
+fn random_debug_color() -> Hsla {
+    let mut rng = rand::thread_rng();
+    let h: f32 = rng.gen();
+    hsla(h, 1.0, 0.5, 1.0)
+}
+
 impl Dock {
     pub fn new(
         position: DockPosition,
@@ -280,6 +290,8 @@ impl Dock {
                 serialized_dock: None,
                 zoom_layer_open: false,
                 modal_layer,
+                #[cfg(debug_assertions)]
+                debug_color: random_debug_color(),
             }
         });
 
@@ -785,7 +797,16 @@ impl Render for Dock {
                 .track_focus(&self.focus_handle(cx))
                 .flex()
                 .bg(cx.theme().colors().panel_background)
-                .border_color(cx.theme().colors().border)
+                .border_color({
+                    #[cfg(debug_assertions)]
+                    {
+                        self.debug_color
+                    }
+                    #[cfg(not(debug_assertions))]
+                    {
+                        cx.theme().colors().border
+                    }
+                })
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
                     Axis::Horizontal => this.w(size).h_full().flex_row(),

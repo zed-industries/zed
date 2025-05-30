@@ -921,7 +921,11 @@ impl TerminalPanel {
             let workspace = self.workspace.clone();
             window.defer(cx, move |window, cx| {
                 workspace
+<<<<<<< ours
                     .update(cx, |workspace, cx| {
+=======
+                    .update_in(cx, |workspace, window, cx| {
+>>>>>>> theirs
                         workspace.activate_pane_in_direction(direction, window, cx);
                     })
                     .ok();

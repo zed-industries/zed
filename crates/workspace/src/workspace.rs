@@ -114,6 +114,24 @@ use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
 };
 
+#[cfg(debug_assertions)]
+fn debug_color_name(color: Hsla) -> &'static str {
+    let h = color.h;
+    if h < 30.0 / 360.0 || h >= 330.0 / 360.0 {
+        "red"
+    } else if h < 90.0 / 360.0 {
+        "yellow"
+    } else if h < 150.0 / 360.0 {
+        "green"
+    } else if h < 210.0 / 360.0 {
+        "cyan"
+    } else if h < 270.0 / 360.0 {
+        "blue"
+    } else {
+        "magenta"
+    }
+}
+
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
@@ -3406,13 +3424,32 @@ impl Workspace {
                     let panel_focused = dock.read(cx).active_panel()
                         .map(|panel| panel.panel_focus_handle(cx).contains_focused(window, cx))
                         .unwrap_or(false);
-                    let position = dock.read(cx).position();
-                    println!("dock {:?}: dock_focused={}, panel_focused={}", position, dock_focused, panel_focused);
+                    let dock_read = dock.read(cx);
+                    let position = dock_read.position();
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "dock {:?} ({}) : dock_focused={}, panel_focused={}",
+                        position,
+                        debug_color_name(dock_read.debug_color),
+                        dock_focused,
+                        panel_focused
+                    );
+                    #[cfg(not(debug_assertions))]
+                    println!(
+                        "dock {:?}: dock_focused={}, panel_focused={}",
+                        position,
+                        dock_focused,
+                        panel_focused
+                    );
                     dock_focused || panel_focused
                 });
 
             if let Some(dock) = focused_dock {
-                let position = dock.read(cx).position();
+                let dock_read = dock.read(cx);
+                let position = dock_read.position();
+                #[cfg(debug_assertions)]
+                println!("focused dock {:?} ({})", position, debug_color_name(dock_read.debug_color));
+                #[cfg(not(debug_assertions))]
                 println!("focused dock {:?}", position);
                 if let Some(bounds) = self.bounding_box_for_dock(dock, window, cx) {
                     println!("origin bounds from dock {:?}: {:?}", position, bounds);
@@ -3444,15 +3481,25 @@ impl Workspace {
                     window.focus(&p.focus_handle(cx));
                 }
                 FocusTarget::Dock(d, _, _) => {
-                    let position = d.read(cx).position();
+                    let dock_read = d.read(cx);
+                    let position = dock_read.position();
+                    #[cfg(debug_assertions)]
+                    println!("attempting to focus dock {:?} ({})", position, debug_color_name(dock_read.debug_color));
+                    #[cfg(not(debug_assertions))]
                     println!("attempting to focus dock {:?}", position);
                     // Get both the active panel and its focus handle in one read operation
-                    let focus_handle = d.read(cx).active_panel()
+                    let focus_handle = dock_read.active_panel()
                         .map(|panel| panel.panel_focus_handle(cx));
                     if let Some(handle) = focus_handle {
+                        #[cfg(debug_assertions)]
+                        println!("focusing panel in dock {:?} ({})", position, debug_color_name(dock_read.debug_color));
+                        #[cfg(not(debug_assertions))]
                         println!("focusing panel in dock {:?}", position);
                         handle.focus(window);
                     } else {
+                        #[cfg(debug_assertions)]
+                        println!("dock {:?} ({}) has no active panel to focus", position, debug_color_name(dock_read.debug_color));
+                        #[cfg(not(debug_assertions))]
                         println!("dock {:?} has no active panel to focus", position);
                     }
                 }
@@ -3542,6 +3589,14 @@ impl Workspace {
         let panes = self.center.panes();
         let panes_iter = panes.iter().filter_map(|p| {
             self.bounding_box_for_pane(p).map(|b| {
+                #[cfg(debug_assertions)]
+                println!(
+                    "candidate pane {:?} ({}) -> {:?}",
+                    Entity::entity_id(p),
+                    debug_color_name(p.read(cx).debug_color),
+                    b
+                );
+                #[cfg(not(debug_assertions))]
                 println!("candidate pane {:?} -> {:?}", Entity::entity_id(p), b);
                 FocusTarget::Pane(p, b, p.read(cx).last_visit_ts)
             })
@@ -3556,11 +3611,30 @@ impl Workspace {
             };
 
             if !is_open {
+                #[cfg(debug_assertions)]
+                println!("dock {:?} ({}) closed", position, debug_color_name(dock_read.debug_color));
+                #[cfg(not(debug_assertions))]
                 println!("dock {:?} closed", position);
                 return None;
             }
 
             self.bounding_box_for_dock(d, window, cx).map(|b| {
+                #[cfg(debug_assertions)]
+                println!(
+                    "candidate dock {:?} ({}) -> {:?}",
+                    position,
+                    debug_color_name(dock_read.debug_color),
+                    b
+                );
+                #[cfg(not(debug_assertions))]
+                #[cfg(debug_assertions)]
+                println!(
+                    "candidate dock {:?} ({}) -> {:?}",
+                    position,
+                    debug_color_name(dock_read.debug_color),
+                    b
+                );
+                #[cfg(not(debug_assertions))]
                 println!("candidate dock {:?} -> {:?}", position, b);
                 FocusTarget::Dock(d, b, last_visit_ts)
             })
@@ -3573,11 +3647,23 @@ impl Workspace {
         for target in panes_iter.chain(docks_iter) {
             let (bounds, ts) = match &target {
                 FocusTarget::Pane(p, b, ts) => {
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "checking pane {:?} ({}) bounds {:?}",
+                        Entity::entity_id(p),
+                        debug_color_name(p.read(cx).debug_color),
+                        b
+                    );
+                    #[cfg(not(debug_assertions))]
                     println!("checking pane {:?} bounds {:?}", Entity::entity_id(p), b);
                     (*b, *ts)
                 }
                 FocusTarget::Dock(d, b, ts) => {
-                    let pos = d.read(cx).position();
+                    let dock_read = d.read(cx);
+                    let pos = dock_read.position();
+                    #[cfg(debug_assertions)]
+                    println!("checking dock {:?} ({}) bounds {:?}", pos, debug_color_name(dock_read.debug_color), b);
+                    #[cfg(not(debug_assertions))]
                     println!("checking dock {:?} bounds {:?}", pos, b);
                     (*b, *ts)
                 }
@@ -3602,8 +3688,27 @@ impl Workspace {
         }
         if let Some(best) = best {
             match &best {
-                FocusTarget::Pane(p, _, _) => println!("best target pane {:?}", Entity::entity_id(p)),
-                FocusTarget::Dock(d, _, _) => println!("best target dock {:?}", d.read(cx).position()),
+                FocusTarget::Pane(p, _, _) => {
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "best target pane {:?} ({})",
+                        Entity::entity_id(p),
+                        debug_color_name(p.read(cx).debug_color)
+                    );
+                    #[cfg(not(debug_assertions))]
+                    println!("best target pane {:?}", Entity::entity_id(p));
+                }
+                FocusTarget::Dock(d, _, _) => {
+                    let dock_read = d.read(cx);
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "best target dock {:?} ({})",
+                        dock_read.position(),
+                        debug_color_name(dock_read.debug_color)
+                    );
+                    #[cfg(not(debug_assertions))]
+                    println!("best target dock {:?}", dock_read.position());
+                }
             }
             return Some(best);
         }
@@ -3623,6 +3728,14 @@ impl Workspace {
         // Rebuild the iterator for circular search
         let panes_iter = panes.iter().filter_map(|p| {
             self.bounding_box_for_pane(p).map(|b| {
+                #[cfg(debug_assertions)]
+                println!(
+                    "circular candidate pane {:?} ({}) -> {:?}",
+                    Entity::entity_id(p),
+                    debug_color_name(p.read(cx).debug_color),
+                    b
+                );
+                #[cfg(not(debug_assertions))]
                 println!("circular candidate pane {:?} -> {:?}", Entity::entity_id(p), b);
                 FocusTarget::Pane(p, b, p.read(cx).last_visit_ts)
             })
@@ -3639,6 +3752,14 @@ impl Workspace {
             }
 
             self.bounding_box_for_dock(d, window, cx).map(|b| {
+                #[cfg(debug_assertions)]
+                println!(
+                    "circular candidate dock {:?} ({}) -> {:?}",
+                    position,
+                    debug_color_name(dock_read.debug_color),
+                    b
+                );
+                #[cfg(not(debug_assertions))]
                 println!("circular candidate dock {:?} -> {:?}", position, b);
                 FocusTarget::Dock(d, b, last_visit_ts)
             })
@@ -3647,11 +3768,28 @@ impl Workspace {
         for target in panes_iter.chain(docks_iter) {
             let (bounds, ts) = match &target {
                 FocusTarget::Pane(p, b, ts) => {
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "circular checking pane {:?} ({}) bounds {:?}",
+                        Entity::entity_id(p),
+                        debug_color_name(p.read(cx).debug_color),
+                        b
+                    );
+                    #[cfg(not(debug_assertions))]
                     println!("circular checking pane {:?} bounds {:?}", Entity::entity_id(p), b);
                     (*b, *ts)
                 }
                 FocusTarget::Dock(d, b, ts) => {
-                    let pos = d.read(cx).position();
+                    let dock_read = d.read(cx);
+                    let pos = dock_read.position();
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "circular checking dock {:?} ({}) bounds {:?}",
+                        pos,
+                        debug_color_name(dock_read.debug_color),
+                        b
+                    );
+                    #[cfg(not(debug_assertions))]
                     println!("circular checking dock {:?} bounds {:?}", pos, b);
                     (*b, *ts)
                 }
@@ -3709,8 +3847,27 @@ impl Workspace {
 
         if let Some(best) = &best {
             match best {
-                FocusTarget::Pane(p, _, _) => println!("circular best target pane {:?}", Entity::entity_id(p)),
-                FocusTarget::Dock(d, _, _) => println!("circular best target dock {:?}", d.read(cx).position()),
+                FocusTarget::Pane(p, _, _) => {
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "circular best target pane {:?} ({})",
+                        Entity::entity_id(p),
+                        debug_color_name(p.read(cx).debug_color)
+                    );
+                    #[cfg(not(debug_assertions))]
+                    println!("circular best target pane {:?}", Entity::entity_id(p));
+                }
+                FocusTarget::Dock(d, _, _) => {
+                    let dock_read = d.read(cx);
+                    #[cfg(debug_assertions)]
+                    println!(
+                        "circular best target dock {:?} ({})",
+                        dock_read.position(),
+                        debug_color_name(dock_read.debug_color)
+                    );
+                    #[cfg(not(debug_assertions))]
+                    println!("circular best target dock {:?}", dock_read.position());
+                }
             }
         } else {
             println!("no circular target found either - staying in place");
