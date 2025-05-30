@@ -39,7 +39,7 @@ fn eval_extract_handle_command_output() {
     // Model                       | Pass rate
     // ----------------------------|----------
     // claude-3.7-sonnet           |  0.98
-    // gemini-2.5-pro              |  0.98
+    // gemini-2.5-pro              |  0.86
     // gemini-2.5-flash            |  0.11
     // gpt-4.1                     |  1.00
 
@@ -109,10 +109,6 @@ fn eval_extract_handle_command_output() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_delete_run_git_blame() {
-    // Model                       | Pass rate
-    // ----------------------------|----------
-    // claude-3.7-sonnet           |  1.0
-    // gemini-2.5-pro              |  1.0
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/delete_run_git_blame/before.rs");
     let output_file_content = include_str!("evals/fixtures/delete_run_git_blame/after.rs");
@@ -172,7 +168,7 @@ fn eval_translate_doc_comments() {
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |  1.0
+    //  claude-3.7-sonnet              |
     //  gemini-2.5-pro-preview-03-25   |  1.0
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
@@ -235,7 +231,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     // ============================================
     //
     //  claude-3.7-sonnet              |  0.98
-    //  gemini-2.5-pro-preview-03-25   |  0.97
+    //  gemini-2.5-pro-preview-03-25   |  0.99
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/lib.rs";
@@ -443,7 +439,7 @@ fn eval_from_pixels_constructor() {
     // ============================================
     //
     //  claude-3.7-sonnet              |
-    //  gemini-2.5-pro-preview-03-25   |  0.85
+    //  gemini-2.5-pro-preview-03-25   |  0.94
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
@@ -749,7 +745,7 @@ fn eval_add_overwrite_test() {
     // ============================================
     //
     //  claude-3.7-sonnet              |  0.16
-    //  gemini-2.5-pro-preview-03-25   |  0.40
+    //  gemini-2.5-pro-preview-03-25   |  0.35
     //  gemini-2.5-flash-preview-04-17 |
     //  gpt-4.1                        |
     let input_file_path = "root/action_log.rs";
