@@ -573,11 +573,17 @@ message StatusUpdate {
     optional string message = 1;
     Status status = 2;
 
+    // start/run/stop
+    // message (ok/warning/error/other)
     enum Status {
         Starting = 0;
         Running = 1;
-        RunningWithWarning = 2;
-        Stopped = 3;
+        Stopped = 2;
+        Ok = 3;
+        Info = 4;
+        Warning = 5;
+        Error = 6;
+        Other = 7;
     }
 }
 
