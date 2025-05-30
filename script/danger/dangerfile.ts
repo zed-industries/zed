@@ -1,4 +1,4 @@
-import { danger, message, warn } from "danger";
+import { danger, message, warn, fail } from "danger";
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
 prHygiene({
@@ -56,4 +56,15 @@ if (includesIssueUrl) {
       "If this PR aims to close an issue, please include a `Closes #ISSUE` line at the top of the PR body.",
     ].join("\n"),
   );
+}
+
+const PROMPT_PATHS = [
+  "crates/assistant_tools/src/templates/create_file_prompt.hbs",
+  "crates/assistant_tools/src/templates/edit_file_prompt.hbs",
+];
+
+for (const promptPath of PROMPT_PATHS) {
+  if (danger.git.modified_files.some((file) => file.includes(promptPath))) {
+    fail([`Modifying the '${promptPath}' prompt requires corresponding changes in the LLM Worker.`].join("\n"));
+  }
 }
