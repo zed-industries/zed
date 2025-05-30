@@ -1753,42 +1753,6 @@ Example:
 }
 ```
 
-### Hunk Style
-
-- Description: What styling we should use for the diff hunks.
-- Setting: `hunk_style`
-- Default:
-
-```json
-{
-  "git": {
-    "hunk_style": "staged_hollow"
-  }
-}
-```
-
-**Options**
-
-1. Show the staged hunks faded out and with a border:
-
-```json
-{
-  "git": {
-    "hunk_style": "staged_hollow"
-  }
-}
-```
-
-2. Show unstaged hunks faded out and with a border:
-
-```json
-{
-  "git": {
-    "hunk_style": "unstaged_hollow"
-  }
-}
-```
-
 **Options**
 
 1. Disable inline git blame:
@@ -1838,6 +1802,42 @@ Example:
       "enabled": true,
       "min_column": 80
     }
+  }
+}
+```
+
+### Hunk Style
+
+- Description: What styling we should use for the diff hunks.
+- Setting: `hunk_style`
+- Default:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+**Options**
+
+1. Show the staged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+2. Show unstaged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "unstaged_hollow"
   }
 }
 ```
