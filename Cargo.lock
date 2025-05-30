@@ -15585,6 +15585,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "hex",
+ "log",
  "parking_lot",
  "pretty_assertions",
  "proto",
