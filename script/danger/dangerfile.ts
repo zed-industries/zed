@@ -88,6 +88,7 @@ if (!!modifiedPrompts.length) {
       fail(
         [
           `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
+          "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
           `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
         ].join("\n"),
       );
