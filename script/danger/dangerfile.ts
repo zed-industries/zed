@@ -76,7 +76,10 @@ if (!!modifiedPrompts.length) {
   for (const promptPath of modifiedPrompts) {
     if (body.includes(PROMPT_CHANGE_ATTESTATION)) {
       message(
-        [`This PR contains changes to "${promptPath}" that have been accounted for in the LLM Worker.`].join("\n"),
+        [
+          `This PR contains changes to "${promptPath}".`,
+          "The author has attested the corresponding changes have been made in the LLM Worker.",
+        ].join("\n"),
       );
     } else {
       fail(
