@@ -726,13 +726,6 @@ async fn sync_billing_subscription(
     Extension(app): Extension<Arc<AppState>>,
     extract::Json(body): extract::Json<SyncBillingSubscriptionBody>,
 ) -> Result<Json<SyncBillingSubscriptionResponse>> {
-    let Some(real_stripe_client) = app.real_stripe_client.clone() else {
-        log::error!("failed to retrieve Stripe client");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
     let Some(stripe_client) = app.stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
         Err(Error::http(
@@ -752,26 +745,16 @@ async fn sync_billing_subscription(
         .get_billing_customer_by_user_id(user.id)
         .await?
         .context("billing customer not found")?;
-    let stripe_customer_id = billing_customer
-        .stripe_customer_id
-        .parse::<stripe::CustomerId>()
-        .context("failed to parse Stripe customer ID from database")?;
+    let stripe_customer_id = StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
 
-    let subscriptions = Subscription::list(
-        &real_stripe_client,
-        &stripe::ListSubscriptions {
-            customer: Some(stripe_customer_id),
-            // Sync all non-canceled subscriptions.
-            status: None,
-            ..Default::default()
-        },
-    )
-    .await?;
+    let subscriptions = stripe_client
+        .list_subscriptions_for_customer(&stripe_customer_id)
+        .await?;
 
-    for subscription in subscriptions.data {
+    for subscription in subscriptions {
         let subscription_id = subscription.id.clone();
 
-        sync_subscription(&app, &stripe_client, subscription.into())
+        sync_subscription(&app, &stripe_client, subscription)
             .await
             .with_context(|| {
                 format!(
