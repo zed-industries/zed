@@ -496,7 +496,9 @@ impl Item for MarkdownPreviewView {
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        self.tab_content_text.clone().unwrap_or_else(|| SharedString::from("Markdown Preview"))
+        self.tab_content_text
+            .clone()
+            .unwrap_or_else(|| SharedString::from("Markdown Preview"))
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
