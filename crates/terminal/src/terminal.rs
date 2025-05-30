@@ -957,8 +957,6 @@ impl Terminal {
 
                     Some((url, true, url_match))
                 } else if let Some(url_match) = regex_match_at(term, point, &mut self.url_regex) {
-                    
-                    let url_match = url_match;
                     let url = term.bounds_to_string(*url_match.start(), *url_match.end());
 
                     if !valid_url_ending(&url) {
@@ -2046,8 +2044,8 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
 }
 
 // Check if the url ends with a valid delimiter and if the 
-// number of opening and closing delimiters is the 
-pub fn valid_url_ending(url: &str) -> bool {
+// number of opening and closing delimiters is the same.
+fn valid_url_ending(url: &str) -> bool {
     if !(url.ends_with(")") || url.ends_with("]")) {
         return true;
     }
