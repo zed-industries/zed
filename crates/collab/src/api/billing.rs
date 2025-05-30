@@ -754,7 +754,7 @@ async fn sync_billing_subscription(
     for subscription in subscriptions {
         let subscription_id = subscription.id.clone();
 
-        sync_subscription(&app, &stripe_client, subscription.into())
+        sync_subscription(&app, &stripe_client, subscription)
             .await
             .with_context(|| {
                 format!(
