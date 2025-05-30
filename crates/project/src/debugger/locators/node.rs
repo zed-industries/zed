@@ -1,11 +1,16 @@
+use std::{borrow::Cow, path::Path};
+
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
 
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate, VariableName};
 
 pub(crate) struct NodeLocator;
+
+const TYPESCRIPT_RUNNER_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_RUNNER"));
 
 #[async_trait]
 impl DapLocator for NodeLocator {
@@ -23,25 +28,22 @@ impl DapLocator for NodeLocator {
         if adapter.as_ref() != "JavaScript" {
             return None;
         }
-        //  ./node_modules/.bin/jest
-        //
-        //
-        // TODO this should be npm/deno/yarn/etc. + mocha/jake/jasmine/etc.
-        let valid_program = build_config.command == "npx"
-            && build_config
-                .args
-                .first()
-                .is_some_and(|s| s.as_str() == "jest");
-        if !valid_program {
+        // TODO kb debug npm commands too?
+        if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value() {
             return None;
         }
+        let Some(test_library) = build_config.args.first() else {
+            return None;
+        };
+        let program_path = Path::new("$ZED_WORKTREE_ROOT")
+            .join("node_modules")
+            .join(".bin")
+            .join(test_library);
         let args = Some("--runInBand".to_owned())
             .into_iter()
             .chain(build_config.args[1..].iter().cloned())
             .collect::<Vec<_>>();
 
-        // npx --node-options="--inspect-brk" jest --testNamePattern foobar folder/file.ts
-        let program_path = "$ZED_WORKTREE_ROOT/node_modules/.bin/jest";
         let config = serde_json::json!({
             "request": "launch",
             "program": program_path,
