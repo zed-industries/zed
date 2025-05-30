@@ -877,6 +877,8 @@ impl ThreadsDatabase {
     fn connection(&self) -> Arc<Mutex<Connection>> {
         self.connection.clone()
     }
+
+    const COMPRESSION_LEVEL: i32 = 3;
 }
 
 impl Bind for ThreadId {
@@ -930,7 +932,7 @@ impl ThreadsDatabase {
                     summary TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     data_type TEXT NOT NULL,
-                    data TEXT NOT NULL
+                    data BLOB NOT NULL
                 )
             "})?()
         .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
@@ -1021,13 +1023,17 @@ impl ThreadsDatabase {
         id: ThreadId,
         thread: SerializedThread,
     ) -> Result<()> {
-        let data = serde_json::to_string(&thread)?;
+        let json_data = serde_json::to_string(&thread)?;
         let summary = thread.summary.to_string();
         let updated_at = thread.updated_at.to_rfc3339();
-        let data_type = "json".to_string();
+
         let connection = connection.lock().unwrap();
 
-        let mut insert = connection.exec_bound::<(ThreadId, String, String, String, String)>(indoc! {"
+        let compressed = zstd::encode_all(json_data.as_bytes(), Self::COMPRESSION_LEVEL)?;
+        let data_type = "zstd".to_string();
+        let data = compressed;
+
+        let mut insert = connection.exec_bound::<(ThreadId, String, String, String, Vec<u8>)>(indoc! {"
             INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
         "})?;
 
@@ -1066,13 +1072,22 @@ impl ThreadsDatabase {
 
         self.executor.spawn(async move {
             let connection = connection.lock().unwrap();
-            let mut select = connection.select_bound::<ThreadId, String>(indoc! {"
-                SELECT data FROM threads WHERE id = ? LIMIT 1
+            let mut select = connection.select_bound::<ThreadId, (String, Vec<u8>)>(indoc! {"
+                SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
             "})?;
 
             let rows = select(id)?;
-            if let Some(data) = rows.into_iter().next() {
-                let thread = SerializedThread::from_json(data.as_bytes())?;
+            if let Some((data_type, data)) = rows.into_iter().next() {
+                let json_data = match data_type.as_str() {
+                    "zstd" => {
+                        let decompressed = zstd::decode_all(&data[..])?;
+                        String::from_utf8(decompressed)?
+                    }
+                    "json" => String::from_utf8(data)?,
+                    _ => anyhow::bail!("Unknown data type: {}", data_type),
+                };
+
+                let thread = SerializedThread::from_json(json_data.as_bytes())?;
                 Ok(Some(thread))
             } else {
                 Ok(None)

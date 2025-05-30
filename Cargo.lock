@@ -134,6 +134,7 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zed_llm_client",
+ "zstd",
 ]
 
 [[package]]
