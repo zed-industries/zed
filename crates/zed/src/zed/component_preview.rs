@@ -419,7 +419,7 @@ impl ComponentPreview {
 
         if new_len > 0 {
             self.nav_scroll_handle
-                .scroll_to_item(0, ScrollStrategy::Top);
+                .scroll_item_onscreen(0, ScrollStrategy::Top);
         }
 
         let filtered_components = self.filtered_components();

@@ -391,7 +391,7 @@ impl CompletionsMenu {
         if self.selected_item != match_index {
             self.selected_item = match_index;
             self.scroll_handle
-                .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+                .scroll_item_onscreen(self.selected_item, ScrollStrategy::Top);
             self.resolve_visible_completions(provider, cx);
             self.start_markdown_parse_for_nearby_entries(cx);
             if let Some(provider) = provider {
@@ -994,7 +994,8 @@ impl CompletionsMenu {
         *self.entries.borrow_mut() = matches;
         self.selected_item = 0;
         // This keeps the display consistent when y_flipped.
-        self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+        self.scroll_handle
+            .scroll_item_onscreen(0, ScrollStrategy::Top);
 
         if let Some(provider) = provider {
             cx.update(|window, cx| {
@@ -1175,7 +1176,7 @@ impl CodeActionsMenu {
             0
         };
         self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+            .scroll_item_onscreen(self.selected_item, ScrollStrategy::Top);
         cx.notify()
     }
 
@@ -1186,7 +1187,7 @@ impl CodeActionsMenu {
             self.actions.len() - 1
         };
         self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+            .scroll_item_onscreen(self.selected_item, ScrollStrategy::Top);
         cx.notify()
     }
 
@@ -1197,7 +1198,7 @@ impl CodeActionsMenu {
             self.prev_match_index()
         };
         self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+            .scroll_item_onscreen(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -1208,7 +1209,7 @@ impl CodeActionsMenu {
             self.next_match_index()
         };
         self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+            .scroll_item_onscreen(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 

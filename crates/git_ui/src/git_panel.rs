@@ -740,7 +740,7 @@ impl GitPanel {
     fn scroll_to_selected_entry(&mut self, cx: &mut Context<Self>) {
         if let Some(selected_entry) = self.selected_entry {
             self.scroll_handle
-                .scroll_to_item(selected_entry, ScrollStrategy::Center);
+                .scroll_item_onscreen(selected_entry, ScrollStrategy::Center);
         }
 
         cx.notify();

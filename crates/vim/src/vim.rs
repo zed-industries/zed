@@ -55,6 +55,9 @@ use crate::state::ReplayableAction;
 struct Number(usize);
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+struct WorkspaceNumber(usize);
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 struct SelectRegister(String);
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq)]
@@ -162,6 +165,8 @@ actions!(
         PushReplayRegister,
         PushReplaceWithRegister,
         PushToggleComments,
+        MenuSelectNext,
+        MenuSelectPrevious
     ]
 );
 
@@ -172,6 +177,7 @@ impl_actions!(
     vim,
     [
         Number,
+        WorkspaceNumber,
         SelectRegister,
         PushObject,
         PushFindForward,
@@ -201,6 +207,33 @@ pub fn init(cx: &mut App) {
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
                 *setting = Some(!currently_enabled)
             })
+        });
+
+        workspace.register_action(|_, _: &MenuSelectNext, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+
+            for _ in 0..count {
+                window.dispatch_action(menu::SelectNext.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|_, _: &MenuSelectPrevious, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+
+            for _ in 0..count {
+                window.dispatch_action(menu::SelectPrevious.boxed_clone(), cx);
+            }
+        });
+
+        workspace.register_action(|_, n: &WorkspaceNumber, _, cx| {
+            let workspace_count = Vim::globals(cx).pre_count.unwrap_or(0);
+
+            Vim::globals(cx).pre_count = Some(
+                workspace_count
+                    .checked_mul(10)
+                    .and_then(|c| c.checked_add(n.0))
+                    .unwrap_or(workspace_count),
+            )
         });
 
         workspace.register_action(|_, _: &OpenDefaultKeymap, _, cx| {

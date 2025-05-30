@@ -1301,7 +1301,7 @@ impl OutlinePanel {
                 .position(|cached_entry| &cached_entry.entry == selected_entry);
             if let Some(index) = index {
                 self.scroll_handle
-                    .scroll_to_item(index, ScrollStrategy::Center);
+                    .scroll_item_onscreen(index, ScrollStrategy::Center);
                 cx.notify();
             }
         }

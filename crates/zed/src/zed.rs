@@ -4151,6 +4151,7 @@ mod tests {
                     | "vim::PushDigraph"
                     | "vim::PushLiteral"
                     | "vim::Number"
+                    | "vim::WorkspaceNumber"
                     | "vim::SelectRegister"
                     | "git::StageAndNext"
                     | "git::UnstageAndNext"
