@@ -816,6 +816,7 @@ mod tests {
             tool_choice: None,
             thread_id: None,
             prompt_id: None,
+            intent: None,
             mode: None,
             stop: Vec::new(),
         };

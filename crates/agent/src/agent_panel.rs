@@ -52,7 +52,7 @@ use workspace::{
 use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
-use zed_llm_client::UsageLimit;
+use zed_llm_client::{CompletionIntent, UsageLimit};
 
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
@@ -1310,7 +1310,12 @@ impl AgentPanel {
                 active_thread.thread().update(cx, |thread, cx| {
                     thread.insert_invisible_continue_message(cx);
                     thread.advance_prompt_id();
-                    thread.send_to_model(model, Some(window.window_handle()), cx);
+                    thread.send_to_model(
+                        model,
+                        CompletionIntent::UserPrompt,
+                        Some(window.window_handle()),
+                        cx,
+                    );
                 });
             });
         } else {

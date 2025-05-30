@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
 
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
@@ -163,9 +164,16 @@ async fn test_subscribe_to_price() {
         .lock()
         .insert(price.id.clone(), price.clone());
 
+    let now = Utc::now();
     let subscription = StripeSubscription {
         id: StripeSubscriptionId("sub_test".into()),
+        customer: StripeCustomerId("cus_test".into()),
+        status: stripe::SubscriptionStatus::Active,
+        current_period_start: now.timestamp(),
+        current_period_end: (now + Duration::days(30)).timestamp(),
         items: vec![],
+        cancel_at: None,
+        cancellation_details: None,
     };
     stripe_client
         .subscriptions
@@ -194,12 +202,19 @@ async fn test_subscribe_to_price() {
 
     // Subscribing to a price that is already on the subscription is a no-op.
     {
+        let now = Utc::now();
         let subscription = StripeSubscription {
             id: StripeSubscriptionId("sub_test".into()),
+            customer: StripeCustomerId("cus_test".into()),
+            status: stripe::SubscriptionStatus::Active,
+            current_period_start: now.timestamp(),
+            current_period_end: (now + Duration::days(30)).timestamp(),
             items: vec![StripeSubscriptionItem {
                 id: StripeSubscriptionItemId("si_test".into()),
                 price: Some(price.clone()),
             }],
+            cancel_at: None,
+            cancellation_details: None,
         };
         stripe_client
             .subscriptions
@@ -212,6 +227,108 @@ async fn test_subscribe_to_price() {
             .unwrap();
 
         assert_eq!(stripe_client.update_subscription_calls.lock().len(), 1);
+    }
+}
+
+#[gpui::test]
+async fn test_subscribe_to_zed_free() {
+    let (stripe_billing, stripe_client) = make_stripe_billing();
+
+    let zed_pro_price = StripePrice {
+        id: StripePriceId("price_1".into()),
+        unit_amount: Some(0),
+        lookup_key: Some("zed-pro".to_string()),
+        recurring: None,
+    };
+    stripe_client
+        .prices
+        .lock()
+        .insert(zed_pro_price.id.clone(), zed_pro_price.clone());
+    let zed_free_price = StripePrice {
+        id: StripePriceId("price_2".into()),
+        unit_amount: Some(0),
+        lookup_key: Some("zed-free".to_string()),
+        recurring: None,
+    };
+    stripe_client
+        .prices
+        .lock()
+        .insert(zed_free_price.id.clone(), zed_free_price.clone());
+
+    stripe_billing.initialize().await.unwrap();
+
+    // Customer is subscribed to Zed Free when not already subscribed to a plan.
+    {
+        let customer_id = StripeCustomerId("cus_no_plan".into());
+
+        let subscription = stripe_billing
+            .subscribe_to_zed_free(customer_id)
+            .await
+            .unwrap();
+
+        assert_eq!(subscription.items[0].price.as_ref(), Some(&zed_free_price));
+    }
+
+    // Customer is not subscribed to Zed Free when they already have an active subscription.
+    {
+        let customer_id = StripeCustomerId("cus_active_subscription".into());
+
+        let now = Utc::now();
+        let existing_subscription = StripeSubscription {
+            id: StripeSubscriptionId("sub_existing_active".into()),
+            customer: customer_id.clone(),
+            status: stripe::SubscriptionStatus::Active,
+            current_period_start: now.timestamp(),
+            current_period_end: (now + Duration::days(30)).timestamp(),
+            items: vec![StripeSubscriptionItem {
+                id: StripeSubscriptionItemId("si_test".into()),
+                price: Some(zed_pro_price.clone()),
+            }],
+            cancel_at: None,
+            cancellation_details: None,
+        };
+        stripe_client.subscriptions.lock().insert(
+            existing_subscription.id.clone(),
+            existing_subscription.clone(),
+        );
+
+        let subscription = stripe_billing
+            .subscribe_to_zed_free(customer_id)
+            .await
+            .unwrap();
+
+        assert_eq!(subscription, existing_subscription);
+    }
+
+    // Customer is not subscribed to Zed Free when they already have a trial subscription.
+    {
+        let customer_id = StripeCustomerId("cus_trial_subscription".into());
+
+        let now = Utc::now();
+        let existing_subscription = StripeSubscription {
+            id: StripeSubscriptionId("sub_existing_trial".into()),
+            customer: customer_id.clone(),
+            status: stripe::SubscriptionStatus::Trialing,
+            current_period_start: now.timestamp(),
+            current_period_end: (now + Duration::days(14)).timestamp(),
+            items: vec![StripeSubscriptionItem {
+                id: StripeSubscriptionItemId("si_test".into()),
+                price: Some(zed_pro_price.clone()),
+            }],
+            cancel_at: None,
+            cancellation_details: None,
+        };
+        stripe_client.subscriptions.lock().insert(
+            existing_subscription.id.clone(),
+            existing_subscription.clone(),
+        );
+
+        let subscription = stripe_billing
+            .subscribe_to_zed_free(customer_id)
+            .await
+            .unwrap();
+
+        assert_eq!(subscription, existing_subscription);
     }
 }
 

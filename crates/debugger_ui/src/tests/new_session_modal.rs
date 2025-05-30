@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use task::{DebugRequest, DebugScenario, LaunchRequest, TaskContext, VariableName, ZedDebugConfig};
 use util::path;
 
+use crate::new_session_modal::NewSessionMode;
 use crate::tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -170,7 +171,13 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
 
     workspace
         .update(cx, |workspace, window, cx| {
-            crate::new_session_modal::NewSessionModal::show(workspace, window, cx);
+            crate::new_session_modal::NewSessionModal::show(
+                workspace,
+                window,
+                NewSessionMode::Launch,
+                None,
+                cx,
+            );
         })
         .unwrap();
 
@@ -184,7 +191,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
         .expect("Modal should be active");
 
     modal.update_in(cx, |modal, window, cx| {
-        modal.set_custom("/project/main", "/project", false, window, cx);
+        modal.set_configure("/project/main", "/project", false, window, cx);
         modal.save_scenario(window, cx);
     });
 
@@ -213,7 +220,7 @@ async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut
     pretty_assertions::assert_eq!(expected_content, actual_lines);
 
     modal.update_in(cx, |modal, window, cx| {
-        modal.set_custom("/project/other", "/project", true, window, cx);
+        modal.set_configure("/project/other", "/project", true, window, cx);
         modal.save_scenario(window, cx);
     });
 

@@ -660,7 +660,7 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, None, None, false)
+        self.get_installed_binary(delegate, &config, None, toolchain, false)
             .await
     }
 }
