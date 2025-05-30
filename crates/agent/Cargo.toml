@@ -100,7 +100,7 @@ workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zed_llm_client.workspace = true
-speech = { path = "../speech", features = ["whisper-stt"] }
+speech = { path = "../speech", features = ["whisper-stt", "system-tts"] }
 
 [dev-dependencies]
 buffer_diff = { workspace = true, features = ["test-support"] }

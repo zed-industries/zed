@@ -4,19 +4,22 @@
 //! functionality in Rust. It supports multiple providers and platforms.
 
 pub mod audio;
-pub mod stt;
-pub mod tts;
 pub mod config;
 pub mod error;
+pub mod stt;
+pub mod tts;
 
-// Re-export main types
-pub use audio::AudioProcessor;
-pub use config::{SpeechConfig, AudioConfig, SttConfig, TtsConfig, SttProvider, TtsProvider, Voice};
-pub use error::{SpeechError, AudioError, SttError, TtsError, Result};
-pub use stt::{SpeechToText, SttResult};
-pub use tts::{TextToSpeech, TtsResult};
+// Re-export commonly used types and functions
+pub use config::{SpeechConfig, SttConfig, TtsConfig, SttProvider, TtsProvider};
+pub use error::{SpeechError, SttError, TtsError, Result};
+pub use stt::{SpeechToText, SttResult, create_provider};
+pub use tts::{TextToSpeech, TtsResult, create_provider as create_tts_provider, TtsService};
+
+// Re-export audio utilities for convenience
+pub use audio::{AudioProcessor, utils as audio_utils};
 
 /// Main speech processing interface that combines STT and TTS
+#[allow(dead_code)]
 pub struct SpeechProcessor {
     stt: Box<dyn SpeechToText>,
     tts: std::sync::Arc<dyn TextToSpeech>,

@@ -74,7 +74,7 @@ impl WhisperStt {
         // Try to build the binary if not found
         log::info!("🔨 Building whisper_transcribe binary...");
         let output = Command::new("cargo")
-            .args(&["build", "-p", "speech", "--bin", "whisper_transcribe", "--features", "whisper-stt"])
+            .args(["build", "-p", "speech", "--bin", "whisper_transcribe", "--features", "whisper-stt"])
             .output()
             .map_err(|e| {
                 log::error!("❌ Failed to run cargo build: {}", e);

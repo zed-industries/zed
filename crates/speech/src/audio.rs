@@ -261,16 +261,17 @@ pub mod capture {
     use std::sync::Arc;
     use parking_lot::Mutex;
 
+    #[allow(dead_code)]
     pub struct AudioCapture {
         config: AudioConfig,
-        _stream: Option<cpal::Stream>,
+        stream: Option<cpal::Stream>,
     }
 
     impl AudioCapture {
         pub fn new(config: AudioConfig) -> Result<Self> {
             Ok(Self {
                 config,
-                _stream: None,
+                stream: None,
             })
         }
 
@@ -302,7 +303,7 @@ pub mod capture {
                 )?;
 
             stream.play()?;
-            self._stream = Some(stream);
+            self.stream = Some(stream);
 
             Ok(Box::pin(receiver))
         }
@@ -316,13 +317,15 @@ pub mod playback {
     use std::sync::Arc;
     use parking_lot::Mutex;
 
+    #[allow(dead_code)]
     pub struct AudioPlayback {
         config: AudioConfig,
+        stream: Option<cpal::Stream>,
     }
 
     impl AudioPlayback {
         pub fn new(config: AudioConfig) -> Result<Self> {
-            Ok(Self { config })
+            Ok(Self { config, stream: None })
         }
 
         pub async fn play_samples(&self, samples: Vec<f32>) -> Result<()> {
@@ -367,11 +370,75 @@ pub mod playback {
             stream.play()?;
 
             // Wait for playback to complete
-            while sample_index.lock().clone() < samples.lock().len() {
+            while *sample_index.lock() < samples.lock().len() {
                 tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             }
 
             Ok(())
         }
+    }
+}
+
+/// Audio processing utilities for speech recognition
+pub mod utils {
+    /// Convert audio bytes (from i16 samples) to f32 samples for STT processing
+    pub fn bytes_to_f32_samples(audio_bytes: &[u8]) -> Vec<f32> {
+        audio_bytes
+            .chunks_exact(2)
+            .map(|chunk| {
+                let sample = i16::from_le_bytes([chunk[0], chunk[1]]);
+                sample as f32 / i16::MAX as f32
+            })
+            .collect()
+    }
+    
+    /// Convert stereo samples to mono by averaging channels
+    pub fn stereo_to_mono(samples: &[f32]) -> Vec<f32> {
+        samples
+            .chunks_exact(2)
+            .map(|chunk| (chunk[0] + chunk[1]) / 2.0)
+            .collect()
+    }
+    
+    /// Simple downsampling by skipping samples (not ideal but works for basic resampling)
+    pub fn downsample(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+        if from_rate <= to_rate {
+            return samples.to_vec();
+        }
+        
+        let downsample_ratio = from_rate as f32 / to_rate as f32;
+        let target_len = (samples.len() as f32 / downsample_ratio) as usize;
+        let mut resampled = Vec::with_capacity(target_len);
+        
+        for i in 0..target_len {
+            let src_idx = (i as f32 * downsample_ratio) as usize;
+            if src_idx < samples.len() {
+                resampled.push(samples[src_idx]);
+            }
+        }
+        
+        resampled
+    }
+    
+    /// Prepare audio data for Whisper STT (converts to mono 16kHz f32 samples)
+    pub fn prepare_for_whisper(
+        audio_bytes: &[u8], 
+        sample_rate: u32, 
+        channels: u32
+    ) -> Vec<f32> {
+        // Convert bytes to f32 samples
+        let mut samples = bytes_to_f32_samples(audio_bytes);
+        
+        // Convert stereo to mono if needed
+        if channels == 2 {
+            samples = stereo_to_mono(&samples);
+        }
+        
+        // Resample to 16kHz if needed (Whisper's expected rate)
+        if sample_rate != 16000 {
+            samples = downsample(&samples, sample_rate, 16000);
+        }
+        
+        samples
     }
 } 

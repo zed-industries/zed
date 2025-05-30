@@ -2123,10 +2123,16 @@ impl MessageEditor {
     /// Change TTS language
     fn set_tts_language(&mut self, language: String, cx: &mut Context<Self>) {
         if let Some(ref tts_service) = self.tts_service {
-            match tts_service.change_language(language.clone()) {
+            let current_gender = self.tts_config.voice.as_ref()
+                .and_then(|v| v.gender.clone())
+                .unwrap_or(VoiceGender::Male);
+            
+            // Update both language and voice to ensure they're compatible
+            match tts_service.change_voice(language.clone(), current_gender.clone()) {
                 Ok(_) => {
-                    log::info!("🌍 TTS language changed to: {}", language);
-                    self.tts_config.set_language(&language);
+                    log::info!("🌍 TTS language and voice changed to: {} ({:?})", language, current_gender);
+                    // Update local config to match the service
+                    self.tts_config = TtsConfig::with_language_and_gender(&language, current_gender);
                     cx.notify();
                 }
                 Err(e) => {
@@ -2146,7 +2152,7 @@ impl MessageEditor {
             match tts_service.change_voice(current_language.clone(), gender.clone()) {
                 Ok(_) => {
                     log::info!("🎭 TTS voice changed to {:?} for {}", gender, current_language);
-                    // Update the config to reflect the new voice
+                    // Update local config to match the service
                     self.tts_config = TtsConfig::with_language_and_gender(&current_language, gender);
                     cx.notify();
                 }

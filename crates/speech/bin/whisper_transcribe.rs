@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let samples: Vec<f32> = serde_json::from_str(&audio_samples_json)?;
         
         // Initialize Whisper context with optimized parameters for Metal GPU acceleration
-        let mut ctx_params = WhisperContextParameters::default();
+        let ctx_params = WhisperContextParameters::default();
         
         // Enable Metal GPU acceleration for Apple Silicon
         eprintln!("DEBUG: Enabling Metal GPU acceleration for Apple Silicon...");
@@ -43,12 +43,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Set up transcription parameters
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         
-        // Use optimal number of threads for better performance
-        let optimal_threads = std::thread::available_parallelism()
-            .map(|p| (p.get() / 2).max(1).min(8)) // Use half of available cores, max 8
-            .unwrap_or(4); // Default to 4 threads if detection fails
-        params.set_n_threads(optimal_threads as i32);
-        eprintln!("DEBUG: Using {} threads for transcription", optimal_threads);
+        // Set thread count to half of available cores (max 8)
+        let n_threads: i32 = std::thread::available_parallelism()
+            .map(|p| (p.get() / 2).clamp(1, 8)) // Use half of available cores, max 8
+            .unwrap_or(4) as i32; // Default to 4 threads if detection fails
+        params.set_n_threads(n_threads);
+        eprintln!("DEBUG: Using {} threads for transcription", n_threads);
         
         params.set_translate(false);
         

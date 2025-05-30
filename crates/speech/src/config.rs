@@ -1,21 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SpeechConfig {
     pub audio: AudioConfig,
     pub stt: SttConfig,
     pub tts: TtsConfig,
-}
-
-impl Default for SpeechConfig {
-    fn default() -> Self {
-        Self {
-            audio: AudioConfig::default(),
-            stt: SttConfig::default(),
-            tts: TtsConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -165,7 +155,7 @@ impl SttConfig {
         for path_str in &possible_paths {
             let path = if path_str.starts_with('~') {
                 // Expand home directory
-                if let Some(home) = std::env::var("HOME").ok() {
+                if let Ok(home) = std::env::var("HOME") {
                     PathBuf::from(path_str.replace('~', &home))
                 } else {
                     continue;
@@ -238,6 +228,159 @@ impl Default for TtsConfig {
             api_url: None,
             model_path: None,
         }
+    }
+}
+
+impl TtsConfig {
+    /// Create TTS config with a specific language
+    pub fn with_language<L: Into<String>>(language: L) -> Self {
+        let mut config = Self::default();
+        let lang = language.into();
+        
+        // Set a default voice for the language if we have common ones
+        config.voice = Self::get_default_voice_for_language(&lang);
+        
+        config
+    }
+    
+    /// Create TTS config with a specific voice by name and language
+    pub fn with_voice<N: Into<String>, L: Into<String>>(voice_name: N, language: L) -> Self {
+        let mut config = Self::default();
+        let name = voice_name.into();
+        config.voice = Some(Voice {
+            id: name.clone(),
+            name,
+            language: language.into(),
+            gender: None,
+            age: Some(VoiceAge::Adult),
+            style: None,
+        });
+        config
+    }
+    
+    /// Set the language by updating the voice configuration
+    pub fn set_language<L: Into<String>>(&mut self, language: L) {
+        let lang = language.into();
+        
+        if let Some(ref mut voice) = self.voice {
+            voice.language = lang.clone();
+        } else {
+            self.voice = Self::get_default_voice_for_language(&lang);
+        }
+    }
+    
+    /// Get the current language from the voice configuration
+    pub fn get_language(&self) -> Option<String> {
+        self.voice.as_ref().map(|v| v.language.clone())
+    }
+    
+    /// Get a list of supported languages
+    pub fn supported_languages() -> Vec<&'static str> {
+        vec![
+            "en", "en-US", "en-GB", "en-AU", "en-CA",
+            "es", "es-ES", "es-MX", "es-AR",
+            "fr", "fr-FR", "fr-CA",
+            "de", "de-DE", "de-AT",
+            "it", "it-IT",
+            "pt", "pt-PT", "pt-BR",
+            "ru", "ru-RU",
+            "ja", "ja-JP",
+            "zh", "zh-CN", "zh-TW",
+            "ko", "ko-KR",
+            "ar", "ar-SA",
+            "hi", "hi-IN",
+            "th", "th-TH",
+            "vi", "vi-VN",
+            "pl", "pl-PL",
+            "nl", "nl-NL",
+            "sv", "sv-SE",
+            "da", "da-DK",
+            "no", "no-NO",
+            "fi", "fi-FI",
+        ]
+    }
+    
+    /// Get default voice for a language (platform-specific)
+    fn get_default_voice_for_language(language: &str) -> Option<Voice> {
+        let (voice_name, voice_id, gender) = match language.to_lowercase().as_str() {
+            "en" | "en-us" => ("Alex", "Alex", VoiceGender::Male),
+            "en-gb" => ("Daniel", "Daniel", VoiceGender::Male),
+            "en-au" => ("Karen", "Karen", VoiceGender::Female),
+            "es" | "es-es" => ("Jorge", "Jorge", VoiceGender::Male),
+            "es-mx" => ("Juan", "Juan", VoiceGender::Male),
+            "fr" | "fr-fr" => ("Thomas", "Thomas", VoiceGender::Male),
+            "de" | "de-de" => ("Anna", "Anna", VoiceGender::Female),
+            "it" | "it-it" => ("Alice", "Alice", VoiceGender::Female),
+            "pt" | "pt-pt" => ("Joana", "Joana", VoiceGender::Female),
+            "pt-br" => ("Luciana", "Luciana", VoiceGender::Female),
+            "ru" | "ru-ru" => ("Milena", "Milena", VoiceGender::Female),
+            "ja" | "ja-jp" => ("Kyoko", "Kyoko", VoiceGender::Female),
+            "zh" | "zh-cn" => ("Ting-Ting", "Ting-Ting", VoiceGender::Female),
+            "ko" | "ko-kr" => ("Yuna", "Yuna", VoiceGender::Female),
+            _ => ("Alex", "Alex", VoiceGender::Male), // Default fallback
+        };
+        
+        Some(Voice {
+            id: voice_id.to_string(),
+            name: voice_name.to_string(),
+            language: language.to_string(),
+            gender: Some(gender),
+            age: Some(VoiceAge::Adult),
+            style: None,
+        })
+    }
+    
+    /// Create a configuration for a specific language and gender preference
+    pub fn with_language_and_gender<L: Into<String>>(language: L, gender: VoiceGender) -> Self {
+        let mut config = Self::default();
+        let lang = language.into();
+        
+        if let Some(mut voice) = Self::get_default_voice_for_language(&lang) {
+            voice.gender = Some(gender.clone());
+            
+            // Adjust voice name based on gender preference for some languages
+            match (lang.to_lowercase().as_str(), gender) {
+                ("en" | "en-us", VoiceGender::Female) => {
+                    voice.name = "Samantha".to_string();
+                    voice.id = "Samantha".to_string();
+                },
+                ("en" | "en-us", VoiceGender::Male) => {
+                    voice.name = "Alex".to_string();
+                    voice.id = "Alex".to_string();
+                },
+                ("es" | "es-es", VoiceGender::Female) => {
+                    voice.name = "Monica".to_string();
+                    voice.id = "Monica".to_string();
+                },
+                ("fr" | "fr-fr", VoiceGender::Female) => {
+                    voice.name = "Amélie".to_string();
+                    voice.id = "Amélie".to_string();
+                },
+                ("ru" | "ru-ru", VoiceGender::Female | VoiceGender::Male | VoiceGender::Neutral) => {
+                    // Russian only has Milena available on this system
+                    voice.name = "Milena".to_string();
+                    voice.id = "Milena".to_string();
+                    voice.gender = Some(VoiceGender::Female); // Milena is female
+                },
+                ("de" | "de-de", VoiceGender::Female) => {
+                    voice.name = "Anna".to_string();
+                    voice.id = "Anna".to_string();
+                },
+                ("ja" | "ja-jp", VoiceGender::Male) => {
+                    voice.name = "Otoya".to_string();
+                    voice.id = "Otoya".to_string();
+                },
+                ("zh" | "zh-cn", VoiceGender::Male) => {
+                    voice.name = "Yu-shu".to_string();
+                    voice.id = "Yu-shu".to_string();
+                },
+                _ => {} // Keep default
+            }
+            
+            config.voice = Some(voice);
+        }
+        
+        config
     }
 }
 
