@@ -918,11 +918,14 @@ impl TerminalPanel {
         {
             window.focus(&pane.focus_handle(cx));
         } else {
-            self.workspace
-                .update(cx, |workspace, cx| {
-                    workspace.activate_pane_in_direction(direction, window, cx)
-                })
-                .ok();
+            let workspace = self.workspace.clone();
+            window.defer(cx, move |window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.activate_pane_in_direction(direction, window, cx);
+                    })
+                    .ok();
+            });
         }
     }
 
