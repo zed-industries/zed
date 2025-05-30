@@ -1443,8 +1443,8 @@ impl Thread {
         }
 
         // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
-        let header = include_str!("./prompts/stale_files_prompt_header.txt").trim();
-        let content = MessageContent::Text(format!("{header}\n{stale_files}"));
+        const STALE_FILES_HEADER: &str = include_str!("./prompts/stale_files_prompt_header.txt");
+        let content = MessageContent::Text(format!("{STALE_FILES_HEADER}{stale_files}"));
 
         // Insert our message before the last Assistant message.
         // Inserting it to the tail distracts the agent too much
