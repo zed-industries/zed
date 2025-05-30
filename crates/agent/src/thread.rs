@@ -1442,6 +1442,7 @@ impl Thread {
             return;
         }
 
+        // NOTE: Changes to this prompt require a symmetric update in the LLM Worker
         let header = include_str!("./prompts/stale_files_prompt_header.txt").trim();
         let content = MessageContent::Text(format!("{header}\n{stale_files}"));
 
@@ -1461,9 +1462,9 @@ impl Thread {
 
         messages.insert(insert_position, request_message);
 
-        // It makes no sense to cache messages after this one:
-        // the cache will be invalidated after this message is gone.
-        // Move cache marker before this message.
+        // It makes no sense to cache messages after this one because
+        // the cache is invalidated when this message is gone.
+        // Move the cache marker before this message.
         let has_cached_messages_after = messages
             .iter()
             .skip(insert_position + 1)
@@ -3279,7 +3280,6 @@ fn main() {{
 
 These files have changed since the last read:
 - code.rs
-
 ";
         assert_eq!(
             last_message.string_contents(),
