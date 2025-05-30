@@ -26,7 +26,7 @@ impl JsDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
-            &format!("{}/{}", "microsoft", Self::ADAPTER_NPM_NAME),
+            &format!("microsoft/{}", Self::ADAPTER_NPM_NAME),
             true,
             false,
             delegate.http_client(),
@@ -449,6 +449,8 @@ impl DebugAdapter for JsDebugAdapter {
                     delegate.as_ref(),
                 )
                 .await?;
+            } else {
+                delegate.output_to_console(format!("{} debug adapter is up to date", self.name()));
             }
         }
 
