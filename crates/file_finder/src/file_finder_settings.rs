@@ -61,5 +61,6 @@ pub enum FileFinderWidth {
     Medium,
     Large,
     XLarge,
+    XXLarge,
     Full,
 }
