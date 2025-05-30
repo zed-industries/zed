@@ -1440,7 +1440,7 @@ impl Thread {
             };
 
             if stale_message.is_empty() {
-                write!(&mut stale_message, "{}\n", STALE_FILES_HEADER).ok();
+                write!(&mut stale_message, "{}", STALE_FILES_HEADER).ok();
             }
 
             writeln!(&mut stale_message, "- {}", file.path().display()).ok();
