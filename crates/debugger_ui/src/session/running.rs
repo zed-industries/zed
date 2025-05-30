@@ -812,7 +812,7 @@ impl RunningState {
             let request_type = dap_registry
                 .adapter(&adapter)
                 .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                .and_then(|adapter| adapter.validate_config(&config));
+                .and_then(|adapter| adapter.request_kind(&config));
 
             let config_is_valid = request_type.is_ok();
 
@@ -954,7 +954,10 @@ impl RunningState {
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
-                anyhow::bail!("No request or build provided");
+                let Err(e) = request_type else {
+                    unreachable!();
+                };
+                anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
             };
 
             Ok(DebugTaskDefinition {
