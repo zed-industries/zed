@@ -1019,5 +1019,12 @@
     "bindings": {
       "enter": "menu::Confirm"
     }
+  },
+  {
+    "context": "RunModal",
+    "bindings": {
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePreviousItem"
+    }
   }
 ]

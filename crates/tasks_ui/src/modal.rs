@@ -23,7 +23,7 @@ use workspace::{ModalView, Workspace};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
-pub(crate) struct TasksModalDelegate {
+pub struct TasksModalDelegate {
     task_store: Entity<TaskStore>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     task_overrides: Option<TaskOverrides>,
@@ -33,21 +33,21 @@ pub(crate) struct TasksModalDelegate {
     selected_index: usize,
     workspace: WeakEntity<Workspace>,
     prompt: String,
-    task_contexts: TaskContexts,
+    task_contexts: Arc<TaskContexts>,
     placeholder_text: Arc<str>,
 }
 
 /// Task template amendments to do before resolving the context.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TaskOverrides {
+pub struct TaskOverrides {
     /// See [`RevealTarget`].
-    pub(crate) reveal_target: Option<RevealTarget>,
+    pub reveal_target: Option<RevealTarget>,
 }
 
 impl TasksModalDelegate {
     fn new(
         task_store: Entity<TaskStore>,
-        task_contexts: TaskContexts,
+        task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
         workspace: WeakEntity<Workspace>,
     ) -> Self {
@@ -123,15 +123,16 @@ impl TasksModalDelegate {
 }
 
 pub struct TasksModal {
-    picker: Entity<Picker<TasksModalDelegate>>,
+    pub picker: Entity<Picker<TasksModalDelegate>>,
     _subscription: [Subscription; 2],
 }
 
 impl TasksModal {
-    pub(crate) fn new(
+    pub fn new(
         task_store: Entity<TaskStore>,
-        task_contexts: TaskContexts,
+        task_contexts: Arc<TaskContexts>,
         task_overrides: Option<TaskOverrides>,
+        is_modal: bool,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -142,6 +143,7 @@ impl TasksModal {
                 window,
                 cx,
             )
+            .modal(is_modal)
         });
         let _subscription = [
             cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
@@ -157,6 +159,20 @@ impl TasksModal {
             picker,
             _subscription,
         }
+    }
+
+    pub fn task_contexts_loaded(
+        &mut self,
+        task_contexts: Arc<TaskContexts>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.task_contexts = task_contexts;
+            picker.delegate.candidates = None;
+            picker.refresh(window, cx);
+            cx.notify();
+        })
     }
 }
 
@@ -568,6 +584,7 @@ impl PickerDelegate for TasksModalDelegate {
             Vec::new()
         }
     }
+
     fn render_footer(
         &self,
         window: &mut Window,
