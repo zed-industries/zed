@@ -952,7 +952,7 @@ impl ThreadsDatabase {
         let sqlite_path = threads_dir.join("threads.db");
         let mdb_path = threads_dir.join("threads-db.1.mdb");
 
-        let needs_migration_from_heed = mdb_path.exists() && !sqlite_path.exists();
+        let needs_migration_from_heed = mdb_path.exists();
 
         let connection = Connection::open_file(&sqlite_path.to_string_lossy());
 
