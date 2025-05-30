@@ -23,6 +23,7 @@ gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
 lsp.workspace = true
+picker.workspace = true
 project.workspace = true
 serde_json.workspace = true
 settings.workspace = true

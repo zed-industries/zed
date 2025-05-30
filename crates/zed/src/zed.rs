@@ -237,8 +237,7 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
-        let lsp_popover_menu_handle = PopoverMenuHandle::default();
-        let lsp_tool = cx.new(|cx| LspTool::new(lsp_popover_menu_handle, workspace, cx));
+        let lsp_tool = cx.new(|cx| LspTool::new(workspace, window, cx));
 
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
