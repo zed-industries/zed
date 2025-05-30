@@ -1,6 +1,6 @@
-use anyhow::{Context as _, anyhow, bail};
+use anyhow::{Context as _, bail};
 use dap::{
-    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    StartDebuggingRequestArguments,
     adapters::{
         DebugTaskDefinition, DownloadedFileType, download_adapter_from_github,
         latest_github_release,

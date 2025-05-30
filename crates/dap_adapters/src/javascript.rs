@@ -1,9 +1,6 @@
 use adapters::latest_github_release;
-use anyhow::{Context as _, anyhow};
-use dap::{
-    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
-    adapters::DebugTaskDefinition,
-};
+use anyhow::Context as _;
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
