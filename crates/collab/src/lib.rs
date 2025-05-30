@@ -270,7 +270,9 @@ pub struct AppState {
     pub llm_db: Option<Arc<LlmDatabase>>,
     pub livekit_client: Option<Arc<dyn livekit_api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
-    pub stripe_client: Option<Arc<stripe::Client>>,
+    /// This is a real instance of the Stripe client; we're working to replace references to this with the
+    /// [`StripeClient`] trait.
+    pub real_stripe_client: Option<Arc<stripe::Client>>,
     pub stripe_billing: Option<Arc<StripeBilling>>,
     pub executor: Executor,
     pub kinesis_client: Option<::aws_sdk_kinesis::Client>,
@@ -323,7 +325,7 @@ impl AppState {
             stripe_billing: stripe_client
                 .clone()
                 .map(|stripe_client| Arc::new(StripeBilling::new(stripe_client))),
-            stripe_client,
+            real_stripe_client: stripe_client,
             executor,
             kinesis_client: if config.kinesis_access_key.is_some() {
                 build_kinesis_client(&config).await.log_err()

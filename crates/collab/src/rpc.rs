@@ -4024,7 +4024,7 @@ async fn get_llm_api_token(
 
     let stripe_client = session
         .app_state
-        .stripe_client
+        .real_stripe_client
         .as_ref()
         .context("failed to retrieve Stripe client")?;
 

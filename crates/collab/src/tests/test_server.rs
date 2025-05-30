@@ -522,7 +522,7 @@ impl TestServer {
             llm_db: None,
             livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
-            stripe_client: None,
+            real_stripe_client: None,
             stripe_billing: None,
             executor,
             kinesis_client: None,

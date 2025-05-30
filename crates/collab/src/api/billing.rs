@@ -429,7 +429,7 @@ async fn manage_billing_subscription(
         .await?
         .context("user not found")?;
 
-    let Some(stripe_client) = app.stripe_client.clone() else {
+    let Some(stripe_client) = app.real_stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
         Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
@@ -647,7 +647,7 @@ async fn migrate_to_new_billing(
     Extension(app): Extension<Arc<AppState>>,
     extract::Json(body): extract::Json<MigrateToNewBillingBody>,
 ) -> Result<Json<MigrateToNewBillingResponse>> {
-    let Some(stripe_client) = app.stripe_client.clone() else {
+    let Some(stripe_client) = app.real_stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
         Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
@@ -726,7 +726,7 @@ async fn sync_billing_subscription(
     Extension(app): Extension<Arc<AppState>>,
     extract::Json(body): extract::Json<SyncBillingSubscriptionBody>,
 ) -> Result<Json<SyncBillingSubscriptionResponse>> {
-    let Some(stripe_client) = app.stripe_client.clone() else {
+    let Some(stripe_client) = app.real_stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
         Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
@@ -811,7 +811,7 @@ const NUMBER_OF_ALREADY_PROCESSED_PAGES_BEFORE_WE_STOP: usize = 4;
 /// Polls the Stripe events API periodically to reconcile the records in our
 /// database with the data in Stripe.
 pub fn poll_stripe_events_periodically(app: Arc<AppState>, rpc_server: Arc<Server>) {
-    let Some(stripe_client) = app.stripe_client.clone() else {
+    let Some(stripe_client) = app.real_stripe_client.clone() else {
         log::warn!("failed to retrieve Stripe client");
         return;
     };
