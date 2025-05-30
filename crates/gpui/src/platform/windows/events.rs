@@ -1006,7 +1006,8 @@ fn handle_nc_mouse_down_msg(
             click_count,
             first_mouse: false,
         });
-        let handled = !func(input).propagate;
+        let result = func(input.clone());
+        let handled = !result.propagate || result.default_prevented;
         state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
         if handled {

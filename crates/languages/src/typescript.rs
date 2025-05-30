@@ -2,54 +2,407 @@ use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use chrono::{DateTime, Local};
 use collections::HashMap;
-use gpui::AsyncApp;
+use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
-use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{
+    ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::ContextProviderWithTasks;
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
-use smol::{fs, io::BufReader, stream::StreamExt};
+use smol::{fs, io::BufReader, lock::RwLock, stream::StreamExt};
 use std::{
     any::Any,
+    borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, VariableName};
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::archive::extract_zip;
+use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
 
-pub(super) fn typescript_task_context() -> ContextProviderWithTasks {
-    ContextProviderWithTasks::new(TaskTemplates(vec![
-        TaskTemplate {
-            label: "jest file test".to_owned(),
-            command: "npx jest".to_owned(),
-            args: vec![VariableName::File.template_value()],
-            ..TaskTemplate::default()
-        },
-        TaskTemplate {
-            label: "jest test $ZED_SYMBOL".to_owned(),
-            command: "npx jest".to_owned(),
+pub(crate) struct TypeScriptContextProvider {
+    last_package_json: PackageJsonContents,
+}
+
+const TYPESCRIPT_RUNNER_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_RUNNER"));
+const TYPESCRIPT_JEST_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JEST"));
+const TYPESCRIPT_MOCHA_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_MOCHA"));
+
+const TYPESCRIPT_VITEST_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_VITEST"));
+const TYPESCRIPT_JASMINE_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JASMINE"));
+const TYPESCRIPT_BUILD_SCRIPT_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUILD_SCRIPT"));
+const TYPESCRIPT_TEST_SCRIPT_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_TEST_SCRIPT"));
+
+#[derive(Clone, Default)]
+struct PackageJsonContents(Arc<RwLock<HashMap<PathBuf, PackageJson>>>);
+
+struct PackageJson {
+    mtime: DateTime<Local>,
+    data: PackageJsonData,
+}
+
+#[derive(Clone, Copy, Default)]
+struct PackageJsonData {
+    jest: bool,
+    mocha: bool,
+    vitest: bool,
+    jasmine: bool,
+    build_script: bool,
+    test_script: bool,
+    runner: Runner,
+}
+
+#[derive(Clone, Copy, Default)]
+enum Runner {
+    #[default]
+    Npm,
+    Npx,
+    Pnpm,
+}
+
+impl PackageJsonData {
+    fn new(package_json: HashMap<String, Value>) -> Self {
+        let mut build_script = false;
+        let mut test_script = false;
+        if let Some(serde_json::Value::Object(scripts)) = package_json.get("scripts") {
+            build_script |= scripts.contains_key("build");
+            test_script |= scripts.contains_key("test");
+        }
+
+        let mut jest = false;
+        let mut mocha = false;
+        let mut vitest = false;
+        let mut jasmine = false;
+        if let Some(serde_json::Value::Object(dependencies)) = package_json.get("devDependencies") {
+            jest |= dependencies.contains_key("jest");
+            mocha |= dependencies.contains_key("mocha");
+            vitest |= dependencies.contains_key("vitest");
+            jasmine |= dependencies.contains_key("jasmine");
+        }
+        if let Some(serde_json::Value::Object(dev_dependencies)) = package_json.get("dependencies")
+        {
+            jest |= dev_dependencies.contains_key("jest");
+            mocha |= dev_dependencies.contains_key("mocha");
+            vitest |= dev_dependencies.contains_key("vitest");
+            jasmine |= dev_dependencies.contains_key("jasmine");
+        }
+
+        let mut runner = Runner::Npm;
+        if which::which("pnpm").is_ok() {
+            runner = Runner::Pnpm;
+        } else if which::which("npx").is_ok() {
+            runner = Runner::Npx;
+        }
+
+        Self {
+            jest,
+            mocha,
+            vitest,
+            jasmine,
+            build_script,
+            test_script,
+            runner,
+        }
+    }
+
+    fn fill_variables(&self, variables: &mut TaskVariables) {
+        let runner = match self.runner {
+            Runner::Npm => "npm",
+            Runner::Npx => "npx",
+            Runner::Pnpm => "pnpm",
+        };
+        variables.insert(TYPESCRIPT_RUNNER_VARIABLE, runner.to_owned());
+
+        if self.jest {
+            variables.insert(TYPESCRIPT_JEST_TASK_VARIABLE, "jest".to_owned());
+        }
+        if self.mocha {
+            variables.insert(TYPESCRIPT_MOCHA_TASK_VARIABLE, "mocha".to_owned());
+        }
+        if self.vitest {
+            variables.insert(TYPESCRIPT_VITEST_TASK_VARIABLE, "vitest".to_owned());
+        }
+        if self.jasmine {
+            variables.insert(TYPESCRIPT_JASMINE_TASK_VARIABLE, "jasmine".to_owned());
+        }
+        if self.build_script {
+            variables.insert(TYPESCRIPT_BUILD_SCRIPT_TASK_VARIABLE, "build".to_owned());
+        }
+        if self.test_script {
+            variables.insert(TYPESCRIPT_TEST_SCRIPT_TASK_VARIABLE, "test".to_owned());
+        }
+    }
+}
+
+impl TypeScriptContextProvider {
+    pub fn new() -> Self {
+        TypeScriptContextProvider {
+            last_package_json: PackageJsonContents::default(),
+        }
+    }
+}
+
+impl ContextProvider for TypeScriptContextProvider {
+    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Option<TaskTemplates> {
+        let mut task_templates = TaskTemplates(Vec::new());
+
+        // Jest tasks
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} file test",
+                TYPESCRIPT_JEST_TASK_VARIABLE.template_value()
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
             args: vec![
-                "--testNamePattern".into(),
+                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
+                VariableName::File.template_value(),
+            ],
+            ..TaskTemplate::default()
+        });
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} test {}",
+                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
+                "--testNamePattern".to_owned(),
                 format!("\"{}\"", VariableName::Symbol.template_value()),
                 VariableName::File.template_value(),
             ],
-            tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
+            tags: vec![
+                "ts-test".to_owned(),
+                "js-test".to_owned(),
+                "tsx-test".to_owned(),
+            ],
             ..TaskTemplate::default()
-        },
-        TaskTemplate {
-            label: "execute selection $ZED_SELECTED_TEXT".to_owned(),
+        });
+
+        // Vitest tasks
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} file test",
+                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value()
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
+                "run".to_owned(),
+                VariableName::File.template_value(),
+            ],
+            ..TaskTemplate::default()
+        });
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} test {}",
+                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
+                "run".to_owned(),
+                "--testNamePattern".to_owned(),
+                format!("\"{}\"", VariableName::Symbol.template_value()),
+                VariableName::File.template_value(),
+            ],
+            tags: vec![
+                "ts-test".to_owned(),
+                "js-test".to_owned(),
+                "tsx-test".to_owned(),
+            ],
+            ..TaskTemplate::default()
+        });
+
+        // Mocha tasks
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} file test",
+                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value()
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
+                VariableName::File.template_value(),
+            ],
+            ..TaskTemplate::default()
+        });
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} test {}",
+                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
+                "--grep".to_owned(),
+                format!("\"{}\"", VariableName::Symbol.template_value()),
+                VariableName::File.template_value(),
+            ],
+            tags: vec![
+                "ts-test".to_owned(),
+                "js-test".to_owned(),
+                "tsx-test".to_owned(),
+            ],
+            ..TaskTemplate::default()
+        });
+
+        // Jasmine tasks
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} file test",
+                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value()
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
+                VariableName::File.template_value(),
+            ],
+            ..TaskTemplate::default()
+        });
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "{} test {}",
+                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
+                VariableName::Symbol.template_value(),
+            ),
+            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+            args: vec![
+                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
+                format!("--filter={}", VariableName::Symbol.template_value()),
+                VariableName::File.template_value(),
+            ],
+            tags: vec![
+                "ts-test".to_owned(),
+                "js-test".to_owned(),
+                "tsx-test".to_owned(),
+            ],
+            ..TaskTemplate::default()
+        });
+
+        for package_json_script in [
+            TYPESCRIPT_TEST_SCRIPT_TASK_VARIABLE,
+            TYPESCRIPT_BUILD_SCRIPT_TASK_VARIABLE,
+        ] {
+            task_templates.0.push(TaskTemplate {
+                label: format!(
+                    "package.json script {}",
+                    package_json_script.template_value()
+                ),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "--prefix".to_owned(),
+                    VariableName::WorktreeRoot.template_value(),
+                    "run".to_owned(),
+                    package_json_script.template_value(),
+                ],
+                tags: vec!["package-script".into()],
+                ..TaskTemplate::default()
+            });
+        }
+
+        task_templates.0.push(TaskTemplate {
+            label: format!(
+                "execute selection {}",
+                VariableName::SelectedText.template_value()
+            ),
             command: "node".to_owned(),
             args: vec![
-                "-e".into(),
+                "-e".to_owned(),
                 format!("\"{}\"", VariableName::SelectedText.template_value()),
             ],
             ..TaskTemplate::default()
-        },
-    ]))
+        });
+
+        Some(task_templates)
+    }
+
+    fn build_context(
+        &self,
+        _variables: &task::TaskVariables,
+        location: ContextLocation<'_>,
+        _project_env: Option<HashMap<String, String>>,
+        _toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &mut App,
+    ) -> Task<Result<task::TaskVariables>> {
+        let Some((fs, worktree_root)) = location.fs.zip(location.worktree_root) else {
+            return Task::ready(Ok(task::TaskVariables::default()));
+        };
+
+        let package_json_contents = self.last_package_json.clone();
+        cx.background_spawn(async move {
+            let variables = package_json_variables(fs, worktree_root, package_json_contents)
+                .await
+                .context("package.json context retrieval")
+                .log_err()
+                .unwrap_or_else(task::TaskVariables::default);
+            Ok(variables)
+        })
+    }
+}
+
+async fn package_json_variables(
+    fs: Arc<dyn Fs>,
+    worktree_root: PathBuf,
+    package_json_contents: PackageJsonContents,
+) -> anyhow::Result<task::TaskVariables> {
+    let package_json_path = worktree_root.join("package.json");
+    let metadata = fs
+        .metadata(&package_json_path)
+        .await
+        .with_context(|| format!("getting metadata for {package_json_path:?}"))?
+        .with_context(|| format!("missing FS metadata for {package_json_path:?}"))?;
+    let mtime = DateTime::<Local>::from(metadata.mtime.timestamp_for_user());
+    let existing_data = {
+        let contents = package_json_contents.0.read().await;
+        contents
+            .get(&package_json_path)
+            .filter(|package_json| package_json.mtime == mtime)
+            .map(|package_json| package_json.data)
+    };
+
+    let mut variables = TaskVariables::default();
+    if let Some(existing_data) = existing_data {
+        existing_data.fill_variables(&mut variables);
+    } else {
+        let package_json_string = fs
+            .load(&package_json_path)
+            .await
+            .with_context(|| format!("loading package.json from {package_json_path:?}"))?;
+        let package_json: HashMap<String, serde_json::Value> =
+            serde_json::from_str(&package_json_string)
+                .with_context(|| format!("parsing package.json from {package_json_path:?}"))?;
+        let new_data = PackageJsonData::new(package_json);
+        new_data.fill_variables(&mut variables);
+        {
+            let mut contents = package_json_contents.0.write().await;
+            contents.insert(
+                package_json_path,
+                PackageJson {
+                    mtime,
+                    data: new_data,
+                },
+            );
+        }
+    }
+
+    Ok(variables)
 }
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
@@ -373,81 +726,55 @@ impl LspAdapter for EsLintLspAdapter {
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
-
-        let eslint_user_settings = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
-        })?;
-
-        let mut code_action_on_save = json!({
-            // We enable this, but without also configuring `code_actions_on_format`
-            // in the Zed configuration, it doesn't have an effect.
-            "enable": true,
-        });
-
-        if let Some(code_action_settings) = eslint_user_settings
-            .get("codeActionOnSave")
-            .and_then(|settings| settings.as_object())
-        {
-            if let Some(enable) = code_action_settings.get("enable") {
-                code_action_on_save["enable"] = enable.clone();
-            }
-            if let Some(mode) = code_action_settings.get("mode") {
-                code_action_on_save["mode"] = mode.clone();
-            }
-            if let Some(rules) = code_action_settings.get("rules") {
-                code_action_on_save["rules"] = rules.clone();
-            }
-        }
-
-        let working_directory = eslint_user_settings
-            .get("workingDirectory")
-            .cloned()
-            .unwrap_or_else(|| json!({"mode": "auto"}));
-
-        let problems = eslint_user_settings
-            .get("problems")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-
-        let rules_customizations = eslint_user_settings
-            .get("rulesCustomizations")
-            .cloned()
-            .unwrap_or_else(|| json!([]));
-
-        let node_path = eslint_user_settings.get("nodePath").unwrap_or(&Value::Null);
         let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
             .iter()
             .any(|file| workspace_root.join(file).is_file());
 
+        let mut default_workspace_configuration = json!({
+            "validate": "on",
+            "rulesCustomizations": [],
+            "run": "onType",
+            "nodePath": null,
+            "workingDirectory": {
+                "mode": "auto"
+            },
+            "workspaceFolder": {
+                "uri": workspace_root,
+                "name": workspace_root.file_name()
+                    .unwrap_or(workspace_root.as_os_str())
+                    .to_string_lossy(),
+            },
+            "problems": {},
+            "codeActionOnSave": {
+                // We enable this, but without also configuring code_actions_on_format
+                // in the Zed configuration, it doesn't have an effect.
+                "enable": true,
+            },
+            "codeAction": {
+                "disableRuleComment": {
+                    "enable": true,
+                    "location": "separateLine",
+                },
+                "showDocumentation": {
+                    "enable": true
+                }
+            },
+            "experimental": {
+                "useFlatConfig": use_flat_config,
+            },
+        });
+
+        let override_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = override_options {
+            merge_json_value_into(override_options, &mut default_workspace_configuration);
+        }
+
         Ok(json!({
-            "": {
-                "validate": "on",
-                "rulesCustomizations": rules_customizations,
-                "run": "onType",
-                "nodePath": node_path,
-                "workingDirectory": working_directory,
-                "workspaceFolder": {
-                    "uri": workspace_root,
-                    "name": workspace_root.file_name()
-                        .unwrap_or(workspace_root.as_os_str()),
-                },
-                "problems": problems,
-                "codeActionOnSave": code_action_on_save,
-                "codeAction": {
-                    "disableRuleComment": {
-                        "enable": true,
-                        "location": "separateLine",
-                    },
-                    "showDocumentation": {
-                        "enable": true
-                    }
-                },
-                "experimental": {
-                    "useFlatConfig": use_flat_config,
-                },
-            }
+            "": default_workspace_configuration
         }))
     }
 
@@ -514,14 +841,11 @@ impl LspAdapter for EsLintLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, response.body_mut())
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             }
 
@@ -623,7 +947,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline
                 .items

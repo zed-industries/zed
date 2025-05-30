@@ -905,7 +905,15 @@ impl Client {
                         }
 
                         futures::select_biased! {
-                            result = self.set_connection(conn, cx).fuse() => ConnectionResult::Result(result.context("client auth and connect")),
+                            result = self.set_connection(conn, cx).fuse() => {
+                                match result.context("client auth and connect") {
+                                    Ok(()) => ConnectionResult::Result(Ok(())),
+                                    Err(err) => {
+                                        self.set_status(Status::ConnectionError, cx);
+                                        ConnectionResult::Result(Err(err))
+                                    },
+                                }
+                            },
                             _ = timeout => {
                                 self.set_status(Status::ConnectionError, cx);
                                 ConnectionResult::Timeout
@@ -1842,7 +1850,7 @@ mod tests {
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
             move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
-                match entity.update(&mut cx, |entity, _| entity.id).unwrap() {
+                match entity.read_with(&mut cx, |entity, _| entity.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),
