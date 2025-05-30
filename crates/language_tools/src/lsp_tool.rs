@@ -264,7 +264,6 @@ impl LspTool {
                     dbg!((language_server_id, name, update));
                     true
                 }
-                // TODO kb move custom r-a status thing here too
                 _ => false,
             };
 

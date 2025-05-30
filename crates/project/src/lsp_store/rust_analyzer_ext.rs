@@ -1,12 +1,10 @@
 use ::serde::{Deserialize, Serialize};
 use anyhow::Context as _;
-use gpui::{App, Entity, PromptLevel, Task, WeakEntity};
+use gpui::{App, Entity, Task, WeakEntity};
 use lsp::LanguageServer;
 use rpc::proto;
 
-use crate::{
-    LanguageServerPromptRequest, LspStore, LspStoreEvent, Project, ProjectPath, lsp_store,
-};
+use crate::{LspStore, LspStoreEvent, Project, ProjectPath, lsp_store};
 
 pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
@@ -45,38 +43,47 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
 
     language_server
         .on_notification::<ServerStatus, _>({
-            let name = name.to_string();
+            let name = name.clone();
             move |params, cx| {
-                let name = name.to_string();
+                let name = name.clone();
                 if let Some(ref message) = params.message {
                     let message = message.trim();
                     if !message.is_empty() {
                         let formatted_message = format!(
                             "Language server {name} (id {server_id}) status update: {message}"
                         );
-                        match params.health {
-                            ServerHealthStatus::Ok => log::info!("{formatted_message}"),
-                            ServerHealthStatus::Warning => log::warn!("{formatted_message}"),
+                        let status = match params.health {
+                            ServerHealthStatus::Ok => {
+                                log::info!("{formatted_message}");
+                                proto::status_update::Status::Ok
+                            }
+                            ServerHealthStatus::Warning => {
+                                log::warn!("{formatted_message}");
+                                proto::status_update::Status::Warning
+                            }
                             ServerHealthStatus::Error => {
                                 log::error!("{formatted_message}");
-                                let (tx, _rx) = smol::channel::bounded(1);
-                                let request = LanguageServerPromptRequest {
-                                    level: PromptLevel::Critical,
-                                    message: params.message.unwrap_or_default(),
-                                    actions: Vec::new(),
-                                    response_channel: tx,
-                                    lsp_name: name.clone(),
-                                };
-                                lsp_store
-                                    .update(cx, |_, cx| {
-                                        cx.emit(LspStoreEvent::LanguageServerPrompt(request));
-                                    })
-                                    .ok();
+                                proto::status_update::Status::Error
                             }
                             ServerHealthStatus::Other(status) => {
-                                log::info!("Unknown server health: {status}\n{formatted_message}")
+                                log::info!("Unknown server health: {status}\n{formatted_message}");
+                                proto::status_update::Status::Other
                             }
-                        }
+                        };
+                        lsp_store
+                            .update(cx, |_, cx| {
+                                cx.emit(LspStoreEvent::LanguageServerUpdate {
+                                    language_server_id: server_id,
+                                    name: Some(name),
+                                    message: proto::update_language_server::Variant::StatusUpdate(
+                                        proto::StatusUpdate {
+                                            message: Some(formatted_message),
+                                            status: status as i32,
+                                        },
+                                    ),
+                                });
+                            })
+                            .ok();
                     }
                 }
             }
