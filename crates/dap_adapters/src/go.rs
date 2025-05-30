@@ -414,13 +414,15 @@ impl DebugAdapter for GoDebugAdapter {
         &self,
         delegate: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
-        _user_installed_path: Option<PathBuf>,
+        user_installed_path: Option<PathBuf>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
         let dlv_path = adapter_path.join("dlv");
 
-        let delve_path = if let Some(path) = delegate.which(OsStr::new("dlv")).await {
+        let delve_path = if let Some(path) = user_installed_path {
+            path.to_string_lossy().to_string()
+        } else if let Some(path) = delegate.which(OsStr::new("dlv")).await {
             path.to_string_lossy().to_string()
         } else if delegate.fs().is_file(&dlv_path).await {
             dlv_path.to_string_lossy().to_string()
