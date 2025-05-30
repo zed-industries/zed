@@ -4011,8 +4011,7 @@ impl Window {
         self.platform_window.gpu_specs()
     }
 
-  
-      /// Perform titlebar double-click action.
+    /// Perform titlebar double-click action.
     /// This is MacOS specific.
     pub fn titlebar_double_click(&self) {
         self.platform_window.titlebar_double_click();
