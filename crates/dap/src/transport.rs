@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use task::TcpArgumentsTemplate;
-use util::{ResultExt as _, TryFutureExt};
+use util::{ConnectionResult, ResultExt as _, TryFutureExt};
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -337,29 +337,29 @@ impl TransportDelegate {
         let mut reader = BufReader::new(server_stdout);
 
         let result = loop {
-            let message =
-                Self::receive_server_message(&mut reader, &mut recv_buffer, log_handlers.as_ref())
-                    .await;
-
-            match message {
-                Ok(Message::Response(res)) => {
+            match Self::receive_server_message(&mut reader, &mut recv_buffer, log_handlers.as_ref())
+                .await
+            {
+                ConnectionResult::Timeout => anyhow::bail!("Timed out when connecting to debugger"),
+                ConnectionResult::ConnectionReset => {
+                    log::info!("Debugger closed the connection");
+                    return Ok(());
+                }
+                ConnectionResult::Result(Ok(Message::Response(res))) => {
                     if let Some(tx) = pending_requests.lock().await.remove(&res.request_seq) {
                         if let Err(e) = tx.send(Self::process_response(res)) {
                             log::trace!("Did not send response `{:?}` for a cancelled", e);
                         }
                     } else {
                         client_tx.send(Message::Response(res)).await?;
-                    };
+                    }
                 }
-                Ok(message) => {
-                    client_tx.send(message).await?;
-                }
-                Err(e) => break Err(e),
+                ConnectionResult::Result(Ok(message)) => client_tx.send(message).await?,
+                ConnectionResult::Result(Err(e)) => break Err(e),
             }
         };
 
         drop(client_tx);
-
         log::debug!("Handle adapter output dropped");
 
         result
@@ -420,7 +420,7 @@ impl TransportDelegate {
         reader: &mut BufReader<Stdout>,
         buffer: &mut String,
         log_handlers: Option<&LogHandlers>,
-    ) -> Result<Message>
+    ) -> ConnectionResult<Message>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
@@ -428,48 +428,58 @@ impl TransportDelegate {
         loop {
             buffer.truncate(0);
 
-            if reader
+            match reader
                 .read_line(buffer)
                 .await
-                .with_context(|| "reading a message from server")?
-                == 0
+                .with_context(|| "reading a message from server")
             {
-                anyhow::bail!("debugger reader stream closed, last string output: '{buffer}'");
+                Ok(0) => return ConnectionResult::ConnectionReset,
+                Ok(_) => {}
+                Err(e) => return ConnectionResult::Result(Err(e)),
             };
 
             if buffer == "\r\n" {
                 break;
             }
 
-            let parts = buffer.trim().split_once(": ");
-
-            match parts {
-                Some(("Content-Length", value)) => {
-                    content_length = Some(value.parse().context("invalid content length")?);
+            if let Some(("Content-Length", value)) = buffer.trim().split_once(": ") {
+                match value.parse().context("invalid content length") {
+                    Ok(length) => content_length = Some(length),
+                    Err(e) => return ConnectionResult::Result(Err(e)),
                 }
-                _ => {}
             }
         }
 
-        let content_length = content_length.context("missing content length")?;
+        let content_length = match content_length.context("missing content length") {
+            Ok(length) => length,
+            Err(e) => return ConnectionResult::Result(Err(e)),
+        };
 
         let mut content = vec![0; content_length];
-        reader
+        if let Err(e) = reader
             .read_exact(&mut content)
             .await
-            .with_context(|| "reading after a loop")?;
+            .with_context(|| "reading after a loop")
+        {
+            return ConnectionResult::Result(Err(e));
+        }
 
-        let message = std::str::from_utf8(&content).context("invalid utf8 from server")?;
+        let message_str = match std::str::from_utf8(&content).context("invalid utf8 from server") {
+            Ok(str) => str,
+            Err(e) => return ConnectionResult::Result(Err(e)),
+        };
 
         if let Some(log_handlers) = log_handlers {
             for (kind, log_handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Rpc) {
-                    log_handler(IoKind::StdOut, &message);
+                    log_handler(IoKind::StdOut, message_str);
                 }
             }
         }
 
-        Ok(serde_json::from_str::<Message>(message)?)
+        ConnectionResult::Result(
+            serde_json::from_str::<Message>(message_str).context("deserializing server message"),
+        )
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -783,15 +793,18 @@ impl FakeTransport {
                 let mut buffer = String::new();
 
                 loop {
-                    let message =
-                        TransportDelegate::receive_server_message(&mut reader, &mut buffer, None)
-                            .await;
-
-                    match message {
-                        Err(error) => {
-                            break anyhow::anyhow!(error);
+                    match TransportDelegate::receive_server_message(&mut reader, &mut buffer, None)
+                        .await
+                    {
+                        ConnectionResult::Timeout => {
+                            anyhow::bail!("Timed out when connecting to debugger");
                         }
-                        Ok(message) => {
+                        ConnectionResult::ConnectionReset => {
+                            log::info!("Debugger closed the connection");
+                            break Ok(());
+                        }
+                        ConnectionResult::Result(Err(e)) => break Err(e),
+                        ConnectionResult::Result(Ok(message)) => {
                             match message {
                                 Message::Request(request) => {
                                     // redirect reverse requests to stdout writer/reader
