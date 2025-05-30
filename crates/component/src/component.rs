@@ -9,13 +9,12 @@
 
 mod component_layout;
 
-pub use component_layout::*;
-
 use std::sync::LazyLock;
+
+pub use component_layout::*;
 
 use collections::HashMap;
 use gpui::{AnyElement, App, SharedString, Window};
-use linkme::distributed_slice;
 use parking_lot::RwLock;
 use strum::{Display, EnumString};
 
@@ -24,10 +23,25 @@ pub fn components() -> ComponentRegistry {
 }
 
 pub fn init() {
-    let component_fns: Vec<_> = __ALL_COMPONENTS.iter().cloned().collect();
-    for f in component_fns {
-        f();
+    for f in inventory::iter::<ComponentFn>() {
+        (f.0)();
     }
+}
+
+pub struct ComponentFn(fn());
+
+impl ComponentFn {
+    pub const fn new(f: fn()) -> Self {
+        Self(f)
+    }
+}
+
+inventory::collect!(ComponentFn);
+
+/// Private internals for macros.
+#[doc(hidden)]
+pub mod __private {
+    pub use inventory;
 }
 
 pub fn register_component<T: Component>() {
@@ -45,9 +59,6 @@ pub fn register_component<T: Component>() {
     let mut data = COMPONENT_DATA.write();
     data.components.insert(id, metadata);
 }
-
-#[distributed_slice]
-pub static __ALL_COMPONENTS: [fn()] = [..];
 
 pub static COMPONENT_DATA: LazyLock<RwLock<ComponentRegistry>> =
     LazyLock::new(|| RwLock::new(ComponentRegistry::default()));

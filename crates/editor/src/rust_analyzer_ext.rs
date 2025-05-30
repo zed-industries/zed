@@ -73,7 +73,7 @@ pub fn go_to_parent_module(
         };
 
         let location_links = if let Some((client, project_id)) = upstream_client {
-            let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
 
             let request = proto::LspExtGoToParentModule {
                 project_id,
@@ -95,7 +95,7 @@ pub fn go_to_parent_module(
             .collect::<anyhow::Result<_>>()
             .context("go to parent module via collab")?
         } else {
-            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {
@@ -173,7 +173,7 @@ pub fn expand_macro_recursively(
                 expansion: response.expansion,
             }
         } else {
-            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {
@@ -249,7 +249,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
         };
 
         let docs_urls = if let Some((client, project_id)) = upstream_client {
-            let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id())?;
+            let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id())?;
             let request = proto::LspExtOpenDocs {
                 project_id,
                 buffer_id: buffer_id.to_proto(),
@@ -264,7 +264,7 @@ pub fn open_docs(editor: &mut Editor, _: &OpenDocs, window: &mut Window, cx: &mu
                 local: response.local,
             }
         } else {
-            let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
             let position = trigger_anchor.text_anchor.to_point_utf16(&buffer_snapshot);
             project
                 .update(cx, |project, cx| {

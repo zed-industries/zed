@@ -15,10 +15,10 @@ path = "src/assistant_tools.rs"
 eval = []
 
 [dependencies]
-aho-corasick.workspace = true
+agent_settings.workspace = true
 anyhow.workspace = true
-assistant_settings.workspace = true
 assistant_tool.workspace = true
+async-watch.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true
@@ -35,13 +35,14 @@ indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
-linkme.workspace = true
 log.workspace = true
+lsp.workspace = true
 markdown.workspace = true
 open.workspace = true
 paths.workspace = true
 portable-pty.workspace = true
 project.workspace = true
+prompt_store.workspace = true
 regex.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
@@ -64,6 +65,7 @@ workspace.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
+lsp = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }

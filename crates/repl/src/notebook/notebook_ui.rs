@@ -565,7 +565,7 @@ impl project::ProjectItem for NotebookItem {
         project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         let project = project.clone();
         let fs = project.read(cx).fs().clone();
@@ -575,7 +575,7 @@ impl project::ProjectItem for NotebookItem {
             Some(cx.spawn(async move |cx| {
                 let abs_path = project
                     .read_with(cx, |project, cx| project.absolute_path(&path, cx))?
-                    .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
+                    .with_context(|| format!("finding the absolute path of {path:?}"))?;
 
                 // todo: watch for changes to the file
                 let file_content = fs.load(&abs_path.as_path()).await?;
