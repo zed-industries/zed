@@ -52,6 +52,7 @@ actions!(
         Commit,
         Amend,
         Cancel,
+        Signoff,
         ExpandCommitEditor,
         GenerateCommitMessage,
         Init,
