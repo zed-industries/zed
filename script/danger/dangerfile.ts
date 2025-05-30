@@ -75,23 +75,21 @@ const modifiedPrompts = danger.git.modified_files.filter((file) =>
   PROMPT_PATHS.some((promptPath) => file.includes(promptPath)),
 );
 
-if (!!modifiedPrompts.length) {
-  for (const promptPath of modifiedPrompts) {
-    if (body.includes(PROMPT_CHANGE_ATTESTATION)) {
-      message(
-        [
-          `This PR contains changes to "${promptPath}".`,
-          "The author has attested the LLM Worker works with the changes to this prompt.",
-        ].join("\n"),
-      );
-    } else {
-      fail(
-        [
-          `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
-          "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
-          `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
-        ].join("\n"),
-      );
-    }
+for (const promptPath of modifiedPrompts) {
+  if (body.includes(PROMPT_CHANGE_ATTESTATION)) {
+    message(
+      [
+        `This PR contains changes to "${promptPath}".`,
+        "The author has attested the LLM Worker works with the changes to this prompt.",
+      ].join("\n"),
+    );
+  } else {
+    fail(
+      [
+        `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
+        "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
+        `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
+      ].join("\n"),
+    );
   }
 }
