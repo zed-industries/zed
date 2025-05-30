@@ -1,0 +1,48 @@
+[package]
+name = "uide"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+description = "Unified Intelligent Data Engine - One engine for all AI data types"
+
+[dependencies]
+# Core storage foundation
+rocksdb = { version = "0.21", features = ["multi-threaded-cf"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# Async support
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
+
+# Vector operations
+ndarray = "0.15"
+
+# Utilities
+anyhow = "1.0"
+thiserror = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+
+# Collections and data structures
+dashmap = "5.0"
+indexmap = { version = "2.0", features = ["serde"] }
+
+# Optional vector search (will add Faiss later)
+# faiss = { version = "0.12", optional = true }
+
+[features]
+default = []
+vector-search = [] # Will enable faiss when we add it
+
+[dev-dependencies]
+tempfile = "3.0"
+pretty_assertions = "1.0"
+tracing-subscriber = "0.3"
+
+[lints]
+workspace = true
