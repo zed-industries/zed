@@ -679,7 +679,7 @@ async fn test_collaborating_with_code_actions(
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.toggle_code_actions(
             &ToggleCodeActions {
-                deployed_from_indicator: None,
+                deployed_from: None,
                 quick_launch: false,
             },
             window,
@@ -1740,6 +1740,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
+        .into_response()
         .expect("inlay refresh request failed");
 
     executor.run_until_parked();
@@ -1930,6 +1931,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
     fake_language_server
         .request::<lsp::request::InlayHintRefreshRequest>(())
         .await
+        .into_response()
         .expect("inlay refresh request failed");
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
@@ -2515,7 +2517,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2524,7 +2526,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2548,7 +2550,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2557,7 +2559,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2581,7 +2583,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2590,7 +2592,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2614,7 +2616,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2623,7 +2625,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 

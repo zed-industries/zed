@@ -381,6 +381,7 @@ fn default_lsp_fetch_timeout_ms() -> u64 {
 
 /// The settings for a particular language.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -979,8 +980,8 @@ pub struct InlayHintSettings {
     pub enabled: bool,
     /// Global switch to toggle inline values on and off.
     ///
-    /// Default: false
-    #[serde(default)]
+    /// Default: true
+    #[serde(default = "default_true")]
     pub show_value_hints: bool,
     /// Whether type hints should be shown.
     ///
@@ -1044,6 +1045,15 @@ pub struct LanguageTaskConfig {
     pub variables: HashMap<String, String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Use LSP tasks over Zed language extension ones.
+    /// If no LSP tasks are returned due to error/timeout or regular execution,
+    /// Zed language extension tasks will be used instead.
+    ///
+    /// Other Zed tasks will still be shown:
+    /// * Zed task from either of the task config file
+    /// * Zed task from history (e.g. one-off task was spawned before)
+    #[serde(default = "default_true")]
+    pub prefer_lsp: bool,
 }
 
 impl InlayHintSettings {
@@ -1492,8 +1502,27 @@ impl settings::Settings for AllLanguageSettings {
                 associations.entry(v.into()).or_default().push(k.clone());
             }
         }
+
         // TODO: do we want to merge imported globs per filetype? for now we'll just replace
         current.file_types.extend(associations);
+
+        // cursor global ignore list applies to cursor-tab, so transfer it to edit_predictions.disabled_globs
+        if let Some(disabled_globs) = vscode
+            .read_value("cursor.general.globalCursorIgnoreList")
+            .and_then(|v| v.as_array())
+        {
+            current
+                .edit_predictions
+                .get_or_insert_default()
+                .disabled_globs
+                .get_or_insert_default()
+                .extend(
+                    disabled_globs
+                        .iter()
+                        .filter_map(|glob| glob.as_str())
+                        .map(|s| s.to_string()),
+                );
+        }
     }
 }
 

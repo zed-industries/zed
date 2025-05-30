@@ -163,20 +163,26 @@ impl AskPassSession {
 #[cfg(unix)]
 fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     let zed_path = std::env::current_exe()
-        .context("Failed to figure out current executable path for use in askpass")?
+        .context("Failed to determine current executable path for use in askpass")?
         .to_string_lossy()
+        // see https://github.com/rust-lang/rust/issues/69343
+        .trim_end_matches(" (deleted)")
         .to_string();
 
-    // sanity check on unix systems that the path exists and is executable
-    // todo(windows): implement this check for windows (or just use `is-executable` crate)
-    use std::os::unix::fs::MetadataExt;
-    let metadata = std::fs::metadata(&zed_path)
-        .context("Failed to check metadata of Zed executable path for use in askpass")?;
-    let is_executable = metadata.is_file() && metadata.mode() & 0o111 != 0;
-    anyhow::ensure!(
-        is_executable,
-        "Failed to verify Zed executable path for use in askpass"
-    );
+    // NOTE: this was previously enabled, however, it caused errors when it shouldn't have
+    //       (see https://github.com/zed-industries/zed/issues/29819)
+    //       The zed path failing to execute within the askpass script results in very vague ssh
+    //       authentication failed errors, so this was done to try and surface a better error
+    //
+    // use std::os::unix::fs::MetadataExt;
+    // let metadata = std::fs::metadata(&zed_path)
+    //     .context("Failed to check metadata of Zed executable path for use in askpass")?;
+    // let is_executable = metadata.is_file() && metadata.mode() & 0o111 != 0;
+    // anyhow::ensure!(
+    //     is_executable,
+    //     "Failed to verify Zed executable path for use in askpass"
+    // );
+
     // As of writing, this can only be fail if the path contains a null byte, which shouldn't be possible
     // but shlex has annotated the error as #[non_exhaustive] so we can't make it a compile error if other
     // errors are introduced in the future :(

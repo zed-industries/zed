@@ -16,7 +16,7 @@ We’ll also bill in-month for additional prompts used beyond your plan’s prom
 
 ## Invoice History {#invoice-history}
 
-You can access your invoice history by navigating to [zed.dev/account](https://zed.dev/account) and clicking [button].
+You can access your invoice history by navigating to [zed.dev/account](https://zed.dev/account) and clicking "Manage" on your subscription.
 
 From Stripe’s secure portal, you can download all current and historical invoices.
 

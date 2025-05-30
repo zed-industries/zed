@@ -9,12 +9,13 @@ pub mod migrations;
 pub mod rpc;
 pub mod seed;
 pub mod stripe_billing;
+pub mod stripe_client;
 pub mod user_backfiller;
 
 #[cfg(test)]
 mod tests;
 
-use anyhow::anyhow;
+use anyhow::Context as _;
 use aws_config::{BehaviorVersion, Region};
 use axum::{
     http::{HeaderMap, StatusCode},
@@ -339,7 +340,7 @@ fn build_stripe_client(config: &Config) -> anyhow::Result<stripe::Client> {
     let api_key = config
         .stripe_api_key
         .as_ref()
-        .ok_or_else(|| anyhow!("missing stripe_api_key"))?;
+        .context("missing stripe_api_key")?;
     Ok(stripe::Client::new(api_key))
 }
 
@@ -348,11 +349,11 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
         config
             .blob_store_access_key
             .clone()
-            .ok_or_else(|| anyhow!("missing blob_store_access_key"))?,
+            .context("missing blob_store_access_key")?,
         config
             .blob_store_secret_key
             .clone()
-            .ok_or_else(|| anyhow!("missing blob_store_secret_key"))?,
+            .context("missing blob_store_secret_key")?,
         None,
         None,
         "env",
@@ -363,13 +364,13 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
             config
                 .blob_store_url
                 .as_ref()
-                .ok_or_else(|| anyhow!("missing blob_store_url"))?,
+                .context("missing blob_store_url")?,
         )
         .region(Region::new(
             config
                 .blob_store_region
                 .clone()
-                .ok_or_else(|| anyhow!("missing blob_store_region"))?,
+                .context("missing blob_store_region")?,
         ))
         .credentials_provider(keys)
         .load()
@@ -383,11 +384,11 @@ async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis
         config
             .kinesis_access_key
             .clone()
-            .ok_or_else(|| anyhow!("missing kinesis_access_key"))?,
+            .context("missing kinesis_access_key")?,
         config
             .kinesis_secret_key
             .clone()
-            .ok_or_else(|| anyhow!("missing kinesis_secret_key"))?,
+            .context("missing kinesis_secret_key")?,
         None,
         None,
         "env",
@@ -398,7 +399,7 @@ async fn build_kinesis_client(config: &Config) -> anyhow::Result<aws_sdk_kinesis
             config
                 .kinesis_region
                 .clone()
-                .ok_or_else(|| anyhow!("missing kinesis_region"))?,
+                .context("missing kinesis_region")?,
         ))
         .credentials_provider(keys)
         .load()

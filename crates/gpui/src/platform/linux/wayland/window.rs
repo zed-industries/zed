@@ -29,8 +29,8 @@ use crate::platform::{
 use crate::scene::Scene;
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, RequestFrameOptions, ResizeEdge,
-    ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
+    PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams, px,
     size,
 };
@@ -862,7 +862,7 @@ impl PlatformWindow for WaylandWindow {
         _level: PromptLevel,
         _msg: &str,
         _detail: Option<&str>,
-        _answers: &[&str],
+        _answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
         None
     }

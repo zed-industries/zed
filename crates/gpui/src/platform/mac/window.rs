@@ -3,8 +3,8 @@ use crate::{
     AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
     KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptLevel, RequestFrameOptions, ScaledPixels, Size, Timer,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
+    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ScaledPixels, Size,
+    Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
     platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
@@ -844,6 +844,9 @@ impl PlatformWindow for MacWindow {
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         unsafe {
             let screen = self.0.lock().native_window.screen();
+            if screen.is_null() {
+                return None;
+            }
             let device_description: id = msg_send![screen, deviceDescription];
             let screen_number: id = NSDictionary::valueForKey_(
                 device_description,
@@ -899,7 +902,7 @@ impl PlatformWindow for MacWindow {
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>> {
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:
@@ -923,7 +926,7 @@ impl PlatformWindow for MacWindow {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, label)| **label != "Cancel")
+            .find(|(_, label)| !label.is_cancel())
             .filter(|&(label_index, _)| label_index > 0);
 
         unsafe {
@@ -945,11 +948,19 @@ impl PlatformWindow for MacWindow {
                 .enumerate()
                 .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
             {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
+                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
+
+                if answer.is_cancel() {
+                    // Bind Escape Key to Cancel Button
+                    if let Some(key) = std::char::from_u32(super::events::ESCAPE_KEY as u32) {
+                        let _: () =
+                            msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
+                    }
+                }
             }
             if let Some((ix, answer)) = latest_non_cancel_label {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
+                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
             }
 
@@ -1193,6 +1204,9 @@ impl rwh::HasDisplayHandle for MacWindow {
 fn get_scale_factor(native_window: id) -> f32 {
     let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
+        if screen.is_null() {
+            return 1.0;
+        }
         NSScreen::backingScaleFactor(screen) as f32
     };
 

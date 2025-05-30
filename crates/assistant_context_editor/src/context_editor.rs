@@ -1,5 +1,11 @@
+use crate::{
+    language_model_selector::{
+        LanguageModelSelector, ToggleModelSelector, language_model_selector,
+    },
+    max_mode_tooltip::MaxModeTooltip,
+};
+use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
-use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
     DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs, FileSlashCommand,
@@ -36,11 +42,8 @@ use language_model::{
     LanguageModelImage, LanguageModelProvider, LanguageModelProviderTosView, LanguageModelRegistry,
     Role,
 };
-use language_model_selector::{
-    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
-};
 use multi_buffer::MultiBufferRow;
-use picker::Picker;
+use picker::{Picker, popover_menu::PickerPopoverMenu};
 use project::{Project, Worktree};
 use project::{ProjectPath, lsp_store::LocalLspAdapterDelegate};
 use rope::Point;
@@ -51,6 +54,7 @@ use std::{
     cmp,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -114,7 +118,6 @@ type MessageHeader = MessageMetadata;
 #[derive(Clone)]
 enum AssistError {
     PaymentRequired,
-    MaxMonthlySpendReached,
     Message(SharedString),
 }
 
@@ -235,7 +238,7 @@ impl ContextEditor {
             editor.set_show_breakpoints(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Some(Box::new(completion_provider)));
+            editor.set_completion_provider(Some(Rc::new(completion_provider)));
             editor.set_menu_inline_completions_policy(MenuInlineCompletionsPolicy::Never);
             editor.set_collaboration_hub(Box::new(project.clone()));
 
@@ -280,10 +283,10 @@ impl ContextEditor {
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
             language_model_selector: cx.new(|cx| {
-                LanguageModelSelector::new(
+                language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model.clone()),
@@ -731,9 +734,6 @@ impl ContextEditor {
             }
             ContextEvent::ShowPaymentRequiredError => {
                 self.last_error = Some(AssistError::PaymentRequired);
-            }
-            ContextEvent::ShowMaxMonthlySpendReachedError => {
-                self.last_error = Some(AssistError::MaxMonthlySpendReached);
             }
         }
     }
@@ -1594,7 +1594,7 @@ impl ContextEditor {
         &mut self,
         cx: &mut Context<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
-        let (selection, creases) = self.editor.update(cx, |editor, cx| {
+        let (mut selection, creases) = self.editor.update(cx, |editor, cx| {
             let mut selection = editor.selections.newest_adjusted(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
 
@@ -1652,7 +1652,18 @@ impl ContextEditor {
             } else if message.offset_range.end >= selection.range().start {
                 let range = cmp::max(message.offset_range.start, selection.range().start)
                     ..cmp::min(message.offset_range.end, selection.range().end);
-                if !range.is_empty() {
+                if range.is_empty() {
+                    let snapshot = context.buffer().read(cx).snapshot();
+                    let point = snapshot.offset_to_point(range.start);
+                    selection.start = snapshot.point_to_offset(Point::new(point.row, 0));
+                    selection.end = snapshot.point_to_offset(cmp::min(
+                        Point::new(point.row + 1, 0),
+                        snapshot.max_point(),
+                    ));
+                    for chunk in context.buffer().read(cx).text_for_range(selection.range()) {
+                        text.push_str(chunk);
+                    }
+                } else {
                     for chunk in context.buffer().read(cx).text_for_range(range) {
                         text.push_str(chunk);
                     }
@@ -1860,7 +1871,12 @@ impl ContextEditor {
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        self.context.read(cx).summary_or_default()
+        self.context.read(cx).summary().or_default()
+    }
+
+    pub fn regenerate_summary(&mut self, cx: &mut Context<Self>) {
+        self.context
+            .update(cx, |context, cx| context.summarize(true, cx));
     }
 
     fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -1890,15 +1906,28 @@ impl ContextEditor {
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 let client = this
                                     .workspace
-                                    .update(cx, |workspace, _| workspace.client().clone())
+                                    .read_with(cx, |workspace, _| workspace.client().clone())
                                     .log_err();
 
                                 if let Some(client) = client {
-                                    cx.spawn(async move |this, cx| {
-                                        client.authenticate_and_connect(true, cx).await?;
-                                        this.update(cx, |_, cx| cx.notify())
+                                    cx.spawn(async move |context_editor, cx| {
+                                        match client.authenticate_and_connect(true, cx).await {
+                                            util::ConnectionResult::Timeout => {
+                                                log::error!("Authentication timeout")
+                                            }
+                                            util::ConnectionResult::ConnectionReset => {
+                                                log::error!("Connection reset")
+                                            }
+                                            util::ConnectionResult::Result(r) => {
+                                                if r.log_err().is_some() {
+                                                    context_editor
+                                                        .update(cx, |_, cx| cx.notify())
+                                                        .ok();
+                                                }
+                                            }
+                                        }
                                     })
-                                    .detach_and_log_err(cx)
+                                    .detach()
                                 }
                             })),
                     )
@@ -1982,17 +2011,17 @@ impl ContextEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        ButtonLike::new("send_button")
+        Button::new("send_button", "Send")
+            .label_size(LabelSize::Small)
             .disabled(self.sending_disabled(cx))
             .style(style)
             .when_some(tooltip, |button, tooltip| {
                 button.tooltip(move |_, _| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Send"))
-            .children(
+            .key_binding(
                 KeyBinding::for_action_in(&Assist, &focus_handle, window, cx)
-                    .map(|binding| binding.into_any_element()),
+                    .map(|kb| kb.size(rems_from_px(12.))),
             )
             .on_click(move |_event, window, cx| {
                 focus_handle.dispatch_action(&Assist, window, cx);
@@ -2032,7 +2061,50 @@ impl ContextEditor {
         )
     }
 
-    fn render_language_model_selector(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_max_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let context = self.context().read(cx);
+        let active_model = LanguageModelRegistry::read_global(cx)
+            .default_model()
+            .map(|default| default.model)?;
+        if !active_model.supports_max_mode() {
+            return None;
+        }
+
+        let active_completion_mode = context.completion_mode();
+        let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
+        let icon = if burn_mode_enabled {
+            IconName::ZedBurnModeOn
+        } else {
+            IconName::ZedBurnMode
+        };
+
+        Some(
+            IconButton::new("burn-mode", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .toggle_state(burn_mode_enabled)
+                .selected_icon_color(Color::Error)
+                .on_click(cx.listener(move |this, _event, _window, cx| {
+                    this.context().update(cx, |context, _cx| {
+                        context.set_completion_mode(match active_completion_mode {
+                            CompletionMode::Burn => CompletionMode::Normal,
+                            CompletionMode::Normal => CompletionMode::Burn,
+                        });
+                    });
+                }))
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| MaxModeTooltip::new().selected(burn_mode_enabled))
+                        .into()
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn render_language_model_selector(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let active_model = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.model);
@@ -2042,7 +2114,7 @@ impl ContextEditor {
             None => SharedString::from("No model selected"),
         };
 
-        LanguageModelSelectorPopoverMenu::new(
+        PickerPopoverMenu::new(
             self.language_model_selector.clone(),
             ButtonLike::new("active-model")
                 .style(ButtonStyle::Subtle)
@@ -2070,8 +2142,10 @@ impl ContextEditor {
                 )
             },
             gpui::Corner::BottomLeft,
+            cx,
         )
         .with_handle(self.language_model_selector_menu_handle.clone())
+        .render(window, cx)
     }
 
     fn render_last_error(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -2089,9 +2163,6 @@ impl ContextEditor {
                 .occlude()
                 .child(match last_error {
                     AssistError::PaymentRequired => self.render_payment_required_error(cx),
-                    AssistError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(cx)
-                    }
                     AssistError::Message(error_message) => {
                         self.render_assist_error(error_message, cx)
                     }
@@ -2130,48 +2201,6 @@ impl ContextEditor {
                             cx.notify();
                         },
                     )))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, _window, cx| {
-                            this.last_error = None;
-                            cx.notify();
-                        },
-                    ))),
-            )
-            .into_any()
-    }
-
-    fn render_max_monthly_spend_reached_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
-
-        v_flex()
-            .gap_0p5()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .items_center()
-                    .child(Icon::new(IconName::XCircle).color(Color::Error))
-                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
-            )
-            .child(
-                div()
-                    .id("error-message")
-                    .max_h_24()
-                    .overflow_y_scroll()
-                    .child(Label::new(ERROR_MESSAGE)),
-            )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .child(
-                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
-                            cx.listener(|this, _, _window, cx| {
-                                this.last_error = None;
-                                cx.open_url(&zed_urls::account_url(cx));
-                                cx.notify();
-                            }),
-                        ),
-                    )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
                         |this, _, _window, cx| {
                             this.last_error = None;
@@ -2522,6 +2551,7 @@ impl Render for ContextEditor {
         let provider = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.provider);
+
         let accept_terms = if self.show_accept_terms {
             provider.as_ref().and_then(|provider| {
                 provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
@@ -2531,6 +2561,8 @@ impl Render for ContextEditor {
         };
 
         let language_model_selector = self.language_model_selector_menu_handle.clone();
+        let max_mode_toggle = self.render_max_mode_toggle(cx);
+
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -2570,31 +2602,28 @@ impl Render for ContextEditor {
             })
             .children(self.render_last_error(cx))
             .child(
-                h_flex().w_full().relative().child(
-                    h_flex()
-                        .p_2()
-                        .w_full()
-                        .border_t_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(self.render_inject_context_menu(cx))
-                                .child(ui::Divider::vertical())
-                                .child(
-                                    div()
-                                        .pl_0p5()
-                                        .child(self.render_language_model_selector(cx)),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_end()
-                                .child(self.render_send_button(window, cx)),
-                        ),
-                ),
+                h_flex()
+                    .relative()
+                    .py_2()
+                    .pl_1p5()
+                    .pr_2()
+                    .w_full()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(self.render_inject_context_menu(cx))
+                            .when_some(max_mode_toggle, |this, element| this.child(element)),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(self.render_language_model_selector(window, cx))
+                            .child(self.render_send_button(window, cx)),
+                    ),
             )
     }
 }
@@ -3064,7 +3093,7 @@ fn invoked_slash_command_fold_placeholder(
                 .gap_2()
                 .bg(cx.theme().colors().surface_background)
                 .rounded_sm()
-                .child(Label::new(format!("/{}", command.name.clone())))
+                .child(Label::new(format!("/{}", command.name)))
                 .map(|parent| match &command.status {
                     InvokedSlashCommandStatus::Running(_) => {
                         parent.child(Icon::new(IconName::ArrowCircle).with_animation(
@@ -3233,9 +3262,77 @@ pub fn make_lsp_adapter_delegate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::App;
-    use language::Buffer;
+    use fs::FakeFs;
+    use gpui::{App, TestAppContext, VisualTestContext};
+    use language::{Buffer, LanguageRegistry};
+    use prompt_store::PromptBuilder;
     use unindent::Unindent;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_copy_paste_no_selection(cx: &mut TestAppContext) {
+        cx.update(init_test);
+
+        let fs = FakeFs::new(cx.executor());
+        let registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+        let context = cx.new(|cx| {
+            AssistantContext::local(
+                registry,
+                None,
+                None,
+                prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
+                cx,
+            )
+        });
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+
+        let context_editor = window
+            .update(cx, |_, window, cx| {
+                cx.new(|cx| {
+                    ContextEditor::for_context(
+                        context,
+                        fs,
+                        workspace.downgrade(),
+                        project,
+                        None,
+                        window,
+                        cx,
+                    )
+                })
+            })
+            .unwrap();
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.set_text("abc\ndef\nghi", window, cx);
+                editor.move_to_beginning(&Default::default(), window, cx);
+            })
+        });
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.copy(&Default::default(), window, cx);
+                editor.paste(&Default::default(), window, cx);
+
+                assert_eq!(editor.text(cx), "abc\nabc\ndef\nghi");
+            })
+        });
+
+        context_editor.update_in(cx, |context_editor, window, cx| {
+            context_editor.editor.update(cx, |editor, cx| {
+                editor.cut(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "abc\ndef\nghi");
+
+                editor.paste(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "abc\nabc\ndef\nghi");
+            })
+        });
+    }
 
     #[gpui::test]
     fn test_find_code_blocks(cx: &mut App) {
@@ -3309,5 +3406,18 @@ mod tests {
             let range = find_surrounding_code_block(&snapshot, offset);
             assert_eq!(range, expected, "unexpected result on row {:?}", row);
         }
+    }
+
+    fn init_test(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        prompt_store::init(cx);
+        LanguageModelRegistry::test(cx);
+        cx.set_global(settings_store);
+        language::init(cx);
+        agent_settings::init(cx);
+        Project::init_settings(cx);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        workspace::init_settings(cx);
+        editor::init_settings(cx);
     }
 }

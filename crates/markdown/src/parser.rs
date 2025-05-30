@@ -33,7 +33,7 @@ pub fn parse_markdown(
     let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
         .into_offset_iter()
         .peekable();
-    while let Some((pulldown_event, mut range)) = parser.next() {
+    while let Some((pulldown_event, range)) = parser.next() {
         if within_metadata {
             if let pulldown_cmark::Event::End(pulldown_cmark::TagEnd::MetadataBlock { .. }) =
                 pulldown_event
@@ -303,9 +303,10 @@ pub fn parse_markdown(
                 }
             }
             pulldown_cmark::Event::Code(_) => {
-                range.start += 1;
-                range.end -= 1;
-                events.push((range, MarkdownEvent::Code))
+                let content_range = extract_code_content_range(&text[range.clone()]);
+                let content_range =
+                    content_range.start + range.start..content_range.end + range.start;
+                events.push((content_range, MarkdownEvent::Code))
             }
             pulldown_cmark::Event::Html(_) => events.push((range, MarkdownEvent::Html)),
             pulldown_cmark::Event::InlineHtml(_) => events.push((range, MarkdownEvent::InlineHtml)),
@@ -497,6 +498,27 @@ pub struct CodeBlockMetadata {
     pub line_count: usize,
 }
 
+fn extract_code_content_range(text: &str) -> Range<usize> {
+    let text_len = text.len();
+    if text_len == 0 {
+        return 0..0;
+    }
+
+    let start_ticks = text.chars().take_while(|&c| c == '`').count();
+
+    if start_ticks == 0 || start_ticks > text_len {
+        return 0..text_len;
+    }
+
+    let end_ticks = text.chars().rev().take_while(|&c| c == '`').count();
+
+    if end_ticks != start_ticks || text_len < start_ticks + end_ticks {
+        return 0..text_len;
+    }
+
+    start_ticks..text_len - end_ticks
+}
+
 pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
     let mut range = 0..text.len();
     if text.starts_with("```") {
@@ -509,6 +531,9 @@ pub(crate) fn extract_code_block_content_range(text: &str) -> Range<usize> {
 
     if !range.is_empty() && text.ends_with("```") {
         range.end -= 3;
+    }
+    if range.start > range.end {
+        range.end = range.start;
     }
     range
 }
@@ -677,6 +702,24 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_code_content_range() {
+        let input = "```let x = 5;```";
+        assert_eq!(extract_code_content_range(input), 3..13);
+
+        let input = "``let x = 5;``";
+        assert_eq!(extract_code_content_range(input), 2..12);
+
+        let input = "`let x = 5;`";
+        assert_eq!(extract_code_content_range(input), 1..11);
+
+        let input = "plain text";
+        assert_eq!(extract_code_content_range(input), 0..10);
+
+        let input = "``let x = 5;`";
+        assert_eq!(extract_code_content_range(input), 0..13);
+    }
+
+    #[test]
     fn test_extract_code_block_content_range() {
         let input = "```rust\nlet x = 5;\n```";
         assert_eq!(extract_code_block_content_range(input), 8..19);
@@ -686,6 +729,10 @@ mod tests {
 
         let input = "```python\nprint('hello')\nprint('world')\n```";
         assert_eq!(extract_code_block_content_range(input), 10..40);
+
+        // Malformed input
+        let input = "`````";
+        assert_eq!(extract_code_block_content_range(input), 3..3);
     }
 
     #[test]

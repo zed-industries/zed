@@ -19,13 +19,14 @@ test-support = [
 ]
 
 [dependencies]
+agent_settings.workspace = true
 anyhow.workspace = true
 assistant_context_editor.workspace = true
-assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
+audio.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
@@ -47,12 +48,11 @@ heed.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
 indexed_docs.workspace = true
+inventory.workspace = true
 itertools.workspace = true
 jsonschema.workspace = true
 language.workspace = true
 language_model.workspace = true
-language_model_selector.workspace = true
-linkme.workspace = true
 log.workspace = true
 lsp.workspace = true
 markdown.workspace = true
@@ -77,7 +77,6 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
-smallvec.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
 telemetry.workspace = true
