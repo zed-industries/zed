@@ -1077,7 +1077,7 @@ impl ThreadsDatabase {
             let connection = connection.lock().unwrap();
             let mut select =
                 connection.select_bound::<(), (ThreadId, String, String)>(indoc! {"
-                SELECT id, summary, updated_at FROM threads
+                SELECT id, summary, updated_at FROM threads ORDER BY updated_at DESC
             "})?;
 
             let rows = select(())?;
@@ -1125,21 +1125,8 @@ impl ThreadsDatabase {
     pub fn save_thread(&self, id: ThreadId, thread: SerializedThread) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
-        self.executor.spawn(async move {
-            let data = serde_json::to_string(&thread)?;
-            let summary = thread.summary.to_string();
-            let updated_at = thread.updated_at.to_rfc3339();
-            let data_type = DataType::Zstd;
-            let connection = connection.lock().unwrap();
-
-            let mut insert = connection.exec_bound::<(ThreadId, String, String, DataType, String)>(indoc! {"
-                INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
-            "})?;
-
-            insert((id, summary, updated_at, data_type, data))?;
-
-            Ok(())
-        })
+        self.executor
+            .spawn(async move { Self::save_thread_sync(&connection, id, thread) })
     }
 
     pub fn delete_thread(&self, id: ThreadId) -> Task<Result<()>> {
