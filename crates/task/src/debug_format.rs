@@ -1,12 +1,14 @@
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::FxHashMap;
 use gpui::SharedString;
-use schemars::{JsonSchema, r#gen::SchemaSettings};
+use log as _;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use std::{net::Ipv4Addr, path::Path};
+use util::debug_panic;
 
-use crate::TaskTemplate;
+use crate::{TaskTemplate, adapter_schema::AdapterSchemas};
 
 /// Represents the host information of the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
@@ -93,9 +95,20 @@ pub struct LaunchRequest {
     pub env: FxHashMap<String, String>,
 }
 
+impl LaunchRequest {
+    pub fn env_json(&self) -> serde_json::Value {
+        serde_json::Value::Object(
+            self.env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_owned().into()))
+                .collect::<serde_json::Map<String, serde_json::Value>>(),
+        )
+    }
+}
+
 /// Represents the type that will determine which request to call on the debug adapter
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase", untagged)]
+#[serde(rename_all = "lowercase", tag = "request")]
 pub enum DebugRequest {
     /// Call the `launch` request on the debug adapter
     Launch(LaunchRequest),
@@ -136,9 +149,7 @@ impl DebugRequest {
     }
 
     pub fn from_proto(val: proto::DebugRequest) -> Result<DebugRequest> {
-        let request = val
-            .request
-            .ok_or_else(|| anyhow::anyhow!("Missing debug request"))?;
+        let request = val.request.context("Missing debug request")?;
         match request {
             proto::debug_request::Request::DebugLaunchRequest(proto::DebugLaunchRequest {
                 program,
@@ -173,9 +184,8 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
 pub enum BuildTaskDefinition {
     ByName(SharedString),
     Template {
@@ -185,41 +195,89 @@ pub enum BuildTaskDefinition {
         locator_name: Option<SharedString>,
     },
 }
+
+impl<'de> Deserialize<'de> for BuildTaskDefinition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TemplateHelper {
+            #[serde(default)]
+            label: Option<String>,
+            #[serde(flatten)]
+            rest: serde_json::Value,
+        }
+
+        let value = serde_json::Value::deserialize(deserializer)?;
+
+        if let Ok(name) = serde_json::from_value::<SharedString>(value.clone()) {
+            return Ok(BuildTaskDefinition::ByName(name));
+        }
+
+        let helper: TemplateHelper =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+
+        let mut template_value = helper.rest;
+        if let serde_json::Value::Object(ref mut map) = template_value {
+            map.insert(
+                "label".to_string(),
+                serde_json::to_value(helper.label.unwrap_or_else(|| "debug-build".to_owned()))
+                    .map_err(serde::de::Error::custom)?,
+            );
+        }
+
+        let task_template: TaskTemplate =
+            serde_json::from_value(template_value).map_err(serde::de::Error::custom)?;
+
+        Ok(BuildTaskDefinition::Template {
+            task_template,
+            locator_name: None,
+        })
+    }
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
+pub enum Request {
+    Launch,
+    Attach,
+}
+
+/// This struct represent a user created debug task from the new session modal
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ZedDebugConfig {
+    /// Name of the debug task
+    pub label: SharedString,
+    /// The debug adapter to use
+    pub adapter: SharedString,
+    #[serde(flatten)]
+    pub request: DebugRequest,
+    /// Whether to tell the debug adapter to stop on entry
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_on_entry: Option<bool>,
+}
+
 /// This struct represent a user created debug task
-#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugScenario {
     pub adapter: SharedString,
     /// Name of the debug task
     pub label: SharedString,
     /// A task to run prior to spawning the debuggee.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<BuildTaskDefinition>,
-    #[serde(flatten)]
-    pub request: Option<DebugRequest>,
-    /// Additional initialization arguments to be sent on DAP initialization
-    #[serde(default)]
-    pub initialize_args: Option<serde_json::Value>,
+    /// The main arguments to be sent to the debug adapter
+    #[serde(default, flatten)]
+    pub config: serde_json::Value,
     /// Optional TCP connection information
     ///
     /// If provided, this will be used to connect to the debug adapter instead of
     /// spawning a new process. This is useful for connecting to a debug adapter
     /// that is already running or is started by another process.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tcp_connection: Option<TcpArgumentsTemplate>,
-    /// Whether to tell the debug adapter to stop on entry
-    #[serde(default)]
-    pub stop_on_entry: Option<bool>,
-}
-
-impl DebugScenario {
-    pub fn cwd(&self) -> Option<&Path> {
-        if let Some(DebugRequest::Launch(config)) = &self.request {
-            config.cwd.as_ref().map(Path::new)
-        } else {
-            None
-        }
-    }
 }
 
 /// A group of Debug Tasks defined in a JSON file.
@@ -228,32 +286,128 @@ impl DebugScenario {
 pub struct DebugTaskFile(pub Vec<DebugScenario>);
 
 impl DebugTaskFile {
-    /// Generates JSON schema of Tasks JSON template format.
-    pub fn generate_json_schema() -> serde_json_lenient::Value {
-        let schema = SchemaSettings::draft07()
-            .with(|settings| settings.option_add_null_type = false)
-            .into_generator()
-            .into_root_schema_for::<Self>();
+    pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json_lenient::Value {
+        let build_task_schema = schemars::schema_for!(BuildTaskDefinition);
+        let mut build_task_value =
+            serde_json_lenient::to_value(&build_task_schema).unwrap_or_default();
 
-        serde_json_lenient::to_value(schema).unwrap()
+        if let Some(template_object) = build_task_value
+            .get_mut("anyOf")
+            .and_then(|array| array.as_array_mut())
+            .and_then(|array| array.get_mut(1))
+        {
+            if let Some(properties) = template_object
+                .get_mut("properties")
+                .and_then(|value| value.as_object_mut())
+            {
+                properties.remove("label");
+            }
+
+            if let Some(arr) = template_object
+                .get_mut("required")
+                .and_then(|array| array.as_array_mut())
+            {
+                arr.retain(|v| v.as_str() != Some("label"));
+            }
+        } else {
+            debug_panic!("Task Template schema in debug scenario's needs to be updated");
+        }
+
+        let task_definitions = build_task_value
+            .get("definitions")
+            .cloned()
+            .unwrap_or_default();
+
+        let adapter_conditions = schemas
+            .0
+            .iter()
+            .map(|adapter_schema| {
+                let adapter_name = adapter_schema.adapter.to_string();
+                serde_json::json!({
+                    "if": {
+                        "properties": {
+                            "adapter": { "const": adapter_name }
+                        }
+                    },
+                    "then": adapter_schema.schema
+                })
+            })
+            .collect::<Vec<_>>();
+
+        serde_json_lenient::json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": "Debug Configurations",
+            "description": "Configuration for debug scenarios",
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["adapter", "label"],
+                "properties": {
+                    "adapter": {
+                        "type": "string",
+                        "description": "The name of the debug adapter"
+                    },
+                    "label": {
+                        "type": "string",
+                        "description": "The name of the debug configuration"
+                    },
+                    "build": build_task_value,
+                    "tcp_connection": {
+                        "type": "object",
+                        "description": "Optional TCP connection information for connecting to an already running debug adapter",
+                        "properties": {
+                            "port": {
+                                "type": "integer",
+                                "description": "The port that the debug adapter is listening on (default: auto-find open port)"
+                            },
+                            "host": {
+                                "type": "string",
+                                "pattern": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
+                                "description": "The host that the debug adapter is listening to (default: 127.0.0.1)"
+                            },
+                            "timeout": {
+                                "type": "integer",
+                                "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)"
+                            }
+                        }
+                    }
+                },
+                "allOf": adapter_conditions
+            },
+            "definitions": task_definitions
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{DebugRequest, DebugScenario, LaunchRequest};
+    use crate::DebugScenario;
+    use serde_json::json;
 
     #[test]
-    fn test_can_deserialize_non_attach_task() {
-        let deserialized: DebugRequest =
-            serde_json::from_str(r#"{"program": "cafebabe"}"#).unwrap();
-        assert_eq!(
-            deserialized,
-            DebugRequest::Launch(LaunchRequest {
-                program: "cafebabe".to_owned(),
-                ..Default::default()
-            })
-        );
+    fn test_just_build_args() {
+        let json = r#"{
+            "label": "Build & debug rust",
+            "adapter": "CodeLLDB",
+            "build": {
+                "command": "rust",
+                "args": ["build"]
+            }
+        }"#;
+
+        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        assert!(deserialized.build.is_some());
+        match deserialized.build.as_ref().unwrap() {
+            crate::BuildTaskDefinition::Template { task_template, .. } => {
+                assert_eq!("debug-build", task_template.label);
+                assert_eq!("rust", task_template.command);
+                assert_eq!(vec!["build"], task_template.args);
+            }
+            _ => panic!("Expected Template variant"),
+        }
+        assert_eq!(json!({}), deserialized.config);
+        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
+        assert_eq!("Build & debug rust", deserialized.label.as_ref());
     }
 
     #[test]
@@ -265,7 +419,10 @@ mod tests {
         }"#;
 
         let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
-        assert_eq!(deserialized.request, None);
+
+        assert_eq!(json!({}), deserialized.config);
+        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
+        assert_eq!("Build & debug rust", deserialized.label.as_ref());
     }
 
     #[test]
@@ -273,18 +430,19 @@ mod tests {
         let json = r#"{
             "label": "Launch program",
             "adapter": "CodeLLDB",
+            "request": "launch",
             "program": "target/debug/myapp",
             "args": ["--test"]
         }"#;
 
         let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
-        match deserialized.request {
-            Some(DebugRequest::Launch(launch)) => {
-                assert_eq!(launch.program, "target/debug/myapp");
-                assert_eq!(launch.args, vec!["--test"]);
-            }
-            _ => panic!("Expected Launch request"),
-        }
+
+        assert_eq!(
+            json!({ "request": "launch", "program": "target/debug/myapp", "args": ["--test"] }),
+            deserialized.config
+        );
+        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
+        assert_eq!("Launch program", deserialized.label.as_ref());
     }
 
     #[test]
@@ -292,15 +450,58 @@ mod tests {
         let json = r#"{
             "label": "Attach to process",
             "adapter": "CodeLLDB",
-            "process_id": 1234
+            "process_id": 1234,
+            "request": "attach"
         }"#;
 
         let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
-        match deserialized.request {
-            Some(DebugRequest::Attach(attach)) => {
-                assert_eq!(attach.process_id, Some(1234));
+
+        assert_eq!(
+            json!({ "request": "attach", "process_id": 1234 }),
+            deserialized.config
+        );
+        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
+        assert_eq!("Attach to process", deserialized.label.as_ref());
+    }
+
+    #[test]
+    fn test_build_task_definition_without_label() {
+        use crate::BuildTaskDefinition;
+
+        let json = r#""my_build_task""#;
+        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
+        match deserialized {
+            BuildTaskDefinition::ByName(name) => assert_eq!("my_build_task", name.as_ref()),
+            _ => panic!("Expected ByName variant"),
+        }
+
+        let json = r#"{
+            "command": "cargo",
+            "args": ["build", "--release"]
+        }"#;
+        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
+        match deserialized {
+            BuildTaskDefinition::Template { task_template, .. } => {
+                assert_eq!("debug-build", task_template.label);
+                assert_eq!("cargo", task_template.command);
+                assert_eq!(vec!["build", "--release"], task_template.args);
             }
-            _ => panic!("Expected Attach request"),
+            _ => panic!("Expected Template variant"),
+        }
+
+        let json = r#"{
+            "label": "Build Release",
+            "command": "cargo",
+            "args": ["build", "--release"]
+        }"#;
+        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
+        match deserialized {
+            BuildTaskDefinition::Template { task_template, .. } => {
+                assert_eq!("Build Release", task_template.label);
+                assert_eq!("cargo", task_template.command);
+                assert_eq!(vec!["build", "--release"], task_template.args);
+            }
+            _ => panic!("Expected Template variant"),
         }
     }
 }

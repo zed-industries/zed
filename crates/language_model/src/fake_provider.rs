@@ -107,14 +107,18 @@ impl FakeLanguageModel {
         self.current_completion_txs.lock().len()
     }
 
-    pub fn stream_completion_response(&self, request: &LanguageModelRequest, chunk: String) {
+    pub fn stream_completion_response(
+        &self,
+        request: &LanguageModelRequest,
+        chunk: impl Into<String>,
+    ) {
         let current_completion_txs = self.current_completion_txs.lock();
         let tx = current_completion_txs
             .iter()
             .find(|(req, _)| req == request)
             .map(|(_, tx)| tx)
             .unwrap();
-        tx.unbounded_send(chunk).unwrap();
+        tx.unbounded_send(chunk.into()).unwrap();
     }
 
     pub fn end_completion_stream(&self, request: &LanguageModelRequest) {
@@ -123,7 +127,7 @@ impl FakeLanguageModel {
             .retain(|(req, _)| req != request);
     }
 
-    pub fn stream_last_completion_response(&self, chunk: String) {
+    pub fn stream_last_completion_response(&self, chunk: impl Into<String>) {
         self.stream_completion_response(self.pending_completions().last().unwrap(), chunk);
     }
 
@@ -154,6 +158,10 @@ impl LanguageModel for FakeLanguageModel {
     }
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        false
+    }
+
+    fn supports_images(&self) -> bool {
         false
     }
 

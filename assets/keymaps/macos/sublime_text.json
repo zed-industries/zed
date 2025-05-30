@@ -54,8 +54,6 @@
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
-      "cmd-g": "editor::FindNextMatch",
-      "cmd-shift-g": "editor::FindPreviousMatch",
       "ctrl-right": "editor::MoveToNextSubwordEnd",
       "ctrl-left": "editor::MoveToPreviousSubwordStart",
       "ctrl-shift-right": "editor::SelectToNextSubwordEnd",

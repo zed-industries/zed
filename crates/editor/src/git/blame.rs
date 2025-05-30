@@ -786,7 +786,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id());
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
 
         let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 
@@ -896,7 +896,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id());
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
 
         let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
 

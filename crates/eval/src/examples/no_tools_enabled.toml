@@ -1,0 +1,19 @@
+url = "https://github.com/zed-industries/zed"
+revision = "main"
+require_lsp = false
+prompt = """
+I need to explore the codebase to understand what files are available in the project. What can you tell me about the structure of the codebase?
+
+Please find all uses of the 'find_path' function in the src directory.
+
+Also, can you tell me what the capital of France is? And how does garbage collection work in programming languages?
+"""
+
+profile_name = "minimal"
+
+[thread_assertions]
+no_hallucinated_tool_calls = """The agent should not hallucinate tool calls - for example, by writing markdown code blocks that simulate commands like `find`, `grep`, `ls`, etc. - since no tools are available. However, it is totally fine if the agent describes to the user what should be done, e.g. telling the user \"You can run `find` to...\" etc."""
+
+doesnt_hallucinate_file_paths = """The agent should not make up file paths or pretend to know the structure of the project when tools are not available."""
+
+correctly_answers_general_questions = """The agent should correctly answer general knowledge questions about the capital of France and garbage collection without asking for more context, demonstrating it can still be helpful with areas it knows about."""

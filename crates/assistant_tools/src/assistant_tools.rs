@@ -40,13 +40,12 @@ use crate::find_path_tool::FindPathTool;
 use crate::grep_tool::GrepTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
-use crate::read_file_tool::ReadFileTool;
 use crate::thinking_tool::ThinkingTool;
 
-pub use edit_file_tool::EditFileToolInput;
+pub use edit_file_tool::{EditFileMode, EditFileToolInput};
 pub use find_path_tool::FindPathToolInput;
 pub use open_tool::OpenTool;
-pub use read_file_tool::ReadFileToolInput;
+pub use read_file_tool::{ReadFileTool, ReadFileToolInput};
 pub use terminal_tool::TerminalTool;
 
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
@@ -97,7 +96,7 @@ fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assistant_settings::AssistantSettings;
+    use agent_settings::AgentSettings;
     use client::Client;
     use clock::FakeSystemClock;
     use http_client::FakeHttpClient;
@@ -134,7 +133,7 @@ mod tests {
     #[gpui::test]
     fn test_builtin_tool_schema_compatibility(cx: &mut App) {
         settings::init(cx);
-        AssistantSettings::register(cx);
+        AgentSettings::register(cx);
 
         let client = Client::new(
             Arc::new(FakeSystemClock::new()),

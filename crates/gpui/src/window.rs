@@ -1,3 +1,5 @@
+#[cfg(any(feature = "inspector", debug_assertions))]
+use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Context,
@@ -7,13 +9,13 @@ use crate::{
     KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, size, transparent_black,
+    PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -50,6 +52,7 @@ use uuid::Uuid;
 
 mod prompts;
 
+use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
 pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
@@ -261,15 +264,13 @@ impl FocusHandle {
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
         let ref_count = lock.get(id)?;
-        if ref_count.load(SeqCst) == 0 {
-            None
-        } else {
-            ref_count.fetch_add(1, SeqCst);
-            Some(Self {
-                id,
-                handles: handles.clone(),
-            })
+        if atomic_incr_if_not_zero(ref_count) == 0 {
+            return None;
         }
+        Some(Self {
+            id,
+            handles: handles.clone(),
+        })
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
@@ -411,14 +412,42 @@ pub(crate) struct CursorStyleRequest {
     pub(crate) style: CursorStyle,
 }
 
-/// An identifier for a [Hitbox].
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-pub struct HitboxId(usize);
+#[derive(Default, Eq, PartialEq)]
+pub(crate) struct HitTest {
+    pub(crate) ids: SmallVec<[HitboxId; 8]>,
+    pub(crate) hover_hitbox_count: usize,
+}
+
+/// An identifier for a [Hitbox] which also includes [HitboxBehavior].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct HitboxId(u64);
 
 impl HitboxId {
-    /// Checks if the hitbox with this id is currently hovered.
-    pub fn is_hovered(&self, window: &Window) -> bool {
-        window.mouse_hit_test.0.contains(self)
+    /// Checks if the hitbox with this ID is currently hovered. Except when handling
+    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
+    /// events or paint hover styles.
+    ///
+    /// See [`Hitbox::is_hovered`] for details.
+    pub fn is_hovered(self, window: &Window) -> bool {
+        let hit_test = &window.mouse_hit_test;
+        for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
+            if self == *id {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
+    /// Typically this should only be used when handling `ScrollWheelEvent`, and otherwise
+    /// `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for details about
+    /// this distinction.
+    pub fn should_handle_scroll(self, window: &Window) -> bool {
+        window.mouse_hit_test.ids.contains(&self)
+    }
+
+    fn next(mut self) -> HitboxId {
+        HitboxId(self.0.wrapping_add(1))
     }
 }
 
@@ -433,19 +462,98 @@ pub struct Hitbox {
     pub bounds: Bounds<Pixels>,
     /// The content mask when the hitbox was inserted.
     pub content_mask: ContentMask<Pixels>,
-    /// Whether the hitbox occludes other hitboxes inserted prior.
-    pub opaque: bool,
+    /// Flags that specify hitbox behavior.
+    pub behavior: HitboxBehavior,
 }
 
 impl Hitbox {
-    /// Checks if the hitbox is currently hovered.
+    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent`, this is
+    /// typically what you want when determining whether to handle mouse events or paint hover
+    /// styles.
+    ///
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`) or
+    /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`).
+    ///
+    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
+    /// Concretely, this is due to use-cases like overlays that cause the elements under to be
+    /// non-interactive while still allowing scrolling. More abstractly, this is because
+    /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
+    /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
+    /// container.
     pub fn is_hovered(&self, window: &Window) -> bool {
         self.id.is_hovered(window)
     }
+
+    /// Checks if the hitbox contains the mouse and should handle scroll events. Typically this
+    /// should only be used when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be
+    /// used. See the documentation of `Hitbox::is_hovered` for details about this distinction.
+    ///
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
+    pub fn should_handle_scroll(&self, window: &Window) -> bool {
+        self.id.should_handle_scroll(window)
+    }
 }
 
-#[derive(Default, Eq, PartialEq)]
-pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
+/// How the hitbox affects mouse behavior.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum HitboxBehavior {
+    /// Normal hitbox mouse behavior, doesn't affect mouse handling for other hitboxes.
+    #[default]
+    Normal,
+
+    /// All hitboxes behind this hitbox will be ignored and so will have `hitbox.is_hovered() ==
+    /// false` and `hitbox.should_handle_scroll() == false`. Typically for elements this causes
+    /// skipping of all mouse events, hover styles, and tooltips. This flag is set by
+    /// [`InteractiveElement::occlude`].
+    ///
+    /// For mouse handlers that check those hitboxes, this behaves the same as registering a
+    /// bubble-phase handler for every mouse event type:
+    ///
+    /// ```
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
+    ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+    ///         cx.stop_propagation();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// This has effects beyond event handling - any use of hitbox checking, such as hover
+    /// styles and tooltops. These other behaviors are the main point of this mechanism. An
+    /// alternative might be to not affect mouse event handling - but this would allow
+    /// inconsistent UI where clicks and moves interact with elements that are not considered to
+    /// be hovered.
+    BlockMouse,
+
+    /// All hitboxes behind this hitbox will have `hitbox.is_hovered() == false`, even when
+    /// `hitbox.should_handle_scroll() == true`. Typically for elements this causes all mouse
+    /// interaction except scroll events to be ignored - see the documentation of
+    /// [`Hitbox::is_hovered`] for details. This flag is set by
+    /// [`InteractiveElement::block_mouse_except_scroll`].
+    ///
+    /// For mouse handlers that check those hitboxes, this behaves the same as registering a
+    /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
+    ///
+    /// ```
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
+    ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+    ///         cx.stop_propagation();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
+    /// handled differently than other mouse events. If also blocking these scroll events is
+    /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
+    ///
+    /// This has effects beyond event handling - this affects any use of `is_hovered`, such as
+    /// hover styles and tooltops. These other behaviors are the main point of this mechanism.
+    /// An alternative might be to not affect mouse event handling - but this would allow
+    /// inconsistent UI where clicks and moves interact with elements that are not considered to
+    /// be hovered.
+    BlockMouseExceptScroll,
+}
 
 /// An identifier for a tooltip.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -502,6 +610,10 @@ pub(crate) struct Frame {
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
 }
 
 #[derive(Clone, Default)]
@@ -542,6 +654,12 @@ impl Frame {
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
+
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            next_inspector_instance_ids: FxHashMap::default(),
+
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            inspector_hitboxes: FxHashMap::default(),
         }
     }
 
@@ -557,18 +675,34 @@ impl Frame {
         self.hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.next_inspector_instance_ids.clear();
+            self.inspector_hitboxes.clear();
+        }
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
+        let mut set_hover_hitbox_count = false;
         let mut hit_test = HitTest::default();
         for hitbox in self.hitboxes.iter().rev() {
             let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
             if bounds.contains(&position) {
-                hit_test.0.push(hitbox.id);
-                if hitbox.opaque {
+                hit_test.ids.push(hitbox.id);
+                if !set_hover_hitbox_count
+                    && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
+                {
+                    hit_test.hover_hitbox_count = hit_test.ids.len();
+                    set_hover_hitbox_count = true;
+                }
+                if hitbox.behavior == HitboxBehavior::BlockMouse {
                     break;
                 }
             }
+        }
+        if !set_hover_hitbox_count {
+            hit_test.hover_hitbox_count = hit_test.ids.len();
         }
         hit_test
     }
@@ -620,7 +754,7 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
-    pub(crate) next_hitbox_id: HitboxId,
+    next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -648,6 +782,8 @@ pub struct Window {
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    inspector: Option<Entity<Inspector>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -907,7 +1043,7 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
-            next_hitbox_id: HitboxId::default(),
+            next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -935,6 +1071,8 @@ impl Window {
             prompt: None,
             client_inset: None,
             image_cache_stack: Vec::new(),
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            inspector: None,
         })
     }
 
@@ -957,7 +1095,7 @@ pub(crate) struct DispatchEventResult {
 /// to leave room to support more complex shapes in the future.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
-pub struct ContentMask<P: Clone + Default + Debug> {
+pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
     pub bounds: Bounds<P>,
 }
@@ -1658,9 +1796,30 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Prepaint);
         self.tooltip_bounds.take();
 
+        let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
+        let root_size = {
+            #[cfg(any(feature = "inspector", debug_assertions))]
+            {
+                if self.inspector.is_some() {
+                    let mut size = self.viewport_size;
+                    size.width = (size.width - _inspector_width).max(px(0.0));
+                    size
+                } else {
+                    self.viewport_size
+                }
+            }
+            #[cfg(not(any(feature = "inspector", debug_assertions)))]
+            {
+                self.viewport_size
+            }
+        };
+
         // Layout all root elements.
         let mut root_element = self.root.as_ref().unwrap().clone().into_any();
-        root_element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+        root_element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        let inspector_element = self.prepaint_inspector(_inspector_width, cx);
 
         let mut sorted_deferred_draws =
             (0..self.next_frame.deferred_draws.len()).collect::<SmallVec<[_; 8]>>();
@@ -1672,7 +1831,7 @@ impl Window {
         let mut tooltip_element = None;
         if let Some(prompt) = self.prompt.take() {
             let mut element = prompt.view.any_view().into_any();
-            element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
+            element.prepaint_as_root(Point::default(), root_size.into(), self, cx);
             prompt_element = Some(element);
             self.prompt = Some(prompt);
         } else if let Some(active_drag) = cx.active_drag.take() {
@@ -1691,6 +1850,9 @@ impl Window {
         self.invalidator.set_phase(DrawPhase::Paint);
         root_element.paint(self, cx);
 
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.paint_inspector(inspector_element, cx);
+
         self.paint_deferred_draws(&sorted_deferred_draws, cx);
 
         if let Some(mut prompt_element) = prompt_element {
@@ -1700,6 +1862,9 @@ impl Window {
         } else if let Some(mut tooltip_element) = tooltip_element {
             tooltip_element.paint(self, cx);
         }
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        self.paint_inspector_hitbox(cx);
     }
 
     fn prepaint_tooltip(&mut self, cx: &mut App) -> Option<AnyElement> {
@@ -2100,14 +2265,14 @@ impl Window {
         let (task, is_first) = cx.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
-                let entity = self.current_view();
+                let entity_id = self.current_view();
                 self.spawn(cx, {
                     let task = task.clone();
                     async move |cx| {
                         task.await;
 
                         cx.on_next_frame(move |_, cx| {
-                            cx.notify(entity);
+                            cx.notify(entity_id);
                         });
                     }
                 })
@@ -2821,17 +2986,17 @@ impl Window {
     /// to determine whether the inserted hitbox was the topmost.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = self.content_mask();
-        let id = self.next_hitbox_id;
-        self.next_hitbox_id.0 += 1;
+        let mut id = self.next_hitbox_id;
+        self.next_hitbox_id = self.next_hitbox_id.next();
         let hitbox = Hitbox {
             id,
             bounds,
             content_mask,
-            opaque,
+            behavior,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
@@ -3198,6 +3363,13 @@ impl Window {
         if hit_test != self.mouse_hit_test {
             self.mouse_hit_test = hit_test;
             self.reset_cursor_style(cx);
+        }
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        if self.is_inspector_picking(cx) {
+            self.handle_inspector_mouse_event(event, cx);
+            // When inspector is picking, all other mouse handling is skipped.
+            return;
         }
 
         let mut mouse_listeners = mem::take(&mut self.rendered_frame.mouse_listeners);
@@ -3649,28 +3821,36 @@ impl Window {
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
-    pub fn prompt(
+    pub fn prompt<T>(
         &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[T],
         cx: &mut App,
-    ) -> oneshot::Receiver<usize> {
+    ) -> oneshot::Receiver<usize>
+    where
+        T: Clone + Into<PromptButton>,
+    {
         let prompt_builder = cx.prompt_builder.take();
         let Some(prompt_builder) = prompt_builder else {
             unreachable!("Re-entrant window prompting is not supported by GPUI");
         };
 
+        let answers = answers
+            .iter()
+            .map(|answer| answer.clone().into())
+            .collect::<Vec<_>>();
+
         let receiver = match &prompt_builder {
             PromptBuilder::Default => self
                 .platform_window
-                .prompt(level, message, detail, answers)
+                .prompt(level, message, detail, &answers)
                 .unwrap_or_else(|| {
-                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
                 }),
             PromptBuilder::Custom(_) => {
-                self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
+                self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
             }
         };
 
@@ -3685,7 +3865,7 @@ impl Window {
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
         cx: &mut App,
     ) -> oneshot::Receiver<usize> {
         let (sender, receiver) = oneshot::channel();
@@ -3830,6 +4010,203 @@ impl Window {
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
     }
+
+    /// Perform titlebar double-click action.
+    /// This is MacOS specific.
+    pub fn titlebar_double_click(&self) {
+        self.platform_window.titlebar_double_click();
+    }
+
+    /// Toggles the inspector mode on this window.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn toggle_inspector(&mut self, cx: &mut App) {
+        self.inspector = match self.inspector {
+            None => Some(cx.new(|_| Inspector::new())),
+            Some(_) => None,
+        };
+        self.refresh();
+    }
+
+    /// Returns true if the window is in inspector mode.
+    pub fn is_inspector_picking(&self, _cx: &App) -> bool {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            if let Some(inspector) = &self.inspector {
+                return inspector.read(_cx).is_picking();
+            }
+        }
+        false
+    }
+
+    /// Executes the provided function with mutable access to an inspector state.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn with_inspector_state<T: 'static, R>(
+        &mut self,
+        _inspector_id: Option<&crate::InspectorElementId>,
+        cx: &mut App,
+        f: impl FnOnce(&mut Option<T>, &mut Self) -> R,
+    ) -> R {
+        if let Some(inspector_id) = _inspector_id {
+            if let Some(inspector) = &self.inspector {
+                let inspector = inspector.clone();
+                let active_element_id = inspector.read(cx).active_element_id();
+                if Some(inspector_id) == active_element_id {
+                    return inspector.update(cx, |inspector, _cx| {
+                        inspector.with_active_element_state(self, f)
+                    });
+                }
+            }
+        }
+        f(&mut None, self)
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) fn build_inspector_element_id(
+        &mut self,
+        path: crate::InspectorElementPath,
+    ) -> crate::InspectorElementId {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        let path = Rc::new(path);
+        let next_instance_id = self
+            .next_frame
+            .next_inspector_instance_ids
+            .entry(path.clone())
+            .or_insert(0);
+        let instance_id = *next_instance_id;
+        *next_instance_id += 1;
+        crate::InspectorElementId { path, instance_id }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn prepaint_inspector(&mut self, inspector_width: Pixels, cx: &mut App) -> Option<AnyElement> {
+        if let Some(inspector) = self.inspector.take() {
+            let mut inspector_element = AnyView::from(inspector.clone()).into_any_element();
+            inspector_element.prepaint_as_root(
+                point(self.viewport_size.width - inspector_width, px(0.0)),
+                size(inspector_width, self.viewport_size.height).into(),
+                self,
+                cx,
+            );
+            self.inspector = Some(inspector);
+            Some(inspector_element)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn paint_inspector(&mut self, mut inspector_element: Option<AnyElement>, cx: &mut App) {
+        if let Some(mut inspector_element) = inspector_element {
+            inspector_element.paint(self, cx);
+        };
+    }
+
+    /// Registers a hitbox that can be used for inspector picking mode, allowing users to select and
+    /// inspect UI elements by clicking on them.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub fn insert_inspector_hitbox(
+        &mut self,
+        hitbox_id: HitboxId,
+        inspector_id: Option<&crate::InspectorElementId>,
+        cx: &App,
+    ) {
+        self.invalidator.debug_assert_paint_or_prepaint();
+        if !self.is_inspector_picking(cx) {
+            return;
+        }
+        if let Some(inspector_id) = inspector_id {
+            self.next_frame
+                .inspector_hitboxes
+                .insert(hitbox_id, inspector_id.clone());
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn paint_inspector_hitbox(&mut self, cx: &App) {
+        if let Some(inspector) = self.inspector.as_ref() {
+            let inspector = inspector.read(cx);
+            if let Some((hitbox_id, _)) = self.hovered_inspector_hitbox(inspector, &self.next_frame)
+            {
+                if let Some(hitbox) = self
+                    .next_frame
+                    .hitboxes
+                    .iter()
+                    .find(|hitbox| hitbox.id == hitbox_id)
+                {
+                    self.paint_quad(crate::fill(hitbox.bounds, crate::rgba(0x61afef4d)));
+                }
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn handle_inspector_mouse_event(&mut self, event: &dyn Any, cx: &mut App) {
+        let Some(inspector) = self.inspector.clone() else {
+            return;
+        };
+        if event.downcast_ref::<MouseMoveEvent>().is_some() {
+            inspector.update(cx, |inspector, _cx| {
+                if let Some((_, inspector_id)) =
+                    self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                {
+                    inspector.hover(inspector_id, self);
+                }
+            });
+        } else if event.downcast_ref::<crate::MouseDownEvent>().is_some() {
+            inspector.update(cx, |inspector, _cx| {
+                if let Some((_, inspector_id)) =
+                    self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                {
+                    inspector.select(inspector_id, self);
+                }
+            });
+        } else if let Some(event) = event.downcast_ref::<crate::ScrollWheelEvent>() {
+            // This should be kept in sync with SCROLL_LINES in x11 platform.
+            const SCROLL_LINES: f32 = 3.0;
+            const SCROLL_PIXELS_PER_LAYER: f32 = 36.0;
+            let delta_y = event
+                .delta
+                .pixel_delta(px(SCROLL_PIXELS_PER_LAYER / SCROLL_LINES))
+                .y;
+            if let Some(inspector) = self.inspector.clone() {
+                inspector.update(cx, |inspector, _cx| {
+                    if let Some(depth) = inspector.pick_depth.as_mut() {
+                        *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
+                        let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
+                        if *depth < 0.0 {
+                            *depth = 0.0;
+                        } else if *depth > max_depth {
+                            *depth = max_depth;
+                        }
+                        if let Some((_, inspector_id)) =
+                            self.hovered_inspector_hitbox(inspector, &self.rendered_frame)
+                        {
+                            inspector.set_active_element_id(inspector_id.clone(), self);
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    fn hovered_inspector_hitbox(
+        &self,
+        inspector: &Inspector,
+        frame: &Frame,
+    ) -> Option<(HitboxId, crate::InspectorElementId)> {
+        if let Some(pick_depth) = inspector.pick_depth {
+            let depth = (pick_depth as i64).try_into().unwrap_or(0);
+            let max_skipped = self.mouse_hit_test.ids.len().saturating_sub(1);
+            let skip_count = (depth as usize).min(max_skipped);
+            for hitbox_id in self.mouse_hit_test.ids.iter().skip(skip_count) {
+                if let Some(inspector_id) = frame.inspector_hitboxes.get(hitbox_id) {
+                    return Some((*hitbox_id, inspector_id.clone()));
+                }
+            }
+        }
+        return None;
+    }
 }
 
 // #[derive(Clone, Copy, Eq, PartialEq, Hash)]
@@ -3922,7 +4299,7 @@ impl<V: 'static + Render> WindowHandle<V> {
                     .and_then(|window| window.root.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
-            .ok_or_else(|| anyhow!("window not found"))?
+            .context("window not found")?
             .map_err(|_| anyhow!("the type of the window's root view has changed"))?;
 
         Ok(x.read(cx))
@@ -4069,7 +4446,7 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, u64),
-    /// A path
+    /// A path.
     Path(Arc<std::path::Path>),
 }
 
@@ -4103,7 +4480,7 @@ impl TryInto<SharedString> for ElementId {
         if let ElementId::Name(name) = self {
             Ok(name)
         } else {
-            Err(anyhow!("element id is not string"))
+            anyhow::bail!("element id is not string")
         }
     }
 }

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use std::fs;
 use std::path::Path;
 
@@ -6,8 +6,8 @@ pub fn get_dotenv_vars(current_dir: impl AsRef<Path>) -> Result<Vec<(String, Str
     let current_dir = current_dir.as_ref();
 
     let mut vars = Vec::new();
-    let env_content = fs::read_to_string(current_dir.join(".env.toml"))
-        .map_err(|_| anyhow!("no .env.toml file found"))?;
+    let env_content =
+        fs::read_to_string(current_dir.join(".env.toml")).context("no .env.toml file found")?;
 
     add_vars(env_content, &mut vars)?;
 

@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use collections::HashMap;
 
 use semantic_version::SemanticVersion;
@@ -13,18 +14,12 @@ pub struct IpsFile {
 impl IpsFile {
     pub fn parse(bytes: &[u8]) -> anyhow::Result<IpsFile> {
         let mut split = bytes.splitn(2, |&b| b == b'\n');
-        let header_bytes = split
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No header found"))?;
-        let header: Header = serde_json::from_slice(header_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to parse header: {}", e))?;
+        let header_bytes = split.next().context("No header found")?;
+        let header: Header = serde_json::from_slice(header_bytes).context("parsing header")?;
 
-        let body_bytes = split
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("No body found"))?;
+        let body_bytes = split.next().context("No body found")?;
 
-        let body: Body = serde_json::from_slice(body_bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to parse body: {}", e))?;
+        let body: Body = serde_json::from_slice(body_bytes).context("parsing body")?;
         Ok(IpsFile { header, body })
     }
 

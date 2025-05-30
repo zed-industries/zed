@@ -14,7 +14,7 @@
 //!
 //! You only need to write replacement logic for x-1 to x because you can be certain that, internally, every user will be at x-1, regardless of their on disk state.
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
@@ -144,6 +144,10 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
             migrations::m_2025_05_08::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_05_08,
         ),
+        (
+            migrations::m_2025_05_29::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_05_29,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -237,6 +241,10 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_05_08,
     migrations::m_2025_05_08::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_05_29,
+    migrations::m_2025_05_29::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -782,6 +790,67 @@ mod tests {
                 }
             }
         "#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_preferred_completion_mode_migration() {
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "max",
+                    "enabled": true
+                }
+            }"#,
+            Some(
+                r#"{
+                "agent": {
+                    "preferred_completion_mode": "burn",
+                    "enabled": true
+                }
+            }"#,
+            ),
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "normal",
+                    "enabled": true
+                }
+            }"#,
+            None,
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "burn",
+                    "enabled": true
+                }
+            }"#,
+            None,
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "other_section": {
+                    "preferred_completion_mode": "max"
+                },
+                "agent": {
+                    "preferred_completion_mode": "max"
+                }
+            }"#,
+            Some(
+                r#"{
+                "other_section": {
+                    "preferred_completion_mode": "max"
+                },
+                "agent": {
+                    "preferred_completion_mode": "burn"
+                }
+            }"#,
             ),
         );
     }

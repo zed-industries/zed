@@ -56,6 +56,10 @@ impl Workspace {
     ) {
         let spawn_in_terminal = resolved_task.resolved.clone();
         if !omit_history {
+            if let Some(debugger_provider) = self.debugger_provider.as_ref() {
+                debugger_provider.task_scheduled(cx);
+            }
+
             self.project().update(cx, |project, cx| {
                 if let Some(task_inventory) =
                     project.task_store().read(cx).task_inventory().cloned()
