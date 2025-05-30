@@ -151,6 +151,8 @@ pub enum VariableName {
     File,
     /// A path of the currently opened file (relative to worktree root).
     RelativeFile,
+    /// A path of the currently opened file's directory (relative to worktree root).
+    RelativeDir,
     /// The currently opened filename.
     Filename,
     /// The path to a parent directory of a currently opened file.
@@ -194,6 +196,7 @@ impl FromStr for VariableName {
             "FILE" => Self::File,
             "FILENAME" => Self::Filename,
             "RELATIVE_FILE" => Self::RelativeFile,
+            "RELATIVE_DIR" => Self::RelativeDir,
             "DIRNAME" => Self::Dirname,
             "STEM" => Self::Stem,
             "WORKTREE_ROOT" => Self::WorktreeRoot,
@@ -226,6 +229,7 @@ impl std::fmt::Display for VariableName {
             Self::File => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILE"),
             Self::Filename => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILENAME"),
             Self::RelativeFile => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_FILE"),
+            Self::RelativeDir => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_DIR"),
             Self::Dirname => write!(f, "{ZED_VARIABLE_NAME_PREFIX}DIRNAME"),
             Self::Stem => write!(f, "{ZED_VARIABLE_NAME_PREFIX}STEM"),
             Self::WorktreeRoot => write!(f, "{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT"),

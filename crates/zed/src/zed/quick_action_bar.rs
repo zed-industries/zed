@@ -1,6 +1,6 @@
 mod markdown_preview;
 mod repl_menu;
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
@@ -132,6 +132,46 @@ impl Render for QuickActionBar {
                 },
             )
         });
+
+        let last_run_debug = self
+            .workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .debugger_provider()
+                    .map(|provider| provider.debug_scenario_scheduled_last(cx))
+                    .unwrap_or_default()
+            })
+            .ok()
+            .unwrap_or_default();
+
+        let run_button = if last_run_debug {
+            QuickActionBarButton::new(
+                "debug",
+                IconName::Debug, // TODO: use debug + play icon
+                false,
+                Box::new(debugger_ui::Start),
+                focus_handle.clone(),
+                "Debug",
+                move |_, window, cx| {
+                    window.dispatch_action(Box::new(debugger_ui::Start), cx);
+                },
+            )
+        } else {
+            let action = Box::new(tasks_ui::Spawn::ViaModal {
+                reveal_target: None,
+            });
+            QuickActionBarButton::new(
+                "run",
+                IconName::Play,
+                false,
+                action.boxed_clone(),
+                focus_handle.clone(),
+                "Spawn Task",
+                move |_, window, cx| {
+                    window.dispatch_action(action.boxed_clone(), cx);
+                },
+            )
+        };
 
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
@@ -558,10 +598,10 @@ impl Render for QuickActionBar {
             .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
             .children(search_button)
             .when(
-                AssistantSettings::get_global(cx).enabled
-                    && AssistantSettings::get_global(cx).button,
+                AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,
                 |bar| bar.child(assistant_button),
             )
+            .child(run_button)
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)
             .child(editor_settings_dropdown)

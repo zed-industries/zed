@@ -8,7 +8,7 @@ pub struct FileFinderSettings {
     pub file_icons: bool,
     pub modal_max_width: Option<FileFinderWidth>,
     pub skip_focus_for_active_in_search: bool,
-    pub git_status: bool,
+    pub include_ignored: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -29,6 +29,16 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: true
     pub git_status: Option<bool>,
+    /// Whether to use gitignored files when searching.
+    /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    ///
+    /// Can accept 3 values:
+    /// * `Some(true)`: Use all gitignored files
+    /// * `Some(false)`: Use only the files Zed had indexed
+    /// * `None`: Be smart and search for ignored when called from a gitignored worktree
+    ///
+    /// Default: None
+    pub include_ignored: Option<Option<bool>>,
 }
 
 impl Settings for FileFinderSettings {
@@ -40,9 +50,7 @@ impl Settings for FileFinderSettings {
         sources.json_merge()
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.bool_setting("git.decorations.enabled", &mut current.git_status);
-    }
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]

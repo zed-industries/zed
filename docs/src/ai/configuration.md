@@ -16,7 +16,7 @@ Here's an overview of the supported providers and tool call support:
 | [DeepSeek](#deepseek)                           | 🚫                                                                                                                                                                          |
 | [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
 | [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
-| [LM Studio](#lmstudio)                          | 🚫                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | ✅                                                                                                                                                                          |
 | [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
 | [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
 | [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
@@ -152,8 +152,8 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
 
 ```json
 {
-  "name": "claude-4-sonnet-latest",
-  "display_name": "claude-4-sonnet-thinking",
+  "name": "claude-sonnet-4-latest",
+  "display_name": "claude-sonnet-4-thinking",
   "max_tokens": 200000,
   "mode": {
     "type": "thinking",
@@ -248,7 +248,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### LM Studio {#lmstudio}
 
-> 🚫 Does not support tool use
+> ✅ Supports tool use
 
 1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
 2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
@@ -455,7 +455,7 @@ Where `some-provider` can be any of the following values: `anthropic`, `google`,
 
 ### Default Model {#default-model}
 
-Zed's hosted LLM service sets `claude-4-sonnet-latest` as the default model.
+Zed's hosted LLM service sets `claude-sonnet-4` as the default model.
 However, you can change it either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
 
 ```json
@@ -488,7 +488,7 @@ Example configuration:
     "version": "2",
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-4-sonnet"
+      "model": "claude-sonnet-4"
     },
     "inline_assistant_model": {
       "provider": "anthropic",
@@ -520,7 +520,7 @@ One with Claude 3.7 Sonnet, and one with GPT-4o.
   "agent": {
     "default_model": {
       "provider": "zed.dev",
-      "model": "claude-4-sonnet"
+      "model": "claude-sonnet-4"
     },
     "inline_alternatives": [
       {

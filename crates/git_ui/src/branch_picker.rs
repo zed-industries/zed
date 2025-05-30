@@ -221,6 +221,7 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        let new_branch_name = new_branch_name.to_string().replace(' ', "-");
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
                 repo.create_branch(new_branch_name.to_string())
@@ -325,6 +326,7 @@ impl PickerDelegate for BranchListDelegate {
                             .first()
                             .is_some_and(|entry| entry.branch.name() == query)
                     {
+                        let query = query.replace(' ', "-");
                         matches.push(BranchEntry {
                             branch: Branch {
                                 ref_name: format!("refs/heads/{query}").into(),

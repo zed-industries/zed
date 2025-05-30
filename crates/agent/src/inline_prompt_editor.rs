@@ -100,7 +100,7 @@ impl<T: 'static> Render for PromptEditor<T> {
         v_flex()
             .key_context("PromptEditor")
             .bg(cx.theme().colors().editor_background)
-            .block_mouse_down()
+            .block_mouse_except_scroll()
             .gap_0p5()
             .border_y_1()
             .border_color(cx.theme().status().info_border)

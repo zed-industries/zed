@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, WrappedTextContent,
+    RateLimiter, Role, StopReason,
 };
 use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
@@ -407,11 +407,7 @@ pub fn into_open_ai(
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text)
-                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                            text,
-                            ..
-                        }) => {
+                        LanguageModelToolResultContent::Text(text) => {
                             vec![open_ai::MessagePart::Text {
                                 text: text.to_string(),
                             }]
@@ -864,6 +860,7 @@ mod tests {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: None,
             mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
