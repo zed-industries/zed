@@ -183,7 +183,7 @@ impl Console {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.console.read(cx).read_only(cx) {
-                cx.theme().colors().text_disabled
+                cx.theme().colors().text_muted
             } else {
                 cx.theme().colors().text
             },
