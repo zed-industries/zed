@@ -906,6 +906,7 @@ struct InlineBlamePopover {
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
+    keyboard_grace: Rc<RefCell<bool>>,
 }
 
 /// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
@@ -6178,7 +6179,6 @@ impl Editor {
         let anchor = self.selections.newest_anchor().head();
         let position = self.to_pixel_point(anchor, &snapshot, window);
         if let Some(position) = position {
-            // TODO: Don't hide when mouse is not over popover
             self.show_blame_popover(&blame_entry, position, true, cx);
         }
     }
@@ -6236,6 +6236,7 @@ impl Editor {
                     commit_message: details,
                     markdown,
                 },
+                keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
             });
         }
     }

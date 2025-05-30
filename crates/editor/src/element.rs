@@ -2220,11 +2220,17 @@ impl EditorElement {
                 .and_then(|state| state.popover_bounds)
                 .map_or(false, |bounds| bounds.contains(&mouse_position))
         });
+        let keyboard_grace = self.editor.update(cx, |editor, _| {
+            editor
+                .inline_blame_popover
+                .as_ref()
+                .map_or(false, |state| *state.keyboard_grace.borrow())
+        });
 
         self.editor.update(cx, |editor, cx| {
             if mouse_over_inline_blame || mouse_over_popover {
                 editor.show_blame_popover(&blame_entry, mouse_position, false, cx);
-            } else {
+            } else if !keyboard_grace {
                 editor.hide_blame_popover(cx);
             }
         });
