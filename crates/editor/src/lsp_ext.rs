@@ -181,7 +181,7 @@ pub fn lsp_tasks(
                         lsp_tasks
                             .entry(source_kind)
                             .or_insert_with(Vec::new)
-                            .extend(new_lsp_tasks.drain(..));
+                            .append(&mut new_lsp_tasks);
                     }
                 }
             }
