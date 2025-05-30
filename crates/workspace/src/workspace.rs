@@ -161,6 +161,8 @@ pub trait DebuggerProvider {
     fn task_scheduled(&self, cx: &mut App);
     fn debug_scenario_scheduled(&self, cx: &mut App);
     fn debug_scenario_scheduled_last(&self, cx: &App) -> bool;
+
+    fn have_stopped_session(&self, cx: &App) -> bool;
 }
 
 actions!(
@@ -5794,6 +5796,14 @@ impl Render for Workspace {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
+        if self
+            .debugger_provider
+            .as_ref()
+            .is_some_and(|debugger_provider| debugger_provider.have_stopped_session(cx))
+        {
+            context.add("debugger_stopped");
+        }
+
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();

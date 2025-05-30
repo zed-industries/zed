@@ -32,7 +32,6 @@
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
       "alt-f4": "debugger::RerunLastSession",
-      "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::Restart",
       "f6": "debugger::Pause",
@@ -588,6 +587,12 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
+    }
+  },
+  {
+    "context": "Workspace && debugger_stopped",
+    "bindings": {
+      "f5": "debugger::Continue"
     }
   },
   {
