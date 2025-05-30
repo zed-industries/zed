@@ -950,6 +950,7 @@ struct InlineBlamePopover {
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
+    keyboard_grace: bool,
 }
 
 enum SelectionDragState {
@@ -6545,7 +6546,6 @@ impl Editor {
         let anchor = self.selections.newest_anchor().head();
         let position = self.to_pixel_point(anchor, &snapshot, window);
         if let Some(position) = position {
-            // TODO: Don't hide when mouse is not over popover
             self.show_blame_popover(&blame_entry, position, true, cx);
         }
     }
@@ -6596,6 +6596,7 @@ impl Editor {
                                 commit_message: details,
                                 markdown,
                             },
+                            keyboard_grace: ignore_timeout,
                         });
                         cx.notify();
                     })
