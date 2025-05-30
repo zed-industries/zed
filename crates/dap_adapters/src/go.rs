@@ -77,7 +77,7 @@ impl GoDebugAdapter {
         let path = paths::debug_adapters_dir()
             .join("delve-shim-dap")
             .join(format!("delve-shim-dap{}", asset.tag_name))
-            .join("delve-shim-dap");
+            .join(format!("delve-shim-dap{}", std::env::consts::EXE_SUFFIX));
         self.shim_path.set(path.clone()).ok();
 
         Ok(path)
