@@ -298,6 +298,7 @@ pub async fn download_adapter_from_github(
         response.status().to_string()
     );
 
+    delegate.output_to_console("Download complete".to_owned());
     match file_type {
         DownloadedFileType::GzipTar => {
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));

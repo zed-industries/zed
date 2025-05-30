@@ -936,6 +936,8 @@ pub struct Editor {
     select_next_state: Option<SelectNextState>,
     select_prev_state: Option<SelectNextState>,
     selection_history: SelectionHistory,
+    defer_selection_effects: bool,
+    deferred_selection_effects_state: Option<DeferredSelectionEffectsState>,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
     select_syntax_node_history: SelectSyntaxNodeHistory,
@@ -1193,6 +1195,14 @@ impl Default for SelectionHistoryMode {
     fn default() -> Self {
         Self::Normal
     }
+}
+
+struct DeferredSelectionEffectsState {
+    changed: bool,
+    show_completions: bool,
+    autoscroll: Option<Autoscroll>,
+    old_cursor_position: Anchor,
+    history_entry: SelectionHistoryEntry,
 }
 
 #[derive(Default)]
@@ -1670,6 +1680,13 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
+                        project::Event::LanguageServerAdded(..)
+                        | project::Event::LanguageServerRemoved(..) => {
+                            if editor.tasks_update_task.is_none() {
+                                editor.tasks_update_task =
+                                    Some(editor.refresh_runnables(window, cx));
+                            }
+                        }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
@@ -1784,6 +1801,8 @@ impl Editor {
             select_next_state: None,
             select_prev_state: None,
             selection_history: SelectionHistory::default(),
+            defer_selection_effects: false,
+            deferred_selection_effects_state: None,
             autoclose_regions: Vec::new(),
             snippet_stack: InvalidationStack::default(),
             select_syntax_node_history: SelectSyntaxNodeHistory::default(),
@@ -2947,6 +2966,9 @@ impl Editor {
         Subscription::join(other_subscription, this_subscription)
     }
 
+    /// Changes selections using the provided mutation function. Changes to `self.selections` occur
+    /// immediately, but when run within `transact` or `with_selection_effects_deferred` other
+    /// effects of selection change occur at the end of the transaction.
     pub fn change_selections<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,
@@ -2954,39 +2976,105 @@ impl Editor {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        self.change_selections_inner(autoscroll, true, window, cx, change)
+        self.change_selections_inner(true, autoscroll, window, cx, change)
     }
 
-    fn change_selections_inner<R>(
+    pub(crate) fn change_selections_without_showing_completions<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,
-        request_completions: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        let old_cursor_position = self.selections.newest_anchor().head();
-        self.push_to_selection_history();
+        self.change_selections_inner(false, autoscroll, window, cx, change)
+    }
 
+    fn change_selections_inner<R>(
+        &mut self,
+        show_completions: bool,
+        autoscroll: Option<Autoscroll>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
+    ) -> R {
+        if let Some(state) = &mut self.deferred_selection_effects_state {
+            state.autoscroll = autoscroll.or(state.autoscroll);
+            state.show_completions = show_completions;
+            let (changed, result) = self.selections.change_with(cx, change);
+            state.changed |= changed;
+            return result;
+        }
+        let mut state = DeferredSelectionEffectsState {
+            changed: false,
+            show_completions,
+            autoscroll,
+            old_cursor_position: self.selections.newest_anchor().head(),
+            history_entry: SelectionHistoryEntry {
+                selections: self.selections.disjoint_anchors(),
+                select_next_state: self.select_next_state.clone(),
+                select_prev_state: self.select_prev_state.clone(),
+                add_selections_state: self.add_selections_state.clone(),
+            },
+        };
         let (changed, result) = self.selections.change_with(cx, change);
+        state.changed = state.changed || changed;
+        if self.defer_selection_effects {
+            self.deferred_selection_effects_state = Some(state);
+        } else {
+            self.apply_selection_effects(state, window, cx);
+        }
+        result
+    }
 
-        if changed {
-            if let Some(autoscroll) = autoscroll {
+    /// Defers the effects of selection change, so that the effects of multiple calls to
+    /// `change_selections` are applied at the end. This way these intermediate states aren't added
+    /// to selection history and the state of popovers based on selection position aren't
+    /// erroneously updated.
+    pub fn with_selection_effects_deferred<R>(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        update: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> R,
+    ) -> R {
+        let already_deferred = self.defer_selection_effects;
+        self.defer_selection_effects = true;
+        let result = update(self, window, cx);
+        if !already_deferred {
+            self.defer_selection_effects = false;
+            if let Some(state) = self.deferred_selection_effects_state.take() {
+                self.apply_selection_effects(state, window, cx);
+            }
+        }
+        result
+    }
+
+    fn apply_selection_effects(
+        &mut self,
+        state: DeferredSelectionEffectsState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if state.changed {
+            self.selection_history.push(state.history_entry);
+
+            if let Some(autoscroll) = state.autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
-            self.selections_did_change(true, &old_cursor_position, request_completions, window, cx);
 
-            if self.should_open_signature_help_automatically(
+            let old_cursor_position = &state.old_cursor_position;
+
+            self.selections_did_change(
+                true,
                 &old_cursor_position,
-                self.signature_help_state.backspace_pressed(),
+                state.show_completions,
+                window,
                 cx,
-            ) {
+            );
+
+            if self.should_open_signature_help_automatically(&old_cursor_position, cx) {
                 self.show_signature_help(&ShowSignatureHelp, window, cx);
             }
-            self.signature_help_state.set_backspace_pressed(false);
         }
-
-        result
     }
 
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
@@ -3870,9 +3958,12 @@ impl Editor {
             }
 
             let had_active_inline_completion = this.has_active_inline_completion();
-            this.change_selections_inner(Some(Autoscroll::fit()), false, window, cx, |s| {
-                s.select(new_selections)
-            });
+            this.change_selections_without_showing_completions(
+                Some(Autoscroll::fit()),
+                window,
+                cx,
+                |s| s.select(new_selections),
+            );
 
             if !bracket_inserted {
                 if let Some(on_type_format_task) =
@@ -9026,7 +9117,6 @@ impl Editor {
                 }
             }
 
-            this.signature_help_state.set_backspace_pressed(true);
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select(selections)
             });
@@ -12748,7 +12838,6 @@ impl Editor {
     ) -> Result<()> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
-        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         self.select_next_match_internal(&display_map, false, None, window, cx)?;
@@ -12801,7 +12890,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.select_next_match_internal(
             &display_map,
@@ -12820,7 +12908,6 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.selections.all::<usize>(cx);
@@ -13543,6 +13630,7 @@ impl Editor {
         }
         let project = self.project.as_ref().map(Entity::downgrade);
         let task_sources = self.lsp_task_sources(cx);
+        let multi_buffer = self.buffer.downgrade();
         cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
@@ -13626,7 +13714,19 @@ impl Editor {
                 return;
             };
 
-            let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
+            let Ok(prefer_lsp) = multi_buffer.update(cx, |buffer, cx| {
+                buffer.language_settings(cx).tasks.prefer_lsp
+            }) else {
+                return;
+            };
+
+            let rows = Self::runnable_rows(
+                project,
+                display_snapshot,
+                prefer_lsp && !lsp_tasks_by_rows.is_empty(),
+                new_rows,
+                cx.clone(),
+            );
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();
@@ -13654,15 +13754,21 @@ impl Editor {
     fn runnable_rows(
         project: Entity<Project>,
         snapshot: DisplaySnapshot,
+        prefer_lsp: bool,
         runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
     ) -> Vec<((BufferId, BufferRow), RunnableTasks)> {
         runnable_ranges
             .into_iter()
             .filter_map(|mut runnable| {
-                let tasks = cx
+                let mut tasks = cx
                     .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
                     .ok()?;
+                if prefer_lsp {
+                    tasks.retain(|(task_kind, _)| {
+                        !matches!(task_kind, TaskSourceKind::Language { .. })
+                    });
+                }
                 if tasks.is_empty() {
                     return None;
                 }
@@ -14995,7 +15101,7 @@ impl Editor {
                                         text_style = text_style.highlight(highlight_style);
                                     }
                                     div()
-                                        .block_mouse_down()
+                                        .block_mouse_except_scroll()
                                         .pl(cx.anchor_x)
                                         .child(EditorElement::new(
                                             &rename_editor,
@@ -15671,24 +15777,17 @@ impl Editor {
         self.selections_did_change(false, &old_cursor_position, true, window, cx);
     }
 
-    fn push_to_selection_history(&mut self) {
-        self.selection_history.push(SelectionHistoryEntry {
-            selections: self.selections.disjoint_anchors(),
-            select_next_state: self.select_next_state.clone(),
-            select_prev_state: self.select_prev_state.clone(),
-            add_selections_state: self.add_selections_state.clone(),
-        });
-    }
-
     pub fn transact(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
         update: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
     ) -> Option<TransactionId> {
-        self.start_transaction_at(Instant::now(), window, cx);
-        update(self, window, cx);
-        self.end_transaction_at(Instant::now(), cx)
+        self.with_selection_effects_deferred(window, cx, |this, window, cx| {
+            this.start_transaction_at(Instant::now(), window, cx);
+            update(this, window, cx);
+            this.end_transaction_at(Instant::now(), cx)
+        })
     }
 
     pub fn start_transaction_at(
@@ -18609,16 +18708,20 @@ impl Editor {
             }
 
             let minimap_settings = EditorSettings::get_global(cx).minimap;
-            if self.minimap_visibility.settings_visibility() != minimap_settings.minimap_enabled() {
-                self.set_minimap_visibility(
-                    MinimapVisibility::for_mode(self.mode(), cx),
-                    window,
-                    cx,
-                );
-            } else if let Some(minimap_entity) = self.minimap.as_ref() {
-                minimap_entity.update(cx, |minimap_editor, cx| {
-                    minimap_editor.update_minimap_configuration(minimap_settings, cx)
-                })
+            if self.minimap_visibility != MinimapVisibility::Disabled {
+                if self.minimap_visibility.settings_visibility()
+                    != minimap_settings.minimap_enabled()
+                {
+                    self.set_minimap_visibility(
+                        MinimapVisibility::for_mode(self.mode(), cx),
+                        window,
+                        cx,
+                    );
+                } else if let Some(minimap_entity) = self.minimap.as_ref() {
+                    minimap_entity.update(cx, |minimap_editor, cx| {
+                        minimap_editor.update_minimap_configuration(minimap_settings, cx)
+                    })
+                }
             }
         }
 
@@ -21877,7 +21980,7 @@ fn render_diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .stop_mouse_events_except_scroll()
+        .block_mouse_except_scroll()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")

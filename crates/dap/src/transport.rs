@@ -434,7 +434,7 @@ impl TransportDelegate {
                 .with_context(|| "reading a message from server")?
                 == 0
             {
-                anyhow::bail!("debugger reader stream closed");
+                anyhow::bail!("debugger reader stream closed, last string output: '{buffer}'");
             };
 
             if buffer == "\r\n" {
@@ -658,9 +658,13 @@ impl StdioTransport {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        let mut process = command
-            .spawn()
-            .with_context(|| "failed to spawn command.")?;
+        let mut process = command.spawn().with_context(|| {
+            format!(
+                "failed to spawn command `{} {}`.",
+                binary.command,
+                binary.arguments.join(" ")
+            )
+        })?;
 
         let stdin = process.stdin.take().context("Failed to open stdin")?;
         let stdout = process.stdout.take().context("Failed to open stdout")?;

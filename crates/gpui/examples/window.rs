@@ -1,6 +1,6 @@
 use gpui::{
-    App, Application, Bounds, Context, KeyBinding, SharedString, Timer, Window, WindowBounds,
-    WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
+    App, Application, Bounds, Context, KeyBinding, PromptButton, PromptLevel, SharedString, Timer,
+    Window, WindowBounds, WindowKind, WindowOptions, actions, div, prelude::*, px, rgb, size,
 };
 
 struct SubWindow {
@@ -169,6 +169,42 @@ impl Render for WindowDemo {
                 let content_size = window.bounds().size;
                 window.resize(size(content_size.height, content_size.width));
             }))
+            .child(button("Prompt", |window, cx| {
+                let answer = window.prompt(
+                    PromptLevel::Info,
+                    "Are you sure?",
+                    None,
+                    &["Ok", "Cancel"],
+                    cx,
+                );
+
+                cx.spawn(async move |_| {
+                    if answer.await.unwrap() == 0 {
+                        println!("You have clicked Ok");
+                    } else {
+                        println!("You have clicked Cancel");
+                    }
+                })
+                .detach();
+            }))
+            .child(button("Prompt (non-English)", |window, cx| {
+                let answer = window.prompt(
+                    PromptLevel::Info,
+                    "Are you sure?",
+                    None,
+                    &[PromptButton::ok("确定"), PromptButton::cancel("取消")],
+                    cx,
+                );
+
+                cx.spawn(async move |_| {
+                    if answer.await.unwrap() == 0 {
+                        println!("You have clicked Ok");
+                    } else {
+                        println!("You have clicked Cancel");
+                    }
+                })
+                .detach();
+            }))
     }
 }
 
@@ -195,6 +231,7 @@ fn main() {
             },
         )
         .unwrap();
+
         cx.activate(true);
         cx.on_action(|_: &Quit, cx| cx.quit());
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
