@@ -132,7 +132,10 @@ pub enum TaskSourceKind {
     /// Languages-specific tasks coming from extensions.
     Language { name: SharedString },
     /// Language-specific tasks coming from LSP servers.
-    Lsp(LanguageServerId),
+    Lsp {
+        language_name: SharedString,
+        server: LanguageServerId,
+    },
 }
 
 /// A collection of task contexts, derived from the current state of the workspace.
@@ -211,7 +214,10 @@ impl TaskSourceKind {
                 format!("{id_base}_{id}_{}", directory_in_worktree.display())
             }
             Self::Language { name } => format!("language_{name}"),
-            Self::Lsp(server_id) => format!("lsp_{server_id}"),
+            Self::Lsp {
+                server,
+                language_name,
+            } => format!("lsp_{language_name}_{server}"),
         }
     }
 }
@@ -693,7 +699,7 @@ fn task_lru_comparator(
 
 fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     match kind {
-        TaskSourceKind::Lsp(..) => 0,
+        TaskSourceKind::Lsp { .. } => 0,
         TaskSourceKind::Language { .. } => 1,
         TaskSourceKind::UserInput => 2,
         TaskSourceKind::Worktree { .. } => 3,
