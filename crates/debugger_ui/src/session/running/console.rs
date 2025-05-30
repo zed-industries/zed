@@ -176,16 +176,18 @@ impl Console {
     }
 
     fn render_console(&self, cx: &Context<Self>) -> impl IntoElement {
-        EditorElement::new(&self.console, self.editor_style(cx))
+        EditorElement::new(&self.console, Self::editor_style(&self.console, cx))
     }
 
-    fn editor_style(&self, cx: &Context<Self>) -> EditorStyle {
+    fn editor_style(editor: &Entity<Editor>, cx: &Context<Self>) -> EditorStyle {
+        let is_read_only = editor.read(cx).read_only(cx);
         let settings = ThemeSettings::get_global(cx);
+        let theme = cx.theme();
         let text_style = TextStyle {
-            color: if self.console.read(cx).read_only(cx) {
-                cx.theme().colors().text_muted
+            color: if is_read_only {
+                theme.colors().text_muted
             } else {
-                cx.theme().colors().text
+                theme.colors().text
             },
             font_family: settings.buffer_font.family.clone(),
             font_features: settings.buffer_font.features.clone(),
@@ -195,15 +197,15 @@ impl Console {
             ..Default::default()
         };
         EditorStyle {
-            background: cx.theme().colors().editor_background,
-            local_player: cx.theme().players().local(),
+            background: theme.colors().editor_background,
+            local_player: theme.players().local(),
             text: text_style,
             ..Default::default()
         }
     }
 
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        EditorElement::new(&self.query_bar, self.editor_style(cx))
+        EditorElement::new(&self.query_bar, Self::editor_style(&self.query_bar, cx))
     }
 
     fn update_output(&mut self, window: &mut Window, cx: &mut Context<Self>) {
