@@ -1,6 +1,7 @@
 use super::{SerializedAxis, SerializedWindowBounds};
 use crate::{
-    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
+    Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId,
+    dock::DEFAULT_DOCK_SIZE, item::ItemHandle,
 };
 use anyhow::{Context as _, Result};
 use async_recursion::async_recursion;
@@ -18,6 +19,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use ui::Pixels;
 use util::{ResultExt, paths::SanitizedPath};
 use uuid::Uuid;
 
@@ -304,6 +306,7 @@ pub struct DockData {
     pub(crate) visible: bool,
     pub(crate) active_panel: Option<String>,
     pub(crate) zoom: bool,
+    pub(crate) size: Pixels,
 }
 
 impl Column for DockData {
@@ -311,11 +314,13 @@ impl Column for DockData {
         let (visible, next_index) = Option::<bool>::column(statement, start_index)?;
         let (active_panel, next_index) = Option::<String>::column(statement, next_index)?;
         let (zoom, next_index) = Option::<bool>::column(statement, next_index)?;
+        let (size, next_index) = Option::<f32>::column(statement, next_index)?;
         Ok((
             DockData {
                 visible: visible.unwrap_or(false),
                 active_panel,
                 zoom: zoom.unwrap_or(false),
+                size: size.map_or_else(|| DEFAULT_DOCK_SIZE, Pixels),
             },
             next_index,
         ))
@@ -326,7 +331,8 @@ impl Bind for DockData {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.visible, start_index)?;
         let next_index = statement.bind(&self.active_panel, next_index)?;
-        statement.bind(&self.zoom, next_index)
+        let next_index = statement.bind(&self.zoom, next_index)?;
+        statement.bind(&self.size.0, next_index)
     }
 }
 

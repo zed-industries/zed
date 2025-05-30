@@ -84,6 +84,8 @@
   },
   // Layout mode of the bottom dock. Defaults to "contained"
   "bottom_dock_layout": "contained",
+  // Maintain the same size for a dock regardless of the active panel
+  "stable_size_docks": false,
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"

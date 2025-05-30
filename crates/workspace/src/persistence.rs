@@ -542,6 +542,12 @@ define_connection! {
         ALTER TABLE breakpoints ADD COLUMN condition TEXT;
         ALTER TABLE breakpoints ADD COLUMN hit_condition TEXT;
     ),
+    // Add dock size persistence
+    sql!(
+        ALTER TABLE workspaces ADD COLUMN left_dock_size INTEGER;
+        ALTER TABLE workspaces ADD COLUMN right_dock_size INTEGER;
+        ALTER TABLE workspaces ADD COLUMN bottom_dock_size INTEGER;
+    ),
     ];
 }
 
@@ -593,12 +599,15 @@ impl WorkspaceDb {
                     left_dock_visible,
                     left_dock_active_panel,
                     left_dock_zoom,
+                    left_dock_size,
                     right_dock_visible,
                     right_dock_active_panel,
                     right_dock_zoom,
+                    right_dock_size,
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
+                    bottom_dock_size,
                     window_id
                 FROM workspaces
                 WHERE local_paths = ?
@@ -659,12 +668,15 @@ impl WorkspaceDb {
                     left_dock_visible,
                     left_dock_active_panel,
                     left_dock_zoom,
+                    left_dock_size,
                     right_dock_visible,
                     right_dock_active_panel,
                     right_dock_zoom,
+                    right_dock_size,
                     bottom_dock_visible,
                     bottom_dock_active_panel,
                     bottom_dock_zoom,
+                    bottom_dock_size,
                     window_id
                 FROM workspaces
                 WHERE ssh_project_id = ?
@@ -797,19 +809,22 @@ impl WorkspaceDb {
                                 left_dock_visible,
                                 left_dock_active_panel,
                                 left_dock_zoom,
+                                left_dock_size,
                                 right_dock_visible,
                                 right_dock_active_panel,
                                 right_dock_zoom,
+                                right_dock_size,
                                 bottom_dock_visible,
                                 bottom_dock_active_panel,
                                 bottom_dock_zoom,
+                                bottom_dock_size,
                                 session_id,
                                 window_id,
                                 timestamp,
                                 local_paths_array,
                                 local_paths_order_array
                             )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, CURRENT_TIMESTAMP, ?15, ?16)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, CURRENT_TIMESTAMP, ?18, ?19)
                             ON CONFLICT DO
                             UPDATE SET
                                 local_paths = ?2,
@@ -817,17 +832,20 @@ impl WorkspaceDb {
                                 left_dock_visible = ?4,
                                 left_dock_active_panel = ?5,
                                 left_dock_zoom = ?6,
-                                right_dock_visible = ?7,
-                                right_dock_active_panel = ?8,
-                                right_dock_zoom = ?9,
-                                bottom_dock_visible = ?10,
-                                bottom_dock_active_panel = ?11,
-                                bottom_dock_zoom = ?12,
-                                session_id = ?13,
-                                window_id = ?14,
+                                left_dock_size = ?7,
+                                right_dock_visible = ?8,
+                                right_dock_active_panel = ?9,
+                                right_dock_zoom = ?10,
+                                right_dock_size = ?11,
+                                bottom_dock_visible = ?12,
+                                bottom_dock_active_panel = ?13,
+                                bottom_dock_zoom = ?14,
+                                bottom_dock_size = ?15,
+                                session_id = ?16,
+                                window_id = ?17,
                                 timestamp = CURRENT_TIMESTAMP,
-                                local_paths_array = ?15,
-                                local_paths_order_array = ?16
+                                local_paths_array = ?18,
+                                local_paths_order_array = ?19
                         );
                         let mut prepared_query = conn.exec_bound(query)?;
                         let args = (workspace.id, &local_paths, &local_paths_order, workspace.docks, workspace.session_id, workspace.window_id, local_paths.paths().iter().map(|path| path.to_string_lossy().to_string()).join(","), local_paths_order.order().iter().map(|order| order.to_string()).join(","));
@@ -849,31 +867,37 @@ impl WorkspaceDb {
                                 left_dock_visible,
                                 left_dock_active_panel,
                                 left_dock_zoom,
+                                left_dock_size,
                                 right_dock_visible,
                                 right_dock_active_panel,
                                 right_dock_zoom,
+                                right_dock_size,
                                 bottom_dock_visible,
                                 bottom_dock_active_panel,
                                 bottom_dock_zoom,
+                                bottom_dock_size,
                                 session_id,
                                 window_id,
                                 timestamp
                             )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, CURRENT_TIMESTAMP)
+                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, CURRENT_TIMESTAMP)
                             ON CONFLICT DO
                             UPDATE SET
                                 ssh_project_id = ?2,
                                 left_dock_visible = ?3,
                                 left_dock_active_panel = ?4,
                                 left_dock_zoom = ?5,
-                                right_dock_visible = ?6,
-                                right_dock_active_panel = ?7,
-                                right_dock_zoom = ?8,
-                                bottom_dock_visible = ?9,
-                                bottom_dock_active_panel = ?10,
-                                bottom_dock_zoom = ?11,
-                                session_id = ?12,
-                                window_id = ?13,
+                                left_dock_size = ?6,
+                                right_dock_visible = ?7,
+                                right_dock_active_panel = ?8,
+                                right_dock_zoom = ?9,
+                                right_dock_size = ?10,
+                                bottom_dock_visible = ?11,
+                                bottom_dock_active_panel = ?12,
+                                bottom_dock_zoom = ?13,
+                                bottom_dock_size = ?14,
+                                session_id = ?15,
+                                window_id = ?16,
                                 timestamp = CURRENT_TIMESTAMP
                         ))?((
                             workspace.id,
