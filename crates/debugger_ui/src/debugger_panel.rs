@@ -3,9 +3,10 @@ use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
-    ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
-    ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewSessionModal,
+    NewSessionMode, Pause, Restart, ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop,
+    ToggleIgnoreBreakpoints, ToggleSessionPicker, ToggleThreadPicker, persistence,
+    spawn_task_or_modal,
 };
 use anyhow::{Context as _, Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
@@ -335,10 +336,17 @@ impl DebugPanel {
         let Some(task_inventory) = task_store.read(cx).task_inventory() else {
             return;
         };
+        let workspace = self.workspace.clone();
         let Some(scenario) = task_inventory.read(cx).last_scheduled_scenario().cloned() else {
+            window.defer(cx, move |window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        NewSessionModal::show(workspace, window, NewSessionMode::Launch, None, cx);
+                    })
+                    .ok();
+            });
             return;
         };
-        let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let task_contexts = workspace
