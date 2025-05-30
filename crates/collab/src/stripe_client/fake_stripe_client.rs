@@ -74,6 +74,14 @@ impl StripeClient for FakeStripeClient {
             .collect())
     }
 
+    async fn get_customer(&self, customer_id: &StripeCustomerId) -> Result<StripeCustomer> {
+        self.customers
+            .lock()
+            .get(customer_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("no customer found for {customer_id:?}"))
+    }
+
     async fn create_customer(&self, params: CreateCustomerParams<'_>) -> Result<StripeCustomer> {
         let customer = StripeCustomer {
             id: StripeCustomerId(format!("cus_{}", Uuid::new_v4()).into()),
@@ -135,6 +143,8 @@ impl StripeClient for FakeStripeClient {
                         .and_then(|price_id| self.prices.lock().get(&price_id).cloned()),
                 })
                 .collect(),
+            cancel_at: None,
+            cancellation_details: None,
         };
 
         self.subscriptions
@@ -154,6 +164,13 @@ impl StripeClient for FakeStripeClient {
         self.update_subscription_calls
             .lock()
             .push((subscription.id, params));
+
+        Ok(())
+    }
+
+    async fn cancel_subscription(&self, subscription_id: &StripeSubscriptionId) -> Result<()> {
+        // TODO: Implement fake subscription cancellation.
+        let _ = subscription_id;
 
         Ok(())
     }
