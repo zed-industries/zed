@@ -114,6 +114,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
+ "sqlez",
  "streaming_diff",
  "telemetry",
  "telemetry_events",
