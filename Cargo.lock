@@ -178,9 +178,11 @@ name = "ai_studio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "futures 0.3.31",
  "gpui",
  "http_client",
+ "indexmap",
  "language_model",
  "language_model_repository",
  "language_models",
@@ -190,8 +192,11 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "tempfile",
+ "tokio",
  "ui",
  "ui_input",
+ "uide",
  "uuid",
  "workspace",
 ]

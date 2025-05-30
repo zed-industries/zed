@@ -28,4 +28,16 @@ settings.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 uuid.workspace = true
-workspace.workspace = true 
+workspace.workspace = true
+# AI Orchestration and Persistence
+uide = { path = "../uide" }
+chrono = { version = "0.4", features = ["serde"] }
+indexmap = { version = "2.0", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio = { version = "1.0", features = ["full"] }
+
+[[example]]
+name = "workflow_uide_demo"
+path = "examples/workflow_uide_demo.rs" 

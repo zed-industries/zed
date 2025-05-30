@@ -10,6 +10,14 @@ impl NodeId {
     pub fn new() -> Self {
         Self(Uuid::new_v4())
     }
+    
+    pub fn as_uuid(&self) -> Uuid {
+        self.0
+    }
+    
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self(uuid)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

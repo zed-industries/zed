@@ -4,14 +4,14 @@ use std::sync::Arc;
 use ui::{prelude::*, IconName, Label, LabelSize, Button, ButtonStyle, Icon};
 use workspace::{Item, WorkspaceId};
 
-use crate::{ModelManager, ProviderRegistry, ChatInterface, WorkflowCanvas};
+use crate::{ModelManager, ProviderRegistry, ChatInterface, WorkflowManagerView};
 
 /// Main AI Studio component that provides a unified interface for AI model management
 pub struct AiStudio {
     provider_registry: Entity<ProviderRegistry>,
     model_manager: Entity<ModelManager>,
     chat_interface: Option<Entity<ChatInterface>>,
-    workflow_canvas: Entity<WorkflowCanvas>,
+    workflow_manager: Entity<WorkflowManagerView>,
     active_view: StudioView,
     focus_handle: FocusHandle,
 }
@@ -31,13 +31,13 @@ impl AiStudio {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let provider_registry = cx.new(ProviderRegistry::new);
         let model_manager = cx.new(ModelManager::new);
-        let workflow_canvas = cx.new(|cx| WorkflowCanvas::new(window, cx));
+        let workflow_manager = cx.new(|cx| WorkflowManagerView::new(window, cx));
         
         Self {
             provider_registry,
             model_manager,
             chat_interface: None,
-            workflow_canvas,
+            workflow_manager,
             active_view: StudioView::Dashboard,
             focus_handle: cx.focus_handle(),
         }
@@ -327,7 +327,7 @@ impl AiStudio {
                         .into_any_element()
                 }
             }
-            StudioView::Workflow => self.workflow_canvas.clone().into_any_element(),
+            StudioView::Workflow => self.workflow_manager.clone().into_any_element(),
             StudioView::Settings => {
                 div()
                     .flex()
