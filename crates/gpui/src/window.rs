@@ -4011,6 +4011,12 @@ impl Window {
         self.platform_window.gpu_specs()
     }
 
+    /// Perform titlebar double-click action.
+    /// This is MacOS specific.
+    pub fn titlebar_double_click(&self) {
+        self.platform_window.titlebar_double_click();
+    }
+
     /// Toggles the inspector mode on this window.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn toggle_inspector(&mut self, cx: &mut App) {
