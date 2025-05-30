@@ -343,8 +343,6 @@ impl MarkdownPreviewView {
         );
 
         let tab_content = editor.read(cx).tab_content_text(0, cx);
-
-        // Only update the tab content if it doesn't have a default value.
         if self.tab_content_text.is_none() {
             self.tab_content_text = Some(format!("Preview {}", tab_content).into());
         }
