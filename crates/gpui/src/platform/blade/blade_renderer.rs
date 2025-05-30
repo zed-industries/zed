@@ -778,8 +778,6 @@ impl BladeRenderer {
             }
         }
 
-        // draw to screen
-
         self.command_encoder.present(frame);
         let sync_point = self.gpu.submit(&mut self.command_encoder);
 
