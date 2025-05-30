@@ -689,6 +689,7 @@ pub struct AgentSettingsContentV2 {
 pub enum CompletionMode {
     #[default]
     Normal,
+    #[serde(alias = "max")]
     Burn,
 }
 
