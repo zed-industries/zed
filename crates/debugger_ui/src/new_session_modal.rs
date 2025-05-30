@@ -27,9 +27,9 @@ use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
     ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconButton, IconName, IconSize,
-    InteractiveElement, IntoElement, Label, LabelCommon as _, ListItem, ListItemSpacing,
-    ParentElement, RenderOnce, SharedString, Styled, StyledExt, ToggleButton, ToggleState,
-    Toggleable, Window, div, h_flex, relative, rems, v_flex,
+    IconWithIndicator, Indicator, InteractiveElement, IntoElement, Label, LabelCommon as _,
+    ListItem, ListItemSpacing, ParentElement, RenderOnce, SharedString, Styled, StyledExt,
+    ToggleButton, ToggleState, Toggleable, Window, div, h_flex, relative, rems, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
@@ -1222,21 +1222,32 @@ impl PickerDelegate for DebugScenarioDelegate {
         let task_kind = &self.candidates[hit.candidate_id].0;
 
         let icon = match task_kind {
-            Some(TaskSourceKind::Lsp(..)) => Some(Icon::new(IconName::BoltFilled)),
             Some(TaskSourceKind::UserInput) => Some(Icon::new(IconName::Terminal)),
             Some(TaskSourceKind::AbsPath { .. }) => Some(Icon::new(IconName::Settings)),
             Some(TaskSourceKind::Worktree { .. }) => Some(Icon::new(IconName::FileTree)),
-            Some(TaskSourceKind::Language { name }) => file_icons::FileIcons::get(cx)
+            Some(TaskSourceKind::Lsp {
+                language_name: name,
+                ..
+            })
+            | Some(TaskSourceKind::Language { name }) => file_icons::FileIcons::get(cx)
                 .get_icon_for_type(&name.to_lowercase(), cx)
                 .map(Icon::from_path),
             None => Some(Icon::new(IconName::HistoryRerun)),
         }
-        .map(|icon| icon.color(Color::Muted).size(ui::IconSize::Small));
+        .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
+        let indicator = if matches!(task_kind, Some(TaskSourceKind::Lsp { .. })) {
+            Some(Indicator::icon(
+                Icon::new(IconName::BoltFilled).color(Color::Muted),
+            ))
+        } else {
+            None
+        };
+        let icon = icon.map(|icon| IconWithIndicator::new(icon, indicator));
 
         Some(
             ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))
                 .inset(true)
-                .start_slot::<Icon>(icon)
+                .start_slot::<IconWithIndicator>(icon)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(highlighted_location.render(window, cx)),

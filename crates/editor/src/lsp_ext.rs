@@ -22,6 +22,7 @@ use smol::stream::StreamExt;
 use task::ResolvedTask;
 use task::TaskContext;
 use text::BufferId;
+use ui::SharedString;
 use util::ResultExt as _;
 
 pub(crate) fn find_specific_language_server_in_selection<F>(
@@ -133,13 +134,22 @@ pub fn lsp_tasks(
 
     cx.spawn(async move |cx| {
         cx.spawn(async move |cx| {
-            let mut lsp_tasks = Vec::new();
+            let mut lsp_tasks = HashMap::default();
             while let Some(server_to_query) = lsp_task_sources.next().await {
                 if let Some((server_id, buffers)) = server_to_query {
-                    let source_kind = TaskSourceKind::Lsp(server_id);
-                    let id_base = source_kind.to_id_base();
                     let mut new_lsp_tasks = Vec::new();
                     for buffer in buffers {
+                        let source_kind = match buffer.update(cx, |buffer, _| {
+                            buffer.language().map(|language| language.name())
+                        }) {
+                            Ok(Some(language_name)) => TaskSourceKind::Lsp {
+                                server: server_id,
+                                language_name: SharedString::from(language_name),
+                            },
+                            Ok(None) => continue,
+                            Err(_) => return Vec::new(),
+                        };
+                        let id_base = source_kind.to_id_base();
                         let lsp_buffer_context = lsp_task_context(&project, &buffer, cx)
                             .await
                             .unwrap_or_default();
@@ -168,11 +178,14 @@ pub fn lsp_tasks(
                                 );
                             }
                         }
+                        lsp_tasks
+                            .entry(source_kind)
+                            .or_insert_with(Vec::new)
+                            .append(&mut new_lsp_tasks);
                     }
-                    lsp_tasks.push((source_kind, new_lsp_tasks));
                 }
             }
-            lsp_tasks
+            lsp_tasks.into_iter().collect()
         })
         .race({
             // `lsp::LSP_REQUEST_TIMEOUT` is larger than we want for the modal to open fast
