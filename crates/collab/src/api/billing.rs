@@ -30,8 +30,8 @@ use crate::llm::db::subscription_usage_meter::CompletionMode;
 use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, DEFAULT_MAX_MONTHLY_SPEND};
 use crate::rpc::{ResultExt as _, Server};
 use crate::stripe_client::{
-    RealStripeClient, StripeCancellationDetailsReason, StripeClient, StripeCustomerId,
-    StripeSubscription, StripeSubscriptionId,
+    StripeCancellationDetailsReason, StripeClient, StripeCustomerId, StripeSubscription,
+    StripeSubscriptionId,
 };
 use crate::{AppState, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
@@ -726,7 +726,14 @@ async fn sync_billing_subscription(
     Extension(app): Extension<Arc<AppState>>,
     extract::Json(body): extract::Json<SyncBillingSubscriptionBody>,
 ) -> Result<Json<SyncBillingSubscriptionResponse>> {
-    let Some(stripe_client) = app.real_stripe_client.clone() else {
+    let Some(real_stripe_client) = app.real_stripe_client.clone() else {
+        log::error!("failed to retrieve Stripe client");
+        Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
+    let Some(stripe_client) = app.stripe_client.clone() else {
         log::error!("failed to retrieve Stripe client");
         Err(Error::http(
             StatusCode::NOT_IMPLEMENTED,
@@ -751,7 +758,7 @@ async fn sync_billing_subscription(
         .context("failed to parse Stripe customer ID from database")?;
 
     let subscriptions = Subscription::list(
-        &stripe_client,
+        &real_stripe_client,
         &stripe::ListSubscriptions {
             customer: Some(stripe_customer_id),
             // Sync all non-canceled subscriptions.
@@ -761,12 +768,10 @@ async fn sync_billing_subscription(
     )
     .await?;
 
-    let stripe_client = Arc::new(RealStripeClient::new(stripe_client));
-
     for subscription in subscriptions.data {
         let subscription_id = subscription.id.clone();
 
-        sync_subscription(&app, stripe_client.clone(), subscription.into())
+        sync_subscription(&app, &stripe_client, subscription.into())
             .await
             .with_context(|| {
                 format!(
@@ -811,7 +816,11 @@ const NUMBER_OF_ALREADY_PROCESSED_PAGES_BEFORE_WE_STOP: usize = 4;
 /// Polls the Stripe events API periodically to reconcile the records in our
 /// database with the data in Stripe.
 pub fn poll_stripe_events_periodically(app: Arc<AppState>, rpc_server: Arc<Server>) {
-    let Some(stripe_client) = app.real_stripe_client.clone() else {
+    let Some(real_stripe_client) = app.real_stripe_client.clone() else {
+        log::warn!("failed to retrieve Stripe client");
+        return;
+    };
+    let Some(stripe_client) = app.stripe_client.clone() else {
         log::warn!("failed to retrieve Stripe client");
         return;
     };
@@ -821,7 +830,7 @@ pub fn poll_stripe_events_periodically(app: Arc<AppState>, rpc_server: Arc<Serve
         let executor = executor.clone();
         async move {
             loop {
-                poll_stripe_events(&app, &rpc_server, &stripe_client)
+                poll_stripe_events(&app, &rpc_server, &stripe_client, &real_stripe_client)
                     .await
                     .log_err();
 
@@ -834,7 +843,8 @@ pub fn poll_stripe_events_periodically(app: Arc<AppState>, rpc_server: Arc<Serve
 async fn poll_stripe_events(
     app: &Arc<AppState>,
     rpc_server: &Arc<Server>,
-    stripe_client: &stripe::Client,
+    stripe_client: &Arc<dyn StripeClient>,
+    real_stripe_client: &stripe::Client,
 ) -> anyhow::Result<()> {
     fn event_type_to_string(event_type: EventType) -> String {
         // Calling `to_string` on `stripe::EventType` members gives us a quoted string,
@@ -866,7 +876,7 @@ async fn poll_stripe_events(
     params.types = Some(event_types.clone());
     params.limit = Some(EVENTS_LIMIT_PER_PAGE);
 
-    let mut event_pages = stripe::Event::list(&stripe_client, &params)
+    let mut event_pages = stripe::Event::list(&real_stripe_client, &params)
         .await?
         .paginate(params);
 
@@ -910,7 +920,7 @@ async fn poll_stripe_events(
                 break;
             } else {
                 log::info!("Stripe events: retrieving next page");
-                event_pages = event_pages.next(&stripe_client).await?;
+                event_pages = event_pages.next(&real_stripe_client).await?;
             }
         } else {
             break;
@@ -950,15 +960,13 @@ async fn poll_stripe_events(
 
         let process_result = match event.type_ {
             EventType::CustomerCreated | EventType::CustomerUpdated => {
-                handle_customer_event(app, stripe_client, event).await
+                handle_customer_event(app, real_stripe_client, event).await
             }
             EventType::CustomerSubscriptionCreated
             | EventType::CustomerSubscriptionUpdated
             | EventType::CustomerSubscriptionPaused
             | EventType::CustomerSubscriptionResumed
             | EventType::CustomerSubscriptionDeleted => {
-                let stripe_client =
-                    Arc::new(RealStripeClient::new(Arc::new(stripe_client.clone())));
                 handle_customer_subscription_event(app, rpc_server, stripe_client, event).await
             }
             _ => Ok(()),
@@ -1027,7 +1035,7 @@ async fn handle_customer_event(
 
 async fn sync_subscription(
     app: &Arc<AppState>,
-    stripe_client: Arc<dyn StripeClient>,
+    stripe_client: &Arc<dyn StripeClient>,
     subscription: StripeSubscription,
 ) -> anyhow::Result<billing_customer::Model> {
     let subscription_kind = if let Some(stripe_billing) = &app.stripe_billing {
@@ -1198,7 +1206,7 @@ async fn sync_subscription(
 async fn handle_customer_subscription_event(
     app: &Arc<AppState>,
     rpc_server: &Arc<Server>,
-    stripe_client: Arc<dyn StripeClient>,
+    stripe_client: &Arc<dyn StripeClient>,
     event: stripe::Event,
 ) -> anyhow::Result<()> {
     let EventObject::Subscription(subscription) = event.data.object else {

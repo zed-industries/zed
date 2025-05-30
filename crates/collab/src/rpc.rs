@@ -5,7 +5,7 @@ use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
 use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
-use crate::stripe_client::{RealStripeClient, StripeCustomerId};
+use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
@@ -4024,7 +4024,7 @@ async fn get_llm_api_token(
 
     let stripe_client = session
         .app_state
-        .real_stripe_client
+        .stripe_client
         .as_ref()
         .context("failed to retrieve Stripe client")?;
 
@@ -4043,7 +4043,6 @@ async fn get_llm_api_token(
             .find_or_create_customer_by_email(user.email_address.as_deref())
             .await?;
 
-        let stripe_client = Arc::new(RealStripeClient::new(stripe_client.clone()));
         find_or_create_billing_customer(&session.app_state, stripe_client.as_ref(), &customer_id)
             .await?
             .context("billing customer not found")?

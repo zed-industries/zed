@@ -169,6 +169,9 @@ impl StripeClient for FakeStripeClient {
     }
 
     async fn cancel_subscription(&self, subscription_id: &StripeSubscriptionId) -> Result<()> {
+        // TODO: Implement fake subscription cancellation.
+        let _ = subscription_id;
+
         Ok(())
     }
 
