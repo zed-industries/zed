@@ -3415,10 +3415,10 @@ impl Workspace {
                 let position = dock.read(cx).position();
                 println!("focused dock {:?}", position);
                 if let Some(bounds) = self.bounding_box_for_dock(dock, window, cx) {
-                    println!("FOO origin bounds from dock {:?}: {:?}", position, bounds);
+                    println!("origin bounds from dock {:?}: {:?}", position, bounds);
                     bounds
                 } else {
-                    println!("FOO dock {:?} has no bounds, falling back to active pane", position);
+                    println!("dock {:?} has no bounds, falling back to active pane", position);
                     match self.bounding_box_for_pane(&self.active_pane) {
                         Some(bounds) => bounds,
                         None => return,
@@ -3428,7 +3428,7 @@ impl Workspace {
                 println!("no dock focused, using active pane");
                 match self.bounding_box_for_pane(&self.active_pane) {
                     Some(bounds) => {
-                        println!("FOO origin bounds from active pane: {:?}", bounds);
+                        println!("origin bounds from active pane: {:?}", bounds);
                         bounds
                     },
                     None => return,
