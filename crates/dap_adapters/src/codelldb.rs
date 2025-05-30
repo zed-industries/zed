@@ -89,48 +89,6 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn validate_config(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        let map = config
-            .as_object()
-            .ok_or_else(|| anyhow!("Config isn't an object"))?;
-
-        let request_variant = map
-            .get("request")
-            .and_then(|r| r.as_str())
-            .ok_or_else(|| anyhow!("request field is required and must be a string"))?;
-
-        match request_variant {
-            "launch" => {
-                // For launch, verify that one of the required configs exists
-                if !(map.contains_key("program")
-                    || map.contains_key("targetCreateCommands")
-                    || map.contains_key("cargo"))
-                {
-                    return Err(anyhow!(
-                        "launch request requires either 'program', 'targetCreateCommands', or 'cargo' field"
-                    ));
-                }
-                Ok(StartDebuggingRequestArgumentsRequest::Launch)
-            }
-            "attach" => {
-                // For attach, verify that either pid or program exists
-                if !(map.contains_key("pid") || map.contains_key("program")) {
-                    return Err(anyhow!(
-                        "attach request requires either 'pid' or 'program' field"
-                    ));
-                }
-                Ok(StartDebuggingRequestArgumentsRequest::Attach)
-            }
-            _ => Err(anyhow!(
-                "request must be either 'launch' or 'attach', got '{}'",
-                request_variant
-            )),
-        }
-    }
-
     fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut configuration = json!({
             "request": match zed_scenario.request {

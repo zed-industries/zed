@@ -954,7 +954,10 @@ impl RunningState {
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
-                anyhow::bail!("No request or build provided");
+                let Err(e) = request_type else {
+                    unreachable!();
+                };
+                anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
             };
 
             Ok(DebugTaskDefinition {

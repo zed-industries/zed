@@ -350,24 +350,6 @@ impl DebugAdapter for GoDebugAdapter {
         })
     }
 
-    fn validate_config(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        let map = config.as_object().context("Config isn't an object")?;
-
-        let request_variant = map
-            .get("request")
-            .and_then(|val| val.as_str())
-            .context("request argument is not found or invalid")?;
-
-        match request_variant {
-            "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
-            "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
-            _ => Err(anyhow!("request must be either 'launch' or 'attach'")),
-        }
-    }
-
     fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut args = match &zed_scenario.request {
             dap::DebugRequest::Attach(attach_config) => {

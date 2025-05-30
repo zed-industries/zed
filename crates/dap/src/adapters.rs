@@ -374,17 +374,12 @@ pub trait DebugAdapter: 'static + Send + Sync {
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        let map = config.as_object().context("Config isn't an object")?;
-
-        let request_variant = map
-            .get("request")
-            .and_then(|val| val.as_str())
-            .context("request argument is not found or invalid")?;
-
-        match request_variant {
-            "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
-            "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
-            _ => Err(anyhow!("request must be either 'launch' or 'attach'")),
+        match config.get("request") {
+            Some(val) if val == "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
+            Some(val) if val == "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
+            _ => Err(anyhow!(
+                "missing or invalid `request` field in config. Expected 'launch' or 'attach'"
+            )),
         }
     }
 
