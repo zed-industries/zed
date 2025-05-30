@@ -1442,15 +1442,10 @@ impl Thread {
             return;
         }
 
-        let content = MessageContent::Text(format!(
-            "[The following is an auto-generated notification; do not reply]
+        let header = include_str!("./prompts/stale_files_prompt_header.txt").trim();
+        let content = MessageContent::Text(format!("{header}\n{stale_files}"));
 
-These files have changed since the last read:
-{stale_files}
-"
-        ));
-
-        // Insert the message before the last Assistant message.
+        // Insert our message before the last Assistant message.
         // Inserting it to the tail distracts the agent too much
         let insert_position = messages
             .iter()
@@ -1870,10 +1865,7 @@ These files have changed since the last read:
             return;
         }
 
-        let added_user_message = "Generate a concise 3-7 word title for this conversation, omitting punctuation. \
-            Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`. \
-            If the conversation is about a specific subject, include it in the title. \
-            Be descriptive. DO NOT speak in the first person.";
+        let added_user_message = include_str!("./prompts/summarize_thread_prompt.txt");
 
         let request = self.to_summarize_request(
             &model.model,
@@ -1974,12 +1966,7 @@ These files have changed since the last read:
             return;
         }
 
-        let added_user_message = "Generate a detailed summary of this conversation. Include:\n\
-             1. A brief overview of what was discussed\n\
-             2. Key facts or information discovered\n\
-             3. Outcomes or conclusions reached\n\
-             4. Any action items or next steps if any\n\
-             Format it in Markdown with headings and bullet points.";
+        let added_user_message = include_str!("./prompts/summarize_thread_detailed_prompt.txt");
 
         let request = self.to_summarize_request(
             &model,

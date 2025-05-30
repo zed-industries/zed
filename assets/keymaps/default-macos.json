@@ -1109,5 +1109,13 @@
     "bindings": {
       "enter": "menu::Confirm"
     }
+  },
+  {
+    "context": "RunModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePreviousItem"
+    }
   }
 ]
