@@ -144,7 +144,6 @@ For a common Flask Application with a file structure similar to the following:
   {
     "label": "Build & Debug native binary",
     "build": {
-      "label": "build binary", // By launch this field won't be required
       "command": "cargo",
       "args": ["build"]
     },
