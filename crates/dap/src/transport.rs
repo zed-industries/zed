@@ -434,7 +434,7 @@ impl TransportDelegate {
                 .with_context(|| "reading a message from server")?
                 == 0
             {
-                anyhow::bail!("debugger reader stream closed");
+                anyhow::bail!("debugger reader stream closed, last string output: '{buffer}'");
             };
 
             if buffer == "\r\n" {
