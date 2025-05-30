@@ -151,6 +151,10 @@ impl PlatformWindow for TestWindow {
         crate::Modifiers::default()
     }
 
+    fn capslock(&self) -> crate::Capslock {
+        crate::Capslock::default()
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.lock().input_handler = Some(input_handler);
     }

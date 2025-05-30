@@ -21,11 +21,6 @@ use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
-use crate::platform::{
-    PlatformAtlas, PlatformInputHandler, PlatformWindow,
-    blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
-    linux::wayland::{display::WaylandDisplay, serial::SerialKind},
-};
 use crate::scene::Scene;
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
@@ -33,6 +28,14 @@ use crate::{
     ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams, px,
     size,
+};
+use crate::{
+    Capslock,
+    platform::{
+        PlatformAtlas, PlatformInputHandler, PlatformWindow,
+        blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
+        linux::wayland::{display::WaylandDisplay, serial::SerialKind},
+    },
 };
 
 #[derive(Default)]
@@ -847,6 +850,10 @@ impl PlatformWindow for WaylandWindow {
 
     fn modifiers(&self) -> Modifiers {
         self.borrow().client.get_client().borrow().modifiers
+    }
+
+    fn capslock(&self) -> Capslock {
+        self.borrow().client.get_client().borrow().capslock
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
