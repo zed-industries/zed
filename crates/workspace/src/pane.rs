@@ -18,14 +18,18 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, Hsla, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
+    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
-    actions, anchored, deferred, impl_actions, prelude::*, hsla,
+    actions, anchored, deferred, impl_actions, prelude::*,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
-use rand::Rng;
 use parking_lot::Mutex;
+
+#[cfg(debug_assertions)]
+use gpui::{Hsla, hsla};
+#[cfg(debug_assertions)]
+use rand::Rng;
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -354,7 +358,7 @@ pub struct ItemNavHistory {
 #[cfg(debug_assertions)]
 fn random_debug_color() -> Hsla {
     let mut rng = rand::thread_rng();
-    let h: f32 = rng.gen();
+    let h: f32 = rng.r#gen();
     hsla(h, 1.0, 0.5, 1.0)
 }
 

@@ -5,15 +5,19 @@ use anyhow::Context as _;
 use client::proto;
 use gpui::{
     Action, AnyView, App, Axis, Context, Corner, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Hsla, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
+    Focusable, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseUpEvent,
     ParentElement, Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window,
-    deferred, div, hsla, px,
+    deferred, div, px,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
-use rand::Rng;
 use std::sync::Arc;
+
+#[cfg(debug_assertions)]
+use gpui::{Hsla, hsla};
+#[cfg(debug_assertions)]
+use rand::Rng;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
 
@@ -252,7 +256,7 @@ pub struct PanelButtons {
 #[cfg(debug_assertions)]
 fn random_debug_color() -> Hsla {
     let mut rng = rand::thread_rng();
-    let h: f32 = rng.gen();
+    let h: f32 = rng.r#gen();
     hsla(h, 1.0, 0.5, 1.0)
 }
 

@@ -3605,6 +3605,12 @@ impl Workspace {
         let docks = self.all_docks();
         let docks_iter = docks.iter().filter_map(|d| {
             // Read dock state once and extract what we need
+            #[cfg(debug_assertions)]
+            let (is_open, last_visit_ts, position, debug_color) = {
+                let dock_read = d.read(cx);
+                (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position(), dock_read.debug_color)
+            };
+            #[cfg(not(debug_assertions))]
             let (is_open, last_visit_ts, position) = {
                 let dock_read = d.read(cx);
                 (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position())
@@ -3612,7 +3618,7 @@ impl Workspace {
 
             if !is_open {
                 #[cfg(debug_assertions)]
-                println!("dock {:?} ({}) closed", position, debug_color_name(dock_read.debug_color));
+                println!("dock {:?} ({}) closed", position, debug_color_name(debug_color));
                 #[cfg(not(debug_assertions))]
                 println!("dock {:?} closed", position);
                 return None;
@@ -3623,7 +3629,7 @@ impl Workspace {
                 println!(
                     "candidate dock {:?} ({}) -> {:?}",
                     position,
-                    debug_color_name(dock_read.debug_color),
+                    debug_color_name(debug_color),
                     b
                 );
                 #[cfg(not(debug_assertions))]
@@ -3631,7 +3637,7 @@ impl Workspace {
                 println!(
                     "candidate dock {:?} ({}) -> {:?}",
                     position,
-                    debug_color_name(dock_read.debug_color),
+                    debug_color_name(debug_color),
                     b
                 );
                 #[cfg(not(debug_assertions))]
@@ -3742,6 +3748,12 @@ impl Workspace {
         });
 
         let docks_iter = docks.iter().filter_map(|d| {
+            #[cfg(debug_assertions)]
+            let (is_open, last_visit_ts, position, debug_color) = {
+                let dock_read = d.read(cx);
+                (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position(), dock_read.debug_color)
+            };
+            #[cfg(not(debug_assertions))]
             let (is_open, last_visit_ts, position) = {
                 let dock_read = d.read(cx);
                 (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position())
@@ -3756,7 +3768,7 @@ impl Workspace {
                 println!(
                     "circular candidate dock {:?} ({}) -> {:?}",
                     position,
-                    debug_color_name(dock_read.debug_color),
+                    debug_color_name(debug_color),
                     b
                 );
                 #[cfg(not(debug_assertions))]
