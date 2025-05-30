@@ -927,6 +927,9 @@ impl ThreadsDatabase {
         connection.exec(indoc! {"
                 CREATE TABLE IF NOT EXISTS threads (
                     id TEXT PRIMARY KEY,
+                    summary TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    data_type TEXT NOT NULL,
                     data TEXT NOT NULL
                 )
             "})?()
@@ -1019,13 +1022,16 @@ impl ThreadsDatabase {
         thread: SerializedThread,
     ) -> Result<()> {
         let data = serde_json::to_string(&thread)?;
+        let summary = thread.summary.to_string();
+        let updated_at = thread.updated_at.to_rfc3339();
+        let data_type = "json".to_string();
         let connection = connection.lock().unwrap();
 
-        let mut insert = connection.exec_bound::<(ThreadId, String)>(indoc! {"
-            INSERT OR REPLACE INTO threads (id, data) VALUES (?, ?)
+        let mut insert = connection.exec_bound::<(ThreadId, String, String, String, String)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
         "})?;
 
-        insert((id, data))?;
+        insert((id, summary, updated_at, data_type, data))?;
 
         Ok(())
     }
@@ -1035,19 +1041,19 @@ impl ThreadsDatabase {
 
         self.executor.spawn(async move {
             let connection = connection.lock().unwrap();
-            let mut select = connection.select_bound::<(), (ThreadId, String)>(indoc! {"
-                SELECT id, data FROM threads
+            let mut select =
+                connection.select_bound::<(), (ThreadId, String, String)>(indoc! {"
+                SELECT id, summary, updated_at FROM threads
             "})?;
 
             let rows = select(())?;
             let mut threads = Vec::new();
 
-            for (id, data) in rows {
-                let thread = SerializedThread::from_json(data.as_bytes())?;
+            for (id, summary, updated_at) in rows {
                 threads.push(SerializedThreadMetadata {
                     id,
-                    summary: thread.summary,
-                    updated_at: thread.updated_at,
+                    summary: summary.into(),
+                    updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                 });
             }
 
@@ -1079,13 +1085,16 @@ impl ThreadsDatabase {
 
         self.executor.spawn(async move {
             let data = serde_json::to_string(&thread)?;
+            let summary = thread.summary.to_string();
+            let updated_at = thread.updated_at.to_rfc3339();
+            let data_type = "thread-v1".to_string();
             let connection = connection.lock().unwrap();
 
-            let mut insert = connection.exec_bound::<(ThreadId, String)>(indoc! {"
-                INSERT OR REPLACE INTO threads (id, data) VALUES (?, ?)
+            let mut insert = connection.exec_bound::<(ThreadId, String, String, String, String)>(indoc! {"
+                INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
             "})?;
 
-            insert((id, data))?;
+            insert((id, summary, updated_at, data_type, data))?;
 
             Ok(())
         })
