@@ -4,7 +4,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "f4": "debugger::Start",
-      "alt-f4": "debugger::RerunLastSession",
       "shift-f5": "debugger::Stop",
       "shift-cmd-f5": "debugger::Restart",
       "f6": "debugger::Pause",
@@ -634,7 +633,8 @@
       "cmd-k shift-right": "workspace::SwapPaneRight",
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
-      "cmd-shift-x": "zed::Extensions"
+      "cmd-shift-x": "zed::Extensions",
+      "f5": "debugger::RerunLastSession"
     }
   },
   {
@@ -649,6 +649,13 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
+    }
+  },
+  {
+    "context": "Workspace && debugger_stopped",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": "debugger::Continue"
     }
   },
   // Bindings from Sublime Text
@@ -669,13 +676,6 @@
       "ctrl-alt-shift-b": "editor::SelectToPreviousSubwordStart",
       "ctrl-alt-shift-right": "editor::SelectToNextSubwordEnd",
       "ctrl-alt-shift-f": "editor::SelectToNextSubwordEnd"
-    }
-  },
-  {
-    "context": "Workspace && debugger_stopped",
-    "use_key_equivalents": true,
-    "bindings": {
-      "f5": "debugger::Continue"
     }
   },
   // Bindings from Atom
