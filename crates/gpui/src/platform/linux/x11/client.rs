@@ -1463,7 +1463,7 @@ impl LinuxClient for X11Client {
                     CursorStyle::None => create_invisible_cursor(&state.xcb_connection).log_err(),
                     _ => state
                         .cursor_handle
-                        .load_cursor(&state.xcb_connection, &style.to_icon_name())
+                        .load_cursor(&state.xcb_connection, style.to_icon_name())
                         .log_err(),
                 }) else {
                     return;

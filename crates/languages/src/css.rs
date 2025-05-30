@@ -200,7 +200,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
         assert_eq!(
             outline
                 .items

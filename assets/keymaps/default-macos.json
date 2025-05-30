@@ -4,6 +4,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "f4": "debugger::Start",
+      "alt-f4": "debugger::RerunLastSession",
       "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
       "shift-cmd-f5": "debugger::Restart",
@@ -278,11 +279,14 @@
       "cmd-i": "agent::ToggleProfileSelector",
       "cmd-alt-/": "agent::ToggleModelSelector",
       "cmd-shift-a": "agent::ToggleContextPicker",
-      "cmd-shift-o": "agent::ToggleNavigationMenu",
+      "cmd-shift-j": "agent::ToggleNavigationMenu",
       "cmd-shift-i": "agent::ToggleOptionsMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "cmd-alt-e": "agent::RemoveAllContext",
-      "cmd-shift-e": "project_panel::ToggleFocus"
+      "cmd-shift-e": "project_panel::ToggleFocus",
+      "cmd-shift-enter": "agent::ContinueThread",
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "cmd-alt-b": "agent::ToggleBurnMode"
     }
   },
   {
@@ -311,6 +315,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
+      "cmd-enter": "agent::ChatWithFollow",
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-ctrl-r": "agent::OpenAgentDiff"
     }
@@ -541,9 +546,7 @@
       "cmd-\\": "pane::SplitRight",
       "cmd-k v": "markdown::OpenPreviewToTheSide",
       "cmd-shift-v": "markdown::OpenPreview",
-      "ctrl-cmd-c": "editor::DisplayCursorNames",
-      "cmd-shift-backspace": "editor::GoToPreviousChange",
-      "cmd-shift-alt-backspace": "editor::GoToNextChange"
+      "ctrl-cmd-c": "editor::DisplayCursorNames"
     }
   },
   {
@@ -551,7 +554,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-o": "outline::Toggle",
-      "ctrl-g": "go_to_line::Toggle"
+      "ctrl-g": "go_to_line::Toggle",
+      "cmd-shift-backspace": "editor::GoToPreviousChange",
+      "cmd-shift-alt-backspace": "editor::GoToNextChange"
     }
   },
   {
@@ -735,6 +740,7 @@
       "ctrl-alt-cmd-f": "workspace::FollowNextCollaborator",
       // TODO: Move this to a dock open action
       "cmd-shift-c": "collab_panel::ToggleFocus",
+      // Only available in debug builds: opens an element inspector for development.
       "cmd-alt-i": "dev::ToggleInspector"
     }
   },
@@ -838,7 +844,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "left": "variable_list::CollapseSelectedEntry",
-      "right": "variable_list::ExpandSelectedEntry"
+      "right": "variable_list::ExpandSelectedEntry",
+      "enter": "variable_list::EditVariable",
+      "cmd-c": "variable_list::CopyVariableValue",
+      "cmd-alt-c": "variable_list::CopyVariableName"
     }
   },
   {
@@ -928,6 +937,13 @@
     "bindings": {
       "cmd-t": "debugger::ToggleThreadPicker",
       "cmd-i": "debugger::ToggleSessionPicker"
+    }
+  },
+  {
+    "context": "BreakpointList",
+    "bindings": {
+      "space": "debugger::ToggleEnableBreakpoint",
+      "backspace": "debugger::UnsetBreakpoint"
     }
   },
   {
@@ -1092,6 +1108,14 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "menu::Confirm"
+    }
+  },
+  {
+    "context": "RunModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePreviousItem"
     }
   }
 ]

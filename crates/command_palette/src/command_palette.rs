@@ -557,7 +557,7 @@ mod tests {
                 .clone()
         });
 
-        palette.update(cx, |palette, _| {
+        palette.read_with(cx, |palette, _| {
             assert!(palette.delegate.commands.len() > 5);
             let is_sorted =
                 |actions: &[Command]| actions.windows(2).all(|pair| pair[0].name <= pair[1].name);
@@ -566,7 +566,7 @@ mod tests {
 
         cx.simulate_input("bcksp");
 
-        palette.update(cx, |palette, _| {
+        palette.read_with(cx, |palette, _| {
             assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
         });
 
@@ -595,7 +595,7 @@ mod tests {
                 .picker
                 .clone()
         });
-        palette.update(cx, |palette, _| {
+        palette.read_with(cx, |palette, _| {
             assert!(palette.delegate.matches.is_empty())
         });
     }
@@ -630,7 +630,7 @@ mod tests {
         });
 
         cx.simulate_input("Editor::    Backspace");
-        palette.update(cx, |palette, _| {
+        palette.read_with(cx, |palette, _| {
             assert_eq!(palette.delegate.matches[0].string, "editor: backspace");
         });
     }

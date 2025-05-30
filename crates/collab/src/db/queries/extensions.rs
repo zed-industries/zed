@@ -15,7 +15,7 @@ impl Database {
         max_schema_version: i32,
         limit: usize,
     ) -> Result<Vec<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let mut condition = Condition::all()
                 .add(
                     extension::Column::LatestVersion
@@ -43,7 +43,7 @@ impl Database {
         ids: &[&str],
         constraints: Option<&ExtensionVersionConstraints>,
     ) -> Result<Vec<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let extensions = extension::Entity::find()
                 .filter(extension::Column::ExternalId.is_in(ids.iter().copied()))
                 .all(&*tx)
@@ -123,7 +123,7 @@ impl Database {
         &self,
         extension_id: &str,
     ) -> Result<Vec<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let condition = extension::Column::ExternalId
                 .eq(extension_id)
                 .into_condition();
@@ -162,7 +162,7 @@ impl Database {
         extension_id: &str,
         constraints: Option<&ExtensionVersionConstraints>,
     ) -> Result<Option<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let extension = extension::Entity::find()
                 .filter(extension::Column::ExternalId.eq(extension_id))
                 .one(&*tx)
@@ -187,7 +187,7 @@ impl Database {
         extension_id: &str,
         version: &str,
     ) -> Result<Option<ExtensionMetadata>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let extension = extension::Entity::find()
                 .filter(extension::Column::ExternalId.eq(extension_id))
                 .filter(extension_version::Column::Version.eq(version))
@@ -204,7 +204,7 @@ impl Database {
     }
 
     pub async fn get_known_extension_versions(&self) -> Result<HashMap<String, Vec<String>>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let mut extension_external_ids_by_id = HashMap::default();
 
             let mut rows = extension::Entity::find().stream(&*tx).await?;
@@ -242,7 +242,7 @@ impl Database {
         &self,
         versions_by_extension_id: &HashMap<&str, Vec<NewExtensionVersion>>,
     ) -> Result<()> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             for (external_id, versions) in versions_by_extension_id {
                 if versions.is_empty() {
                     continue;
@@ -346,7 +346,7 @@ impl Database {
     }
 
     pub async fn record_extension_download(&self, extension: &str, version: &str) -> Result<bool> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryId {
                 Id,

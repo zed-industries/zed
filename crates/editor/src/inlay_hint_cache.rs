@@ -639,7 +639,7 @@ impl InlayHintCache {
                         if let Some(resolved_hint_task) = resolved_hint_task {
                             let mut resolved_hint =
                                 resolved_hint_task.await.context("hint resolve task")?;
-                            editor.update(cx, |editor, _| {
+                            editor.read_with(cx, |editor, _| {
                                 if let Some(excerpt_hints) =
                                     editor.inlay_hint_cache.hints.get(&excerpt_id)
                                 {
@@ -933,7 +933,7 @@ fn fetch_and_update_hints(
     cx: &mut Context<Editor>,
 ) -> Task<anyhow::Result<()>> {
     cx.spawn(async move |editor, cx|{
-        let buffer_snapshot = excerpt_buffer.update(cx, |buffer, _| buffer.snapshot())?;
+        let buffer_snapshot = excerpt_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
         let (lsp_request_limiter, multi_buffer_snapshot) =
             editor.update(cx, |editor, cx| {
                 let multi_buffer_snapshot =
@@ -1009,7 +1009,7 @@ fn fetch_and_update_hints(
             .ok()
             .flatten();
 
-        let cached_excerpt_hints = editor.update(cx, |editor, _| {
+        let cached_excerpt_hints = editor.read_with(cx, |editor, _| {
             editor
                 .inlay_hint_cache
                 .hints
@@ -2521,7 +2521,7 @@ pub mod tests {
             "Single buffer should produce a single excerpt with visible range"
         );
         let (_, (excerpt_buffer, _, excerpt_visible_range)) = ranges.into_iter().next().unwrap();
-        excerpt_buffer.update(cx, |buffer, _| {
+        excerpt_buffer.read_with(cx, |buffer, _| {
             let snapshot = buffer.snapshot();
             let start = buffer
                 .anchor_before(excerpt_visible_range.start)

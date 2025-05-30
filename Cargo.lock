@@ -53,13 +53,14 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
  "async-watch",
+ "audio",
  "buffer_diff",
  "chrono",
  "client",
@@ -131,6 +132,33 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
+]
+
+[[package]]
+name = "agent_settings"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "collections",
+ "deepseek",
+ "fs",
+ "gpui",
+ "indexmap",
+ "language_model",
+ "lmstudio",
+ "log",
+ "mistral",
+ "ollama",
+ "open_ai",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "workspace-hack",
  "zed_llm_client",
 ]
 
@@ -481,8 +509,8 @@ dependencies = [
 name = "assistant_context_editor"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "chrono",
@@ -531,32 +559,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "assistant_settings"
-version = "0.1.0"
-dependencies = [
- "anthropic",
- "anyhow",
- "collections",
- "deepseek",
- "fs",
- "gpui",
- "indexmap",
- "language_model",
- "lmstudio",
- "log",
- "mistral",
- "ollama",
- "open_ai",
- "paths",
- "schemars",
- "serde",
- "serde_json",
- "serde_json_lenient",
- "settings",
- "workspace-hack",
  "zed_llm_client",
 ]
 
@@ -593,7 +595,6 @@ dependencies = [
  "collections",
  "context_server",
  "editor",
- "env_logger 0.11.8",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -619,6 +620,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -631,7 +633,6 @@ dependencies = [
  "collections",
  "ctor",
  "derive_more",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "icons",
@@ -650,16 +651,17 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
 name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
- "aho-corasick",
+ "agent_settings",
  "anyhow",
- "assistant_settings",
  "assistant_tool",
+ "async-watch",
  "buffer_diff",
  "chrono",
  "client",
@@ -2198,6 +2200,7 @@ dependencies = [
  "editor",
  "gpui",
  "itertools 0.14.0",
+ "settings",
  "theme",
  "ui",
  "workspace",
@@ -2223,7 +2226,6 @@ dependencies = [
  "anyhow",
  "clock",
  "ctor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "git2",
  "gpui",
@@ -2238,6 +2240,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -2976,9 +2979,9 @@ dependencies = [
 name = "collab"
 version = "0.44.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-stripe",
@@ -3008,7 +3011,6 @@ dependencies = [
  "debugger_ui",
  "derive_more",
  "editor",
- "env_logger 0.11.8",
  "envy",
  "extension",
  "file_finder",
@@ -3083,6 +3085,7 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed_llm_client",
+ "zlog",
 ]
 
 [[package]]
@@ -3337,7 +3340,6 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "editor",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -3363,6 +3365,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -4013,7 +4016,6 @@ dependencies = [
  "client",
  "collections",
  "dap-types",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -4032,8 +4034,11 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
+ "tree-sitter",
+ "tree-sitter-go",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -4057,10 +4062,10 @@ dependencies = [
  "gpui",
  "json_dotpath",
  "language",
+ "log",
  "paths",
  "serde",
  "serde_json",
- "smol",
  "task",
  "util",
  "workspace-hack",
@@ -4220,7 +4225,6 @@ dependencies = [
  "db",
  "debugger_tools",
  "editor",
- "env_logger 0.11.8",
  "feature_flags",
  "file_icons",
  "futures 0.3.31",
@@ -4249,6 +4253,8 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -4365,7 +4371,6 @@ dependencies = [
  "component",
  "ctor",
  "editor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "indoc",
@@ -4386,6 +4391,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -4684,7 +4690,6 @@ dependencies = [
  "dap",
  "db",
  "emojis",
- "env_logger 0.11.8",
  "feature_flags",
  "file_icons",
  "fs",
@@ -4739,6 +4744,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -4995,8 +5001,8 @@ name = "eval"
 version = "0.1.0"
 dependencies = [
  "agent",
+ "agent_settings",
  "anyhow",
- "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-trait",
@@ -5043,6 +5049,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -5122,10 +5129,8 @@ dependencies = [
  "task",
  "toml 0.8.20",
  "util",
- "wasi-preview1-component-adapter-provider",
  "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
- "wit-component 0.221.3",
  "workspace-hack",
 ]
 
@@ -5166,7 +5171,6 @@ dependencies = [
  "criterion",
  "ctor",
  "dap",
- "env_logger 0.11.8",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -5203,6 +5207,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -5376,7 +5381,6 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.8",
  "file_icons",
  "futures 0.3.31",
  "fuzzy",
@@ -5384,8 +5388,10 @@ dependencies = [
  "language",
  "menu",
  "picker",
+ "pretty_assertions",
  "project",
  "schemars",
+ "search",
  "serde",
  "serde_derive",
  "serde_json",
@@ -5396,6 +5402,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -6099,9 +6106,9 @@ dependencies = [
 name = "git_ui"
 version = "0.1.0"
 dependencies = [
+ "agent_settings",
  "anyhow",
  "askpass",
- "assistant_settings",
  "buffer_diff",
  "chrono",
  "collections",
@@ -6110,7 +6117,6 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -6146,6 +6152,8 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
+ "zlog",
 ]
 
 [[package]]
@@ -7123,6 +7131,7 @@ name = "gpui_macros"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "heck 0.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -8165,6 +8174,7 @@ dependencies = [
  "anyhow",
  "command_palette_hooks",
  "editor",
+ "fuzzy",
  "gpui",
  "language",
  "project",
@@ -8727,7 +8737,6 @@ dependencies = [
  "ctor",
  "diffy",
  "ec4rs",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -8772,6 +8781,7 @@ dependencies = [
  "unindent",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -8898,7 +8908,6 @@ dependencies = [
  "collections",
  "copilot",
  "editor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "itertools 0.14.0",
@@ -8915,6 +8924,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -8925,6 +8935,7 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
+ "chrono",
  "collections",
  "dap",
  "futures 0.3.31",
@@ -8978,6 +8989,7 @@ dependencies = [
  "tree-sitter-yaml",
  "unindent",
  "util",
+ "which 6.0.3",
  "workspace",
  "workspace-hack",
 ]
@@ -9437,7 +9449,6 @@ dependencies = [
  "async-pipe",
  "collections",
  "ctor",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "log",
@@ -9451,6 +9462,7 @@ dependencies = [
  "smol",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -9562,10 +9574,10 @@ checksum = "3e2e65a1a2e43cfcb47a895c4c8b10d1f4a61097f9f254f183aee60cad9c651d"
 name = "markdown"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "assets",
  "base64 0.22.1",
  "env_logger 0.11.8",
+ "futures 0.3.31",
  "gpui",
  "language",
  "languages",
@@ -9947,7 +9959,6 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.11.8",
  "gpui",
  "indoc",
  "itertools 0.14.0",
@@ -9968,6 +9979,7 @@ dependencies = [
  "tree-sitter",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -12034,7 +12046,6 @@ dependencies = [
  "context_server",
  "dap",
  "dap_adapters",
- "env_logger 0.11.8",
  "extension",
  "fancy-regex 0.14.0",
  "fs",
@@ -13019,6 +13030,7 @@ dependencies = [
  "unindent",
  "util",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -13360,7 +13372,6 @@ dependencies = [
  "arrayvec",
  "criterion",
  "ctor",
- "env_logger 0.11.8",
  "gpui",
  "log",
  "rand 0.8.5",
@@ -13370,6 +13381,7 @@ dependencies = [
  "unicode-segmentation",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -13387,7 +13399,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "collections",
- "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "parking_lot",
@@ -13401,6 +13412,7 @@ dependencies = [
  "tracing",
  "util",
  "workspace-hack",
+ "zlog",
  "zstd",
 ]
 
@@ -14116,7 +14128,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger 0.11.8",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -14147,6 +14158,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -14677,11 +14689,14 @@ dependencies = [
 name = "snippets_ui"
 version = "0.1.0"
 dependencies = [
+ "file_finder",
+ "file_icons",
  "fuzzy",
  "gpui",
  "language",
  "paths",
  "picker",
+ "settings",
  "ui",
  "util",
  "workspace",
@@ -15176,11 +15191,11 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ctor",
- "env_logger 0.11.8",
  "log",
  "rand 0.8.5",
  "rayon",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -15491,7 +15506,6 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger 0.11.8",
  "fuzzy",
  "gpui",
  "language",
@@ -15508,6 +15522,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -15574,6 +15589,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "hex",
+ "log",
  "parking_lot",
  "pretty_assertions",
  "proto",
@@ -15753,7 +15769,6 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger 0.11.8",
  "gpui",
  "http_client",
  "log",
@@ -15766,6 +15781,7 @@ dependencies = [
  "sum_tree",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -16473,9 +16489,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.25.3"
+version = "0.25.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ac5ea5e7f2f1700842ec071401010b9c59bf735295f6e9fa079c3dc035b167"
+checksum = "ac5fff5c47490dfdf473b5228039bfacad9d765d9b6939d26bf7cc064c1c7822"
 dependencies = [
  "cc",
  "regex",
@@ -16827,6 +16843,7 @@ dependencies = [
  "component",
  "documented",
  "gpui",
+ "gpui_macros",
  "icons",
  "itertools 0.14.0",
  "menu",
@@ -17395,12 +17412,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wasi-preview1-component-adapter-provider"
-version = "29.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcd9f21bbde82ba59e415a8725e6ad0d0d7e9e460b1a3ccbca5bdee952c1a324"
-
-[[package]]
 name = "wasite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17520,22 +17531,6 @@ dependencies = [
  "spdx",
  "wasm-encoder 0.201.0",
  "wasmparser 0.201.0",
-]
-
-[[package]]
-name = "wasm-metadata"
-version = "0.221.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11f4ef50d17e103a88774cd4aa5d06bfb1ae44036a8f3f1325e0e9b3e3417ac4"
-dependencies = [
- "anyhow",
- "indexmap",
- "serde",
- "serde_derive",
- "serde_json",
- "spdx",
- "wasm-encoder 0.221.3",
- "wasmparser 0.221.3",
 ]
 
 [[package]]
@@ -19036,25 +19031,6 @@ dependencies = [
 
 [[package]]
 name = "wit-component"
-version = "0.221.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66c55ca8772d2b270e28066caed50ce4e53a28c3ac10e01efbd90e5be31e448b"
-dependencies = [
- "anyhow",
- "bitflags 2.9.0",
- "indexmap",
- "log",
- "serde",
- "serde_derive",
- "serde_json",
- "wasm-encoder 0.221.3",
- "wasm-metadata 0.221.3",
- "wasmparser 0.221.3",
- "wit-parser 0.221.3",
-]
-
-[[package]]
-name = "wit-component"
 version = "0.227.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "635c3adc595422cbf2341a17fb73a319669cc8d33deed3a48368a841df86b676"
@@ -19153,7 +19129,6 @@ dependencies = [
  "component",
  "dap",
  "db",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -19185,6 +19160,7 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -19359,7 +19335,6 @@ dependencies = [
  "unicode-properties",
  "url",
  "uuid",
- "wasm-encoder 0.221.3",
  "wasmparser 0.221.3",
  "wasmtime",
  "wasmtime-cranelift",
@@ -19382,7 +19357,6 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
- "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -19409,6 +19383,7 @@ dependencies = [
  "text",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -19712,16 +19687,16 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.189.0"
+version = "0.190.0"
 dependencies = [
  "activity_indicator",
  "agent",
+ "agent_settings",
  "anyhow",
  "ashpd",
  "askpass",
  "assets",
  "assistant_context_editor",
- "assistant_settings",
  "assistant_tool",
  "assistant_tools",
  "async-watch",
@@ -19908,9 +19883,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22a8b9575b215536ed8ad254ba07171e4e13bd029eda3b54cca4b184d2768050"
+checksum = "de7d9523255f4e00ee3d0918e5407bd252d798a4a8e71f6d37f23317a1588203"
 dependencies = [
  "anyhow",
  "serde",
@@ -20102,7 +20077,6 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "env_logger 0.11.8",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -20141,6 +20115,7 @@ dependencies = [
  "worktree",
  "zed_actions",
  "zed_llm_client",
+ "zlog",
 ]
 
 [[package]]
