@@ -86,7 +86,7 @@ impl PythonDebugAdapter {
         &self,
         task_definition: &DebugTaskDefinition,
     ) -> Result<StartDebuggingRequestArguments> {
-        let request = self.validate_config(&task_definition.config)?;
+        let request = self.request_kind(&task_definition.config)?;
 
         let mut configuration = task_definition.config.clone();
         if let Ok(console) = configuration.dot_get_mut("console") {

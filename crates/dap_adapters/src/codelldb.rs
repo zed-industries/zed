@@ -37,7 +37,7 @@ impl CodeLldbDebugAdapter {
                 Value::String(String::from(task_definition.label.as_ref())),
             );
 
-        let request = self.validate_config(&configuration)?;
+        let request = self.request_kind(&configuration)?;
 
         Ok(dap::StartDebuggingRequestArguments {
             request,

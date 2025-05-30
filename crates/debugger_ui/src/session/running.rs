@@ -812,7 +812,7 @@ impl RunningState {
             let request_type = dap_registry
                 .adapter(&adapter)
                 .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                .and_then(|adapter| adapter.validate_config(&config));
+                .and_then(|adapter| adapter.request_kind(&config));
 
             let config_is_valid = request_type.is_ok();
 

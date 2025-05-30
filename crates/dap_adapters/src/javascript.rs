@@ -95,7 +95,7 @@ impl JsDebugAdapter {
             }),
             request_args: StartDebuggingRequestArguments {
                 configuration: task_definition.config.clone(),
-                request: self.validate_config(&task_definition.config)?,
+                request: self.request_kind(&task_definition.config)?,
             },
         })
     }

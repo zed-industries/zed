@@ -370,7 +370,8 @@ pub trait DebugAdapter: 'static + Send + Sync {
         None
     }
 
-    fn validate_config(
+    /// Extracts the kind (attach/launch) of debug configuration from the given JSON config.
+    fn request_kind(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
@@ -409,7 +410,7 @@ impl DebugAdapter for FakeAdapter {
         serde_json::Value::Null
     }
 
-    fn validate_config(
+    fn request_kind(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
@@ -454,7 +455,7 @@ impl DebugAdapter for FakeAdapter {
             envs: HashMap::default(),
             cwd: None,
             request_args: StartDebuggingRequestArguments {
-                request: self.validate_config(&task_definition.config)?,
+                request: self.request_kind(&task_definition.config)?,
                 configuration: task_definition.config.clone(),
             },
         })
