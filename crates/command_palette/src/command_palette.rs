@@ -448,7 +448,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     }
 }
 
-fn humanize_action_name(name: &str) -> String {
+pub fn humanize_action_name(name: &str) -> String {
     let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
     let mut result = String::with_capacity(capacity);
     for char in name.chars() {

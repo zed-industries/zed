@@ -4539,6 +4539,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "command_palette",
+ "gpui",
  "mdbook",
  "regex",
  "serde",
@@ -4546,6 +4548,7 @@ dependencies = [
  "settings",
  "util",
  "workspace-hack",
+ "zed",
 ]
 
 [[package]]
