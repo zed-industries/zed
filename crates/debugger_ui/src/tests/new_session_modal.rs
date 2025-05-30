@@ -322,7 +322,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
         );
 
         let request_type = adapter
-            .validate_config(&debug_scenario.config)
+            .request_kind(&debug_scenario.config)
             .unwrap_or_else(|_| {
                 panic!(
                     "Adapter {} should validate the config successfully",
