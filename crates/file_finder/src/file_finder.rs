@@ -39,7 +39,7 @@ use std::{
 use text::Point;
 use ui::{
     ButtonLike, ContextMenu, HighlightedLabel, Indicator, KeyBinding, ListItem, ListItemSpacing,
-    PopoverMenu, PopoverMenuHandle, TintColor, prelude::*,
+    PopoverMenu, PopoverMenuHandle, TintColor, Tooltip, prelude::*,
 };
 use util::{ResultExt, maybe, paths::PathWithPosition, post_inc};
 use workspace::{
@@ -1538,23 +1538,11 @@ impl PickerDelegate for FileFinderDelegate {
     ) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
 
-        let indicator = div()
-            .absolute()
-            .top_1()
-            .right_2()
-            .child(Indicator::dot().color(Color::Info));
-
-        let filter_label = div()
-            .relative()
-            .when(self.include_ignored.is_some(), |this| this.child(indicator))
-            .child(Label::new("Filters"));
-
         Some(
             h_flex()
                 .w_full()
                 .p_1p5()
-                .gap_0p5()
-                .justify_end()
+                .justify_between()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
@@ -1566,19 +1554,26 @@ impl PickerDelegate for FileFinderDelegate {
                             x: px(1.0),
                             y: px(1.0),
                         })
-                        .trigger(
-                            ButtonLike::new("filter-trigger")
-                                .child(filter_label)
-                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                .children(
-                                    KeyBinding::for_action_in(
+                        .trigger_with_tooltip(
+                            IconButton::new("filter-trigger", IconName::Sliders)
+                                .icon_size(IconSize::Small)
+                                .icon_size(IconSize::Small)
+                                .toggle_state(self.include_ignored.unwrap_or(false))
+                                .when(self.include_ignored.is_some(), |this| {
+                                    this.indicator(Indicator::dot().color(Color::Info))
+                                }),
+                            {
+                                let focus_handle = focus_handle.clone();
+                                move |window, cx| {
+                                    Tooltip::for_action_in(
+                                        "Filter Options",
                                         &ToggleFilterMenu,
                                         &focus_handle,
                                         window,
                                         cx,
                                     )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                                ),
+                                }
+                            },
                         )
                         .menu({
                             let focus_handle = focus_handle.clone();
@@ -1609,54 +1604,72 @@ impl PickerDelegate for FileFinderDelegate {
                         }),
                 )
                 .child(
-                    PopoverMenu::new("split-menu-popover")
-                        .with_handle(self.split_popover_menu_handle.clone())
-                        .attach(gpui::Corner::BottomRight)
-                        .anchor(gpui::Corner::BottomLeft)
-                        .offset(gpui::Point {
-                            x: px(1.0),
-                            y: px(1.0),
-                        })
-                        .trigger(
-                            ButtonLike::new("split-trigger")
-                                .child(Label::new("Split…"))
-                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                .children(
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            PopoverMenu::new("split-menu-popover")
+                                .with_handle(self.split_popover_menu_handle.clone())
+                                .attach(gpui::Corner::BottomRight)
+                                .anchor(gpui::Corner::BottomLeft)
+                                .offset(gpui::Point {
+                                    x: px(1.0),
+                                    y: px(1.0),
+                                })
+                                .trigger(
+                                    ButtonLike::new("split-trigger")
+                                        .child(Label::new("Split…"))
+                                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                                        .children(
+                                            KeyBinding::for_action_in(
+                                                &ToggleSplitMenu,
+                                                &focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        ),
+                                )
+                                .menu({
+                                    let focus_handle = focus_handle.clone();
+
+                                    move |window, cx| {
+                                        Some(ContextMenu::build(window, cx, {
+                                            let focus_handle = focus_handle.clone();
+                                            move |menu, _, _| {
+                                                menu.context(focus_handle.clone())
+                                                    .action(
+                                                        "Split Left",
+                                                        pane::SplitLeft.boxed_clone(),
+                                                    )
+                                                    .action(
+                                                        "Split Right",
+                                                        pane::SplitRight.boxed_clone(),
+                                                    )
+                                                    .action("Split Up", pane::SplitUp.boxed_clone())
+                                                    .action(
+                                                        "Split Down",
+                                                        pane::SplitDown.boxed_clone(),
+                                                    )
+                                            }
+                                        }))
+                                    }
+                                }),
+                        )
+                        .child(
+                            Button::new("open-selection", "Open")
+                                .key_binding(
                                     KeyBinding::for_action_in(
-                                        &ToggleSplitMenu,
+                                        &menu::Confirm,
                                         &focus_handle,
                                         window,
                                         cx,
                                     )
                                     .map(|kb| kb.size(rems_from_px(12.))),
-                                ),
-                        )
-                        .menu({
-                            let focus_handle = focus_handle.clone();
-
-                            move |window, cx| {
-                                Some(ContextMenu::build(window, cx, {
-                                    let focus_handle = focus_handle.clone();
-                                    move |menu, _, _| {
-                                        menu.context(focus_handle.clone())
-                                            .action("Split Left", pane::SplitLeft.boxed_clone())
-                                            .action("Split Right", pane::SplitRight.boxed_clone())
-                                            .action("Split Up", pane::SplitUp.boxed_clone())
-                                            .action("Split Down", pane::SplitDown.boxed_clone())
-                                    }
-                                }))
-                            }
-                        }),
-                )
-                .child(
-                    Button::new("open-selection", "Open")
-                        .key_binding(
-                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                        )
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                        }),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                                }),
+                        ),
                 )
                 .into_any(),
         )
