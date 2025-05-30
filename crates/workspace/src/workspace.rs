@@ -5416,7 +5416,7 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
                     adjust_active_dock_size_by_px(
-                        px_with_ui_font_fallback(act.px as _, cx),
+                        px_with_ui_font_fallback(act.px, cx),
                         workspace,
                         window,
                         cx,
@@ -5426,7 +5426,7 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &DecreaseActiveDockSize, window, cx| {
                     adjust_active_dock_size_by_px(
-                        px_with_ui_font_fallback(act.px as f32, cx) * -1.,
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
                         workspace,
                         window,
                         cx,
@@ -5436,7 +5436,7 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &IncreaseOpenDocksSize, window, cx| {
                     adjust_open_docks_size_by_px(
-                        px_with_ui_font_fallback(act.px as _, cx),
+                        px_with_ui_font_fallback(act.px, cx),
                         workspace,
                         window,
                         cx,
@@ -5446,7 +5446,7 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, act: &DecreaseOpenDocksSize, window, cx| {
                     adjust_open_docks_size_by_px(
-                        px_with_ui_font_fallback(act.px as f32, cx) * -1.,
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
                         workspace,
                         window,
                         cx,
@@ -5820,11 +5820,11 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
-fn px_with_ui_font_fallback(val: f32, cx: &Context<Workspace>) -> Pixels {
-    if val == 0. {
+fn px_with_ui_font_fallback(val: u32, cx: &Context<Workspace>) -> Pixels {
+    if val == 0 {
         ThemeSettings::get_global(cx).ui_font_size(cx)
     } else {
-        px(val)
+        px(val as f32)
     }
 }
 

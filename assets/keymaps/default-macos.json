@@ -631,12 +631,12 @@
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions",
-      "alt-cmd-0": "workspace::ResetActiveDockSize",
-      "alt-cmd-=": "workspace::IncreaseActiveDockSize",
-      "alt-cmd--": "workspace::DecreaseActiveDockSize",
-      "ctrl-alt-cmd-0": "workspace::ResetOpenDocksSize",
-      "ctrl-alt-cmd-=": "workspace::IncreaseOpenDocksSize",
-      "ctrl-alt-cmd--": "workspace::DecreaseOpenDocksSize"
+      "cmd-alt-0": "workspace::ResetActiveDockSize",
+      "cmd-alt-=": "workspace::IncreaseActiveDockSize",
+      "cmd-alt--": "workspace::DecreaseActiveDockSize",
+      "cmd-alt-)": "workspace::ResetOpenDocksSize",
+      "cmd-alt-+": "workspace::IncreaseOpenDocksSize",
+      "cmd-alt-_": "workspace::DecreaseOpenDocksSize"
     }
   },
   {
