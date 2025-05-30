@@ -989,6 +989,7 @@ impl ThreadsDatabase {
         Ok(db)
     }
 
+    // Remove this migration after 2025-09-01
     fn migrate_from_heed(
         mdb_path: &Path,
         connection: Arc<Mutex<Connection>>,
@@ -1033,15 +1034,10 @@ impl ThreadsDatabase {
             .open_database(&txn, Some("threads"))?
             .ok_or_else(|| anyhow!("threads database not found"))?;
 
-        let iter = threads.iter(&txn)?;
-
-        let all_threads: Vec<_> = iter.collect::<Result<Vec<_>, _>>()?;
-
-        for (thread_id, thread_heed) in all_threads {
+        for result in threads.iter(&txn)? {
+            let (thread_id, thread_heed) = result?;
             Self::save_thread_sync(&connection, thread_id, thread_heed.0)?;
         }
-
-        drop(txn);
 
         Ok(())
     }
