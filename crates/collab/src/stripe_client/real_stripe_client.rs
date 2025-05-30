@@ -5,9 +5,9 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use serde::Serialize;
 use stripe::{
-    CheckoutSession, CheckoutSessionMode, CheckoutSessionPaymentMethodCollection,
-    CreateCheckoutSession, CreateCheckoutSessionLineItems, CreateCheckoutSessionSubscriptionData,
-    CreateCheckoutSessionSubscriptionDataTrialSettings,
+    CancellationDetails, CancellationDetailsReason, CheckoutSession, CheckoutSessionMode,
+    CheckoutSessionPaymentMethodCollection, CreateCheckoutSession, CreateCheckoutSessionLineItems,
+    CreateCheckoutSessionSubscriptionData, CreateCheckoutSessionSubscriptionDataTrialSettings,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod,
     CreateCustomer, Customer, CustomerId, ListCustomers, Price, PriceId, Recurring, Subscription,
@@ -17,9 +17,9 @@ use stripe::{
 };
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeCheckoutSession, StripeCheckoutSessionMode,
-    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
-    StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
+    CreateCustomerParams, StripeCancellationDetails, StripeCancellationDetailsReason,
+    StripeCheckoutSession, StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection,
+    StripeClient, StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeMeter, StripePrice,
     StripePriceId, StripePriceRecurring, StripeSubscription, StripeSubscriptionId,
@@ -55,6 +55,14 @@ impl StripeClient for RealStripeClient {
             .into_iter()
             .map(StripeCustomer::from)
             .collect())
+    }
+
+    async fn get_customer(&self, customer_id: &StripeCustomerId) -> Result<StripeCustomer> {
+        let customer_id = customer_id.try_into()?;
+
+        let customer = Customer::retrieve(&self.client, &customer_id, &[]).await?;
+
+        Ok(StripeCustomer::from(customer))
     }
 
     async fn create_customer(&self, params: CreateCustomerParams<'_>) -> Result<StripeCustomer> {
@@ -149,6 +157,22 @@ impl StripeClient for RealStripeClient {
                         .collect()
                 }),
                 trial_settings: params.trial_settings.map(Into::into),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    async fn cancel_subscription(&self, subscription_id: &StripeSubscriptionId) -> Result<()> {
+        let subscription_id = subscription_id.try_into()?;
+
+        Subscription::cancel(
+            &self.client,
+            &subscription_id,
+            stripe::CancelSubscription {
+                invoice_now: None,
                 ..Default::default()
             },
         )
@@ -273,6 +297,26 @@ impl From<Subscription> for StripeSubscription {
             current_period_start: value.current_period_start,
             current_period_end: value.current_period_end,
             items: value.items.data.into_iter().map(Into::into).collect(),
+            cancel_at: value.cancel_at,
+            cancellation_details: value.cancellation_details.map(Into::into),
+        }
+    }
+}
+
+impl From<CancellationDetails> for StripeCancellationDetails {
+    fn from(value: CancellationDetails) -> Self {
+        Self {
+            reason: value.reason.map(Into::into),
+        }
+    }
+}
+
+impl From<CancellationDetailsReason> for StripeCancellationDetailsReason {
+    fn from(value: CancellationDetailsReason) -> Self {
+        match value {
+            CancellationDetailsReason::CancellationRequested => Self::CancellationRequested,
+            CancellationDetailsReason::PaymentDisputed => Self::PaymentDisputed,
+            CancellationDetailsReason::PaymentFailed => Self::PaymentFailed,
         }
     }
 }

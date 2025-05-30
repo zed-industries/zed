@@ -111,14 +111,12 @@ impl StripeBilling {
 
     pub async fn determine_subscription_kind(
         &self,
-        subscription: &stripe::Subscription,
+        subscription: &StripeSubscription,
     ) -> Option<SubscriptionKind> {
-        let zed_pro_price_id: stripe::PriceId =
-            self.zed_pro_price_id().await.ok()?.try_into().ok()?;
-        let zed_free_price_id: stripe::PriceId =
-            self.zed_free_price_id().await.ok()?.try_into().ok()?;
+        let zed_pro_price_id = self.zed_pro_price_id().await.ok()?;
+        let zed_free_price_id = self.zed_free_price_id().await.ok()?;
 
-        subscription.items.data.iter().find_map(|item| {
+        subscription.items.iter().find_map(|item| {
             let price = item.price.as_ref()?;
 
             if price.id == zed_pro_price_id {
