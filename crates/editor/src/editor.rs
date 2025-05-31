@@ -5401,8 +5401,8 @@ impl Editor {
             snippet = None;
             new_text = completion.new_text.clone();
         };
-
         let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
+
         let buffer = buffer_handle.read(cx);
         let replace_range_multibuffer = {
             let excerpt = snapshot.excerpt_containing(newest_anchor.range()).unwrap();
@@ -19515,79 +19515,64 @@ fn vim_enabled(cx: &App) -> bool {
         == Some(&serde_json::Value::Bool(true))
 }
 
-// Consider user intent and default settings
 fn choose_completion_range(
     completion: &Completion,
     intent: CompletionIntent,
     buffer: &Entity<Buffer>,
     cx: &mut Context<Editor>,
 ) -> Range<usize> {
-    fn should_replace(
-        completion: &Completion,
-        insert_range: &Range<text::Anchor>,
-        intent: CompletionIntent,
-        completion_mode_setting: LspInsertMode,
-        buffer: &Buffer,
-    ) -> bool {
-        // specific actions take precedence over settings
-        match intent {
-            CompletionIntent::CompleteWithInsert => return false,
-            CompletionIntent::CompleteWithReplace => return true,
-            CompletionIntent::Complete | CompletionIntent::Compose => {}
-        }
-
-        match completion_mode_setting {
-            LspInsertMode::Insert => false,
-            LspInsertMode::Replace => true,
-            LspInsertMode::ReplaceSubsequence => {
-                let mut text_to_replace = buffer.chars_for_range(
-                    buffer.anchor_before(completion.replace_range.start)
-                        ..buffer.anchor_after(completion.replace_range.end),
-                );
-                let mut completion_text = completion.new_text.chars();
-
-                // is `text_to_replace` a subsequence of `completion_text`
-                text_to_replace
-                    .all(|needle_ch| completion_text.any(|haystack_ch| haystack_ch == needle_ch))
-            }
-            LspInsertMode::ReplaceSuffix => {
-                let range_after_cursor = insert_range.end..completion.replace_range.end;
-
-                let text_after_cursor = buffer
-                    .text_for_range(
-                        buffer.anchor_before(range_after_cursor.start)
-                            ..buffer.anchor_after(range_after_cursor.end),
-                    )
-                    .collect::<String>();
-                completion.new_text.ends_with(&text_after_cursor)
-            }
-        }
-    }
-
     let buffer = buffer.read(cx);
 
-    if let CompletionSource::Lsp {
+    let CompletionSource::Lsp {
         insert_range: Some(insert_range),
         ..
     } = &completion.source
-    {
-        let completion_mode_setting =
-            language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                .completions
-                .lsp_insert_mode;
+    else {
+        return completion.replace_range.to_offset(buffer);
+    };
 
-        if !should_replace(
-            completion,
-            &insert_range,
-            intent,
-            completion_mode_setting,
-            buffer,
-        ) {
-            return insert_range.to_offset(buffer);
+    let should_replace = match intent {
+        CompletionIntent::CompleteWithInsert => false,
+        CompletionIntent::CompleteWithReplace => true,
+        CompletionIntent::Complete | CompletionIntent::Compose => {
+            let insert_mode =
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                    .completions
+                    .lsp_insert_mode;
+
+            match insert_mode {
+                LspInsertMode::Insert => false,
+                LspInsertMode::Replace => true,
+                LspInsertMode::ReplaceSubsequence => {
+                    let mut text_to_replace = buffer.chars_for_range(
+                        buffer.anchor_before(completion.replace_range.start)
+                            ..buffer.anchor_after(completion.replace_range.end),
+                    );
+                    let mut completion_text = completion.new_text.chars();
+                    // is `text_to_replace` a subsequence of `completion_text`
+                    text_to_replace.all(|needle_ch| {
+                        completion_text.any(|haystack_ch| haystack_ch == needle_ch)
+                    })
+                }
+                LspInsertMode::ReplaceSuffix => {
+                    let range_after_cursor = insert_range.end..completion.replace_range.end;
+                    let text_after_cursor = buffer
+                        .text_for_range(
+                            buffer.anchor_before(range_after_cursor.start)
+                                ..buffer.anchor_after(range_after_cursor.end),
+                        )
+                        .collect::<String>();
+                    completion.new_text.ends_with(&text_after_cursor)
+                }
+            }
         }
-    }
+    };
 
-    completion.replace_range.to_offset(buffer)
+    if should_replace {
+        completion.replace_range.to_offset(buffer)
+    } else {
+        insert_range.to_offset(buffer)
+    }
 }
 
 fn insert_extra_newline_brackets(
