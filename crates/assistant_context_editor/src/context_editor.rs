@@ -1644,31 +1644,42 @@ impl ContextEditor {
         });
 
         let context = self.context.read(cx);
-
         let mut text = String::new();
-        for message in context.messages(cx) {
-            if message.offset_range.start >= selection.range().end {
-                break;
-            } else if message.offset_range.end >= selection.range().start {
-                let range = cmp::max(message.offset_range.start, selection.range().start)
-                    ..cmp::min(message.offset_range.end, selection.range().end);
-                if range.is_empty() {
-                    let snapshot = context.buffer().read(cx).snapshot();
-                    let point = snapshot.offset_to_point(range.start);
-                    selection.start = snapshot.point_to_offset(Point::new(point.row, 0));
-                    selection.end = snapshot.point_to_offset(cmp::min(
-                        Point::new(point.row + 1, 0),
-                        snapshot.max_point(),
-                    ));
-                    for chunk in context.buffer().read(cx).text_for_range(selection.range()) {
-                        text.push_str(chunk);
-                    }
-                } else {
-                    for chunk in context.buffer().read(cx).text_for_range(range) {
-                        text.push_str(chunk);
-                    }
-                    if message.offset_range.end < selection.range().end {
-                        text.push('\n');
+        let original_selection_range = selection.range();
+
+        // Handle special case when selection is empty (cursor position)
+        if original_selection_range.is_empty() {
+            let snapshot = context.buffer().read(cx).snapshot();
+            let point = snapshot.offset_to_point(original_selection_range.start);
+            let line_start = snapshot.point_to_offset(Point::new(point.row, 0));
+            let line_end = snapshot
+                .point_to_offset(cmp::min(Point::new(point.row + 1, 0), snapshot.max_point()));
+
+            for chunk in context
+                .buffer()
+                .read(cx)
+                .text_for_range(line_start..line_end)
+            {
+                text.push_str(chunk);
+            }
+            selection.start = line_start;
+            selection.end = line_end;
+        } else {
+            // Handle normal selection - copy all selected content across messages
+            for message in context.messages(cx) {
+                if message.offset_range.start >= original_selection_range.end {
+                    break;
+                } else if message.offset_range.end > original_selection_range.start {
+                    let range = cmp::max(message.offset_range.start, original_selection_range.start)
+                        ..cmp::min(message.offset_range.end, original_selection_range.end);
+
+                    if !range.is_empty() {
+                        for chunk in context.buffer().read(cx).text_for_range(range.clone()) {
+                            text.push_str(chunk);
+                        }
+                        if message.offset_range.end < original_selection_range.end {
+                            text.push('\n');
+                        }
                     }
                 }
             }
