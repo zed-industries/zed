@@ -1276,12 +1276,15 @@ impl Pane {
         }
 
         let active_item_id = self.items[self.active_item_index].item_id();
-        let non_closable_item_ids = self.get_non_closable_item_ids(action.close_pinned);
+        let pinned_item_ids = self.pinned_item_ids();
         Some(self.close_items(
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
-            move |item_id| item_id != active_item_id && !non_closable_item_ids.contains(&item_id),
+            move |item_id| {
+                item_id != active_item_id
+                    && (action.close_pinned || !pinned_item_ids.contains(&item_id))
+            },
         ))
     }
 
@@ -1296,10 +1299,11 @@ impl Pane {
             .filter(|item| !item.is_dirty(cx))
             .map(|item| item.item_id())
             .collect();
-        let non_closable_item_ids = self.get_non_closable_item_ids(action.close_pinned);
+        let pinned_item_ids = self.pinned_item_ids();
         Some(
             self.close_items(window, cx, SaveIntent::Close, move |item_id| {
-                item_ids.contains(&item_id) && !non_closable_item_ids.contains(&item_id)
+                item_ids.contains(&item_id)
+                    && (action.close_pinned || !pinned_item_ids.contains(&item_id))
             }),
         )
     }
@@ -1314,11 +1318,11 @@ impl Pane {
             return None;
         }
         let active_item_id = self.items[self.active_item_index].item_id();
-        let non_closable_item_ids = self.get_non_closable_item_ids(action.close_pinned);
+        let pinned_item_ids = self.pinned_item_ids();
         Some(self.close_items_to_the_left_by_id(
             active_item_id,
             action,
-            non_closable_item_ids,
+            pinned_item_ids,
             window,
             cx,
         ))
@@ -1328,7 +1332,7 @@ impl Pane {
         &mut self,
         item_id: EntityId,
         action: &CloseItemsToTheLeft,
-        non_closable_item_ids: HashSet<EntityId>,
+        pinned_item_ids: HashSet<EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1340,7 +1344,7 @@ impl Pane {
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
             item_ids.contains(&item_id)
                 && !action.close_pinned
-                && !non_closable_item_ids.contains(&item_id)
+                && !pinned_item_ids.contains(&item_id)
         })
     }
 
@@ -1354,11 +1358,11 @@ impl Pane {
             return None;
         }
         let active_item_id = self.items[self.active_item_index].item_id();
-        let non_closable_item_ids = self.get_non_closable_item_ids(action.close_pinned);
+        let pinned_item_ids = self.pinned_item_ids();
         Some(self.close_items_to_the_right_by_id(
             active_item_id,
             action,
-            non_closable_item_ids,
+            pinned_item_ids,
             window,
             cx,
         ))
@@ -1368,7 +1372,7 @@ impl Pane {
         &mut self,
         item_id: EntityId,
         action: &CloseItemsToTheRight,
-        non_closable_item_ids: HashSet<EntityId>,
+        pinned_item_ids: HashSet<EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1381,7 +1385,7 @@ impl Pane {
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
             item_ids.contains(&item_id)
                 && !action.close_pinned
-                && !non_closable_item_ids.contains(&item_id)
+                && !pinned_item_ids.contains(&item_id)
         })
     }
 
@@ -1395,12 +1399,12 @@ impl Pane {
             return None;
         }
 
-        let non_closable_item_ids = self.get_non_closable_item_ids(action.close_pinned);
+        let pinned_item_ids = self.pinned_item_ids();
         Some(self.close_items(
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
-            |item_id| !non_closable_item_ids.contains(&item_id),
+            |item_id| (action.close_pinned || !pinned_item_ids.contains(&item_id)),
         ))
     }
 
@@ -2404,10 +2408,9 @@ impl Pane {
                                     }))
                                     .disabled(total_items == 1)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
-                                        let non_closable_item_ids =
-                                            pane.get_non_closable_item_ids(false);
+                                        let pinned_item_ids = pane.pinned_item_ids();
                                         pane.close_items(window, cx, SaveIntent::Close, |id| {
-                                            id != item_id && !non_closable_item_ids.contains(&id)
+                                            id != item_id && !pinned_item_ids.contains(&id)
                                         })
                                         .detach_and_log_err(cx);
                                     })),
@@ -2425,7 +2428,7 @@ impl Pane {
                                             &CloseItemsToTheLeft {
                                                 close_pinned: false,
                                             },
-                                            pane.get_non_closable_item_ids(false),
+                                            pane.pinned_item_ids(),
                                             window,
                                             cx,
                                         )
@@ -2444,7 +2447,7 @@ impl Pane {
                                             &CloseItemsToTheRight {
                                                 close_pinned: false,
                                             },
-                                            pane.get_non_closable_item_ids(false),
+                                            pane.pinned_item_ids(),
                                             window,
                                             cx,
                                         )
@@ -3087,11 +3090,7 @@ impl Pane {
         self.display_nav_history_buttons = display;
     }
 
-    fn get_non_closable_item_ids(&self, close_pinned: bool) -> HashSet<EntityId> {
-        if close_pinned {
-            return HashSet::default();
-        }
-
+    fn pinned_item_ids(&self) -> HashSet<EntityId> {
         self.items
             .iter()
             .enumerate()
