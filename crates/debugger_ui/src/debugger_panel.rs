@@ -3,9 +3,10 @@ use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
-    ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
-    ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewSessionModal,
+    NewSessionMode, Pause, Restart, ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop,
+    ToggleIgnoreBreakpoints, ToggleSessionPicker, ToggleThreadPicker, persistence,
+    spawn_task_or_modal,
 };
 use anyhow::{Context as _, Result, anyhow};
 use command_palette_hooks::CommandPaletteFilter;
@@ -32,6 +33,7 @@ use std::any::TypeId;
 use std::sync::Arc;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
+use util::maybe;
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -334,10 +336,17 @@ impl DebugPanel {
         let Some(task_inventory) = task_store.read(cx).task_inventory() else {
             return;
         };
+        let workspace = self.workspace.clone();
         let Some(scenario) = task_inventory.read(cx).last_scheduled_scenario().cloned() else {
+            window.defer(cx, move |window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        NewSessionModal::show(workspace, window, NewSessionMode::Launch, None, cx);
+                    })
+                    .ok();
+            });
             return;
         };
-        let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let task_contexts = workspace
@@ -1409,5 +1418,15 @@ impl workspace::DebuggerProvider for DebuggerProvider {
 
     fn debug_scenario_scheduled_last(&self, cx: &App) -> bool {
         self.0.read(cx).debug_scenario_scheduled_last
+    }
+
+    fn have_stopped_session(&self, cx: &App) -> bool {
+        maybe!({
+            let session = self.0.read(cx).active_session()?;
+            let thread = session.read(cx).running_state().read(cx).thread_id()?;
+            let status = session.read(cx).session(cx).read(cx).thread_state(thread)?;
+            Some(status == ThreadStatus::Stopped)
+        })
+        .unwrap_or(false)
     }
 }

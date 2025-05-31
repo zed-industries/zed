@@ -2194,4 +2194,8 @@ impl Session {
             self.shutdown(cx).detach();
         }
     }
+
+    pub fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
+        self.thread_states.thread_state(thread_id)
+    }
 }
