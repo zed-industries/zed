@@ -827,7 +827,10 @@
     // its response, or needs user input.
 
     // Default: false
-    "play_sound_when_agent_done": false
+    "play_sound_when_agent_done": false,
+    // Whether to automatically follow the agent after entering a prompt.
+    // Default: false
+    "follow_after_prompt": false
   },
   // The settings for slash commands.
   "slash_commands": {

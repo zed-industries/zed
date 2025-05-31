@@ -111,6 +111,7 @@ pub struct AgentSettings {
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
     pub enable_feedback: bool,
+    pub follow_after_prompt: bool,
 }
 
 impl AgentSettings {
@@ -279,6 +280,7 @@ impl AgentSettingsContent {
                     preferred_completion_mode: None,
                     enable_feedback: None,
                     play_sound_when_agent_done: None,
+                    follow_after_prompt: None,
                 },
                 VersionedAgentSettingsContent::V2(ref settings) => settings.clone(),
             },
@@ -312,6 +314,7 @@ impl AgentSettingsContent {
                 preferred_completion_mode: None,
                 enable_feedback: None,
                 play_sound_when_agent_done: None,
+                follow_after_prompt: None,
             },
             None => AgentSettingsContentV2::default(),
         }
@@ -597,6 +600,7 @@ impl Default for VersionedAgentSettingsContent {
             preferred_completion_mode: None,
             enable_feedback: None,
             play_sound_when_agent_done: None,
+            follow_after_prompt: None,
         })
     }
 }
@@ -682,6 +686,10 @@ pub struct AgentSettingsContentV2 {
     ///
     /// Default: true
     enable_feedback: Option<bool>,
+    /// Whether to automatically follow the agent after entering a prompt.
+    ///
+    /// Default: false
+    follow_after_prompt: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -896,6 +904,7 @@ impl Settings for AgentSettings {
                 value.preferred_completion_mode,
             );
             merge(&mut settings.enable_feedback, value.enable_feedback);
+            merge(&mut settings.follow_after_prompt, value.follow_after_prompt);
 
             settings
                 .model_parameters
@@ -1033,6 +1042,7 @@ mod tests {
                             enable_feedback: None,
                             model_parameters: Vec::new(),
                             preferred_completion_mode: None,
+                            follow_after_prompt: None,
                         })),
                     }
                 },

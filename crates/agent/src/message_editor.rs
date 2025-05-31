@@ -299,6 +299,16 @@ impl MessageEditor {
             return;
         }
 
+        // Check if follow_after_prompt is enabled and follow the agent if so
+        let settings = AgentSettings::get_global(cx);
+        if settings.follow_after_prompt {
+            self.workspace
+                .update(cx, |this, cx| {
+                    this.follow(CollaboratorId::Agent, window, cx)
+                })
+                .log_err();
+        }
+
         self.set_editor_is_expanded(false, cx);
         self.send_to_model(window, cx);
 
