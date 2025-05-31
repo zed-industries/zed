@@ -190,6 +190,8 @@ actions!(
         OpenInTerminal,
         OpenComponentPreview,
         ReloadActiveItem,
+        ResetActiveDockSize,
+        ResetOpenDocksSize,
         SaveAs,
         SaveWithoutFormat,
         ShutdownDebugAdapters,
@@ -272,12 +274,44 @@ pub struct ToggleFileFinder {
 
 impl_action_as!(file_finder, ToggleFileFinder as Toggle);
 
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IncreaseActiveDockSize {
+    #[serde(default)]
+    pub px: u32,
+}
+
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseActiveDockSize {
+    #[serde(default)]
+    pub px: u32,
+}
+
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IncreaseOpenDocksSize {
+    #[serde(default)]
+    pub px: u32,
+}
+
+#[derive(Clone, PartialEq, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseOpenDocksSize {
+    #[serde(default)]
+    pub px: u32,
+}
+
 impl_actions!(
     workspace,
     [
         ActivatePane,
         CloseAllItemsAndPanes,
         CloseInactiveTabsAndPanes,
+        DecreaseActiveDockSize,
+        DecreaseOpenDocksSize,
+        IncreaseActiveDockSize,
+        IncreaseOpenDocksSize,
         MoveItemToPane,
         MoveItemToPaneInDirection,
         OpenTerminal,
@@ -5407,6 +5441,72 @@ impl Workspace {
                     workspace.reopen_closed_item(window, cx).detach();
                 },
             ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if dock.focus_handle(cx).contains_focused(window, cx) {
+                            let Some(panel) = dock.read(cx).active_panel() else {
+                                return;
+                            };
+
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+
+                            return;
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetOpenDocksSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if let Some(panel) = dock.read(cx).visible_panel() {
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &DecreaseActiveDockSize, window, cx| {
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &IncreaseOpenDocksSize, window, cx| {
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &DecreaseOpenDocksSize, window, cx| {
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
             .on_action(cx.listener(Workspace::cancel))
     }
@@ -5772,6 +5872,77 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
             }
         })
         .log_err();
+}
+
+fn px_with_ui_font_fallback(val: u32, cx: &Context<Workspace>) -> Pixels {
+    if val == 0 {
+        ThemeSettings::get_global(cx).ui_font_size(cx)
+    } else {
+        px(val as f32)
+    }
+}
+
+fn adjust_active_dock_size_by_px(
+    px: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(active_dock) = workspace
+        .all_docks()
+        .into_iter()
+        .find(|dock| dock.focus_handle(cx).contains_focused(window, cx))
+    else {
+        return;
+    };
+    let dock = active_dock.read(cx);
+    let Some(panel_size) = dock.active_panel_size(window, cx) else {
+        return;
+    };
+    let dock_pos = dock.position();
+
+    adjust_dock_size_by_px(panel_size, dock_pos, px)(workspace, window, cx);
+}
+
+fn adjust_open_docks_size_by_px(
+    px: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let docks = workspace
+        .all_docks()
+        .into_iter()
+        .filter_map(|dock| {
+            if dock.read(cx).is_open() {
+                let dock = dock.read(cx);
+                let panel_size = dock.active_panel_size(window, cx)?;
+                let dock_pos = dock.position();
+
+                Some((panel_size, dock_pos, px))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    docks
+        .into_iter()
+        .for_each(|(panel_size, dock_pos, offset)| {
+            adjust_dock_size_by_px(panel_size, dock_pos, offset)(workspace, window, cx)
+        });
+}
+
+fn adjust_dock_size_by_px(
+    panel_size: Pixels,
+    dock_pos: DockPosition,
+    px: Pixels,
+) -> impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) {
+    move |workspace, window, cx| match dock_pos {
+        DockPosition::Left => resize_left_dock(panel_size + px, workspace, window, cx),
+        DockPosition::Right => resize_right_dock(panel_size + px, workspace, window, cx),
+        DockPosition::Bottom => resize_bottom_dock(panel_size + px, workspace, window, cx),
+    }
 }
 
 impl Focusable for Workspace {
