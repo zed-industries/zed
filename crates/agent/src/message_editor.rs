@@ -299,6 +299,14 @@ impl MessageEditor {
             return;
         }
 
+        if AgentSettings::get_global(cx).follow_after_prompt {
+            self.workspace
+                .update(cx, |this, cx| {
+                    this.follow(CollaboratorId::Agent, window, cx)
+                })
+                .log_err();
+        }
+
         self.set_editor_is_expanded(false, cx);
         self.send_to_model(window, cx);
 
