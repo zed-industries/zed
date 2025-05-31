@@ -19510,9 +19510,7 @@ fn process_completion_for_edit(
     initial_position: &Anchor,
     cx: &mut Context<Editor>,
 ) -> CompletionEdit {
-    let snippet;
-    let new_text;
-    if completion.is_snippet() {
+    let (snippet, new_text) = if completion.is_snippet() {
         let mut snippet_source = completion.new_text.clone();
         if let Some(scope) = buffer
             .read(cx)
@@ -19530,20 +19528,17 @@ fn process_completion_for_edit(
                 }
             }
         }
-        if let Some(parsed_snippet) = Snippet::parse(&snippet_source).log_err() {
-            snippet = Some(parsed_snippet);
-            new_text = snippet.as_ref().unwrap().text.clone();
-        } else {
-            snippet = None;
-            new_text = completion.new_text.clone();
+        match Snippet::parse(&snippet_source).log_err() {
+            Some(parsed_snippet) => (Some(parsed_snippet.clone()), parsed_snippet.text),
+            None => (None, completion.new_text.clone()),
         }
     } else {
-        snippet = None;
-        new_text = completion.new_text.clone();
-    }
+        (None, completion.new_text.clone())
+    };
 
     let replace_range = {
         let buffer = buffer.read(cx);
+
         let CompletionSource::Lsp {
             insert_range: Some(insert_range),
             ..
