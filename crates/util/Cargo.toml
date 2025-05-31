@@ -50,5 +50,6 @@ dunce = "1.0"
 
 [dev-dependencies]
 git2.workspace = true
+indoc.workspace = true
 rand.workspace = true
 util_macros.workspace = true
