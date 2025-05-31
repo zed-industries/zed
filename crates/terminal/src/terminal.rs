@@ -46,6 +46,7 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
+use urlencoding;
 use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
@@ -704,6 +705,15 @@ impl TaskStatus {
     }
 }
 
+/// Decodes URL-encoded file paths to handle cases where terminal output contains
+/// percent-encoded characters (e.g., %CE%BB for λ).
+/// Falls back to the original string if decoding fails.
+fn decode_file_path(path: &str) -> String {
+    urlencoding::decode(path)
+        .map(|decoded| decoded.into_owned())
+        .unwrap_or_else(|_| path.to_string())
+}
+
 impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
@@ -1035,7 +1045,7 @@ impl Terminal {
                             // handled correctly
                             if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                    maybe_path: path.to_string(),
+                                    maybe_path: decode_file_path(path),
                                     terminal_dir: self.working_directory(),
                                 })
                             } else {
@@ -1043,7 +1053,7 @@ impl Terminal {
                             }
                         } else {
                             MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                maybe_path: maybe_url_or_path.clone(),
+                                maybe_path: decode_file_path(&maybe_url_or_path),
                                 terminal_dir: self.working_directory(),
                             })
                         };
@@ -2386,5 +2396,42 @@ mod tests {
             .collect::<Vec<_>>();
         let expected = inputs.iter().map(|(_, output)| *output).collect::<Vec<_>>();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_decode_file_path() {
+        use crate::decode_file_path;
+
+        // Test normal paths remain unchanged
+        assert_eq!(decode_file_path("normal_file.txt"), "normal_file.txt");
+        assert_eq!(decode_file_path("path/to/file.rs"), "path/to/file.rs");
+
+        // Test URL-encoded characters are decoded
+        assert_eq!(decode_file_path("test%CE%BB.mts"), "testλ.mts");
+        assert_eq!(
+            decode_file_path("file%20with%20spaces.txt"),
+            "file with spaces.txt"
+        );
+        assert_eq!(
+            decode_file_path("path%2Fwith%2Fencoded%2Fslashes"),
+            "path/with/encoded/slashes"
+        );
+
+        // Test paths with line numbers and URL encoding
+        assert_eq!(decode_file_path("test%CE%BB.mts:3:8"), "testλ.mts:3:8");
+        assert_eq!(decode_file_path("file%20name.rs:10:5"), "file name.rs:10:5");
+
+        // Test invalid URL encoding falls back to original
+        assert_eq!(decode_file_path("invalid%ZZ.txt"), "invalid%ZZ.txt");
+        assert_eq!(decode_file_path("incomplete%A.txt"), "incomplete%A.txt");
+
+        // Test empty string
+        assert_eq!(decode_file_path(""), "");
+
+        // Test mixed encoding and normal characters
+        assert_eq!(
+            decode_file_path("prefix%CE%BBsuffix.ext"),
+            "prefixλsuffix.ext"
+        );
     }
 }
