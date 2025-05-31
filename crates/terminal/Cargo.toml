@@ -39,3 +39,5 @@ windows.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
+unicode-width.workspace = true
+url.workspace = true
