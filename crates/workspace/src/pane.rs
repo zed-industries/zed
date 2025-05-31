@@ -1035,6 +1035,10 @@ impl Pane {
         self.items.get(self.active_item_index).cloned()
     }
 
+    fn active_item_id(&self) -> EntityId {
+        self.items[self.active_item_index].item_id()
+    }
+
     pub fn pixel_position_of_cursor(&self, cx: &App) -> Option<Point<Pixels>> {
         self.items
             .get(self.active_item_index)?
@@ -1335,8 +1339,7 @@ impl Pane {
         let to_the_left_item_ids = self.to_the_left_item_ids(item_id);
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
             to_the_left_item_ids.contains(&item_id)
-                && !action.close_pinned
-                && !pinned_item_ids.contains(&item_id)
+                && (action.close_pinned || !pinned_item_ids.contains(&item_id))
         })
     }
 
@@ -1371,8 +1374,7 @@ impl Pane {
         let to_the_right_item_ids = self.to_the_right_item_ids(item_id);
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
             to_the_right_item_ids.contains(&item_id)
-                && !action.close_pinned
-                && !pinned_item_ids.contains(&item_id)
+                && (action.close_pinned || !pinned_item_ids.contains(&item_id))
         })
     }
 
@@ -1391,7 +1393,7 @@ impl Pane {
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
-            |item_id| (action.close_pinned || !pinned_item_ids.contains(&item_id)),
+            |item_id| action.close_pinned || !pinned_item_ids.contains(&item_id),
         ))
     }
 
@@ -3075,10 +3077,6 @@ impl Pane {
 
     pub fn display_nav_history_buttons(&mut self, display: Option<bool>) {
         self.display_nav_history_buttons = display;
-    }
-
-    fn active_item_id(&self) -> EntityId {
-        self.items[self.active_item_index].item_id()
     }
 
     fn pinned_item_ids(&self) -> HashSet<EntityId> {
