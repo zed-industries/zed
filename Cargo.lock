@@ -1890,6 +1890,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
+name = "better-refcell"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f13ce2fd9a2758838f3768b0b7df016c532353ad5328e7117b448c5922375208"
+
+[[package]]
 name = "bigdecimal"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7038,6 +7044,7 @@ dependencies = [
  "ashpd",
  "async-task",
  "backtrace",
+ "better-refcell",
  "bindgen 0.71.1",
  "blade-graphics",
  "blade-macros",
