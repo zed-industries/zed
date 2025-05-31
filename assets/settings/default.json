@@ -934,15 +934,17 @@
     // Determines how much space the file finder can take up in relation to the available window width.
     // There are 5 possible width values:
     //
-    // 1. Small: This value is essentially a fixed width.
+    // 1. Small: Takes 20% of viewport width.
     //    "modal_max_width": "small"
-    // 2. Medium:
+    // 2. Medium: Takes 35% of viewport width.
     //    "modal_max_width": "medium"
-    // 3. Large:
+    // 3. Large: Takes 50% of viewport width.
     //    "modal_max_width": "large"
-    // 4. Extra Large:
+    // 4. Extra Large: Takes 65% of viewport width.
     //    "modal_max_width": "xlarge"
-    // 5. Fullscreen: This value removes any horizontal padding, as it consumes the whole viewport width.
+    // 5. Extra Extra Large: Takes 80% of viewport  width.
+    //    "modal_max_width": "xxlarge"
+    // 6. Fullscreen: This value removes any horizontal padding, as it consumes the whole viewport width.
     //    "modal_max_width": "full"
     //
     // Default: small

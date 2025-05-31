@@ -313,14 +313,14 @@ impl FileFinder {
 
     pub fn modal_max_width(width_setting: Option<FileFinderWidth>, window: &mut Window) -> Pixels {
         let window_width = window.viewport_size().width;
-        let small_width = Pixels(545.);
 
         match width_setting {
-            None | Some(FileFinderWidth::Small) => small_width,
+            None | Some(FileFinderWidth::Small) => window_width * 0.2,
+            Some(FileFinderWidth::Medium) => window_width * 0.35,
+            Some(FileFinderWidth::Large) => window_width * 0.5,
+            Some(FileFinderWidth::XLarge) => window_width * 0.65,
+            Some(FileFinderWidth::XXLarge) => window_width * 0.8,
             Some(FileFinderWidth::Full) => window_width,
-            Some(FileFinderWidth::XLarge) => (window_width - Pixels(512.)).max(small_width),
-            Some(FileFinderWidth::Large) => (window_width - Pixels(768.)).max(small_width),
-            Some(FileFinderWidth::Medium) => (window_width - Pixels(1024.)).max(small_width),
         }
     }
 }
