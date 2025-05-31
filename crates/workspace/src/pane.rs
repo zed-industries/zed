@@ -1294,15 +1294,11 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        let item_ids: Vec<_> = self
-            .items()
-            .filter(|item| !item.is_dirty(cx))
-            .map(|item| item.item_id())
-            .collect();
+        let clean_item_ids = self.clean_item_ids(cx);
         let pinned_item_ids = self.pinned_item_ids();
         Some(
             self.close_items(window, cx, SaveIntent::Close, move |item_id| {
-                item_ids.contains(&item_id)
+                clean_item_ids.contains(&item_id)
                     && (action.close_pinned || !pinned_item_ids.contains(&item_id))
             }),
         )
@@ -3094,8 +3090,25 @@ impl Pane {
         self.items
             .iter()
             .enumerate()
-            .filter(|(index, _item)| self.is_tab_pinned(*index))
-            .map(|(_, item)| item.item_id())
+            .filter_map(|(index, item)| {
+                if self.is_tab_pinned(index) {
+                    return Some(item.item_id());
+                }
+
+                None
+            })
+            .collect()
+    }
+
+    fn clean_item_ids(&self, cx: &mut Context<Pane>) -> HashSet<EntityId> {
+        self.items()
+            .filter_map(|item| {
+                if !item.is_dirty(cx) {
+                    return Some(item.item_id());
+                }
+
+                None
+            })
             .collect()
     }
 
