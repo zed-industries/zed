@@ -1244,7 +1244,7 @@ impl Pane {
 
             return None;
         };
-        let active_item_id = self.items[self.active_item_index].item_id();
+        let active_item_id = self.active_item_id();
         Some(self.close_item_by_id(
             active_item_id,
             action.save_intent.unwrap_or(SaveIntent::Close),
@@ -1275,7 +1275,7 @@ impl Pane {
             return None;
         }
 
-        let active_item_id = self.items[self.active_item_index].item_id();
+        let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
         Some(self.close_items(
             window,
@@ -1313,7 +1313,7 @@ impl Pane {
         if self.items.is_empty() {
             return None;
         }
-        let active_item_id = self.items[self.active_item_index].item_id();
+        let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
         Some(self.close_items_to_the_left_by_id(
             active_item_id,
@@ -1332,13 +1332,9 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let item_ids: Vec<_> = self
-            .items()
-            .take_while(|item| item.item_id() != item_id)
-            .map(|item| item.item_id())
-            .collect();
+        let to_the_left_item_ids = self.to_the_left_item_ids(item_id);
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
-            item_ids.contains(&item_id)
+            to_the_left_item_ids.contains(&item_id)
                 && !action.close_pinned
                 && !pinned_item_ids.contains(&item_id)
         })
@@ -1353,7 +1349,7 @@ impl Pane {
         if self.items.is_empty() {
             return None;
         }
-        let active_item_id = self.items[self.active_item_index].item_id();
+        let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
         Some(self.close_items_to_the_right_by_id(
             active_item_id,
@@ -1372,14 +1368,9 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let item_ids: Vec<_> = self
-            .items()
-            .rev()
-            .take_while(|item| item.item_id() != item_id)
-            .map(|item| item.item_id())
-            .collect();
+        let to_the_right_item_ids = self.to_the_right_item_ids(item_id);
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
-            item_ids.contains(&item_id)
+            to_the_right_item_ids.contains(&item_id)
                 && !action.close_pinned
                 && !pinned_item_ids.contains(&item_id)
         })
@@ -3086,6 +3077,10 @@ impl Pane {
         self.display_nav_history_buttons = display;
     }
 
+    fn active_item_id(&self) -> EntityId {
+        self.items[self.active_item_index].item_id()
+    }
+
     fn pinned_item_ids(&self) -> HashSet<EntityId> {
         self.items
             .iter()
@@ -3109,6 +3104,21 @@ impl Pane {
 
                 None
             })
+            .collect()
+    }
+
+    fn to_the_left_item_ids(&self, item_id: EntityId) -> HashSet<EntityId> {
+        self.items()
+            .take_while(|item| item.item_id() != item_id)
+            .map(|item| item.item_id())
+            .collect()
+    }
+
+    fn to_the_right_item_ids(&self, item_id: EntityId) -> HashSet<EntityId> {
+        self.items()
+            .rev()
+            .take_while(|item| item.item_id() != item_id)
+            .map(|item| item.item_id())
             .collect()
     }
 
