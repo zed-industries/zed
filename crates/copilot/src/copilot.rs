@@ -408,24 +408,30 @@ impl Copilot {
         let proxy_url = copilot_settings.proxy.clone()?;
         let no_verify = copilot_settings.proxy_no_verify;
         let http_or_https_proxy = if proxy_url.starts_with("http:") {
-            "HTTP_PROXY"
+            Some("HTTP_PROXY")
         } else if proxy_url.starts_with("https:") {
-            "HTTPS_PROXY"
+            Some("HTTPS_PROXY")
         } else {
             log::error!(
                 "Unsupported protocol scheme for language server proxy (must be http or https)"
             );
-            return None;
+            None
         };
 
         let mut env = HashMap::default();
-        env.insert(http_or_https_proxy.to_string(), proxy_url);
 
-        if let Some(true) = no_verify {
-            env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
-        };
+        if let Some(proxy_type) = http_or_https_proxy {
+            env.insert(proxy_type.to_string(), proxy_url);
+            if let Some(true) = no_verify {
+                env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
+            };
+        }
 
-        Some(env)
+        if let Ok(oauth_token) = env::var(copilot_chat::COPILOT_OAUTH_ENV_VAR) {
+            env.insert(copilot_chat::COPILOT_OAUTH_ENV_VAR.to_string(), oauth_token);
+        }
+
+        if env.is_empty() { None } else { Some(env) }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1050,7 +1056,6 @@ impl Copilot {
                     }
                 }
             }
-
             cx.notify();
         }
     }
