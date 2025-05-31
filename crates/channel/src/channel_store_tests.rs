@@ -21,12 +21,14 @@ fn test_update_channels(cx: &mut App) {
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: Vec::new(),
+                    channel_order: 1,
                 },
                 proto::Channel {
                     id: 2,
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: Vec::new(),
+                    channel_order: 2,
                 },
             ],
             ..Default::default()
@@ -37,8 +39,8 @@ fn test_update_channels(cx: &mut App) {
         &channel_store,
         &[
             //
-            (0, "a".to_string()),
             (0, "b".to_string()),
+            (0, "a".to_string()),
         ],
         cx,
     );
@@ -52,12 +54,14 @@ fn test_update_channels(cx: &mut App) {
                     name: "x".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![1],
+                    channel_order: 1,
                 },
                 proto::Channel {
                     id: 4,
                     name: "y".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![2],
+                    channel_order: 1,
                 },
             ],
             ..Default::default()
@@ -67,10 +71,10 @@ fn test_update_channels(cx: &mut App) {
     assert_channels(
         &channel_store,
         &[
-            (0, "a".to_string()),
-            (1, "y".to_string()),
             (0, "b".to_string()),
             (1, "x".to_string()),
+            (0, "a".to_string()),
+            (1, "y".to_string()),
         ],
         cx,
     );
@@ -89,18 +93,21 @@ fn test_dangling_channel_paths(cx: &mut App) {
                     name: "a".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![],
+                    channel_order: 1,
                 },
                 proto::Channel {
                     id: 1,
                     name: "b".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![0],
+                    channel_order: 1,
                 },
                 proto::Channel {
                     id: 2,
                     name: "c".to_string(),
                     visibility: proto::ChannelVisibility::Members as i32,
                     parent_path: vec![0, 1],
+                    channel_order: 1,
                 },
             ],
             ..Default::default()
@@ -147,6 +154,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
             name: "the-channel".to_string(),
             visibility: proto::ChannelVisibility::Members as i32,
             parent_path: vec![],
+            channel_order: 1,
         }],
         ..Default::default()
     });

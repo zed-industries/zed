@@ -7,7 +7,7 @@ use crate::{
 };
 use rpc::{
     ConnectionId,
-    proto::{self},
+    proto::{self, reorder_channel},
 };
 use std::sync::Arc;
 
@@ -64,11 +64,11 @@ async fn test_channels(db: &Arc<Database>) {
         channel_tree(&[
             (zed_id, &[], "zed"),
             (crdb_id, &[zed_id], "crdb"),
-            (livestreaming_id, &[zed_id], "livestreaming",),
+            (livestreaming_id, &[zed_id], "livestreaming"),
             (replace_id, &[zed_id], "replace"),
             (rust_id, &[], "rust"),
             (cargo_id, &[rust_id], "cargo"),
-            (cargo_ra_id, &[rust_id, cargo_id], "cargo-ra",)
+            (cargo_ra_id, &[rust_id, cargo_id], "cargo-ra")
         ],)
     );
 
@@ -78,7 +78,7 @@ async fn test_channels(db: &Arc<Database>) {
         channel_tree(&[
             (zed_id, &[], "zed"),
             (crdb_id, &[zed_id], "crdb"),
-            (livestreaming_id, &[zed_id], "livestreaming",),
+            (livestreaming_id, &[zed_id], "livestreaming"),
             (replace_id, &[zed_id], "replace")
         ],)
     );
@@ -99,7 +99,7 @@ async fn test_channels(db: &Arc<Database>) {
         channel_tree(&[
             (zed_id, &[], "zed"),
             (crdb_id, &[zed_id], "crdb"),
-            (livestreaming_id, &[zed_id], "livestreaming",),
+            (livestreaming_id, &[zed_id], "livestreaming"),
             (replace_id, &[zed_id], "replace")
         ],)
     );
@@ -364,6 +364,152 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
             (gpui2_id, &[zed_id]),
         ],
     );
+}
+
+test_both_dbs!(
+    test_channel_reordering,
+    test_channel_reordering_postgres,
+    test_channel_reordering_sqlite
+);
+
+async fn test_channel_reordering(db: &Arc<Database>) {
+    let admin_id = db
+        .create_user(
+            "admin@example.com",
+            None,
+            false,
+            NewUserParams {
+                github_login: "admin".into(),
+                github_user_id: 1,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
+    let user_id = db
+        .create_user(
+            "user@example.com",
+            None,
+            false,
+            NewUserParams {
+                github_login: "user".into(),
+                github_user_id: 2,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
+    // Create a root channel with some sub-channels
+    let root_id = db.create_root_channel("root", admin_id).await.unwrap();
+
+    // Invite user to root channel so they can see the sub-channels
+    db.invite_channel_member(root_id, user_id, admin_id, ChannelRole::Member)
+        .await
+        .unwrap();
+    db.respond_to_channel_invite(root_id, user_id, true)
+        .await
+        .unwrap();
+
+    let alpha_id = db
+        .create_sub_channel("alpha", root_id, admin_id)
+        .await
+        .unwrap();
+    let beta_id = db
+        .create_sub_channel("beta", root_id, admin_id)
+        .await
+        .unwrap();
+    let gamma_id = db
+        .create_sub_channel("gamma", root_id, admin_id)
+        .await
+        .unwrap();
+
+    // Initial order should be: root, alpha (order=1), beta (order=2), gamma (order=3)
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (root_id, &[]),
+            (alpha_id, &[root_id]),
+            (beta_id, &[root_id]),
+            (gamma_id, &[root_id]),
+        ],
+    );
+
+    // Test moving beta up (should swap with alpha)
+    let updated_channels = db
+        .reorder_channel(beta_id, reorder_channel::Direction::Up, admin_id)
+        .await
+        .unwrap();
+
+    // Verify that beta and alpha were returned as updated
+    assert_eq!(updated_channels.len(), 2);
+    let updated_ids: std::collections::HashSet<_> = updated_channels.iter().map(|c| c.id).collect();
+    assert!(updated_ids.contains(&alpha_id));
+    assert!(updated_ids.contains(&beta_id));
+
+    // Now order should be: root, beta (order=1), alpha (order=2), gamma (order=3)
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (root_id, &[]),
+            (beta_id, &[root_id]),
+            (alpha_id, &[root_id]),
+            (gamma_id, &[root_id]),
+        ],
+    );
+
+    // Test moving gamma down (should be no-op since it's already last)
+    let updated_channels = db
+        .reorder_channel(gamma_id, reorder_channel::Direction::Down, admin_id)
+        .await
+        .unwrap();
+
+    // Should return just gamma (no change)
+    assert_eq!(updated_channels.len(), 1);
+    assert_eq!(updated_channels[0].id, gamma_id);
+
+    // Test moving alpha down (should swap with gamma)
+    let updated_channels = db
+        .reorder_channel(alpha_id, reorder_channel::Direction::Down, admin_id)
+        .await
+        .unwrap();
+
+    // Verify that alpha and gamma were returned as updated
+    assert_eq!(updated_channels.len(), 2);
+    let updated_ids: std::collections::HashSet<_> = updated_channels.iter().map(|c| c.id).collect();
+    assert!(updated_ids.contains(&alpha_id));
+    assert!(updated_ids.contains(&gamma_id));
+
+    // Now order should be: root, beta (order=1), gamma (order=2), alpha (order=3)
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (root_id, &[]),
+            (beta_id, &[root_id]),
+            (gamma_id, &[root_id]),
+            (alpha_id, &[root_id]),
+        ],
+    );
+
+    // Test that non-admin cannot reorder
+    let reorder_result = db
+        .reorder_channel(beta_id, reorder_channel::Direction::Up, user_id)
+        .await;
+    assert!(reorder_result.is_err());
+
+    // Test moving beta up (should be no-op since it's already first)
+    let updated_channels = db
+        .reorder_channel(beta_id, reorder_channel::Direction::Up, admin_id)
+        .await
+        .unwrap();
+
+    // Should return just beta (no change)
+    assert_eq!(updated_channels.len(), 1);
+    assert_eq!(updated_channels[0].id, beta_id);
 }
 
 test_both_dbs!(

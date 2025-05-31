@@ -10,6 +10,9 @@ pub struct Model {
     pub visibility: ChannelVisibility,
     pub parent_path: String,
     pub requires_zed_cla: bool,
+    /// The order of this channel relative to its siblings within the same parent.
+    /// Lower values appear first. Channels are sorted by parent_path first, then by channel_order.
+    pub channel_order: i32,
 }
 
 impl Model {

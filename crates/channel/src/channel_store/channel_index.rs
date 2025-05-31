@@ -61,11 +61,13 @@ impl ChannelPathsInsertGuard<'_> {
 
             ret = existing_channel.visibility != channel_proto.visibility()
                 || existing_channel.name != channel_proto.name
-                || existing_channel.parent_path != parent_path;
+                || existing_channel.parent_path != parent_path
+                || existing_channel.channel_order != channel_proto.channel_order;
 
             existing_channel.visibility = channel_proto.visibility();
             existing_channel.name = channel_proto.name.into();
             existing_channel.parent_path = parent_path;
+            existing_channel.channel_order = channel_proto.channel_order;
         } else {
             self.channels_by_id.insert(
                 ChannelId(channel_proto.id),
@@ -74,6 +76,7 @@ impl ChannelPathsInsertGuard<'_> {
                     visibility: channel_proto.visibility(),
                     name: channel_proto.name.into(),
                     parent_path,
+                    channel_order: channel_proto.channel_order,
                 }),
             );
             self.insert_root(ChannelId(channel_proto.id));
@@ -100,17 +103,18 @@ impl Drop for ChannelPathsInsertGuard<'_> {
 fn channel_path_sorting_key(
     id: ChannelId,
     channels_by_id: &BTreeMap<ChannelId, Arc<Channel>>,
-) -> impl Iterator<Item = (&str, ChannelId)> {
-    let (parent_path, name) = channels_by_id
-        .get(&id)
-        .map_or((&[] as &[_], None), |channel| {
-            (
-                channel.parent_path.as_slice(),
-                Some((channel.name.as_ref(), channel.id)),
-            )
-        });
+) -> impl Iterator<Item = (i32, ChannelId)> {
+    let (parent_path, order_and_id) =
+        channels_by_id
+            .get(&id)
+            .map_or((&[] as &[_], None), |channel| {
+                (
+                    channel.parent_path.as_slice(),
+                    Some((channel.channel_order, channel.id)),
+                )
+            });
     parent_path
         .iter()
-        .filter_map(|id| Some((channels_by_id.get(id)?.name.as_ref(), *id)))
-        .chain(name)
+        .filter_map(|id| Some((channels_by_id.get(id)?.channel_order, *id)))
+        .chain(order_and_id)
 }

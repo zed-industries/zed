@@ -266,10 +266,13 @@ CREATE TABLE "channels" (
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "visibility" VARCHAR NOT NULL,
     "parent_path" TEXT NOT NULL,
-    "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE
+    "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE,
+    "channel_order" INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX "index_channels_on_parent_path" ON "channels" ("parent_path");
+
+CREATE INDEX "index_channels_on_parent_path_and_order" ON "channels" ("parent_path", "channel_order");
 
 CREATE TABLE IF NOT EXISTS "channel_chat_participants" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,

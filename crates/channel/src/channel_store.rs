@@ -56,6 +56,7 @@ pub struct Channel {
     pub name: SharedString,
     pub visibility: proto::ChannelVisibility,
     pub parent_path: Vec<ChannelId>,
+    pub channel_order: i32,
 }
 
 #[derive(Default, Debug)]
@@ -614,7 +615,24 @@ impl ChannelStore {
                     to: to.0,
                 })
                 .await?;
+            Ok(())
+        })
+    }
 
+    pub fn reorder_channel(
+        &mut self,
+        channel_id: ChannelId,
+        direction: proto::reorder_channel::Direction,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        cx.spawn(async move |_, _| {
+            client
+                .request(proto::ReorderChannel {
+                    channel_id: channel_id.0,
+                    direction: direction.into(),
+                })
+                .await?;
             Ok(())
         })
     }
@@ -1050,6 +1068,7 @@ impl ChannelStore {
                         visibility: channel.visibility(),
                         name: channel.name.into(),
                         parent_path: channel.parent_path.into_iter().map(ChannelId).collect(),
+                        channel_order: channel.channel_order,
                     }),
                 ),
             }
