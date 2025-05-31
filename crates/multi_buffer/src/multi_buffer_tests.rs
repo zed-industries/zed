@@ -1592,7 +1592,6 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
              six
              seven
              eight
-             -----
              nine
              ten
              eleven
@@ -1848,7 +1847,6 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
         zero
         one
         two
-        -----
         three
         four
         five

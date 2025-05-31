@@ -1575,6 +1575,7 @@ impl MultiBuffer {
         context_line_count: u32,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
+        println!("in 1578");
         let buffer_snapshot = buffer.read(cx).snapshot();
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
@@ -1598,6 +1599,7 @@ impl MultiBuffer {
         excerpt_ranges: Vec<ExcerptRange<Point>>,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
+        println!("in 1603");
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
         self.set_merged_excerpt_ranges_for_path(
             path,
@@ -1618,7 +1620,9 @@ impl MultiBuffer {
         cx: &mut Context<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
         let buffer_snapshot = buffer.read(cx).snapshot();
+
         let path_key = PathKey::for_buffer(&buffer, cx);
+        println!("Setting excerpts for path: {path_key:?}");
         cx.spawn(async move |multi_buffer, cx| {
             let snapshot = buffer_snapshot.clone();
             let (excerpt_ranges, new, counts) = cx
@@ -1626,6 +1630,7 @@ impl MultiBuffer {
                     let ranges = ranges.into_iter().map(|range| range.to_point(&snapshot));
                     let excerpt_ranges =
                         build_excerpt_ranges(ranges, context_line_count, &snapshot);
+                    print!("{:?}", excerpt_ranges);
                     let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
                     (excerpt_ranges, new, counts)
                 })
@@ -1690,7 +1695,9 @@ impl MultiBuffer {
                     last_range.context.start <= range.context.start,
                     "Last range: {last_range:?} Range: {range:?}"
                 );
-                if last_range.context.end >= range.context.start {
+                if last_range.context.end >= range.context.start
+                    || last_range.context.end.row + 1 == range.context.start.row
+                {
                     last_range.context.end = range.context.end.max(last_range.context.end);
                     *counts.last_mut().unwrap() += 1;
                     continue;
