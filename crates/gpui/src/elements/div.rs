@@ -21,7 +21,8 @@ use crate::{
     HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
     LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, point, px, size,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
+    size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -575,6 +576,12 @@ impl Interactivity {
         self.hitbox_behavior = HitboxBehavior::BlockMouse;
     }
 
+    /// Set the bounds of this element as a window control area for the platform window.
+    /// The imperative API equivalent to [`InteractiveElement::window_control_area`]
+    pub fn window_control_area(&mut self, area: WindowControlArea) {
+        self.window_control = Some(area);
+    }
+
     /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
     /// [`Hitbox::is_hovered`] for details.
     ///
@@ -955,6 +962,13 @@ pub trait InteractiveElement: Sized {
     /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
+        self
+    }
+
+    /// Set the bounds of this element as a window control area for the platform window.
+    /// The fluent API equivalent to [`Interactivity::window_control_area`]
+    fn window_control_area(mut self, area: WindowControlArea) -> Self {
+        self.interactivity().window_control_area(area);
         self
     }
 
@@ -1447,6 +1461,7 @@ pub struct Interactivity {
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
+    pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1611,6 +1626,7 @@ impl Interactivity {
 
     fn should_insert_hitbox(&self, style: &Style, window: &Window, cx: &App) -> bool {
         self.hitbox_behavior != HitboxBehavior::Normal
+            || self.window_control.is_some()
             || style.mouse_cursor.is_some()
             || self.group.is_some()
             || self.scroll_offset.is_some()
@@ -1738,6 +1754,11 @@ impl Interactivity {
 
                                         if let Some(group) = self.group.clone() {
                                             GroupHitboxes::push(group, hitbox.id, cx);
+                                        }
+
+                                        if let Some(area) = self.window_control {
+                                            window
+                                                .insert_window_control_hitbox(area, hitbox.clone());
                                         }
 
                                         self.paint_mouse_listeners(
