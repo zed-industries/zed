@@ -1,13 +1,14 @@
 use gpui::{
     Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
-    PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowOptions, canvas, div,
-    linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
+    PathStyle, Pixels, Point, Render, SharedString, StrokeOptions, Window, WindowOptions, canvas,
+    div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
 
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
     lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
+    dashed: bool,
     _painting: bool,
 }
 
@@ -140,7 +141,7 @@ impl PaintingViewer {
             .with_line_join(lyon::path::LineJoin::Bevel);
         let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
         builder.move_to(point(px(40.), px(320.)));
-        for i in 0..50 {
+        for i in 1..50 {
             builder.line_to(point(
                 px(40.0 + i as f32 * 10.0),
                 px(320.0 + (i as f32 * 10.0).sin() * 40.0),
@@ -153,6 +154,7 @@ impl PaintingViewer {
             default_lines: lines.clone(),
             lines: vec![],
             start: point(px(0.), px(0.)),
+            dashed: false,
             _painting: false,
         }
     }
@@ -162,10 +164,30 @@ impl PaintingViewer {
         cx.notify();
     }
 }
+
+fn button(
+    text: &str,
+    cx: &mut Context<PaintingViewer>,
+    on_click: impl Fn(&mut PaintingViewer, &mut Context<PaintingViewer>) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(text.to_string()))
+        .child(text.to_string())
+        .bg(gpui::black())
+        .text_color(gpui::white())
+        .active(|this| this.opacity(0.8))
+        .flex()
+        .px_3()
+        .py_1()
+        .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+}
+
 impl Render for PaintingViewer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
+        let dashed = self.dashed;
+
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -182,17 +204,14 @@ impl Render for PaintingViewer {
                     .child("Mouse down any point and drag to draw lines (Hold on shift key to draw straight lines)")
                     .child(
                         div()
-                            .id("clear")
-                            .child("Clean up")
-                            .bg(gpui::black())
-                            .text_color(gpui::white())
-                            .active(|this| this.opacity(0.8))
                             .flex()
-                            .px_3()
-                            .py_1()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.clear(cx);
-                            })),
+                            .gap_x_2()
+                            .child(button(
+                                if dashed { "Solid" } else { "Dashed" },
+                                cx,
+                                move |this, _| this.dashed = !dashed,
+                            ))
+                            .child(button("Clear", cx, |this, cx| this.clear(cx))),
                     ),
             )
             .child(
@@ -202,7 +221,6 @@ impl Render for PaintingViewer {
                         canvas(
                             move |_, _, _| {},
                             move |_, _, window, _| {
-
                                 for (path, color) in default_lines {
                                     window.paint_path(path, color);
                                 }
@@ -213,6 +231,9 @@ impl Render for PaintingViewer {
                                     }
 
                                     let mut builder = PathBuilder::stroke(px(1.));
+                                    if dashed {
+                                        builder = builder.dash_array(&[px(4.), px(2.)]);
+                                    }
                                     for (i, p) in points.into_iter().enumerate() {
                                         if i == 0 {
                                             builder.move_to(p);
