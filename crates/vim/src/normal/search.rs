@@ -2,7 +2,7 @@ use editor::Editor;
 use gpui::{Context, Window, actions, impl_actions, impl_internal_actions};
 use language::Point;
 use schemars::JsonSchema;
-use search::{BufferSearchBar, SearchOptions, buffer_search};
+use search::{BufferSearchBar, SearchOptions, SelectAllMatches, buffer_search};
 use serde_derive::Deserialize;
 use std::{iter::Peekable, str::Chars};
 use util::serde::default_true;
@@ -51,6 +51,7 @@ pub(crate) struct Search {
 pub struct FindCommand {
     pub query: String,
     pub backwards: bool,
+    pub range: Option<CommandRange>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -376,10 +377,31 @@ impl Vim {
     }
 
     fn find_command(&mut self, action: &FindCommand, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(pane) = self.pane(window, cx) else {
+        let Some(((pane, workspace), editor)) = self
+            .pane(window, cx)
+            .zip(self.workspace(window))
+            .zip(self.editor())
+        else {
             return;
         };
+        let mode = self.mode;
+        if let Some(range) = action.range.clone() {
+            if let Some(result) = self.update_editor(window, cx, |vim, editor, window, cx| {
+                let range = range.buffer_range(vim, editor, window, cx)?;
+                let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
+                let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
+                let range = snapshot.anchor_before(Point::new(range.start.0, 0))
+                    ..snapshot.anchor_after(end_point);
+                editor.set_search_within_ranges(&[range], cx);
+                anyhow::Ok(())
+            }) {
+                workspace.update(cx, |workspace, cx| {
+                    result.notify_err(workspace, cx);
+                })
+            }
+        }
         pane.update(cx, |pane, cx| {
+            let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
                 let search = search_bar.update(cx, |search_bar, cx| {
                     if !search_bar.show(window, cx) {
@@ -390,7 +412,6 @@ impl Vim {
                         query = search_bar.query(cx);
                     };
 
-                    let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
                     if search_bar.should_use_smartcase_search(cx) {
                         options.set(
                             SearchOptions::CASE_SENSITIVE,
@@ -407,14 +428,33 @@ impl Vim {
                 } else {
                     Direction::Next
                 };
-                cx.spawn_in(window, async move |_, cx| {
-                    search.await?;
-                    search_bar.update_in(cx, |search_bar, window, cx| {
-                        search_bar.select_match(direction, 1, window, cx)
-                    })?;
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
+
+                if action.range.is_some() {
+                    cx.spawn_in(window, async move |_, cx| {
+                        search.await?;
+                        search_bar.update_in(cx, |search_bar, window, cx| {
+                            if mode == Mode::HelixNormal {
+                                window.dispatch_action(Box::new(SelectAllMatches), cx);
+                            } else {
+                                search_bar.select_last_match(window, cx);
+                            }
+                            editor.update(cx, |editor, cx| editor.clear_search_within_ranges(cx));
+                            let _ =
+                                search_bar.search(&search_bar.query(cx), Some(options), window, cx);
+                        })?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                } else {
+                    cx.spawn_in(window, async move |_, cx| {
+                        search.await?;
+                        search_bar.update_in(cx, |search_bar, window, cx| {
+                            search_bar.select_match(direction, 1, window, cx)
+                        })?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
             }
         })
     }
