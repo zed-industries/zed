@@ -392,15 +392,15 @@ pub fn into_mistral(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                    .push(match message.role {
-                        Role::User => mistral::RequestMessage::User { content: text },
-                        Role::Assistant => mistral::RequestMessage::Assistant {
-                            content: Some(text),
-                            tool_calls: Vec::new(),
-                        },
-                        Role::System => mistral::RequestMessage::System { content: text },
-                    }),
+                MessageContent::Text(text) => messages.push(match message.role {
+                    Role::User => mistral::RequestMessage::User { content: text },
+                    Role::Assistant => mistral::RequestMessage::Assistant {
+                        content: Some(text),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => mistral::RequestMessage::System { content: text },
+                }),
+                MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
