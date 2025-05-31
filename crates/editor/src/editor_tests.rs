@@ -9981,7 +9981,7 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
         let signature_help_state = editor.signature_help_state.popover().cloned();
         assert_eq!(
             signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 }
@@ -10152,7 +10152,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
         assert!(signature_help_state.is_some());
         assert_eq!(
             signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            "fn sample(param1: u8, param2: u8)"
         );
         editor.signature_help_state = SignatureHelpState::default();
     });
@@ -10193,7 +10193,7 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
         assert!(signature_help_state.is_some());
         assert_eq!(
             signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 }
@@ -10254,7 +10254,7 @@ async fn test_signature_help(cx: &mut TestAppContext) {
         assert!(signature_help_state.is_some());
         assert_eq!(
             signature_help_state.unwrap().label,
-            "param1: u8, param2: u8"
+            "fn sample(param1: u8, param2: u8)"
         );
     });
 
