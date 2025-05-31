@@ -1,9 +1,6 @@
 use adapters::latest_github_release;
-use anyhow::{Context as _, anyhow};
-use dap::{
-    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
-    adapters::DebugTaskDefinition,
-};
+use anyhow::Context as _;
+use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
@@ -26,7 +23,7 @@ impl JsDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
     ) -> Result<AdapterVersion> {
         let release = latest_github_release(
-            &format!("{}/{}", "microsoft", Self::ADAPTER_NPM_NAME),
+            &format!("microsoft/{}", Self::ADAPTER_NPM_NAME),
             true,
             false,
             delegate.http_client(),
@@ -95,7 +92,7 @@ impl JsDebugAdapter {
             }),
             request_args: StartDebuggingRequestArguments {
                 configuration: task_definition.config.clone(),
-                request: self.validate_config(&task_definition.config)?,
+                request: self.request_kind(&task_definition.config)?,
             },
         })
     }
@@ -105,29 +102,6 @@ impl JsDebugAdapter {
 impl DebugAdapter for JsDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
-    }
-
-    fn validate_config(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<dap::StartDebuggingRequestArgumentsRequest> {
-        match config.get("request") {
-            Some(val) if val == "launch" => {
-                if config.get("program").is_none() && config.get("url").is_none() {
-                    return Err(anyhow!(
-                        "either program or url is required for launch request"
-                    ));
-                }
-                Ok(StartDebuggingRequestArgumentsRequest::Launch)
-            }
-            Some(val) if val == "attach" => {
-                if !config.get("processId").is_some_and(|val| val.is_u64()) {
-                    return Err(anyhow!("processId must be a number"));
-                }
-                Ok(StartDebuggingRequestArgumentsRequest::Attach)
-            }
-            _ => Err(anyhow!("missing or invalid request field in config")),
-        }
     }
 
     fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
@@ -449,6 +423,8 @@ impl DebugAdapter for JsDebugAdapter {
                     delegate.as_ref(),
                 )
                 .await?;
+            } else {
+                delegate.output_to_console(format!("{} debug adapter is up to date", self.name()));
             }
         }
 

@@ -7,7 +7,7 @@ Svelte support is available through the [Svelte extension](https://github.com/ze
 
 ## Extra theme styling configuration
 
-You can modify how certain styles such as directives and modifiers appear in attributes:
+You can modify how certain styles, such as directives and modifiers, appear in attributes:
 
 ```json
 "syntax": {
@@ -24,7 +24,7 @@ You can modify how certain styles such as directives and modifiers appear in att
 
 ## Inlay Hints
 
-Zed sets the following initialization options for inlay hints:
+When inlay hints is enabled in Zed, to make the language server send them back, Zed sets the following initialization options:
 
 ```json
 "inlayHints": {
@@ -51,9 +51,7 @@ Zed sets the following initialization options for inlay hints:
 }
 ```
 
-to make the language server send back inlay hints when Zed has them enabled in the settings.
-
-Use
+To override these settings, use the following:
 
 ```json
 "lsp": {
@@ -72,6 +70,4 @@ Use
 }
 ```
 
-to override these settings.
-
-See https://github.com/microsoft/vscode/blob/main/extensions/typescript-language-features/package.json for more information.
+See [the TypeScript language server `package.json`](https://github.com/microsoft/vscode/blob/main/extensions/typescript-language-features/package.json) for more information.

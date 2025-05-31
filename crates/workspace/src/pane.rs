@@ -1328,7 +1328,7 @@ impl Pane {
         &mut self,
         item_id: EntityId,
         action: &CloseItemsToTheLeft,
-        non_closeable_items: Vec<EntityId>,
+        non_closeable_items: HashSet<EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1368,7 +1368,7 @@ impl Pane {
         &mut self,
         item_id: EntityId,
         action: &CloseItemsToTheRight,
-        non_closeable_items: Vec<EntityId>,
+        non_closeable_items: HashSet<EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -2404,8 +2404,10 @@ impl Pane {
                                     }))
                                     .disabled(total_items == 1)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                        let non_closeable_ids =
+                                            pane.get_non_closeable_item_ids(false);
                                         pane.close_items(window, cx, SaveIntent::Close, |id| {
-                                            id != item_id
+                                            id != item_id && !non_closeable_ids.contains(&id)
                                         })
                                         .detach_and_log_err(cx);
                                     })),
@@ -3085,9 +3087,9 @@ impl Pane {
         self.display_nav_history_buttons = display;
     }
 
-    fn get_non_closeable_item_ids(&self, close_pinned: bool) -> Vec<EntityId> {
+    fn get_non_closeable_item_ids(&self, close_pinned: bool) -> HashSet<EntityId> {
         if close_pinned {
-            return vec![];
+            return HashSet::from_iter([]);
         }
 
         self.items
@@ -4380,7 +4382,26 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A*!"], cx);
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*!"], cx);
+
+        add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "C*"], cx);
+
+        add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "C", "D", "E*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
             pane.close_inactive_items(
@@ -4395,7 +4416,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["C*"], cx);
+        assert_item_labels(&pane, ["A!", "B!", "E*"], cx);
     }
 
     #[gpui::test]
@@ -4514,7 +4535,7 @@ mod tests {
         .unwrap()
         .await
         .unwrap();
-        assert_item_labels(&pane, ["A*"], cx);
+        assert_item_labels(&pane, ["A*!"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
@@ -4694,7 +4715,7 @@ mod tests {
             );
         });
         // Non-pinned tab should be active
-        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+        assert_item_labels(&pane, ["A!", "B*", "C"], cx);
     }
 
     #[gpui::test]
@@ -4815,6 +4836,9 @@ mod tests {
                     }
                     if item.is_dirty(cx) {
                         state.push('^');
+                    }
+                    if pane.is_tab_pinned(ix) {
+                        state.push('!');
                     }
                     state
                 })

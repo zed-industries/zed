@@ -168,6 +168,7 @@ jobs:
         run: script/upload-nightly linux-targz
 
   bundle-nix:
+    name: Build and cache Nix package
     needs: tests
     uses: ./.github/workflows/nix.yml
 

@@ -637,7 +637,7 @@ impl AgentConfiguration {
                             .hover(|style| style.bg(cx.theme().colors().element_hover))
                             .rounded_sm()
                             .child(
-                                Label::new(tool.ui_name())
+                                Label::new(tool.name())
                                     .buffer_font(cx)
                                     .size(LabelSize::Small),
                             )
