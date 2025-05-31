@@ -1498,7 +1498,7 @@ impl Pane {
     }
 
     pub fn close_items(
-        &mut self,
+        &self,
         window: &mut Window,
         cx: &mut Context<Pane>,
         mut save_intent: SaveIntent,
