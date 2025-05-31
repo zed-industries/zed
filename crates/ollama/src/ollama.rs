@@ -38,6 +38,7 @@ pub struct Model {
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
     pub supports_tools: Option<bool>,
+    pub supports_thinking: Option<bool>,
 }
 
 fn get_max_tokens(name: &str) -> usize {
@@ -67,6 +68,7 @@ impl Model {
         display_name: Option<&str>,
         max_tokens: Option<usize>,
         supports_tools: Option<bool>,
+        supports_thinking: Option<bool>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -76,6 +78,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
+            supports_thinking,
         }
     }
 
@@ -98,6 +101,9 @@ pub enum ChatMessage {
     Assistant {
         content: String,
         tool_calls: Option<Vec<OllamaToolCall>>,
+        // Thinking contains the text that was inside thinking tags in the
+        // original model output when ChatRequest.Think is enabled.
+        thinking: Option<String>,
     },
     User {
         content: String,
@@ -140,6 +146,12 @@ pub struct ChatRequest {
     pub keep_alive: KeepAlive,
     pub options: Option<ChatOptions>,
     pub tools: Vec<OllamaTool>,
+    /// Controls whether models with thinking/reasoning capabilities will produce their reasoning process.
+    ///
+    /// When set to `true`, models that support this feature will return their step-by-step
+    /// thinking before generating a final response. This is useful for understanding the
+    /// model's reasoning process and for debugging complex reasoning chains.
+    pub think: Option<bool>,
 }
 
 impl ChatRequest {
@@ -214,6 +226,10 @@ impl ModelShow {
     pub fn supports_tools(&self) -> bool {
         // .contains expects &String, which would require an additional allocation
         self.capabilities.iter().any(|v| v == "tools")
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.capabilities.iter().any(|v| v == "thinking")
     }
 }
 
@@ -459,9 +475,11 @@ mod tests {
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                thinking,
             } => {
                 assert!(content.is_empty());
                 assert!(tool_calls.is_some_and(|v| !v.is_empty()));
+                assert!(thinking.is_none());
             }
             _ => panic!("Deserialized wrong role"),
         }
