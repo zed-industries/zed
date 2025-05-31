@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, hash_map},
     sync::Arc,
+    time::Duration,
 };
 
 use client::proto;
@@ -38,6 +39,7 @@ struct LspPickerDelegate {
     items: Vec<LspItem>,
 }
 
+#[derive(Debug)]
 enum LspItem {
     Header(LanguageServerName, Option<(SharedString, Severity)>),
     Item(LanguageServerStatus),
@@ -87,10 +89,19 @@ impl LspPickerDelegate {
             });
     }
 
-    fn update_message(&mut self, id: LanguageServerId, message: Option<&str>, severity: Severity) {
-        if let Some(server_state) = self.language_servers.servers.get_mut(&id) {
-            server_state.message =
+    fn update_message(
+        &mut self,
+        id: LanguageServerId,
+        message: Option<&str>,
+        severity: Severity,
+        name: Option<&LanguageServerName>,
+    ) {
+        if let Some(state) = self.language_servers.servers.get_mut(&id) {
+            state.message =
                 message.map(|message| (SharedString::from(message.to_owned()), severity));
+            if let Some(name) = name.cloned() {
+                state.name = name;
+            }
         } else if let Some(message) = message {
             debug_panic!(
                 "No server state for {id}, but got a message: {message} with severity: {severity:?}"
@@ -139,7 +150,7 @@ impl LspPickerDelegate {
         );
 
         for duplicate_statuses in duplicate_server_statuses.into_values() {
-            if duplicate_statuses.len() < 1 {
+            if duplicate_statuses.len() < 2 {
                 continue;
             }
 
@@ -190,46 +201,57 @@ impl PickerDelegate for LspPickerDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        self.items.clear();
-        self.selected_index = 0;
+        cx.spawn(async move |lsp_picker, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(30))
+                .await;
+            lsp_picker
+                .update(cx, |lsp_picker, cx| {
+                    lsp_picker.delegate.items.clear();
+                    lsp_picker.delegate.selected_index = 0;
 
-        let Some(buffers) = self
-            .active_editor
-            .as_ref()
-            .and_then(|editor| Some(&editor.editor_buffers))
-        else {
-            return Task::ready(());
-        };
+                    let Some(buffers) = lsp_picker
+                        .delegate
+                        .active_editor
+                        .as_ref()
+                        .and_then(|editor| Some(&editor.editor_buffers))
+                    else {
+                        return;
+                    };
 
-        self.items = buffers
-            .iter()
-            .filter_map(|(worktree_id, buffer_id)| {
-                Some(
-                    self.language_servers
-                        .servers_per_worktree
-                        .get(worktree_id)?
-                        .get(buffer_id)?,
-                )
-            })
-            .flatten()
-            .unique()
-            .filter_map(|id| {
-                let adapter = self
-                    .lsp_store
-                    .read(cx)
-                    .language_server_adapter_for_id(*id)?;
-                let state = self.language_servers.servers.get(id)?;
-                Some((adapter, state))
-            })
-            .flat_map(|(adapter, state)| {
-                [
-                    LspItem::Header(adapter.name(), state.message.clone()),
-                    LspItem::Item(state.status),
-                ]
-            })
-            .collect();
-
-        Task::ready(())
+                    lsp_picker.delegate.items = buffers
+                        .iter()
+                        .filter_map(|(worktree_id, buffer_id)| {
+                            Some(
+                                lsp_picker
+                                    .delegate
+                                    .language_servers
+                                    .servers_per_worktree
+                                    .get(worktree_id)?
+                                    .get(buffer_id)?,
+                            )
+                        })
+                        .flatten()
+                        .unique()
+                        .filter_map(|id| {
+                            let adapter = lsp_picker
+                                .delegate
+                                .lsp_store
+                                .read(cx)
+                                .language_server_adapter_for_id(*id)?;
+                            let state = lsp_picker.delegate.language_servers.servers.get(id)?;
+                            Some((adapter, state))
+                        })
+                        .flat_map(|(adapter, state)| {
+                            [
+                                LspItem::Header(adapter.name(), state.message.clone()),
+                                LspItem::Item(state.status),
+                            ]
+                        })
+                        .collect();
+                })
+                .ok();
+        })
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
@@ -318,6 +340,8 @@ impl PickerDelegate for LspPickerDelegate {
             h_flex()
                 .w_full()
                 .justify_between()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("restart-all-servers", "Restart all servers")
                         .key_binding(KeyBinding::for_action(&RestartLanguageServer, window, cx))
@@ -399,14 +423,30 @@ impl LspTool {
                 ..,
             ) => {
                 self.lsp_picker.update(cx, |picker, _| {
-                    picker.delegate.language_servers.servers.insert(
-                        *language_server_id,
-                        LanguageServerState {
-                            name: language_server_name.clone(),
-                            message: None,
-                            status: LanguageServerStatus::Starting,
-                        },
-                    )
+                    match picker
+                        .delegate
+                        .language_servers
+                        .servers
+                        .entry(*language_server_id)
+                    {
+                        hash_map::Entry::Occupied(mut o) => {
+                            let state = o.get_mut();
+                            match state.status {
+                                LanguageServerStatus::Running | LanguageServerStatus::Starting => {}
+                                LanguageServerStatus::Stopping | LanguageServerStatus::Stopped => {
+                                    state.status = LanguageServerStatus::Starting;
+                                    state.message = None;
+                                }
+                            }
+                        }
+                        hash_map::Entry::Vacant(v) => {
+                            v.insert(LanguageServerState {
+                                name: language_server_name.clone(),
+                                message: None,
+                                status: LanguageServerStatus::Starting,
+                            });
+                        }
+                    }
                 });
             }
             project::LspStoreEvent::LanguageServerRemoved(language_server_id) => {
@@ -460,6 +500,7 @@ impl LspTool {
                                 *language_server_id,
                                 status_update.message.as_deref(),
                                 Severity::Ok,
+                                name.as_ref(),
                             );
                         }
                         Some(proto::status_update::Status::Info) => {
@@ -467,6 +508,7 @@ impl LspTool {
                                 *language_server_id,
                                 status_update.message.as_deref(),
                                 Severity::Info,
+                                name.as_ref(),
                             );
                         }
                         Some(proto::status_update::Status::Warning) => {
@@ -474,6 +516,7 @@ impl LspTool {
                                 *language_server_id,
                                 status_update.message.as_deref(),
                                 Severity::Warning,
+                                name.as_ref(),
                             );
                         }
                         Some(proto::status_update::Status::Error) => {
@@ -481,6 +524,7 @@ impl LspTool {
                                 *language_server_id,
                                 status_update.message.as_deref(),
                                 Severity::Error,
+                                name.as_ref(),
                             );
                         }
                         Some(proto::status_update::Status::Other) => {
@@ -488,6 +532,7 @@ impl LspTool {
                                 *language_server_id,
                                 status_update.message.as_deref(),
                                 Severity::Other,
+                                name.as_ref(),
                             );
                         }
                         None => {

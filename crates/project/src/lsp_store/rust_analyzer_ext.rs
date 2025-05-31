@@ -46,46 +46,54 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
             let name = name.clone();
             move |params, cx| {
                 let name = name.clone();
-                if let Some(ref message) = params.message {
-                    let message = message.trim();
-                    if !message.is_empty() {
-                        let formatted_message = format!(
-                            "Language server {name} (id {server_id}) status update: {message}"
-                        );
-                        let status = match params.health {
-                            ServerHealthStatus::Ok => {
-                                log::info!("{formatted_message}");
-                                proto::status_update::Status::Ok
-                            }
-                            ServerHealthStatus::Warning => {
-                                log::warn!("{formatted_message}");
-                                proto::status_update::Status::Warning
-                            }
-                            ServerHealthStatus::Error => {
-                                log::error!("{formatted_message}");
-                                proto::status_update::Status::Error
-                            }
-                            ServerHealthStatus::Other(status) => {
-                                log::info!("Unknown server health: {status}\n{formatted_message}");
-                                proto::status_update::Status::Other
-                            }
-                        };
-                        lsp_store
-                            .update(cx, |_, cx| {
-                                cx.emit(LspStoreEvent::LanguageServerUpdate {
-                                    language_server_id: server_id,
-                                    name: Some(name),
-                                    message: proto::update_language_server::Variant::StatusUpdate(
-                                        proto::StatusUpdate {
-                                            message: Some(formatted_message),
-                                            status: status as i32,
-                                        },
-                                    ),
-                                });
-                            })
-                            .ok();
+                let message = params
+                    .message
+                    .as_ref()
+                    .map(|message| message.trim())
+                    .filter(|message| !message.is_empty())
+                    .map(|message| {
+                        format!("Language server {name} (id {server_id}) status update: {message}")
+                    });
+                let status = match params.health {
+                    ServerHealthStatus::Ok => {
+                        if let Some(message) = message.as_ref() {
+                            log::info!("{message}");
+                        }
+                        proto::status_update::Status::Ok
                     }
-                }
+                    ServerHealthStatus::Warning => {
+                        if let Some(message) = message.as_ref() {
+                            log::warn!("{message}");
+                        }
+                        proto::status_update::Status::Warning
+                    }
+                    ServerHealthStatus::Error => {
+                        if let Some(message) = message.as_ref() {
+                            log::error!("{message}");
+                        }
+                        proto::status_update::Status::Error
+                    }
+                    ServerHealthStatus::Other(status) => {
+                        if let Some(message) = message.as_ref() {
+                            log::info!("Unknown server health: {status}\n{message}");
+                        }
+                        proto::status_update::Status::Other
+                    }
+                };
+                lsp_store
+                    .update(cx, |_, cx| {
+                        cx.emit(LspStoreEvent::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            name: Some(name),
+                            message: proto::update_language_server::Variant::StatusUpdate(
+                                proto::StatusUpdate {
+                                    message: message,
+                                    status: status as i32,
+                                },
+                            ),
+                        });
+                    })
+                    .ok();
             }
         })
         .detach();
