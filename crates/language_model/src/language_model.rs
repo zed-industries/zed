@@ -16,7 +16,6 @@ use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
 use http_client::http::{HeaderMap, HeaderValue};
 use icons::IconName;
 use parking_lot::Mutex;
-use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::fmt;
@@ -46,15 +45,6 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 
 pub fn init_settings(cx: &mut App) {
     registry::init(cx);
-}
-
-/// The availability of a [`LanguageModel`].
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LanguageModelAvailability {
-    /// The language model is available to the general public.
-    Public,
-    /// The language model is available to users on the indicated plan.
-    RequiresPlan(Plan),
 }
 
 /// Configuration for caching language model messages.
@@ -110,6 +100,7 @@ pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
+    Refusal,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -242,11 +233,6 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
-    /// Returns the availability of this language model.
-    fn availability(&self) -> LanguageModelAvailability {
-        LanguageModelAvailability::Public
-    }
-
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 
@@ -256,23 +242,8 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports choosing which tool to use.
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
 
-    /// Returns whether this model supports "max mode";
+    /// Returns whether this model supports "burn mode";
     fn supports_max_mode(&self) -> bool {
-        if self.provider_id().0 != ZED_CLOUD_PROVIDER_ID {
-            return false;
-        }
-
-        const MAX_MODE_CAPABLE_MODELS: &[CloudModel] = &[
-            CloudModel::Anthropic(anthropic::Model::Claude3_7Sonnet),
-            CloudModel::Anthropic(anthropic::Model::Claude3_7SonnetThinking),
-        ];
-
-        for model in MAX_MODE_CAPABLE_MODELS {
-            if self.id().0 == model.id() {
-                return true;
-            }
-        }
-
         false
     }
 

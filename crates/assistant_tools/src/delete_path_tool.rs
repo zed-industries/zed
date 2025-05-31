@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::{SinkExt, StreamExt, channel::mpsc};
@@ -35,7 +35,7 @@ impl Tool for DeletePathTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, cx: &App) -> bool {
-        AssistantSettings::get_global(cx).confirm_file_deletions
+        AgentSettings::get_global(cx).confirm_file_deletions
     }
 
     fn description(&self) -> String {

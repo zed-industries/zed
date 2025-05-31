@@ -940,7 +940,7 @@ fn about(
         ""
     };
     let message = format!("{release_channel} {version} {debug}");
-    let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
+    let detail = AppCommitSha::try_global(cx).map(|sha| sha.full());
 
     let prompt = window.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"], cx);
     cx.foreground_executor()
@@ -1183,19 +1183,15 @@ pub fn handle_settings_file_changes(
             };
 
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let content_migrated = process_settings(content, is_user, store, cx);
-
-                if content_migrated {
-                    if let Some(notifier) = MigrationNotification::try_global(cx) {
-                        notifier.update(cx, |_, cx| {
-                            cx.emit(MigrationEvent::ContentChanged {
-                                migration_type: MigrationType::Settings,
-                                migrated: true,
-                            });
+                let migrating_in_memory = process_settings(content, is_user, store, cx);
+                if let Some(notifier) = MigrationNotification::try_global(cx) {
+                    notifier.update(cx, |_, cx| {
+                        cx.emit(MigrationEvent::ContentChanged {
+                            migration_type: MigrationType::Settings,
+                            migrating_in_memory,
                         });
-                    }
+                    });
                 }
-
                 cx.refresh_windows();
             });
 
@@ -1247,7 +1243,7 @@ pub fn handle_keymap_file_changes(
 
     cx.spawn(async move |cx| {
         let mut user_keymap_content = String::new();
-        let mut content_migrated = false;
+        let mut migrating_in_memory = false;
         loop {
             select_biased! {
                 _ = base_keymap_rx.next() => {},
@@ -1256,10 +1252,10 @@ pub fn handle_keymap_file_changes(
                     if let Some(content) = content {
                         if let Ok(Some(migrated_content)) = migrate_keymap(&content) {
                             user_keymap_content = migrated_content;
-                            content_migrated = true;
+                            migrating_in_memory = true;
                         } else {
                             user_keymap_content = content;
-                            content_migrated = false;
+                            migrating_in_memory = false;
                         }
                     }
                 }
@@ -1269,7 +1265,7 @@ pub fn handle_keymap_file_changes(
                     notifier.update(cx, |_, cx| {
                         cx.emit(MigrationEvent::ContentChanged {
                             migration_type: MigrationType::Keymap,
-                            migrated: content_migrated,
+                            migrating_in_memory,
                         });
                     });
                 }
@@ -1535,10 +1531,10 @@ fn open_local_file(
         cx.spawn_in(window, async move |workspace, cx| {
             // Check if the file actually exists on disk (even if it's excluded from worktree)
             let file_exists = {
-                let full_path =
-                    worktree.update(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
+                let full_path = worktree
+                    .read_with(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
 
-                let fs = project.update(cx, |project, _| project.fs().clone())?;
+                let fs = project.read_with(cx, |project, _| project.fs().clone())?;
                 let file_exists = fs
                     .metadata(&full_path)
                     .await
@@ -1550,7 +1546,7 @@ fn open_local_file(
 
             if !file_exists {
                 if let Some(dir_path) = settings_relative_path.parent() {
-                    if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                    if worktree.read_with(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
                         project
                             .update(cx, |project, cx| {
                                 project.create_entry((tree_id, dir_path), true, cx)
@@ -1560,7 +1556,7 @@ fn open_local_file(
                     }
                 }
 
-                if worktree.update(cx, |tree, _| {
+                if worktree.read_with(cx, |tree, _| {
                     tree.entry_for_path(settings_relative_path).is_none()
                 })? {
                     project
@@ -4295,6 +4291,7 @@ mod tests {
                 app_state.client.clone(),
                 prompt_builder.clone(),
                 app_state.languages.clone(),
+                false,
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);

@@ -1,8 +1,8 @@
 use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
 use crate::{context::load_context, context_store::ContextStore};
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::HashSet;
 use editor::{Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint};
@@ -34,6 +34,7 @@ use std::{
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
+use zed_llm_client::CompletionIntent;
 
 pub struct BufferCodegen {
     alternatives: Vec<Entity<CodegenAlternative>>,
@@ -443,7 +444,7 @@ impl CodegenAlternative {
             }
         });
 
-        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         Ok(cx.spawn(async move |_cx| {
             let mut request_message = LanguageModelRequestMessage {
@@ -464,6 +465,7 @@ impl CodegenAlternative {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                intent: Some(CompletionIntent::InlineAssist),
                 mode: None,
                 tools: Vec::new(),
                 tool_choice: None,

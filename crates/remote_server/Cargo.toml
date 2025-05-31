@@ -86,6 +86,7 @@ language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features=["test-support"] }
 unindent.workspace = true
 serde_json.workspace = true
+zlog.workspace = true
 
 [build-dependencies]
 cargo_toml.workspace = true

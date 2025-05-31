@@ -12,8 +12,8 @@ workspace = true
 path = "src/assistant_context_editor.rs"
 
 [dependencies]
+agent_settings.workspace = true
 anyhow.workspace = true
-assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 chrono.workspace = true
@@ -57,6 +57,7 @@ uuid.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zed_llm_client.workspace = true
 
 [dev-dependencies]
 language_model = { workspace = true, features = ["test-support"] }

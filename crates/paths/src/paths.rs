@@ -435,6 +435,21 @@ pub fn vscode_settings_file() -> &'static PathBuf {
                 .join("Library/Application Support")
                 .join(rel_path)
         } else {
+            home_dir().join(".config").join(rel_path)
+        }
+    })
+}
+
+/// Returns the path to the cursor user settings file
+pub fn cursor_settings_file() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    let rel_path = "Cursor/User/settings.json";
+    LOGS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            home_dir()
+                .join("Library/Application Support")
+                .join(rel_path)
+        } else {
             config_dir().join(rel_path)
         }
     })

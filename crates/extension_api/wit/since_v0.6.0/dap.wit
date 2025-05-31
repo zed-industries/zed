@@ -35,9 +35,7 @@ interface dap {
     record debug-task-definition {
         label: string,
         adapter: string,
-        request: debug-request,
-        initialize-args: option<string>,
-        stop-on-entry: option<bool>,
+        config: string,
         tcp-connection: option<tcp-arguments-template>,
     }
 

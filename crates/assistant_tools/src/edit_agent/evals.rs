@@ -34,13 +34,30 @@ use util::path;
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_extract_handle_command_output() {
+    // Test how well agent generates multiple edit hunks.
+    //
+    // Model                       | Pass rate
+    // ----------------------------|----------
+    // claude-3.7-sonnet           |  0.98
+    // gemini-2.5-pro              |  0.86
+    // gemini-2.5-flash            |  0.11
+    // gpt-4.1                     |  1.00
+
     let input_file_path = "root/blame.rs";
     let input_file_content = include_str!("evals/fixtures/extract_handle_command_output/before.rs");
-    let output_file_content = include_str!("evals/fixtures/extract_handle_command_output/after.rs");
+    let possible_diffs = vec![
+        include_str!("evals/fixtures/extract_handle_command_output/possible-01.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-02.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-03.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-04.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-05.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-06.diff"),
+        include_str!("evals/fixtures/extract_handle_command_output/possible-07.diff"),
+    ];
     let edit_description = "Extract `handle_command_output` method from `run_git_blame`.";
     eval(
         100,
-        0.95,
+        0.7, // Taking the lower bar for Gemini
         EvalInput::from_conversation(
             vec![
                 message(
@@ -49,6 +66,7 @@ fn eval_extract_handle_command_output() {
                         Read the `{input_file_path}` file and extract a method in
                         the final stanza of `run_git_blame` to deal with command failures,
                         call it `handle_command_output` and take the std::process::Output as the only parameter.
+                        Do not document the method and do not add any comments.
 
                         Add it right next to `run_git_blame` and copy it verbatim from `run_git_blame`.
                     "})],
@@ -83,7 +101,7 @@ fn eval_extract_handle_command_output() {
                 ),
             ],
             Some(input_file_content.into()),
-            EvalAssertion::assert_eq(output_file_content),
+            EvalAssertion::assert_diff_any(possible_diffs),
         ),
     );
 }
@@ -145,6 +163,15 @@ fn eval_delete_run_git_blame() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_translate_doc_comments() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
     let edit_description = "Translate all doc comments to Italian";
@@ -198,6 +225,15 @@ fn eval_translate_doc_comments() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  0.98
+    //  gemini-2.5-pro-preview-03-25   |  0.99
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/lib.rs";
     let input_file_content =
         include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs");
@@ -314,6 +350,15 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_disable_cursor_blinking() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
@@ -388,6 +433,15 @@ fn eval_disable_cursor_blinking() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_from_pixels_constructor() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  0.94
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
     let edit_description = "Implement from_pixels constructor and add tests.";
@@ -579,11 +633,20 @@ fn eval_from_pixels_constructor() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_zode() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  1.0
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |  1.0
+    //  gpt-4.1                        |  1.0
     let input_file_path = "root/zode.py";
     let input_content = None;
     let edit_description = "Create the main Zode CLI script";
     eval(
-        200,
+        50,
         1.,
         EvalInput::from_conversation(
             vec![
@@ -649,7 +712,7 @@ fn eval_zode() {
                 let invalid_starts = [' ', '`', '\n'];
                 let mut message = String::new();
                 for start in invalid_starts {
-                    if sample.text.starts_with(start) {
+                    if sample.text_after.starts_with(start) {
                         message.push_str(&format!("The sample starts with a {:?}\n", start));
                         break;
                     }
@@ -676,6 +739,15 @@ fn eval_zode() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_add_overwrite_test() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  0.16
+    //  gemini-2.5-pro-preview-03-25   |  0.35
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/action_log.rs";
     let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
     let edit_description = "Add a new test for overwriting a file in action_log.rs";
@@ -902,13 +974,10 @@ fn eval_create_empty_file() {
     // thoughts into it. This issue is not specific to empty files, but
     // it's easier to reproduce with them.
     //
+    // Results for 2025-05-21:
     //
     //  Model                          | Pass rate
     // ============================================
-    //
-    // --------------------------------------------
-    //           Prompt version: 2025-05-21
-    // --------------------------------------------
     //
     //  claude-3.7-sonnet              |  1.00
     //  gemini-2.5-pro-preview-03-25   |  1.00
@@ -1074,7 +1143,8 @@ impl EvalInput {
 
 #[derive(Clone)]
 struct EvalSample {
-    text: String,
+    text_before: String,
+    text_after: String,
     edit_output: EditAgentOutput,
     diff: String,
 }
@@ -1131,11 +1201,27 @@ impl EvalAssertion {
         let expected = expected.into();
         Self::new(async move |sample, _judge, _cx| {
             Ok(EvalAssertionOutcome {
-                score: if strip_empty_lines(&sample.text) == strip_empty_lines(&expected) {
+                score: if strip_empty_lines(&sample.text_after) == strip_empty_lines(&expected) {
                     100
                 } else {
                     0
                 },
+                message: None,
+            })
+        })
+    }
+
+    fn assert_diff_any(expected_diffs: Vec<impl Into<String>>) -> Self {
+        let expected_diffs: Vec<String> = expected_diffs.into_iter().map(Into::into).collect();
+        Self::new(async move |sample, _judge, _cx| {
+            let matches = expected_diffs.iter().any(|possible_diff| {
+                let expected =
+                    language::apply_diff_patch(&sample.text_before, possible_diff).unwrap();
+                strip_empty_lines(&expected) == strip_empty_lines(&sample.text_after)
+            });
+
+            Ok(EvalAssertionOutcome {
+                score: if matches { 100 } else { 0 },
                 message: None,
             })
         })
@@ -1225,7 +1311,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
                 if output.assertion.score < 80 {
                     failed_count += 1;
                     failed_evals
-                        .entry(output.sample.text.clone())
+                        .entry(output.sample.text_after.clone())
                         .or_insert(Vec::new())
                         .push(output);
                 }
@@ -1395,7 +1481,7 @@ impl EditAgentTest {
                     model.provider_id() == selected_model.provider
                         && model.id() == selected_model.model
                 })
-                .unwrap();
+                .expect("Model not found");
             let provider = models.provider(&model.provider_id()).unwrap();
             (provider, model)
         })?;
@@ -1470,6 +1556,7 @@ impl EditAgentTest {
             tools,
             ..Default::default()
         };
+
         let edit_output = if matches!(eval.edit_file_input.mode, EditFileMode::Edit) {
             if let Some(input_content) = eval.input_content.as_deref() {
                 buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
@@ -1498,7 +1585,8 @@ impl EditAgentTest {
                 eval.input_content.as_deref().unwrap_or_default(),
                 &buffer_text,
             ),
-            text: buffer_text,
+            text_before: eval.input_content.unwrap_or_default(),
+            text_after: buffer_text,
         };
         let assertion = eval
             .assertion

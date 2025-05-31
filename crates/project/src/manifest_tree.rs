@@ -133,7 +133,7 @@ impl ManifestTree {
         };
 
         let key = TriePath::from(&*path);
-        worktree_roots.update(cx, |this, _| {
+        worktree_roots.read_with(cx, |this, _| {
             this.roots.walk(&key, &mut |path, labels| {
                 for (label, presence) in labels {
                     if let Some((marked_path, current_presence)) = roots.get_mut(label) {

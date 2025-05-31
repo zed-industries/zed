@@ -3,7 +3,7 @@
 The Agent Panel provides you with a way to interact with LLMs.
 You can use it for various tasks, such as generating code, asking questions about your code base, and general inquiries such as emails and documentation.
 
-To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
+To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](./getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
 If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./configuration.md).
 
@@ -21,9 +21,7 @@ You can click on the card that contains your message and re-submit it with an ad
 
 ### Checkpoints {#checkpoints}
 
-Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message.
-This allows you to return your codebase to the state it was in prior to that message.
-This is usually valuable if the AI's edit doesn't go in the right direction.
+Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message, allowing you to return your codebase to the state it was in prior to that message.
 
 ### Navigating History {#navigating-history}
 
@@ -31,27 +29,32 @@ To quickly navigate through recently opened threads, use the {#kb agent::ToggleN
 
 The items in this menu function similarly to tabs, and closing them doesn’t delete the thread; instead, it simply removes them from the recent list.
 
-You can also view all historical conversations with the `View All` option from within the same menu or by reaching for the {#kb agent::OpenHistory} binding.
+To view all historical conversations, reach for the `View All` option from within the same menu or via the {#kb agent::OpenHistory} binding.
 
 ### Following the Agent {#following-the-agent}
 
 Zed is built with collaboration natively integrated.
 This approach extends to collaboration with AI as well.
-To follow the agent navigating across your codebase and performing edits, click on the "crosshair" icon button at the bottom left of the panel.
+To follow the agent reading through your codebase and performing edits, click on the "crosshair" icon button at the bottom left of the panel.
 
 ### Get Notified {#get-notified}
 
-If you send a prompt to the Agent and then move elsewhere, thus putting Zed in the background, a notification will pop up at the top right of your monitor indicating that the Agent has completed its work.
+If you send a prompt to the Agent and then move elsewhere, thus putting Zed in the background, you can be notified of whether its response is finished either via:
 
-You can customize the notification behavior or turn it off entirely by using the `agent.notify_when_agent_waiting` settings key.
+- a visual notification that appears in the top right of your screen
+- or a sound notification
+
+Both notification methods can be used together or individually according to your preference.
+
+You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
 
 ### Reviewing Changes {#reviewing-changes}
 
-If you are using a profile that includes write tools, and the agent has made changes to your project, you'll notice the Agent Panel surfaces the fact that edits (and how many of them) have been applied.
+Once the agent has made changes to your project, the panel will surface which files, and how many of them, have been edited.
 
-To see which files have been edited, expand the accordion bar that shows up right above the message editor or click the `Review Changes` button ({#kb agent::OpenAgentDiff}), which opens a multi-buffer tab with all changes.
+To see which files specifically have been edited, expand the accordion bar that shows up right above the message editor or click the `Review Changes` button ({#kb agent::OpenAgentDiff}), which opens a multi-buffer tab with all changes.
 
-Reviewing includes the option to accept or reject each or all edits.
+You're able to reject or accept each individual change hunk, or the whole set of changes made by the agent.
 
 Edit diffs also appear in individual buffers.
 So, if your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
@@ -63,16 +66,16 @@ Although Zed's agent is very efficient at reading through your codebase to auton
 If you have a tab open when opening the Agent Panel, that tab appears as a suggested context in form of a dashed button.
 You can also add other forms of context by either mentioning them with `@` or hitting the `+` icon button.
 
-You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "Start New From Summary" option from the top-right menu to continue a longer conversation and keep it within the context window.
+You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "New From Summary" option from the top-right menu to continue a longer conversation, keeping it within the context window.
 
-Images are also supported, and pasting them over in the panel's editor works.
+Pasting images as context is also supported by the Agent Panel.
 
 ### Token Usage {#token-usage}
 
 Zed surfaces how many tokens you are consuming for your currently active thread in the panel's toolbar.
 Depending on how many pieces of context you add, your token consumption can grow rapidly.
 
-With that in mind, once you get close to the model's context window, a banner appears on the bottom of the message editor suggesting to start a new thread with the current one summarized and added as context.
+With that in mind, once you get close to the model's context window, a banner appears below the message editor suggesting to start a new thread with the current one summarized and added as context.
 You can also do this at any time with an ongoing thread via the "Agent Options" menu on the top right.
 
 ## Changing Models {#changing-models}
@@ -94,15 +97,15 @@ Zed offers three built-in profiles and you can create as many custom ones as you
 #### Built-in Profiles {#built-in-profiles}
 
 - `Write`: A profile with tools to allow the LLM to write to your files and run terminal commands. This one essentially has all built-in tools turned on.
-- `Ask`: A profile with read-only tools. Best for asking questions about your code base without the fear of the agent making changes.
-- `Minimal`: A profile with no tools. Best for general conversations with the LLM where no knowledge of your code is necessary.
+- `Ask`: A profile with read-only tools. Best for asking questions about your code base without the concern of the agent making changes.
+- `Minimal`: A profile with no tools. Best for general conversations with the LLM where no knowledge of your code base is necessary.
 
 You can explore the exact tools enabled in each profile by clicking on the profile selector button > `Configure Profiles…` > the one you want to check out.
 
 #### Custom Profiles {#custom-profiles}
 
 You can create a custom profile via the `Configure Profiles…` option in the profile selector.
-From here, you can choose to `Add New Profile` or fork an existing one with your choice of tools and a custom profile name.
+From here, you can choose to `Add New Profile` or fork an existing one with a custom name and your preferred set of tools.
 
 You can also override built-in profiles.
 With a built-in profile selected, in the profile selector, navigate to `Configure Tools`, and select the tools you'd like.
@@ -115,10 +118,10 @@ All custom profiles can be edited via the UI or by hand under the `assistant.pro
 
 Tool calling needs to be individually supported by each model and model provider.
 Therefore, despite the presence of tools, some models may not have the ability to pick them up yet in Zed.
-You should see a "No tools" disabled button if you select a model that falls into this case.
+You should see a "No tools" label if you select a model that falls into this case.
 
 We want to support all of them, though!
-We may prioritize which ones to focus on based on popularity and user feedback, so feel free to help and contribute.
+We may prioritize which ones to focus on based on popularity and user feedback, so feel free to help and contribute to fast-track those that don't fit this bill.
 
 All [Zed's hosted models](./models.md) support tool calling out-of-the-box.
 

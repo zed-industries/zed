@@ -5,7 +5,7 @@ mod tool_picker;
 
 use std::{sync::Arc, time::Duration};
 
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -249,7 +249,7 @@ impl AgentConfiguration {
     }
 
     fn render_confirm_delete_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let confirm_file_deletions = AssistantSettings::get_global(cx).confirm_file_deletions;
+        let confirm_file_deletions = AgentSettings::get_global(cx).confirm_file_deletions;
 
         h_flex()
                 .gap_4()
@@ -277,7 +277,7 @@ impl AgentConfiguration {
                         let fs = self.fs.clone();
                         move |state, _window, cx| {
                             let allow = state == &ToggleState::Selected;
-                            update_settings_file::<AssistantSettings>(
+                            update_settings_file::<AgentSettings>(
                                 fs.clone(),
                                 cx,
                                 move |settings, _| {
@@ -290,7 +290,7 @@ impl AgentConfiguration {
     }
 
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let always_allow_tool_actions = AssistantSettings::get_global(cx).always_allow_tool_actions;
+        let always_allow_tool_actions = AgentSettings::get_global(cx).always_allow_tool_actions;
 
         h_flex()
                 .gap_4()
@@ -318,7 +318,7 @@ impl AgentConfiguration {
                         let fs = self.fs.clone();
                         move |state, _window, cx| {
                             let allow = state == &ToggleState::Selected;
-                            update_settings_file::<AssistantSettings>(
+                            update_settings_file::<AgentSettings>(
                                 fs.clone(),
                                 cx,
                                 move |settings, _| {
@@ -331,7 +331,7 @@ impl AgentConfiguration {
     }
 
     fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let single_file_review = AssistantSettings::get_global(cx).single_file_review;
+        let single_file_review = AgentSettings::get_global(cx).single_file_review;
 
         h_flex()
             .gap_4()
@@ -356,11 +356,49 @@ impl AgentConfiguration {
                         let fs = self.fs.clone();
                         move |state, _window, cx| {
                             let allow = state == &ToggleState::Selected;
-                            update_settings_file::<AssistantSettings>(
+                            update_settings_file::<AgentSettings>(
                                 fs.clone(),
                                 cx,
                                 move |settings, _| {
                                     settings.set_single_file_review(allow);
+                                },
+                            );
+                        }
+                    }),
+            )
+    }
+
+    fn render_sound_notification(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let play_sound_when_agent_done = AgentSettings::get_global(cx).play_sound_when_agent_done;
+
+        h_flex()
+            .gap_4()
+            .justify_between()
+            .flex_wrap()
+            .child(
+                v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(Label::new("Play sound when finished generating"))
+                    .child(
+                        Label::new(
+                            "Hear a notification sound when the agent is done generating changes or needs your input.",
+                        )
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Switch::new("play-sound-notification-switch", play_sound_when_agent_done.into())
+                    .color(SwitchColor::Accent)
+                    .on_click({
+                        let fs = self.fs.clone();
+                        move |state, _window, cx| {
+                            let allow = state == &ToggleState::Selected;
+                            update_settings_file::<AgentSettings>(
+                                fs.clone(),
+                                cx,
+                                move |settings, _| {
+                                    settings.set_play_sound_when_agent_done(allow);
                                 },
                             );
                         }
@@ -379,6 +417,7 @@ impl AgentConfiguration {
             .child(self.render_command_permission(cx))
             .child(self.render_confirm_delete_permission(cx))
             .child(self.render_single_file_review(cx))
+            .child(self.render_sound_notification(cx))
     }
 
     fn render_context_servers_section(
