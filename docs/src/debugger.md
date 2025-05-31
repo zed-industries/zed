@@ -66,6 +66,18 @@ Zed also allows embedding a task that is run before the debugger starts. This is
 
 See an example [here](#build-binary-then-debug)
 
+#### Go examples
+```json
+[
+  {
+    "label": "Go (Delve)",
+    "adapter": "Delve",
+    "program": "$ZED_FILE",
+    "request": "launch"
+  }
+]
+```
+
 #### Python Examples
 
 ##### Python Active File
