@@ -12,12 +12,12 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter, Role,
+    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, prelude::*};
 use util::ResultExt;
@@ -280,11 +280,11 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        false
+        true
     }
 
     fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        false
+        true
     }
 
     fn supports_images(&self) -> bool {
@@ -348,28 +348,135 @@ impl LanguageModel for DeepSeekLanguageModel {
 
         async move {
             let stream = stream.await?;
-            Ok(stream
-                .map(|result| {
-                    result
-                        .and_then(|response| {
-                            response
-                                .choices
-                                .first()
-                                .context("Empty response")
-                                .map(|choice| {
-                                    choice
-                                        .delta
-                                        .content
-                                        .clone()
-                                        .unwrap_or_default()
-                                        .map(LanguageModelCompletionEvent::Text)
-                                })
-                        })
-                        .map_err(LanguageModelCompletionError::Other)
-                })
-                .boxed())
+            let mapper = DeepSeekEventMapper::new();
+            Ok(mapper.map_stream(stream))
         }
         .boxed()
+    }
+}
+
+#[derive(Default)]
+struct RawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+pub struct DeepSeekEventMapper {
+    tool_calls_by_index: HashMap<usize, RawToolCall>,
+}
+
+impl DeepSeekEventMapper {
+    pub fn new() -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+        }
+    }
+
+    pub fn map_stream(
+        mut self,
+        stream: BoxStream<'static, Result<deepseek::StreamResponse>>,
+    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        stream
+            .flat_map(move |result| {
+                futures::stream::iter(match result {
+                    Ok(response) => self.map_event(response),
+                    Err(error) => vec![Err(LanguageModelCompletionError::Other(error))],
+                })
+            })
+            .boxed()
+    }
+
+    pub fn map_event(
+        &mut self,
+        response: deepseek::StreamResponse,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let Some(choice) = response.choices.first() else {
+            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                "Response contained no choices"
+            )))];
+        };
+
+        let mut events = Vec::new();
+
+        // Handle reasoning content for reasoner models
+        if let Some(reasoning_content) = &choice.delta.reasoning_content {
+            if !reasoning_content.is_empty() {
+                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                    text: reasoning_content.clone(),
+                    signature: None,
+                }));
+            }
+        }
+
+        // Handle regular text content
+        if let Some(content) = &choice.delta.content {
+            if !content.is_empty() {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content.clone())));
+            }
+        }
+
+        // Handle tool calls
+        if let Some(tool_calls) = &choice.delta.tool_calls {
+            for tool_call_chunk in tool_calls {
+                let entry = self
+                    .tool_calls_by_index
+                    .entry(tool_call_chunk.index)
+                    .or_default();
+
+                if let Some(tool_id) = &tool_call_chunk.id {
+                    entry.id = tool_id.clone();
+                }
+
+                if let Some(function) = &tool_call_chunk.function {
+                    if let Some(name) = &function.name {
+                        entry.name = name.clone();
+                    }
+
+                    if let Some(arguments) = &function.arguments {
+                        entry.arguments.push_str(arguments);
+                    }
+                }
+            }
+        }
+
+        // Handle finish reasons
+        match choice.finish_reason.as_deref() {
+            Some("stop") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            Some("tool_calls") => {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                    match serde_json::from_str(&tool_call.arguments) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_call.id.into(),
+                                name: tool_call.name.into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_call.arguments.clone(),
+                            },
+                        )),
+                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                            id: tool_call.id.into(),
+                            tool_name: tool_call.name.into(),
+                            raw_input: tool_call.arguments.into(),
+                            json_parse_error: error.to_string(),
+                        }),
+                    }
+                }));
+
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
+            }
+            Some(stop_reason) => {
+                log::error!("Unexpected DeepSeek stop_reason: {stop_reason:?}");
+                events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
+            }
+            None => {}
+        }
+
+        events
     }
 }
 
@@ -380,64 +487,103 @@ pub fn into_deepseek(
 ) -> deepseek::Request {
     let is_reasoner = model == "deepseek-reasoner";
 
-    let len = request.messages.len();
-    let merged_messages =
-        request
-            .messages
-            .into_iter()
-            .fold(Vec::with_capacity(len), |mut acc, msg| {
-                let role = msg.role;
-                let content = msg.string_contents();
-
-                if is_reasoner {
-                    if let Some(last_msg) = acc.last_mut() {
-                        match (last_msg, role) {
-                            (deepseek::RequestMessage::User { content: last }, Role::User) => {
-                                last.push(' ');
-                                last.push_str(&content);
-                                return acc;
+    let mut messages = Vec::new();
+    for message in request.messages {
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                    if is_reasoner {
+                        if let Some(last_msg) = messages.last_mut() {
+                            match (last_msg, message.role) {
+                                (deepseek::RequestMessage::User { content: last }, Role::User) => {
+                                    last.push(' ');
+                                    last.push_str(&text);
+                                    continue;
+                                }
+                                (
+                                    deepseek::RequestMessage::Assistant {
+                                        content: last_content,
+                                        ..
+                                    },
+                                    Role::Assistant,
+                                ) => {
+                                    *last_content = last_content
+                                        .take()
+                                        .map(|c| {
+                                            let mut s =
+                                                String::with_capacity(c.len() + text.len() + 1);
+                                            s.push_str(&c);
+                                            s.push(' ');
+                                            s.push_str(&text);
+                                            s
+                                        })
+                                        .or(Some(text));
+                                    continue;
+                                }
+                                _ => {}
                             }
-
-                            (
-                                deepseek::RequestMessage::Assistant {
-                                    content: last_content,
-                                    ..
-                                },
-                                Role::Assistant,
-                            ) => {
-                                *last_content = last_content
-                                    .take()
-                                    .map(|c| {
-                                        let mut s =
-                                            String::with_capacity(c.len() + content.len() + 1);
-                                        s.push_str(&c);
-                                        s.push(' ');
-                                        s.push_str(&content);
-                                        s
-                                    })
-                                    .or(Some(content));
-
-                                return acc;
-                            }
-                            _ => {}
                         }
                     }
-                }
 
-                acc.push(match role {
-                    Role::User => deepseek::RequestMessage::User { content },
-                    Role::Assistant => deepseek::RequestMessage::Assistant {
-                        content: Some(content),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => deepseek::RequestMessage::System { content },
-                });
-                acc
-            });
+                    messages.push(match message.role {
+                        Role::User => deepseek::RequestMessage::User { content: text },
+                        Role::Assistant => deepseek::RequestMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => deepseek::RequestMessage::System { content: text },
+                    });
+                }
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(_image) => {
+                    // DeepSeek doesn't support images yet
+                }
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = deepseek::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: deepseek::ToolCallContent::Function {
+                            function: deepseek::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
+                            },
+                        },
+                    };
+
+                    if let Some(deepseek::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
+                    } else {
+                        messages.push(deepseek::RequestMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
+                        });
+                    }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    let content = match &tool_result.content {
+                        language_model::LanguageModelToolResultContent::Text(text) => {
+                            text.to_string()
+                        }
+                        language_model::LanguageModelToolResultContent::Image(_image) => {
+                            // DeepSeek doesn't support images in tool results yet
+                            "[Image not supported]".to_string()
+                        }
+                    };
+
+                    messages.push(deepseek::RequestMessage::Tool {
+                        content,
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
+            }
+        }
+    }
 
     deepseek::Request {
         model,
-        messages: merged_messages,
+        messages,
         stream: true,
         max_tokens: max_output_tokens,
         temperature: if is_reasoner {
@@ -639,6 +785,155 @@ impl Render for ConfigurationView {
                         ),
                 )
                 .into_any()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::{LanguageModelRequestTool, LanguageModelToolChoice, MessageContent};
+    use serde_json::json;
+
+    #[test]
+    fn test_deepseek_tool_support() {
+        let model = deepseek::Model::Chat;
+
+        // Create a mock tool
+        let tool = LanguageModelRequestTool {
+            name: "get_weather".to_string(),
+            description: "Get the current weather for a location".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "The city and state, e.g. San Francisco, CA"
+                    }
+                },
+                "required": ["location"]
+            }),
+        };
+
+        // Create a request with tools
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text(
+                    "What's the weather in San Francisco?".to_string(),
+                )],
+                cache: false,
+            }],
+            tools: vec![tool],
+            tool_choice: Some(LanguageModelToolChoice::Auto),
+            temperature: Some(0.7),
+            stop: vec![],
+        };
+
+        // Convert to DeepSeek format
+        let deepseek_request = into_deepseek(request, model.id().to_string(), Some(1000));
+
+        // Verify the request has tools
+        assert_eq!(deepseek_request.tools.len(), 1);
+        assert_eq!(deepseek_request.model, "deepseek-chat");
+        assert_eq!(deepseek_request.messages.len(), 1);
+
+        if let Some(deepseek::ToolDefinition::Function { function }) =
+            deepseek_request.tools.first()
+        {
+            assert_eq!(function.name, "get_weather");
+            assert_eq!(
+                function.description,
+                Some("Get the current weather for a location".to_string())
+            );
+            assert!(function.parameters.is_some());
+        } else {
+            panic!("Expected function tool definition");
+        }
+    }
+
+    #[test]
+    fn test_deepseek_tool_call_response() {
+        let mut mapper = DeepSeekEventMapper::new();
+
+        // Simulate a streaming response with tool calls
+        let response = deepseek::StreamResponse {
+            id: "test-id".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            created: 123456789,
+            model: "deepseek-chat".to_string(),
+            choices: vec![deepseek::StreamChoice {
+                index: 0,
+                delta: deepseek::StreamDelta {
+                    role: Some(deepseek::Role::Assistant),
+                    content: None,
+                    tool_calls: Some(vec![deepseek::ToolCallChunk {
+                        index: 0,
+                        id: Some("call_123".to_string()),
+                        function: Some(deepseek::FunctionChunk {
+                            name: Some("get_weather".to_string()),
+                            arguments: Some(r#"{"location": "San Francisco, CA"}"#.to_string()),
+                        }),
+                    }]),
+                    reasoning_content: None,
+                },
+                finish_reason: None,
+            }],
+        };
+
+        let events = mapper.map_event(response);
+        assert_eq!(events.len(), 0); // No events until finish_reason is set
+
+        // Now simulate the completion with tool_calls finish reason
+        let final_response = deepseek::StreamResponse {
+            id: "test-id".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            created: 123456789,
+            model: "deepseek-chat".to_string(),
+            choices: vec![deepseek::StreamChoice {
+                index: 0,
+                delta: deepseek::StreamDelta {
+                    role: None,
+                    content: None,
+                    tool_calls: None,
+                    reasoning_content: None,
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+        };
+
+        let final_events = mapper.map_event(final_response);
+        assert_eq!(final_events.len(), 2); // ToolUse event + Stop event
+
+        // Verify the tool use event
+        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use)) = &final_events[0] {
+            assert_eq!(tool_use.id.to_string(), "call_123");
+            assert_eq!(tool_use.name.as_ref(), "get_weather");
+            assert_eq!(tool_use.raw_input, r#"{"location": "San Francisco, CA"}"#);
+            assert!(tool_use.is_input_complete);
+
+            // Verify parsed input
+            if let serde_json::Value::Object(obj) = &tool_use.input {
+                assert_eq!(
+                    obj.get("location").unwrap().as_str().unwrap(),
+                    "San Francisco, CA"
+                );
+            } else {
+                panic!("Expected parsed JSON object");
+            }
+        } else {
+            panic!("Expected ToolUse event");
+        }
+
+        // Verify the stop event
+        if let Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)) = &final_events[1] {
+            // Expected
+        } else {
+            panic!("Expected Stop(ToolUse) event");
         }
     }
 }
