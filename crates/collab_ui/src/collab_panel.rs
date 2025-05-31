@@ -14,9 +14,9 @@ use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
     AnyElement, App, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, Context, DismissEvent,
     Div, Entity, EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement,
-    ListOffset, ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    SharedString, Styled, Subscription, Task, TextStyle, WeakEntity, Window, actions, anchored,
-    canvas, deferred, div, fill, list, point, prelude::*, px,
+    KeyContext, ListOffset, ListState, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, SharedString, Styled, Subscription, Task, TextStyle, WeakEntity, Window, actions,
+    anchored, canvas, deferred, div, fill, list, point, prelude::*, px,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrevious};
 use project::{Fs, Project};
@@ -2003,7 +2003,7 @@ impl CollabPanel {
 
     fn show_inline_context_menu(
         &mut self,
-        _: &menu::SecondaryConfirm,
+        _: &Secondary,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2030,6 +2030,21 @@ impl CollabPanel {
             self.deploy_contact_context_menu(bounds.center(), contact, window, cx);
             cx.stop_propagation();
         }
+    }
+
+    fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
+        let mut dispatch_context = KeyContext::new_with_defaults();
+        dispatch_context.add("CollabPanel");
+        dispatch_context.add("menu");
+
+        let identifier = if self.channel_name_editor.focus_handle(cx).is_focused(window) {
+            "editing"
+        } else {
+            "not_editing"
+        };
+
+        dispatch_context.add(identifier);
+        dispatch_context
     }
 
     fn selected_channel(&self) -> Option<&Arc<Channel>> {
@@ -2994,7 +3009,7 @@ fn render_tree_branch(
 impl Render for CollabPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .key_context("CollabPanel")
+            .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(CollabPanel::cancel))
             .on_action(cx.listener(CollabPanel::select_next))
             .on_action(cx.listener(CollabPanel::select_previous))
