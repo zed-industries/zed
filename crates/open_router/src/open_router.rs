@@ -463,7 +463,7 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
                     entry
                         .name
                         .split(':')
-                        .last()
+                        .next_back()
                         .unwrap_or(&entry.name)
                         .trim()
                         .to_string(),
