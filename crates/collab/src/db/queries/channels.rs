@@ -1184,23 +1184,29 @@ impl Database {
             .update(&*tx)
             .await?;
 
-            // Return all sibling channels to ensure proper UI updates
-            let all_siblings: Vec<Channel> = channel::Entity::find()
-                .filter(channel::Column::ParentPath.eq(&channel.parent_path))
-                .order_by_asc(channel::Column::ChannelOrder)
-                .all(&*tx)
+            // Return only the two channels that were swapped
+            let updated_channel = channel::Entity::find_by_id(channel.id)
+                .one(&*tx)
                 .await?
-                .into_iter()
-                .map(Channel::from_model)
-                .collect();
+                .ok_or_else(|| anyhow!("Channel not found after update"))?;
+
+            let updated_sibling = channel::Entity::find_by_id(sibling_channel.id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("Sibling channel not found after update"))?;
+
+            let swapped_channels = vec![
+                Channel::from_model(updated_channel),
+                Channel::from_model(updated_sibling),
+            ];
 
             log::info!(
-                "Reorder complete. Returning {} sibling channels for parent_path '{}'",
-                all_siblings.len(),
-                channel.parent_path
+                "Reorder complete. Swapped channels {} and {}",
+                channel.id,
+                sibling_channel.id
             );
 
-            Ok(all_siblings)
+            Ok(swapped_channels)
         })
         .await
     }
