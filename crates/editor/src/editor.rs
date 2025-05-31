@@ -5368,7 +5368,6 @@ impl Editor {
             mat.candidate_id
         };
 
-        let buffer_handle = completions_menu.buffer;
         let completion = completions_menu
             .completions
             .borrow()
@@ -5376,34 +5375,23 @@ impl Editor {
             .clone();
         cx.stop_propagation();
 
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let newest_anchor = self.selections.newest_anchor();
+        let buffer_handle = completions_menu.buffer;
 
-        let snippet;
-        let new_text;
-        if completion.is_snippet() {
-            let mut snippet_source = completion.new_text.clone();
-            if let Some(scope) = snapshot.language_scope_at(newest_anchor.head()) {
-                if scope.prefers_label_for_snippet_in_completion() {
-                    if let Some(label) = completion.label() {
-                        if matches!(
-                            completion.kind(),
-                            Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD)
-                        ) {
-                            snippet_source = label;
-                        }
-                    }
-                }
-            }
-            snippet = Some(Snippet::parse(&snippet_source).log_err()?);
-            new_text = snippet.as_ref().unwrap().text.clone();
-        } else {
-            snippet = None;
-            new_text = completion.new_text.clone();
-        };
-        let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
+        let CompletionEdit {
+            new_text,
+            snippet,
+            replace_range,
+        } = process_completion_for_edit(
+            &completion,
+            intent,
+            &buffer_handle,
+            &completions_menu.initial_position,
+            cx,
+        );
 
         let buffer = buffer_handle.read(cx);
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let newest_anchor = self.selections.newest_anchor();
         let replace_range_multibuffer = {
             let excerpt = snapshot.excerpt_containing(newest_anchor.range()).unwrap();
             let multibuffer_anchor = snapshot
@@ -19515,64 +19503,112 @@ fn vim_enabled(cx: &App) -> bool {
         == Some(&serde_json::Value::Bool(true))
 }
 
-fn choose_completion_range(
+fn process_completion_for_edit(
     completion: &Completion,
     intent: CompletionIntent,
     buffer: &Entity<Buffer>,
+    initial_position: &Anchor,
     cx: &mut Context<Editor>,
-) -> Range<usize> {
-    let buffer = buffer.read(cx);
-
-    let CompletionSource::Lsp {
-        insert_range: Some(insert_range),
-        ..
-    } = &completion.source
-    else {
-        return completion.replace_range.to_offset(buffer);
-    };
-
-    let should_replace = match intent {
-        CompletionIntent::CompleteWithInsert => false,
-        CompletionIntent::CompleteWithReplace => true,
-        CompletionIntent::Complete | CompletionIntent::Compose => {
-            let insert_mode =
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                    .completions
-                    .lsp_insert_mode;
-
-            match insert_mode {
-                LspInsertMode::Insert => false,
-                LspInsertMode::Replace => true,
-                LspInsertMode::ReplaceSubsequence => {
-                    let mut text_to_replace = buffer.chars_for_range(
-                        buffer.anchor_before(completion.replace_range.start)
-                            ..buffer.anchor_after(completion.replace_range.end),
-                    );
-                    let mut completion_text = completion.new_text.chars();
-                    // is `text_to_replace` a subsequence of `completion_text`
-                    text_to_replace.all(|needle_ch| {
-                        completion_text.any(|haystack_ch| haystack_ch == needle_ch)
-                    })
-                }
-                LspInsertMode::ReplaceSuffix => {
-                    let range_after_cursor = insert_range.end..completion.replace_range.end;
-                    let text_after_cursor = buffer
-                        .text_for_range(
-                            buffer.anchor_before(range_after_cursor.start)
-                                ..buffer.anchor_after(range_after_cursor.end),
-                        )
-                        .collect::<String>();
-                    completion.new_text.ends_with(&text_after_cursor)
+) -> CompletionEdit {
+    let snippet;
+    let new_text;
+    if completion.is_snippet() {
+        let mut snippet_source = completion.new_text.clone();
+        if let Some(scope) = buffer
+            .read(cx)
+            .snapshot()
+            .language_scope_at(initial_position.text_anchor)
+        {
+            if scope.prefers_label_for_snippet_in_completion() {
+                if let Some(label) = completion.label() {
+                    if matches!(
+                        completion.kind(),
+                        Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD)
+                    ) {
+                        snippet_source = label;
+                    }
                 }
             }
         }
+        if let Some(parsed_snippet) = Snippet::parse(&snippet_source).log_err() {
+            snippet = Some(parsed_snippet);
+            new_text = snippet.as_ref().unwrap().text.clone();
+        } else {
+            snippet = None;
+            new_text = completion.new_text.clone();
+        }
+    } else {
+        snippet = None;
+        new_text = completion.new_text.clone();
+    }
+
+    let replace_range = {
+        let buffer = buffer.read(cx);
+        let CompletionSource::Lsp {
+            insert_range: Some(insert_range),
+            ..
+        } = &completion.source
+        else {
+            return CompletionEdit {
+                new_text,
+                replace_range: completion.replace_range.to_offset(&buffer),
+                snippet,
+            };
+        };
+
+        let should_replace = match intent {
+            CompletionIntent::CompleteWithInsert => false,
+            CompletionIntent::CompleteWithReplace => true,
+            CompletionIntent::Complete | CompletionIntent::Compose => {
+                let insert_mode =
+                    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                        .completions
+                        .lsp_insert_mode;
+                match insert_mode {
+                    LspInsertMode::Insert => false,
+                    LspInsertMode::Replace => true,
+                    LspInsertMode::ReplaceSubsequence => {
+                        let mut text_to_replace = buffer.chars_for_range(
+                            buffer.anchor_before(completion.replace_range.start)
+                                ..buffer.anchor_after(completion.replace_range.end),
+                        );
+                        let mut completion_text = completion.new_text.chars();
+                        text_to_replace.all(|needle_ch| {
+                            completion_text.any(|haystack_ch| haystack_ch == needle_ch)
+                        })
+                    }
+                    LspInsertMode::ReplaceSuffix => {
+                        let range_after_cursor = insert_range.end..completion.replace_range.end;
+                        let text_after_cursor = buffer
+                            .text_for_range(
+                                buffer.anchor_before(range_after_cursor.start)
+                                    ..buffer.anchor_after(range_after_cursor.end),
+                            )
+                            .collect::<String>();
+                        completion.new_text.ends_with(&text_after_cursor)
+                    }
+                }
+            }
+        };
+
+        if should_replace {
+            completion.replace_range.to_offset(&buffer)
+        } else {
+            insert_range.to_offset(&buffer)
+        }
     };
 
-    if should_replace {
-        completion.replace_range.to_offset(buffer)
-    } else {
-        insert_range.to_offset(buffer)
+    CompletionEdit {
+        new_text,
+        replace_range,
+        snippet,
     }
+}
+
+struct CompletionEdit {
+    new_text: String,
+    replace_range: Range<usize>,
+    snippet: Option<Snippet>,
 }
 
 fn insert_extra_newline_brackets(
