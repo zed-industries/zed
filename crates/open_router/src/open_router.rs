@@ -454,7 +454,20 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
             .into_iter()
             .map(|entry| Model {
                 name: entry.id,
-                display_name: Some(entry.name),
+                // OpenRouter returns display names in the format "provider_name: model_name".
+                // When displayed in the UI, these names can get truncated from the right.
+                // Since users typically already know the provider, we extract just the model name
+                // portion (after the colon) to create a more concise and user-friendly label
+                // for the model dropdown in the agent panel.
+                display_name: Some(
+                    entry
+                        .name
+                        .split(':')
+                        .last()
+                        .unwrap_or(&entry.name)
+                        .trim()
+                        .to_string(),
+                ),
                 max_tokens: entry.context_length.unwrap_or(2000000),
                 supports_tools: Some(entry.supported_parameters.contains(&"tools".to_string())),
             })
