@@ -104,6 +104,7 @@ pub struct AgentSettings {
     pub default_view: DefaultView,
     pub profiles: IndexMap<AgentProfileId, AgentProfile>,
     pub always_allow_tool_actions: bool,
+    pub confirm_file_deletions: bool,
     pub notify_when_agent_waiting: NotifyWhenAgentWaiting,
     pub play_sound_when_agent_done: bool,
     pub stream_edits: bool,
@@ -272,6 +273,7 @@ impl AgentSettingsContent {
                     default_view: None,
                     profiles: None,
                     always_allow_tool_actions: None,
+                    confirm_file_deletions: None,
                     notify_when_agent_waiting: None,
                     stream_edits: None,
                     single_file_review: None,
@@ -305,6 +307,7 @@ impl AgentSettingsContent {
                 default_view: None,
                 profiles: None,
                 always_allow_tool_actions: None,
+                confirm_file_deletions: None,
                 notify_when_agent_waiting: None,
                 stream_edits: None,
                 single_file_review: None,
@@ -502,6 +505,14 @@ impl AgentSettingsContent {
         .ok();
     }
 
+    pub fn confirm_file_deletions(&mut self, allow: bool) {
+        self.v2_setting(|setting| {
+            setting.confirm_file_deletions = Some(allow);
+            Ok(())
+        })
+        .ok();
+    }
+
     pub fn set_play_sound_when_agent_done(&mut self, allow: bool) {
         self.v2_setting(|setting| {
             setting.play_sound_when_agent_done = Some(allow);
@@ -590,6 +601,7 @@ impl Default for VersionedAgentSettingsContent {
             default_view: None,
             profiles: None,
             always_allow_tool_actions: None,
+            confirm_file_deletions: None,
             notify_when_agent_waiting: None,
             stream_edits: None,
             single_file_review: None,
@@ -649,6 +661,7 @@ pub struct AgentSettingsContentV2 {
     ///
     /// Default: false
     always_allow_tool_actions: Option<bool>,
+    confirm_file_deletions: Option<bool>,
     /// Where to show a popup notification when the agent is waiting for user input.
     ///
     /// Default: "primary_screen"
@@ -880,6 +893,10 @@ impl Settings for AgentSettings {
                 value.always_allow_tool_actions,
             );
             merge(
+                &mut settings.confirm_file_deletions,
+                value.confirm_file_deletions,
+            );
+            merge(
                 &mut settings.notify_when_agent_waiting,
                 value.notify_when_agent_waiting,
             );
@@ -1026,6 +1043,7 @@ mod tests {
                             default_view: None,
                             profiles: None,
                             always_allow_tool_actions: None,
+                            confirm_file_deletions: None,
                             play_sound_when_agent_done: None,
                             notify_when_agent_waiting: None,
                             stream_edits: None,
