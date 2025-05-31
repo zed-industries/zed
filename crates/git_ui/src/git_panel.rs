@@ -1935,7 +1935,16 @@ impl GitPanel {
             return;
         };
         telemetry::event!("Git Pulled");
-        let branch = branch.clone();
+        let branch_name: SharedString = if let Some(upstream) = branch.upstream.as_ref() {
+            if let Some(upstream_branch) = upstream.branch_name() {
+                SharedString::from(upstream_branch.to_string())
+            } else {
+                branch.name().to_owned().into()
+            }
+        } else {
+            branch.name().to_owned().into()
+        };
+
         let remote = self.get_current_remote(window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let remote = match remote.await {
@@ -1956,12 +1965,7 @@ impl GitPanel {
             })?;
 
             let pull = repo.update(cx, |repo, cx| {
-                repo.pull(
-                    branch.name().to_owned().into(),
-                    remote.name.clone(),
-                    askpass,
-                    cx,
-                )
+                repo.pull(branch_name.clone(), remote.name.clone(), askpass, cx)
             })?;
 
             let remote_message = pull.await?;
