@@ -20016,9 +20016,9 @@ println!("5");
     pane_1
         .update_in(cx, |pane, window, cx| {
             pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
-                .unwrap()
         })
-        .await;
+        .await
+        .unwrap();
     drop(editor_1);
     pane_1.update(cx, |pane, cx| {
         pane.active_item()
@@ -20052,9 +20052,9 @@ println!("5");
     pane_2
         .update_in(cx, |pane, window, cx| {
             pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
-                .unwrap()
         })
-        .await;
+        .await
+        .unwrap();
     drop(editor_2);
     pane_2.update(cx, |pane, cx| {
         let open_editor = pane.active_item().unwrap().downcast::<Editor>().unwrap();
@@ -20227,9 +20227,9 @@ println!("5");
     });
     pane.update_in(cx, |pane, window, cx| {
         pane.close_all_items(&CloseAllItems::default(), window, cx)
-            .unwrap()
     })
-    .await;
+    .await
+    .unwrap();
     pane.update(cx, |pane, _| {
         assert!(pane.active_item().is_none());
     });
