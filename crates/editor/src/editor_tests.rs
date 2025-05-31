@@ -20051,7 +20051,6 @@ println!("5");
         .unwrap();
     pane_2
         .update_in(cx, |pane, window, cx| {
-            // TODO
             pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
                 .unwrap()
         })
