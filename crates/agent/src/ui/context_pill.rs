@@ -304,7 +304,7 @@ impl AddedContext {
             AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
             AgentContextHandle::TextThread(handle) => Some(Self::pending_text_thread(handle, cx)),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
-            AgentContextHandle::Image(handle) => Some(Self::image(handle)),
+            AgentContextHandle::Image(handle) => Some(Self::image(handle, cx)),
         }
     }
 
@@ -318,7 +318,7 @@ impl AddedContext {
             AgentContext::Thread(context) => Self::attached_thread(context),
             AgentContext::TextThread(context) => Self::attached_text_thread(context),
             AgentContext::Rules(context) => Self::attached_rules(context),
-            AgentContext::Image(context) => Self::image(context.clone()),
+            AgentContext::Image(context) => Self::image(context.clone(), cx),
         }
     }
 
@@ -605,21 +605,23 @@ impl AddedContext {
         }
     }
 
-    fn image(context: ImageContext) -> AddedContext {
-        let name = context
-            .project_path
-            .as_ref()
-            .and_then(|path| path.path.file_name())
+    fn image(context: ImageContext, cx: &App) -> AddedContext {
+        let project_path = context.project_path.as_ref();
+
+        let name = project_path
+            .and_then(|p| p.path.file_name())
             .and_then(|name| name.to_str())
             .unwrap_or("Image")
             .to_string();
+
+        let icon_path = project_path.and_then(|p| FileIcons::get_icon(&p.path, cx));
 
         AddedContext {
             kind: ContextKind::Image,
             name: name.into(),
             parent: None,
             tooltip: None,
-            icon_path: None,
+            icon_path: icon_path,
             status: match context.status() {
                 ImageStatus::Loading => ContextStatus::Loading {
                     message: "Loading…".into(),
@@ -773,37 +775,46 @@ impl Component for AddedContext {
         let mut next_context_id = ContextId::zero();
         let image_ready = (
             "Ready",
-            AddedContext::image(ImageContext {
-                context_id: next_context_id.post_inc(),
-                project_path: None,
-                original_image: Arc::new(Image::empty()),
-                image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
-            }),
+            AddedContext::image(
+                ImageContext {
+                    context_id: next_context_id.post_inc(),
+                    project_path: None,
+                    original_image: Arc::new(Image::empty()),
+                    image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+                },
+                cx,
+            ),
         );
 
         let image_loading = (
             "Loading",
-            AddedContext::image(ImageContext {
-                context_id: next_context_id.post_inc(),
-                project_path: None,
-                original_image: Arc::new(Image::empty()),
-                image_task: cx
-                    .background_spawn(async move {
-                        smol::Timer::after(Duration::from_secs(60 * 5)).await;
-                        Some(LanguageModelImage::empty())
-                    })
-                    .shared(),
-            }),
+            AddedContext::image(
+                ImageContext {
+                    context_id: next_context_id.post_inc(),
+                    project_path: None,
+                    original_image: Arc::new(Image::empty()),
+                    image_task: cx
+                        .background_spawn(async move {
+                            smol::Timer::after(Duration::from_secs(60 * 5)).await;
+                            Some(LanguageModelImage::empty())
+                        })
+                        .shared(),
+                },
+                cx,
+            ),
         );
 
         let image_error = (
             "Error",
-            AddedContext::image(ImageContext {
-                context_id: next_context_id.post_inc(),
-                project_path: None,
-                original_image: Arc::new(Image::empty()),
-                image_task: Task::ready(None).shared(),
-            }),
+            AddedContext::image(
+                ImageContext {
+                    context_id: next_context_id.post_inc(),
+                    project_path: None,
+                    original_image: Arc::new(Image::empty()),
+                    image_task: Task::ready(None).shared(),
+                },
+                cx,
+            ),
         );
 
         Some(
