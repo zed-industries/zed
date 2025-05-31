@@ -233,9 +233,9 @@ impl Tool for ReadFileTool {
 
                         {outline}
 
-                        Using the line numbers in this outline, you can call this tool again
-                        while specifying the start_line and end_line fields to see the
-                        implementations of symbols in the outline."
+                        Using the line numbers in this outline, call read_file again
+                        and specify `start_line` and `end_line` to see actual text from
+                        this file. Do not attempt to edit based on this outline alone."
                     }
                     .into())
                 }
