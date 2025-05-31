@@ -1,6 +1,7 @@
 mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
+mod scroll_animation_manager;
 
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
@@ -15,7 +16,9 @@ use core::fmt::Debug;
 use gpui::{App, Axis, Context, Global, Pixels, Task, Window, point, px};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
-use settings::Settings;
+pub(crate) use scroll_animation_manager::UpdateResponse;
+use scroll_animation_manager::{Anim, ScrollAnimationManager};
+use settings::{Settings, SettingsStore};
 use std::{
     cmp::Ordering,
     time::{Duration, Instant},
@@ -65,6 +68,7 @@ impl ScrollAnchor {
 pub struct OngoingScroll {
     last_event: Instant,
     axis: Option<Axis>,
+    try_use_anim: bool,
 }
 
 impl OngoingScroll {
@@ -72,6 +76,7 @@ impl OngoingScroll {
         Self {
             last_event: Instant::now() - SCROLL_EVENT_SEPARATION,
             axis: None,
+            try_use_anim: true,
         }
     }
 
@@ -151,6 +156,7 @@ pub struct ScrollManager {
     pub(crate) vertical_scroll_margin: f32,
     anchor: ScrollAnchor,
     ongoing: OngoingScroll,
+    animation_manager: Option<ScrollAnimationManager>,
     autoscroll_request: Option<(Autoscroll, bool)>,
     last_autoscroll: Option<(gpui::Point<f32>, f32, f32, AutoscrollStrategy)>,
     show_scrollbars: bool,
@@ -162,11 +168,32 @@ pub struct ScrollManager {
 }
 
 impl ScrollManager {
-    pub fn new(cx: &mut App) -> Self {
+    pub fn new(cx: &mut Context<Editor>) -> Self {
+        cx.observe_global::<SettingsStore>(move |editor, cx| {
+            if EditorSettings::get_global(cx).smooth_scroll {
+                if let Some(ref mut anim_manager) = editor.scroll_manager.animation_manager {
+                    anim_manager
+                        .set_duration(EditorSettings::get_global(cx).smooth_scroll_duration);
+                } else {
+                    editor.scroll_manager.animation_manager = Some(ScrollAnimationManager::new(cx));
+                }
+            } else {
+                editor.scroll_manager.animation_manager = None;
+            }
+        })
+        .detach();
+
+        let animation_manager = if EditorSettings::get_global(cx).smooth_scroll {
+            Some(ScrollAnimationManager::new(cx))
+        } else {
+            None
+        };
+
         ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
             ongoing: OngoingScroll::new(),
+            animation_manager,
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
@@ -191,13 +218,102 @@ impl ScrollManager {
         self.ongoing
     }
 
-    pub fn update_ongoing_scroll(&mut self, axis: Option<Axis>) {
+    pub fn update_ongoing_scroll(&mut self, axis: Option<Axis>, try_use_anim: bool) {
         self.ongoing.last_event = Instant::now();
         self.ongoing.axis = axis;
+        self.ongoing.try_use_anim = try_use_anim;
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<f32> {
         self.anchor.scroll_position(snapshot)
+    }
+
+    pub(crate) fn requires_animation_update(&self) -> bool {
+        match &self.animation_manager {
+            None => false,
+            Some(animation_manager) => animation_manager.has_anim(),
+        }
+    }
+
+    pub(crate) fn update_animation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> UpdateResponse {
+        let update_response = match self.animation_manager {
+            Some(ref mut animation_manager) => animation_manager.update(),
+            None => UpdateResponse::Nothing,
+        };
+
+        let update_values = match update_response {
+            UpdateResponse::RequiresAnimationFrame {
+                ref intermediate_anchor,
+                intermediate_top_row,
+            } => Some((
+                *intermediate_anchor,
+                intermediate_top_row,
+                self.animation_manager
+                    .as_ref()
+                    .unwrap()
+                    .get_state()
+                    .unwrap(),
+            )),
+            UpdateResponse::Finished {
+                ref destination_anchor,
+                destination_top_row,
+                ref state,
+            } => Some((*destination_anchor, destination_top_row, state.clone())),
+            UpdateResponse::Nothing => None,
+        };
+
+        if let Some((anchor, top_row, state)) = update_values {
+            self.set_anchor(
+                anchor,
+                top_row,
+                state.local,
+                state.autoscroll,
+                state.workspace_id,
+                window,
+                cx,
+            );
+        }
+
+        update_response
+    }
+
+    fn try_start_anim(
+        &mut self,
+        new_anchor: ScrollAnchor,
+        top_row: u32,
+        map: &DisplaySnapshot,
+        local: bool,
+        autoscroll: bool,
+        workspace_id: Option<WorkspaceId>,
+        cx: &mut Context<Editor>,
+    ) -> bool {
+        let ret = if self.animation_manager.is_some() && self.ongoing.try_use_anim {
+            let current = self.scroll_position(map);
+            let anim = Anim::new(
+                current,
+                top_row,
+                new_anchor,
+                map.clone(),
+                workspace_id,
+                local,
+                autoscroll,
+            );
+            self.animation_manager.as_mut().unwrap().start(anim);
+            cx.notify();
+            true
+        } else {
+            false
+        };
+
+        // not that ideal but OngoingScroll has nowhere
+        // where it's reset and the scroll event marked as treated
+        self.ongoing.try_use_anim = true;
+
+        ret
     }
 
     fn set_scroll_position(
@@ -260,15 +376,25 @@ impl ScrollManager {
             )
         };
 
-        self.set_anchor(
+        if !self.try_start_anim(
             new_anchor,
             top_row,
+            map,
             local,
             autoscroll,
             workspace_id,
-            window,
             cx,
-        );
+        ) {
+            self.set_anchor(
+                new_anchor,
+                top_row,
+                local,
+                autoscroll,
+                workspace_id,
+                window,
+                cx,
+            );
+        }
     }
 
     fn set_anchor(
@@ -522,6 +648,7 @@ impl Editor {
             let current_position = self.scroll_position(cx);
             position.y = current_position.y;
         }
+
         self.set_scroll_position_internal(position, true, false, window, cx);
     }
 
@@ -618,15 +745,30 @@ impl Editor {
             .anchor
             .to_point(&self.buffer().read(cx).snapshot(cx))
             .row;
-        self.scroll_manager.set_anchor(
+
+        let snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+
+        if !self.scroll_manager.try_start_anim(
             scroll_anchor,
             top_row,
+            &snapshot,
             true,
             false,
             workspace_id,
-            window,
             cx,
-        );
+        ) {
+            self.scroll_manager.set_anchor(
+                scroll_anchor,
+                top_row,
+                true,
+                false,
+                workspace_id,
+                window,
+                cx,
+            );
+        }
     }
 
     pub(crate) fn set_scroll_anchor_remote(
@@ -643,15 +785,30 @@ impl Editor {
             return;
         }
         let top_row = scroll_anchor.anchor.to_point(snapshot).row;
-        self.scroll_manager.set_anchor(
+
+        let snapshot = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+
+        if !self.scroll_manager.try_start_anim(
             scroll_anchor,
             top_row,
+            &snapshot,
             false,
             false,
             workspace_id,
-            window,
             cx,
-        );
+        ) {
+            self.scroll_manager.set_anchor(
+                scroll_anchor,
+                top_row,
+                false,
+                false,
+                workspace_id,
+                window,
+                cx,
+            );
+        }
     }
 
     pub fn scroll_screen(

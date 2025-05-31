@@ -1973,6 +1973,7 @@ impl Editor {
             change_list: ChangeList::new(),
             mode,
         };
+
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
                 .push(cx.observe(breakpoints, |_, _, cx| {

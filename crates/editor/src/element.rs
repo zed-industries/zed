@@ -28,7 +28,9 @@ use crate::{
     inlay_hint_settings,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition},
-    scroll::{ActiveScrollbarState, ScrollbarThumbState, scroll_amount::ScrollAmount},
+    scroll::{
+        ActiveScrollbarState, ScrollbarThumbState, UpdateResponse, scroll_amount::ScrollAmount,
+    },
 };
 use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
 use collections::{BTreeMap, HashMap};
@@ -5712,7 +5714,7 @@ impl EditorElement {
                             let position = editor.scroll_position(cx).apply_along(axis, |p| {
                                 (p + (new_position - old_position) / *text_unit_size).max(0.)
                             });
-                            editor.set_scroll_position(position, window, cx);
+                            editor.scroll(position, Some(axis), false, window, cx);
                         }
 
                         editor.scroll_manager.show_scrollbars(window, cx);
@@ -6378,10 +6380,12 @@ impl EditorElement {
 
                         let line_height = position_map.line_height;
                         let max_glyph_width = position_map.em_width;
+                        let mut try_use_anim = true;
                         let (delta, axis) = match delta {
                             gpui::ScrollDelta::Pixels(mut pixels) => {
                                 //Trackpad
                                 let axis = position_map.snapshot.ongoing_scroll.filter(&mut pixels);
+                                try_use_anim = false;
                                 (pixels, axis)
                             }
 
@@ -6408,7 +6412,7 @@ impl EditorElement {
                         }
 
                         if scroll_position != current_scroll_position {
-                            editor.scroll(scroll_position, axis, window, cx);
+                            editor.scroll(scroll_position, axis, try_use_anim, window, cx);
                             cx.stop_propagation();
                         } else if y < 0. {
                             // Due to clamping, we may fail to detect cases of overscroll to the top;
@@ -7713,6 +7717,17 @@ impl Element for EditorElement {
                             cx,
                         );
                         snapshot = editor.snapshot(window, cx);
+
+                        if editor.scroll_manager.requires_animation_update() {
+                            let update_response =
+                                editor.scroll_manager.update_animation(window, cx);
+                            match update_response {
+                                UpdateResponse::RequiresAnimationFrame { .. } => {
+                                    window.request_animation_frame();
+                                }
+                                _ => (),
+                            };
+                        }
                     });
 
                     let mut scroll_position = snapshot.scroll_position();
