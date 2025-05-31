@@ -869,6 +869,7 @@ impl InfoPopover {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         div()
             .id("info_popover")
+            .occlude()
             .elevation_2(cx)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
