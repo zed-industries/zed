@@ -117,7 +117,7 @@ When desired, any of the above default settings can be overridden under the `"ls
       "validation": {
         "enabled": false, // disable validation
         "lint": {
-          "enabled": false, //disable ansible-lint
+          "enabled": false, // disable ansible-lint
           "path": "ansible-lint"
         }
       }
