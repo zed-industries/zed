@@ -1274,14 +1274,15 @@ impl Pane {
         action: &CloseInactiveItems,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Task<Result<()>> {
         if self.items.is_empty() {
-            return None;
+            return Task::ready(Ok(()));
         }
 
         let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
-        Some(self.close_items(
+
+        self.close_items(
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
@@ -1289,7 +1290,7 @@ impl Pane {
                 item_id != active_item_id
                     && (action.close_pinned || !pinned_item_ids.contains(&item_id))
             },
-        ))
+        )
     }
 
     pub fn close_clean_items(
@@ -1297,19 +1298,18 @@ impl Pane {
         action: &CloseCleanItems,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Task<Result<()>> {
         if self.items.is_empty() {
-            return None;
+            return Task::ready(Ok(()));
         }
 
         let clean_item_ids = self.clean_item_ids(cx);
         let pinned_item_ids = self.pinned_item_ids();
-        Some(
-            self.close_items(window, cx, SaveIntent::Close, move |item_id| {
-                clean_item_ids.contains(&item_id)
-                    && (action.close_pinned || !pinned_item_ids.contains(&item_id))
-            }),
-        )
+
+        self.close_items(window, cx, SaveIntent::Close, move |item_id| {
+            clean_item_ids.contains(&item_id)
+                && (action.close_pinned || !pinned_item_ids.contains(&item_id))
+        })
     }
 
     pub fn close_items_to_the_left(
@@ -1321,8 +1321,10 @@ impl Pane {
         if self.items.is_empty() {
             return None;
         }
+
         let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
+
         Some(self.close_items_to_the_left_by_id(
             active_item_id,
             action,
@@ -1345,6 +1347,7 @@ impl Pane {
         }
 
         let to_the_left_item_ids = self.to_the_left_item_ids(item_id);
+
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
             to_the_left_item_ids.contains(&item_id)
                 && (action.close_pinned || !pinned_item_ids.contains(&item_id))
@@ -1384,6 +1387,7 @@ impl Pane {
         }
 
         let to_the_right_item_ids = self.to_the_right_item_ids(item_id);
+
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
             to_the_right_item_ids.contains(&item_id)
                 && (action.close_pinned || !pinned_item_ids.contains(&item_id))
@@ -1395,18 +1399,19 @@ impl Pane {
         action: &CloseAllItems,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Task<Result<()>> {
         if self.items.is_empty() {
-            return None;
+            return Task::ready(Ok(()));
         }
 
         let pinned_item_ids = self.pinned_item_ids();
-        Some(self.close_items(
+
+        self.close_items(
             window,
             cx,
             action.save_intent.unwrap_or(SaveIntent::Close),
             |item_id| action.close_pinned || !pinned_item_ids.contains(&item_id),
-        ))
+        )
     }
 
     pub fn close_items_over_max_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2388,14 +2393,32 @@ impl Pane {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
                 ContextMenu::build(window, cx, move |mut menu, window, cx| {
+                    let close_active_item_action = CloseActiveItem {
+                        save_intent: None,
+                        close_pinned: true,
+                    };
+                    let close_inactive_items_action = CloseInactiveItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
+                    let close_items_to_the_left_action = CloseItemsToTheLeft {
+                        close_pinned: false,
+                    };
+                    let close_items_to_the_right_action = CloseItemsToTheRight {
+                        close_pinned: false,
+                    };
+                    let close_clean_items_action = CloseCleanItems {
+                        close_pinned: false,
+                    };
+                    let close_all_items_action = CloseAllItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    };
                     if let Some(pane) = pane.upgrade() {
                         menu = menu
                             .entry(
                                 "Close",
-                                Some(Box::new(CloseActiveItem {
-                                    save_intent: None,
-                                    close_pinned: true,
-                                })),
+                                Some(Box::new(close_active_item_action)),
                                 window.handler_for(&pane, move |pane, window, cx| {
                                     pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                                         .detach_and_log_err(cx);
@@ -2403,32 +2426,26 @@ impl Pane {
                             )
                             .item(ContextMenuItem::Entry(
                                 ContextMenuEntry::new("Close Others")
-                                    .action(Box::new(CloseInactiveItems {
-                                        save_intent: None,
-                                        close_pinned: false,
-                                    }))
+                                    .action(Box::new(close_inactive_items_action.clone()))
                                     .disabled(total_items == 1)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
-                                        let pinned_item_ids = pane.pinned_item_ids();
-                                        pane.close_items(window, cx, SaveIntent::Close, |id| {
-                                            id != item_id && !pinned_item_ids.contains(&id)
-                                        })
+                                        pane.close_inactive_items(
+                                            &close_inactive_items_action,
+                                            window,
+                                            cx,
+                                        )
                                         .detach_and_log_err(cx);
                                     })),
                             ))
                             .separator()
                             .item(ContextMenuItem::Entry(
                                 ContextMenuEntry::new("Close Left")
-                                    .action(Box::new(CloseItemsToTheLeft {
-                                        close_pinned: false,
-                                    }))
+                                    .action(Box::new(close_items_to_the_left_action.clone()))
                                     .disabled(!has_items_to_left)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
                                         pane.close_items_to_the_left_by_id(
                                             item_id,
-                                            &CloseItemsToTheLeft {
-                                                close_pinned: false,
-                                            },
+                                            &close_items_to_the_left_action,
                                             pane.pinned_item_ids(),
                                             window,
                                             cx,
@@ -2438,16 +2455,12 @@ impl Pane {
                             ))
                             .item(ContextMenuItem::Entry(
                                 ContextMenuEntry::new("Close Right")
-                                    .action(Box::new(CloseItemsToTheRight {
-                                        close_pinned: false,
-                                    }))
+                                    .action(Box::new(close_items_to_the_right_action.clone()))
                                     .disabled(!has_items_to_right)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
                                         pane.close_items_to_the_right_by_id(
                                             item_id,
-                                            &CloseItemsToTheRight {
-                                                close_pinned: false,
-                                            },
+                                            &close_items_to_the_right_action,
                                             pane.pinned_item_ids(),
                                             window,
                                             cx,
@@ -2458,38 +2471,18 @@ impl Pane {
                             .separator()
                             .entry(
                                 "Close Clean",
-                                Some(Box::new(CloseCleanItems {
-                                    close_pinned: false,
-                                })),
+                                Some(Box::new(close_clean_items_action.clone())),
                                 window.handler_for(&pane, move |pane, window, cx| {
-                                    if let Some(task) = pane.close_clean_items(
-                                        &CloseCleanItems {
-                                            close_pinned: false,
-                                        },
-                                        window,
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
+                                    pane.close_clean_items(&close_clean_items_action, window, cx)
+                                        .detach_and_log_err(cx)
                                 }),
                             )
                             .entry(
                                 "Close All",
-                                Some(Box::new(CloseAllItems {
-                                    save_intent: None,
-                                    close_pinned: false,
-                                })),
-                                window.handler_for(&pane, |pane, window, cx| {
-                                    if let Some(task) = pane.close_all_items(
-                                        &CloseAllItems {
-                                            save_intent: None,
-                                            close_pinned: false,
-                                        },
-                                        window,
-                                        cx,
-                                    ) {
-                                        task.detach_and_log_err(cx)
-                                    }
+                                Some(Box::new(close_all_items_action.clone())),
+                                window.handler_for(&pane, move |pane, window, cx| {
+                                    pane.close_all_items(&close_all_items_action, window, cx)
+                                        .detach_and_log_err(cx)
                                 }),
                             );
 
@@ -3337,16 +3330,14 @@ impl Render for Pane {
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseInactiveItems, window, cx| {
-                    if let Some(task) = pane.close_inactive_items(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_inactive_items(action, window, cx)
+                        .detach_and_log_err(cx);
                 }),
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseCleanItems, window, cx| {
-                    if let Some(task) = pane.close_clean_items(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_clean_items(action, window, cx)
+                        .detach_and_log_err(cx)
                 }),
             )
             .on_action(cx.listener(
@@ -3365,9 +3356,8 @@ impl Render for Pane {
             ))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseAllItems, window, cx| {
-                    if let Some(task) = pane.close_all_items(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_all_items(action, window, cx)
+                        .detach_and_log_err(cx)
                 }),
             )
             .on_action(
@@ -4445,7 +4435,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A!", "B!", "E*"], cx);
@@ -4477,7 +4466,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A^", "C*^"], cx);
@@ -4564,7 +4552,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A*!"], cx);
@@ -4581,7 +4568,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
 
@@ -4601,18 +4587,16 @@ mod tests {
         });
         assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
 
-        let save = pane
-            .update_in(cx, |pane, window, cx| {
-                pane.close_all_items(
-                    &CloseAllItems {
-                        save_intent: None,
-                        close_pinned: false,
-                    },
-                    window,
-                    cx,
-                )
-            })
-            .unwrap();
+        let save = pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
 
         cx.executor().run_until_parked();
         cx.simulate_prompt_answer("Save all");
@@ -4623,18 +4607,16 @@ mod tests {
         add_labeled_item(&pane, "B", true, cx);
         add_labeled_item(&pane, "C", true, cx);
         assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
-        let save = pane
-            .update_in(cx, |pane, window, cx| {
-                pane.close_all_items(
-                    &CloseAllItems {
-                        save_intent: None,
-                        close_pinned: false,
-                    },
-                    window,
-                    cx,
-                )
-            })
-            .unwrap();
+        let save = pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
 
         cx.executor().run_until_parked();
         cx.simulate_prompt_answer("Discard all");
@@ -4674,7 +4656,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
 
@@ -4713,7 +4694,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, [], cx);
