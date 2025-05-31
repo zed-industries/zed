@@ -951,7 +951,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm"
+      "space": "menu::Confirm",
+      "cmd-up": "collab_panel::MoveChannelUp",
+      "cmd-down": "collab_panel::MoveChannelDown"
     }
   },
   {

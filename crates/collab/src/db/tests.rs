@@ -173,15 +173,28 @@ impl Drop for TestDb {
 }
 
 fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str)]) -> Vec<Channel> {
-    channels
-        .iter()
-        .map(|(id, parent_path, name)| Channel {
+    use std::collections::HashMap;
+
+    let mut result = Vec::new();
+    let mut order_by_parent: HashMap<Vec<ChannelId>, i32> = HashMap::new();
+
+    for (id, parent_path, name) in channels {
+        let parent_key = parent_path.to_vec();
+        let order = *order_by_parent
+            .entry(parent_key.clone())
+            .and_modify(|e| *e += 1)
+            .or_insert(1);
+
+        result.push(Channel {
             id: *id,
             name: name.to_string(),
             visibility: ChannelVisibility::Members,
-            parent_path: parent_path.to_vec(),
-        })
-        .collect()
+            parent_path: parent_key,
+            channel_order: order,
+        });
+    }
+
+    result
 }
 
 static GITHUB_USER_ID: AtomicI32 = AtomicI32::new(5);

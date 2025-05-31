@@ -4,7 +4,7 @@ use rpc::{
     ErrorCode, ErrorCodeExt,
     proto::{ChannelBufferVersion, VectorClockEntry, channel_member::Kind},
 };
-use sea_orm::{DbBackend, TryGetableMany};
+use sea_orm::{ActiveValue, DbBackend, TryGetableMany};
 
 impl Database {
     #[cfg(test)]
@@ -59,16 +59,36 @@ impl Database {
                 parent = Some(parent_channel);
             }
 
+            let parent_path = parent
+                .as_ref()
+                .map_or(String::new(), |parent| parent.path());
+
+            // Find the maximum channel_order among siblings to set the new channel at the end
+            let max_order = channel::Entity::find()
+                .filter(channel::Column::ParentPath.eq(&parent_path))
+                .select_only()
+                .column_as(channel::Column::ChannelOrder.max(), "max_order")
+                .into_tuple::<Option<i32>>()
+                .one(&*tx)
+                .await?
+                .flatten()
+                .unwrap_or(0);
+
+            log::info!(
+                "Creating channel '{}' with parent_path='{}', max_order={}, new_order={}",
+                name,
+                parent_path,
+                max_order,
+                max_order + 1
+            );
+
             let channel = channel::ActiveModel {
                 id: ActiveValue::NotSet,
                 name: ActiveValue::Set(name.to_string()),
                 visibility: ActiveValue::Set(ChannelVisibility::Members),
-                parent_path: ActiveValue::Set(
-                    parent
-                        .as_ref()
-                        .map_or(String::new(), |parent| parent.path()),
-                ),
+                parent_path: ActiveValue::Set(parent_path),
                 requires_zed_cla: ActiveValue::NotSet,
+                channel_order: ActiveValue::Set(max_order + 1),
             }
             .insert(&*tx)
             .await?;
@@ -554,6 +574,42 @@ impl Database {
             })
             .collect();
 
+        // Build a map of channel_id -> channel_order for lookup
+        let channel_order_map: std::collections::HashMap<ChannelId, i32> =
+            channels.iter().map(|c| (c.id, c.channel_order)).collect();
+
+        // Pre-compute sort keys for efficient O(n log n) sorting instead of O(n²)
+        let mut channels_with_keys: Vec<(Vec<i32>, Channel)> = channels
+            .into_iter()
+            .map(|channel| {
+                let mut sort_key = Vec::with_capacity(channel.parent_path.len() + 1);
+
+                // Build sort key from parent path orders
+                for parent_id in &channel.parent_path {
+                    match channel_order_map.get(parent_id) {
+                        Some(&order) => sort_key.push(order),
+                        None => {
+                            // Missing parent - this should not happen in a well-formed tree
+                            // Put orphaned channels at the end with a high sort value
+                            sort_key.push(i32::MAX);
+                        }
+                    }
+                }
+                sort_key.push(channel.channel_order);
+
+                (sort_key, channel)
+            })
+            .collect();
+
+        // Sort by pre-computed keys (stable sort for deterministic ordering)
+        channels_with_keys.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Extract the sorted channels
+        let channels: Vec<Channel> = channels_with_keys
+            .into_iter()
+            .map(|(_, channel)| channel)
+            .collect();
+
         #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
         enum QueryUserIdsAndChannelIds {
             ChannelId,
@@ -983,6 +1039,168 @@ impl Database {
                 .collect::<Vec<_>>();
 
             Ok((root_id, channels))
+        })
+        .await
+    }
+
+    pub async fn reorder_channel(
+        &self,
+        channel_id: ChannelId,
+        direction: proto::reorder_channel::Direction,
+        user_id: UserId,
+    ) -> Result<Vec<Channel>> {
+        self.transaction(|tx| async move {
+            let channel = self.get_channel_internal(channel_id, &tx).await?;
+
+            log::info!(
+                "Reordering channel {} (parent_path: '{}', order: {})",
+                channel.id,
+                channel.parent_path,
+                channel.channel_order
+            );
+
+            // Check if user is admin of the channel
+            self.check_user_is_channel_admin(&channel, user_id, &tx)
+                .await?;
+
+            // Find the sibling channel to swap with
+            let sibling_channel = match direction {
+                proto::reorder_channel::Direction::Up => {
+                    log::info!(
+                        "Looking for sibling with parent_path='{}' and order < {}",
+                        channel.parent_path,
+                        channel.channel_order
+                    );
+                    // Find channel with highest order less than current
+                    channel::Entity::find()
+                        .filter(
+                            channel::Column::ParentPath
+                                .eq(&channel.parent_path)
+                                .and(channel::Column::ChannelOrder.lt(channel.channel_order)),
+                        )
+                        .order_by_desc(channel::Column::ChannelOrder)
+                        .one(&*tx)
+                        .await?
+                }
+                proto::reorder_channel::Direction::Down => {
+                    log::info!(
+                        "Looking for sibling with parent_path='{}' and order > {}",
+                        channel.parent_path,
+                        channel.channel_order
+                    );
+                    // Find channel with lowest order greater than current
+                    channel::Entity::find()
+                        .filter(
+                            channel::Column::ParentPath
+                                .eq(&channel.parent_path)
+                                .and(channel::Column::ChannelOrder.gt(channel.channel_order)),
+                        )
+                        .order_by_asc(channel::Column::ChannelOrder)
+                        .one(&*tx)
+                        .await?
+                }
+            };
+
+            let sibling_channel = match sibling_channel {
+                Some(sibling) => {
+                    log::info!(
+                        "Found sibling {} (parent_path: '{}', order: {})",
+                        sibling.id,
+                        sibling.parent_path,
+                        sibling.channel_order
+                    );
+                    sibling
+                }
+                None => {
+                    log::warn!("No sibling found to swap with");
+                    // No sibling to swap with, return current channel unchanged
+                    return Ok(vec![Channel::from_model(channel)]);
+                }
+            };
+
+            // Validate that we're not swapping identical orders
+            if channel.channel_order == sibling_channel.channel_order {
+                return Err(anyhow!("Channels have identical order values, cannot swap").into());
+            }
+
+            // Bounds checking for channel_order values
+            const MIN_CHANNEL_ORDER: i32 = 1;
+            const MAX_CHANNEL_ORDER: i32 = 999_999;
+
+            if channel.channel_order < MIN_CHANNEL_ORDER
+                || channel.channel_order > MAX_CHANNEL_ORDER
+            {
+                return Err(anyhow!(
+                    "Channel order {} is out of valid range ({}-{})",
+                    channel.channel_order,
+                    MIN_CHANNEL_ORDER,
+                    MAX_CHANNEL_ORDER
+                )
+                .into());
+            }
+
+            if sibling_channel.channel_order < MIN_CHANNEL_ORDER
+                || sibling_channel.channel_order > MAX_CHANNEL_ORDER
+            {
+                return Err(anyhow!(
+                    "Sibling channel order {} is out of valid range ({}-{})",
+                    sibling_channel.channel_order,
+                    MIN_CHANNEL_ORDER,
+                    MAX_CHANNEL_ORDER
+                )
+                .into());
+            }
+
+            // Swap the channel_order values atomically using a temporary value to avoid conflicts
+            let current_order = channel.channel_order;
+            let sibling_order = sibling_channel.channel_order;
+            let temp_order = i32::MAX; // Use max value as temporary to avoid conflicts
+
+            // Three-step swap to avoid unique constraint violations
+            // Step 1: Set current channel to temp value
+            channel::ActiveModel {
+                id: ActiveValue::Unchanged(channel.id),
+                channel_order: ActiveValue::Set(temp_order),
+                ..Default::default()
+            }
+            .update(&*tx)
+            .await?;
+
+            // Step 2: Set sibling to current's original value
+            channel::ActiveModel {
+                id: ActiveValue::Unchanged(sibling_channel.id),
+                channel_order: ActiveValue::Set(current_order),
+                ..Default::default()
+            }
+            .update(&*tx)
+            .await?;
+
+            // Step 3: Set current to sibling's original value
+            channel::ActiveModel {
+                id: ActiveValue::Unchanged(channel.id),
+                channel_order: ActiveValue::Set(sibling_order),
+                ..Default::default()
+            }
+            .update(&*tx)
+            .await?;
+
+            // Return all sibling channels to ensure proper UI updates
+            let all_siblings: Vec<Channel> = channel::Entity::find()
+                .filter(channel::Column::ParentPath.eq(&channel.parent_path))
+                .order_by_asc(channel::Column::ChannelOrder)
+                .all(&*tx)
+                .await?
+                .into_iter()
+                .map(Channel::from_model)
+                .collect();
+
+            log::info!(
+                "Reorder complete. Returning {} sibling channels for parent_path '{}'",
+                all_siblings.len(),
+                channel.parent_path
+            );
+
+            Ok(all_siblings)
         })
         .await
     }

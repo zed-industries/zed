@@ -52,6 +52,8 @@ actions!(
         StartMoveChannel,
         MoveSelected,
         InsertSpace,
+        MoveChannelUp,
+        MoveChannelDown,
     ]
 );
 
@@ -1961,6 +1963,33 @@ impl CollabPanel {
             })
     }
 
+    fn move_channel_up(&mut self, _: &MoveChannelUp, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(channel) = self.selected_channel() {
+            self.channel_store.update(cx, |store, cx| {
+                store
+                    .reorder_channel(channel.id, proto::reorder_channel::Direction::Up, cx)
+                    .detach_and_prompt_err("Failed to move channel up", window, cx, |_, _, _| None)
+            });
+        }
+    }
+
+    fn move_channel_down(
+        &mut self,
+        _: &MoveChannelDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(channel) = self.selected_channel() {
+            self.channel_store.update(cx, |store, cx| {
+                store
+                    .reorder_channel(channel.id, proto::reorder_channel::Direction::Down, cx)
+                    .detach_and_prompt_err("Failed to move channel down", window, cx, |_, _, _| {
+                        None
+                    })
+            });
+        }
+    }
+
     fn open_channel_notes(
         &mut self,
         channel_id: ChannelId,
@@ -2977,6 +3006,8 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::collapse_selected_channel))
             .on_action(cx.listener(CollabPanel::expand_selected_channel))
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))
+            .on_action(cx.listener(CollabPanel::move_channel_up))
+            .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle(cx))
             .size_full()
             .child(if self.user_store.read(cx).current_user().is_none() {
