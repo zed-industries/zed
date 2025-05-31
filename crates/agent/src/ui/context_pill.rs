@@ -606,9 +606,17 @@ impl AddedContext {
     }
 
     fn image(context: ImageContext) -> AddedContext {
+        let name = context
+            .project_path
+            .as_ref()
+            .and_then(|path| path.path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("Image")
+            .to_string();
+
         AddedContext {
             kind: ContextKind::Image,
-            name: "Image".into(),
+            name: name.into(),
             parent: None,
             tooltip: None,
             icon_path: None,
