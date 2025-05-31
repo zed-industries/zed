@@ -290,18 +290,18 @@ impl ActionLog {
         Ok(())
     }
 
-    /// Track a buffer as read, so we can notify the model about user edits.
+    /// Track a buffer as read by agent, so we can notify the model about user edits.
     pub fn buffer_read(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.track_buffer_internal(buffer, false, cx);
     }
 
-    /// Mark a buffer as edited, so we can refresh it in the context
+    /// Mark a buffer as created by agent, so we can refresh it in the context
     pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.edited_since_project_diagnostics_check = true;
         self.track_buffer_internal(buffer.clone(), true, cx);
     }
 
-    /// Mark a buffer as edited, so we can refresh it in the context
+    /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
         self.edited_since_project_diagnostics_check = true;
 
