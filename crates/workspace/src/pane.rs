@@ -1298,6 +1298,10 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.items.is_empty() {
+            return None;
+        }
+
         let clean_item_ids = self.clean_item_ids(cx);
         let pinned_item_ids = self.pinned_item_ids();
         Some(
@@ -1336,6 +1340,10 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.items.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
         let to_the_left_item_ids = self.to_the_left_item_ids(item_id);
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
             to_the_left_item_ids.contains(&item_id)
@@ -1371,6 +1379,10 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
+        if self.items.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
         let to_the_right_item_ids = self.to_the_right_item_ids(item_id);
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
             to_the_right_item_ids.contains(&item_id)
