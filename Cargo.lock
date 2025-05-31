@@ -15725,6 +15725,7 @@ dependencies = [
  "theme",
  "thiserror 2.0.12",
  "url",
+ "urlencoding",
  "util",
  "windows 0.61.1",
  "workspace-hack",
