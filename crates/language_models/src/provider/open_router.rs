@@ -12,7 +12,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, WrappedTextContent,
+    RateLimiter, Role, StopReason,
 };
 use open_router::{Model, ResponseStreamEvent, list_models, stream_completion};
 use schemars::JsonSchema;
@@ -424,11 +424,7 @@ pub fn into_open_router(
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text)
-                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                            text,
-                            ..
-                        }) => {
+                      LanguageModelToolResultContent::Text(text) => {
                           text.to_string()
                         }
                         LanguageModelToolResultContent::Image(_) => {
