@@ -10597,6 +10597,26 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             expected_with_replace_subsequence_mode: "foo(node_indexˇix)".into(),
             expected_with_replace_suffix_mode: "foo(node_indexˇix)".into(),
         },
+        Run {
+            run_description: "Type name completion with suffix",
+            initial_state: "let z: ShaˇredString".into(),
+            buffer_marked_text: "let z: Sha<|redString>".into(),
+            completion_text: "Shared",
+            expected_with_insert_mode: "let z: ShaSharedˇredString".into(),
+            expected_with_replace_mode: "let z: ShaSharedˇ".into(),
+            expected_with_replace_subsequence_mode: "let z: ShaSharedˇredString".into(),
+            expected_with_replace_suffix_mode: "let z: ShaSharedˇredString".into(),
+        },
+        Run {
+            run_description: "Prefix expansion at start of identifier",
+            initial_state: "ˇname: 2".into(),
+            buffer_marked_text: "<|>name: 2".into(),
+            completion_text: "language_name",
+            expected_with_insert_mode: "language_nameˇname: 2".into(),
+            expected_with_replace_mode: "language_nameˇname: 2".into(),
+            expected_with_replace_subsequence_mode: "language_nameˇname: 2".into(),
+            expected_with_replace_suffix_mode: "language_nameˇname: 2".into(),
+        },
     ];
 
     for run in runs {
@@ -20977,109 +20997,6 @@ async fn test_indent_on_newline_for_python(cx: &mut TestAppContext) {
         a = []
         ˇ
     "});
-}
-
-#[gpui::test]
-async fn test_process_completion_for_edit(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-
-    // test complete replace range
-    test_completion_replacement(
-        (2, 8),
-        None,
-        "toString",
-        "x.tostriˇ",
-        "x.toStringˇ",
-        &mut cx,
-    );
-
-    // test only prefix replace range
-    test_completion_replacement(
-        (1, 2),
-        None,
-        "?.toString",
-        "x.tostriˇ",
-        "x?.toStringˇ",
-        &mut cx,
-    );
-}
-
-fn test_completion_replacement(
-    replace_range: (u32, u32),
-    insert_range: Option<(u32, u32)>,
-    new_text: &str,
-    initial_state: &str,
-    expected_state: &str,
-    cx: &mut EditorTestContext,
-) {
-    cx.set_state(initial_state);
-    let result = cx.update_editor(|editor, _window, cx| {
-        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
-        let source = match insert_range {
-            None => CompletionSource::Custom,
-            Some((start, end)) => CompletionSource::Lsp {
-                insert_range: Some(buffer.read_with(cx, |buffer, _| {
-                    buffer.anchor_before(Point {
-                        row: 0,
-                        column: start,
-                    })..buffer.anchor_after(Point {
-                        row: 0,
-                        column: end,
-                    })
-                })),
-                server_id: LanguageServerId(0),
-                lsp_completion: Box::new(lsp::CompletionItem::default()),
-                lsp_defaults: None,
-                resolved: false,
-            },
-        };
-        let (replace_start, replace_end) = replace_range;
-        let completion = Completion {
-            replace_range: buffer.read_with(cx, |buffer, _| {
-                buffer.anchor_before(Point {
-                    row: 0,
-                    column: replace_start,
-                })..buffer.anchor_after(Point {
-                    row: 0,
-                    column: replace_end,
-                })
-            }),
-            new_text: new_text.to_string(),
-            label: CodeLabel {
-                text: new_text.to_string(),
-                runs: Vec::new(),
-                filter_range: 0..new_text.len(),
-            },
-            documentation: None,
-            source,
-            icon_path: None,
-            insert_text_mode: None,
-            confirm: None,
-        };
-        let cursor_position = editor.selections.newest_anchor().start;
-        process_completion_for_edit(
-            &completion,
-            CompletionIntent::Complete,
-            &buffer,
-            &cursor_position,
-            cx,
-        )
-    });
-    cx.update_editor(|editor, _window, cx| {
-        let buffer = editor.buffer().read(cx).as_singleton().unwrap();
-        buffer.update(cx, |buffer, cx| {
-            let start_point = buffer.offset_to_point(result.replace_range.start);
-            let end_point = buffer.offset_to_point(result.replace_range.end);
-            buffer.edit(
-                [(start_point..end_point, result.new_text.as_str())],
-                None,
-                cx,
-            );
-        });
-    });
-    cx.assert_editor_state(expected_state);
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
