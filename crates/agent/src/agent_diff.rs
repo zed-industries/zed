@@ -1919,6 +1919,13 @@ mod tests {
             EditorSettings::register(cx);
             language_model::init_settings(cx);
             workspace::register_project_item::<Editor>(cx);
+
+            // Explicitly set single_file_review to true since it's now false by default
+            SettingsStore::update_global(cx, |store, _cx| {
+                let mut agent_settings = store.get::<AgentSettings>(None).clone();
+                agent_settings.single_file_review = true;
+                store.override_global(agent_settings);
+            });
         });
 
         let fs = FakeFs::new(cx.executor());
