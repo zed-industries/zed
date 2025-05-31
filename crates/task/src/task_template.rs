@@ -29,6 +29,9 @@ pub struct TaskTemplate {
     /// Arguments to the command.
     #[serde(default)]
     pub args: Vec<String>,
+    /// It allows to dynamically decide what to do with variables in the command line arguments.
+    #[serde(skip)]
+    pub args_variables_processor: Option<fn(name: &str, value: String) -> Option<String>>,
     /// Env overrides for the command, will be appended to the terminal's environment from the settings.
     #[serde(default)]
     pub env: HashMap<String, String>,
@@ -159,6 +162,7 @@ impl TaskTemplate {
                     &task_variables,
                     &variable_names,
                     &mut substituted_variables,
+                    None,
                 )?;
                 Some(PathBuf::from(substituted_cwd))
             }
@@ -170,6 +174,7 @@ impl TaskTemplate {
             &task_variables,
             &variable_names,
             &mut substituted_variables,
+            None,
         )?;
 
         // Arbitrarily picked threshold below which we don't truncate any variables.
@@ -181,6 +186,7 @@ impl TaskTemplate {
                 &truncated_variables,
                 &variable_names,
                 &mut substituted_variables,
+                None,
             )?
         } else {
             full_label.clone()
@@ -201,13 +207,26 @@ impl TaskTemplate {
             &task_variables,
             &variable_names,
             &mut substituted_variables,
+            None,
         )?;
         let args_with_substitutions = substitute_all_template_variables_in_vec(
             &self.args,
             &task_variables,
             &variable_names,
             &mut substituted_variables,
+            None,
         )?;
+
+        let args = match self.args_variables_processor {
+            Some(args_variables_processor) => substitute_all_template_variables_in_vec(
+                &self.args,
+                &task_variables,
+                &variable_names,
+                &mut substituted_variables,
+                Some(args_variables_processor),
+            )?,
+            None => self.args.clone(),
+        };
 
         let task_hash = to_hex_hash(self)
             .context("hashing task template")
@@ -256,7 +275,7 @@ impl TaskTemplate {
                     },
                 ),
                 command,
-                args: self.args.clone(),
+                args,
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
@@ -313,6 +332,7 @@ pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) ->
         &task_variables,
         &variable_names,
         &mut substituted_variables,
+        None,
     )
 }
 fn substitute_all_template_variables_in_str<A: AsRef<str>>(
@@ -320,6 +340,7 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     task_variables: &HashMap<String, A>,
     variable_names: &HashMap<String, VariableName>,
     substituted_variables: &mut HashSet<VariableName>,
+    variable_processor: Option<fn(variable: &str, value: String) -> Option<String>>,
 ) -> Option<String> {
     let substituted_string = shellexpand::env_with_context(template_str, |var| {
         // Colons denote a default value in case the variable is not set. We want to preserve that default, as otherwise shellexpand will substitute it for us.
@@ -335,6 +356,11 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
             if !default.is_empty() {
                 name.push_str(default);
             }
+
+            if let Some(processor) = variable_processor {
+                return Ok(processor(variable_name, name));
+            }
+
             return Ok(Some(name));
         } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
             bail!("Unknown variable name: {variable_name}");
@@ -357,6 +383,7 @@ fn substitute_all_template_variables_in_vec(
     task_variables: &HashMap<String, &str>,
     variable_names: &HashMap<String, VariableName>,
     substituted_variables: &mut HashSet<VariableName>,
+    variable_processor: Option<fn(variable: &str, value: String) -> Option<String>>,
 ) -> Option<Vec<String>> {
     let mut expanded = Vec::with_capacity(template_strs.len());
     for variable in template_strs {
@@ -365,6 +392,7 @@ fn substitute_all_template_variables_in_vec(
             task_variables,
             variable_names,
             substituted_variables,
+            variable_processor,
         )?;
         expanded.push(new_value);
     }
@@ -409,12 +437,14 @@ fn substitute_all_template_variables_in_map(
             task_variables,
             variable_names,
             substituted_variables,
+            None,
         )?;
         let new_key = substitute_all_template_variables_in_str(
             key,
             task_variables,
             variable_names,
             substituted_variables,
+            None,
         )?;
         new_map.insert(new_key, new_value);
     }

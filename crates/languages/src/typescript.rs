@@ -170,6 +170,14 @@ impl ContextProvider for TypeScriptContextProvider {
                 TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
                 VariableName::RelativeFile.template_value(),
             ],
+            args_variables_processor: Some(|name, value| {
+                if name == "ZED_SYMBOL" {
+                    Some(replace_test_name_parameters(&value))
+                } else {
+                    None
+                }
+            }),
+            tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
             cwd: Some(VariableName::WorktreeRoot.template_value()),
             ..TaskTemplate::default()
         });
@@ -424,6 +432,12 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
         server_path.into(),
         "--stdio".into(),
     ]
+}
+
+fn replace_test_name_parameters(test_name: &str) -> String {
+    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
+
+    pattern.replace_all(test_name, "(.+?)").to_string()
 }
 
 pub struct TypeScriptLspAdapter {
