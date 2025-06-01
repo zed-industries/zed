@@ -5009,9 +5009,6 @@ impl Editor {
         if self.pending_rename.is_some() {
             return;
         }
-        if !self.snippet_stack.is_empty() && self.context_menu.borrow().as_ref().is_some() {
-            return;
-        }
 
         let position = self.selections.newest_anchor().head();
         if position.diff_base_anchor.is_some() {
@@ -5049,6 +5046,8 @@ impl Editor {
             if !menu.is_incomplete && filter_completions {
                 // If the new query is a suffix of the old query (typing more characters) and
                 // the previous result was complete, the existing completions can be filtered.
+                //
+                // Note that this is always true for snippet completions.
                 let query_matches = match (&menu.initial_query, &query) {
                     (Some(initial_query), Some(query)) => query.starts_with(initial_query.as_ref()),
                     (None, _) => true,
