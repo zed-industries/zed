@@ -15742,15 +15742,14 @@ impl Editor {
             None
         };
         self.inline_diagnostics_update = cx.spawn_in(window, async move |editor, cx| {
-            let editor = editor.upgrade().unwrap();
-
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
-            let Some(snapshot) = editor
-                .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
-                .ok()
-            else {
+            let Some(snapshot) = editor.upgrade().and_then(|editor| {
+                editor
+                    .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                    .ok()
+            }) else {
                 return;
             };
 

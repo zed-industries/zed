@@ -20016,7 +20016,6 @@ println!("5");
     pane_1
         .update_in(cx, |pane, window, cx| {
             pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
-                .unwrap()
         })
         .await
         .unwrap();
@@ -20053,7 +20052,6 @@ println!("5");
     pane_2
         .update_in(cx, |pane, window, cx| {
             pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
-                .unwrap()
         })
         .await
         .unwrap();
@@ -20229,7 +20227,6 @@ println!("5");
     });
     pane.update_in(cx, |pane, window, cx| {
         pane.close_all_items(&CloseAllItems::default(), window, cx)
-            .unwrap()
     })
     .await
     .unwrap();
@@ -20583,7 +20580,6 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     pane.update_in(cx, |pane, window, cx| {
         pane.close_active_item(&CloseActiveItem::default(), window, cx)
     })
-    .unwrap()
     .await
     .unwrap();
     pane.update_in(cx, |pane, window, cx| {
