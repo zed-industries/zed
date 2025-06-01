@@ -1755,13 +1755,17 @@ impl GitPanel {
 
                 let text_empty = subject.trim().is_empty();
 
+                let prompt = this.update(cx, |_this, cx| {
+                    GitPanelSettings::get_global(cx).commit_message_prompt().to_string()
+                })?;
+
                 let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
+                    format!("{prompt}\nHere are the changes in this commit:\n{diff_text}")
                 } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                    format!("{prompt}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
                 };
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+
 
                 let request = LanguageModelRequest {
                     thread_id: None,
@@ -4946,5 +4950,33 @@ mod tests {
                 },),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_custom_commit_message_prompt(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let settings = GitPanelSettings::get_global(cx);
+            assert!(
+                settings
+                    .commit_message_prompt()
+                    .contains("You are an expert at writing Git commits")
+            );
+        });
+
+        let custom_prompt = "Custom commit message prompt for testing";
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings::<GitPanelSettings>(cx, |settings| {
+                    settings.commit_message_prompt = Some(custom_prompt.to_string());
+                });
+            });
+        });
+
+        cx.update(|cx| {
+            let settings = GitPanelSettings::get_global(cx);
+            assert_eq!(settings.commit_message_prompt(), custom_prompt);
+        });
     }
 }

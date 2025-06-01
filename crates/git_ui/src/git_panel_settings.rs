@@ -70,6 +70,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub sort_by_path: Option<bool>,
+
+    /// Custom prompt for generating commit messages with AI.
+    ///
+    /// Default: built-in prompt
+    pub commit_message_prompt: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -81,6 +86,15 @@ pub struct GitPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
+    pub commit_message_prompt: Option<String>,
+}
+
+impl GitPanelSettings {
+    pub fn commit_message_prompt(&self) -> &str {
+        self.commit_message_prompt
+            .as_deref()
+            .unwrap_or(include_str!("commit_message_prompt.txt"))
+    }
 }
 
 impl Settings for GitPanelSettings {

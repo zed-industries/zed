@@ -689,6 +689,11 @@
     //
     // Default: false
     "sort_by_path": false,
+    // Custom prompt for generating commit messages with AI.
+    // When not set, uses the built-in prompt from commit_message_prompt.txt
+    //
+    // Default: null (uses built-in prompt)
+    // "commit_message_prompt": "You are an expert at writing Git commits...",
     "scrollbar": {
       // When to show the scrollbar in the git panel.
       //
