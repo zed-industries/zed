@@ -2351,6 +2351,7 @@ impl Pane {
         let total_items = self.items.len();
         let has_items_to_left = ix > 0;
         let has_items_to_right = ix < total_items - 1;
+        let has_clean_items = self.items.iter().any(|item| !item.is_dirty(cx));
         let is_pinned = self.is_tab_pinned(ix);
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
@@ -2434,14 +2435,19 @@ impl Pane {
                                     })),
                             ))
                             .separator()
-                            .entry(
-                                "Close Clean",
-                                Some(Box::new(close_clean_items_action.clone())),
-                                window.handler_for(&pane, move |pane, window, cx| {
-                                    pane.close_clean_items(&close_clean_items_action, window, cx)
+                            .item(ContextMenuItem::Entry(
+                                ContextMenuEntry::new("Close Clean")
+                                    .action(Box::new(close_clean_items_action.clone()))
+                                    .disabled(!has_clean_items)
+                                    .handler(window.handler_for(&pane, move |pane, window, cx| {
+                                        pane.close_clean_items(
+                                            &close_clean_items_action,
+                                            window,
+                                            cx,
+                                        )
                                         .detach_and_log_err(cx)
-                                }),
-                            )
+                                    })),
+                            ))
                             .entry(
                                 "Close All",
                                 Some(Box::new(close_all_items_action.clone())),
