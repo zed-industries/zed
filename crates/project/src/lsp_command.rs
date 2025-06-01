@@ -2127,7 +2127,7 @@ impl LspCommand for GetCompletions {
         mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let mut response_list = None;
-        let (mut completions, is_incomplete) = if let Some(completions) = completions {
+        let (mut completions, mut is_incomplete) = if let Some(completions) = completions {
             match completions {
                 lsp::CompletionResponse::Array(completions) => (completions, false),
                 lsp::CompletionResponse::List(mut list) => {
@@ -2140,6 +2140,8 @@ impl LspCommand for GetCompletions {
         } else {
             (Vec::new(), false)
         };
+
+        let unfiltered_completions_count = completions.len();
 
         let language_server_adapter = lsp_store
             .read_with(&mut cx, |lsp_store, _| {
@@ -2259,6 +2261,12 @@ impl LspCommand for GetCompletions {
                 true
             });
         })?;
+
+        // If completions were filtered out due to errors that may be transient, mark the result
+        // incomplete so that it is requeried.
+        if unfiltered_completions_count != completions.len() {
+            is_incomplete = true;
+        }
 
         language_server_adapter
             .process_completions(&mut completions)
