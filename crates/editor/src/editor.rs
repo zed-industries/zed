@@ -5242,7 +5242,39 @@ impl Editor {
                 };
 
                 let matches = matches_task.await;
-                let Ok(()) = editor.update_in(cx, |_editor, window, cx| {
+
+                let Ok(()) = editor.update_in(cx, |editor, window, cx| {
+                    // Newer menu already set, so exit.
+                    match editor.context_menu.borrow().as_ref() {
+                        Some(CodeContextMenu::Completions(prev_menu)) => {
+                            if prev_menu.id > id {
+                                return;
+                            }
+                        }
+                        _ => {}
+                    };
+
+                    // Only valid to take prev_menu because it the new menu is immediately set
+                    // below, or the menu is hidden.
+                    match editor.context_menu.borrow_mut().take() {
+                        Some(CodeContextMenu::Completions(prev_menu)) => {
+                            let position_matches =
+                                if prev_menu.initial_position == menu.initial_position {
+                                    true
+                                } else {
+                                    let snapshot = editor.buffer.read(cx).read(cx);
+                                    prev_menu.initial_position.to_offset(&snapshot)
+                                        == menu.initial_position.to_offset(&snapshot)
+                                };
+                            if position_matches {
+                                // Preserve markdown cache before `set_filter_results` because it will
+                                // try to populate the documentation cache.
+                                menu.preserve_markdown_cache(prev_menu);
+                            }
+                        }
+                        _ => {}
+                    };
+
                     menu.set_filter_results(matches, provider, window, cx);
                 }) else {
                     return;
@@ -5253,16 +5285,6 @@ impl Editor {
 
             editor
                 .update_in(cx, |editor, window, cx| {
-                    match editor.context_menu.borrow().as_ref() {
-                        None => {}
-                        Some(CodeContextMenu::Completions(prev_menu)) => {
-                            if prev_menu.id > id {
-                                return;
-                            }
-                        }
-                        _ => return,
-                    }
-
                     if editor.focus_handle.is_focused(window) {
                         if let Some(menu) = menu {
                             *editor.context_menu.borrow_mut() =

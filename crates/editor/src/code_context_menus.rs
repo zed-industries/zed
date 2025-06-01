@@ -210,10 +210,21 @@ pub struct CompletionsMenu {
     show_completion_documentation: bool,
     pub(super) ignore_completion_provider: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
-    markdown_cache: Rc<RefCell<VecDeque<(usize, Entity<Markdown>)>>>,
+    markdown_cache: Rc<RefCell<VecDeque<(MarkdownCacheKey, Entity<Markdown>)>>>,
     language_registry: Option<Arc<LanguageRegistry>>,
     language: Option<LanguageName>,
     snippet_sort_order: SnippetSortOrder,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum MarkdownCacheKey {
+    ForCandidate {
+        candidate_id: usize,
+    },
+    ForCompletionMatch {
+        new_text: String,
+        markdown_source: SharedString,
+    },
 }
 
 // TODO: There should really be a wrapper around fuzzy match tasks that does this.
@@ -263,7 +274,7 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
-            markdown_cache: RefCell::new(VecDeque::with_capacity(MARKDOWN_CACHE_MAX_SIZE)).into(),
+            markdown_cache: RefCell::new(VecDeque::new()).into(),
             language_registry,
             language,
             snippet_sort_order,
@@ -575,11 +586,11 @@ impl CompletionsMenu {
             return None;
         }
         let candidate_id = entries[index].candidate_id;
-        match &self.completions.borrow()[candidate_id].documentation {
-            Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => Some(
-                self.get_or_create_markdown(candidate_id, source.clone(), false, cx)
-                    .1,
-            ),
+        let completions = self.completions.borrow();
+        match &completions[candidate_id].documentation {
+            Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => self
+                .get_or_create_markdown(candidate_id, Some(source), false, &completions, cx)
+                .map(|(_, markdown)| markdown),
             Some(_) => None,
             _ => None,
         }
@@ -588,38 +599,75 @@ impl CompletionsMenu {
     fn get_or_create_markdown(
         &self,
         candidate_id: usize,
-        source: SharedString,
+        source: Option<&SharedString>,
         is_render: bool,
+        completions: &Box<[Completion]>,
         cx: &mut Context<Editor>,
-    ) -> (bool, Entity<Markdown>) {
+    ) -> Option<(bool, Entity<Markdown>)> {
         let mut markdown_cache = self.markdown_cache.borrow_mut();
-        if let Some((cache_index, (_, markdown))) = markdown_cache
-            .iter()
-            .find_position(|(id, _)| *id == candidate_id)
-        {
-            let markdown = if is_render && cache_index != 0 {
+
+        let mut has_completion_match_cache_entry = false;
+        let mut matching_entry = markdown_cache.iter().find_position(|(key, _)| match key {
+            MarkdownCacheKey::ForCandidate { candidate_id: id } => *id == candidate_id,
+            MarkdownCacheKey::ForCompletionMatch { .. } => {
+                has_completion_match_cache_entry = true;
+                false
+            }
+        });
+
+        if has_completion_match_cache_entry && matching_entry.is_none() {
+            if let Some(source) = source {
+                matching_entry = markdown_cache.iter().find_position(|(key, _)| {
+                    matches!(key, MarkdownCacheKey::ForCompletionMatch { markdown_source, .. }
+                                if markdown_source == source)
+                });
+            } else {
+                // Heuristic guess that documentation can be reused when new_text matches. This is
+                // to mitigate documentation flicker while typing. If this is wrong, then resolution
+                // should cause the correct documentation to be displayed soon.
+                let completion = &completions[candidate_id];
+                matching_entry = markdown_cache.iter().find_position(|(key, _)| {
+                    matches!(key, MarkdownCacheKey::ForCompletionMatch { new_text, .. }
+                                if new_text == &completion.new_text)
+                });
+            }
+        }
+
+        if let Some((cache_index, (key, markdown))) = matching_entry {
+            let markdown = markdown.clone();
+
+            // Since the markdown source matches, the key can now be ForCandidate.
+            if source.is_some() && matches!(key, MarkdownCacheKey::ForCompletionMatch { .. }) {
+                markdown_cache[cache_index].0 = MarkdownCacheKey::ForCandidate { candidate_id };
+            }
+
+            if is_render && cache_index != 0 {
                 // Move the current selection's cache entry to the front.
                 markdown_cache.rotate_right(1);
                 let cache_len = markdown_cache.len();
                 markdown_cache.swap(0, (cache_index + 1) % cache_len);
-                &markdown_cache[0].1
-            } else {
-                markdown
-            };
+            }
 
             let is_parsing = markdown.update(cx, |markdown, cx| {
-                // `reset` is called as it's possible for documentation to change due to resolve
-                // requests. It does nothing if `source` is unchanged.
-                markdown.reset(source, cx);
+                if let Some(source) = source {
+                    // `reset` is called as it's possible for documentation to change due to resolve
+                    // requests. It does nothing if `source` is unchanged.
+                    markdown.reset(source.clone(), cx);
+                }
                 markdown.is_parsing()
             });
-            return (is_parsing, markdown.clone());
+            return Some((is_parsing, markdown));
         }
+
+        let Some(source) = source else {
+            // Can't create markdown as there is no source.
+            return None;
+        };
 
         if markdown_cache.len() < MARKDOWN_CACHE_MAX_SIZE {
             let markdown = cx.new(|cx| {
                 Markdown::new(
-                    source,
+                    source.clone(),
                     self.language_registry.clone(),
                     self.language.clone(),
                     cx,
@@ -628,17 +676,20 @@ impl CompletionsMenu {
             // Handles redraw when the markdown is done parsing. The current render is for a
             // deferred draw, and so without this did not redraw when `markdown` notified.
             cx.observe(&markdown, |_, _, cx| cx.notify()).detach();
-            markdown_cache.push_front((candidate_id, markdown.clone()));
-            (true, markdown)
+            markdown_cache.push_front((
+                MarkdownCacheKey::ForCandidate { candidate_id },
+                markdown.clone(),
+            ));
+            Some((true, markdown))
         } else {
             debug_assert_eq!(markdown_cache.capacity(), MARKDOWN_CACHE_MAX_SIZE);
             // Moves the last cache entry to the start. The ring buffer is full, so this does no
             // copying and just shifts indexes.
             markdown_cache.rotate_right(1);
-            markdown_cache[0].0 = candidate_id;
+            markdown_cache[0].0 = MarkdownCacheKey::ForCandidate { candidate_id };
             let markdown = &markdown_cache[0].1;
-            markdown.update(cx, |markdown, cx| markdown.reset(source, cx));
-            (true, markdown.clone())
+            markdown.update(cx, |markdown, cx| markdown.reset(source.clone(), cx));
+            Some((true, markdown.clone()))
         }
     }
 
@@ -801,37 +852,46 @@ impl CompletionsMenu {
         }
 
         let mat = &self.entries.borrow()[self.selected_item];
-        let multiline_docs = match self.completions.borrow_mut()[mat.candidate_id]
-            .documentation
-            .as_ref()?
-        {
-            CompletionDocumentation::MultiLinePlainText(text) => div().child(text.clone()),
-            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+        let completions = self.completions.borrow_mut();
+        let multiline_docs = match completions[mat.candidate_id].documentation.as_ref() {
+            Some(CompletionDocumentation::MultiLinePlainText(text)) => div().child(text.clone()),
+            Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                 plain_text: Some(text),
                 ..
-            } => div().child(text.clone()),
-            CompletionDocumentation::MultiLineMarkdown(source) if !source.is_empty() => {
-                let (is_parsing, markdown) =
-                    self.get_or_create_markdown(mat.candidate_id, source.clone(), true, cx);
-                if is_parsing {
+            }) => div().child(text.clone()),
+            Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => {
+                let Some((false, markdown)) = self.get_or_create_markdown(
+                    mat.candidate_id,
+                    Some(source),
+                    true,
+                    &completions,
+                    cx,
+                ) else {
                     return None;
-                }
-                div().child(
-                    MarkdownElement::new(markdown, hover_markdown_style(window, cx))
-                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                            copy_button: false,
-                            copy_button_on_hover: false,
-                            border: false,
-                        })
-                        .on_url_click(open_markdown_url),
-                )
+                };
+                Self::render_markdown(markdown, window, cx)
             }
-            CompletionDocumentation::MultiLineMarkdown(_) => return None,
-            CompletionDocumentation::SingleLine(_) => return None,
-            CompletionDocumentation::Undocumented => return None,
-            CompletionDocumentation::SingleLineAndMultiLinePlainText {
-                plain_text: None, ..
-            } => {
+            None => {
+                // Handle the case where documentation hasn't yet been resolved but there's a
+                // `new_text` match in the cache.
+                //
+                // TODO: It's inconsistent that documentation caching based on matching `new_text`
+                // only works for markdown. Consider generally caching the results of resolving
+                // completions.
+                let Some((false, markdown)) =
+                    self.get_or_create_markdown(mat.candidate_id, None, true, &completions, cx)
+                else {
+                    return None;
+                };
+                Self::render_markdown(markdown, window, cx)
+            }
+            Some(CompletionDocumentation::MultiLineMarkdown(_)) => return None,
+            Some(CompletionDocumentation::SingleLine(_)) => return None,
+            Some(CompletionDocumentation::Undocumented) => return None,
+            Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: None,
+                ..
+            }) => {
                 return None;
             }
         };
@@ -848,6 +908,22 @@ impl CompletionsMenu {
                         .occlude(),
                 )
                 .into_any_element(),
+        )
+    }
+
+    fn render_markdown(
+        markdown: Entity<Markdown>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Div {
+        div().child(
+            MarkdownElement::new(markdown, hover_markdown_style(window, cx))
+                .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                    copy_button: false,
+                    copy_button_on_hover: false,
+                    border: false,
+                })
+                .on_url_click(open_markdown_url),
         )
     }
 
@@ -1102,6 +1178,34 @@ impl CompletionsMenu {
                 }
             }
         });
+    }
+
+    pub fn preserve_markdown_cache(&mut self, prev_menu: CompletionsMenu) {
+        self.markdown_cache = prev_menu.markdown_cache.clone();
+
+        // Convert ForCandidate cache keys to ForCompletionMatch keys.
+        let prev_completions = prev_menu.completions.borrow();
+        self.markdown_cache
+            .borrow_mut()
+            .retain_mut(|(key, _markdown)| match key {
+                MarkdownCacheKey::ForCompletionMatch { .. } => true,
+                MarkdownCacheKey::ForCandidate { candidate_id } => {
+                    if let Some(completion) = prev_completions.get(*candidate_id) {
+                        match &completion.documentation {
+                            Some(CompletionDocumentation::MultiLineMarkdown(source)) => {
+                                *key = MarkdownCacheKey::ForCompletionMatch {
+                                    new_text: completion.new_text.clone(),
+                                    markdown_source: source.clone(),
+                                };
+                                true
+                            }
+                            _ => false,
+                        }
+                    } else {
+                        false
+                    }
+                }
+            });
     }
 }
 
