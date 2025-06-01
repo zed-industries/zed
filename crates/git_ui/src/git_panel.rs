@@ -1390,7 +1390,7 @@ impl GitPanel {
         self.collapse_untracked_files_section = !self.collapse_untracked_files_section;
         self.update_visible_entries(cx);
     }
-    
+
     fn stage_selected(&mut self, _: &git::StageFile, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(selected_entry) = self.get_selected_entry() else {
             return;
@@ -3741,11 +3741,18 @@ impl GitPanel {
                 .px(rems(0.75)) // ~12px
                 .pb(rems(0.3125)) // ~ 5px
                 .cursor_pointer()
-                .on_click(cx.listener(|this: &mut GitPanel, _, _window, current_cx: &mut Context<Self>| {
-                    this.collapse_untracked_files_section = !this.collapse_untracked_files_section;
-                    this.update_visible_entries(current_cx);
-                }))
-                .child(Icon::new(icon_name).size(IconSize::Small).color(Color::Muted))
+                .on_click(cx.listener(
+                    |this: &mut GitPanel, _, _window, current_cx: &mut Context<Self>| {
+                        this.collapse_untracked_files_section =
+                            !this.collapse_untracked_files_section;
+                        this.update_visible_entries(current_cx);
+                    },
+                ))
+                .child(
+                    Icon::new(icon_name)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
                 .child(div().w(rems(0.25)))
                 .child(
                     Label::new(header.title())
@@ -5006,13 +5013,13 @@ mod tests {
         fs.insert_tree(
             "/root",
             json!({
-            "project": {
-                ".git": {},
-                "tracked.rs": "// tracked file",
-            },
-        }),
+                "project": {
+                    ".git": {},
+                    "tracked.rs": "// tracked file",
+                },
+            }),
         )
-            .await;
+        .await;
 
         let project = Project::test(fs.clone(), [Path::new("/root/project")], cx).await;
         let (workspace, cx) =
@@ -5021,11 +5028,20 @@ mod tests {
         let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
 
         let panel = cx.new_window_entity(|window, cx| {
-            GitPanel::new(workspace.clone(), project.clone(), app_state.clone(), window, cx)
+            GitPanel::new(
+                workspace.clone(),
+                project.clone(),
+                app_state.clone(),
+                window,
+                cx,
+            )
         });
 
         panel.read_with(cx, |panel, _| {
-            assert!(!panel.collapse_untracked_files_section, "Untracked section should be expanded by default");
+            assert!(
+                !panel.collapse_untracked_files_section,
+                "Untracked section should be expanded by default"
+            );
         });
 
         cx.update_window_entity(&panel, |panel, _, cx| {
@@ -5034,7 +5050,10 @@ mod tests {
         });
 
         panel.read_with(cx, |panel, _| {
-            assert!(panel.collapse_untracked_files_section, "Untracked section should be collapsed");
+            assert!(
+                panel.collapse_untracked_files_section,
+                "Untracked section should be collapsed"
+            );
         });
 
         cx.update_window_entity(&panel, |panel, window, cx| {
@@ -5042,7 +5061,10 @@ mod tests {
         });
 
         panel.read_with(cx, |panel, _| {
-            assert!(!panel.collapse_untracked_files_section, "Untracked section should be expanded after toggle");
+            assert!(
+                !panel.collapse_untracked_files_section,
+                "Untracked section should be expanded after toggle"
+            );
         });
 
         cx.update(|_, cx| {
@@ -5058,7 +5080,10 @@ mod tests {
         });
 
         panel2.read_with(cx, |panel, _| {
-            assert!(panel.collapse_untracked_files_section, "Untracked section should be collapsed when setting is true");
+            assert!(
+                panel.collapse_untracked_files_section,
+                "Untracked section should be collapsed when setting is true"
+            );
         });
     }
 }

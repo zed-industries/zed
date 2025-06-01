@@ -72,7 +72,7 @@ pub struct GitPanelSettingsContent {
     pub sort_by_path: Option<bool>,
 
     /// Whether untracked entries should be collapsed by default.
-    /// 
+    ///
     /// Default: false (expanded)
     pub collapse_untracked_files_section: Option<bool>,
 }
