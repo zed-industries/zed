@@ -172,6 +172,12 @@ impl Drop for TestDb {
     }
 }
 
+fn assert_channel_tree_matches(actual: Vec<Channel>, expected: Vec<Channel>) {
+    let expected_channels = expected.into_iter().collect::<HashSet<_>>();
+    let actual_channels = actual.into_iter().collect::<HashSet<_>>();
+    pretty_assertions::assert_eq!(expected_channels, actual_channels);
+}
+
 fn channel_tree(channels: &[(ChannelId, &[ChannelId], &'static str)]) -> Vec<Channel> {
     use std::collections::HashMap;
 

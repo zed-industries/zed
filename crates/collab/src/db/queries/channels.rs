@@ -551,11 +551,7 @@ impl Database {
             .get_channel_descendants_excluding_self(channels.iter(), tx)
             .await?;
 
-        for channel in channels {
-            if let Err(ix) = descendants.binary_search_by_key(&channel.path(), |c| c.path()) {
-                descendants.insert(ix, channel);
-            }
-        }
+        descendants.extend(channels);
 
         let roles_by_channel_id = channel_memberships
             .iter()
@@ -572,42 +568,6 @@ impl Database {
                     None
                 }
             })
-            .collect();
-
-        // Build a map of channel_id -> channel_order for lookup
-        let channel_order_map: std::collections::HashMap<ChannelId, i32> =
-            channels.iter().map(|c| (c.id, c.channel_order)).collect();
-
-        // Pre-compute sort keys for efficient O(n log n) sorting instead of O(n²)
-        let mut channels_with_keys: Vec<(Vec<i32>, Channel)> = channels
-            .into_iter()
-            .map(|channel| {
-                let mut sort_key = Vec::with_capacity(channel.parent_path.len() + 1);
-
-                // Build sort key from parent path orders
-                for parent_id in &channel.parent_path {
-                    match channel_order_map.get(parent_id) {
-                        Some(&order) => sort_key.push(order),
-                        None => {
-                            // Missing parent - this should not happen in a well-formed tree
-                            // Put orphaned channels at the end with a high sort value
-                            sort_key.push(i32::MAX);
-                        }
-                    }
-                }
-                sort_key.push(channel.channel_order);
-
-                (sort_key, channel)
-            })
-            .collect();
-
-        // Sort by pre-computed keys (stable sort for deterministic ordering)
-        channels_with_keys.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Extract the sorted channels
-        let channels: Vec<Channel> = channels_with_keys
-            .into_iter()
-            .map(|(_, channel)| channel)
             .collect();
 
         #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]

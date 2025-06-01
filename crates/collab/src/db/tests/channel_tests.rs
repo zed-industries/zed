@@ -1,7 +1,7 @@
 use crate::{
     db::{
         Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId,
-        tests::{channel_tree, new_test_connection, new_test_user},
+        tests::{assert_channel_tree_matches, channel_tree, new_test_connection, new_test_user},
     },
     test_both_dbs,
 };
@@ -9,7 +9,7 @@ use rpc::{
     ConnectionId,
     proto::{self, reorder_channel},
 };
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 test_both_dbs!(test_channels, test_channels_postgres, test_channels_sqlite);
 
@@ -59,7 +59,7 @@ async fn test_channels(db: &Arc<Database>) {
         .unwrap();
 
     let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_eq!(
+    assert_channel_tree_matches(
         result.channels,
         channel_tree(&[
             (zed_id, &[], "zed"),
@@ -68,19 +68,19 @@ async fn test_channels(db: &Arc<Database>) {
             (replace_id, &[zed_id], "replace"),
             (rust_id, &[], "rust"),
             (cargo_id, &[rust_id], "cargo"),
-            (cargo_ra_id, &[rust_id, cargo_id], "cargo-ra")
-        ],)
+            (cargo_ra_id, &[rust_id, cargo_id], "cargo-ra"),
+        ]),
     );
 
     let result = db.get_channels_for_user(b_id).await.unwrap();
-    assert_eq!(
+    assert_channel_tree_matches(
         result.channels,
         channel_tree(&[
             (zed_id, &[], "zed"),
             (crdb_id, &[zed_id], "crdb"),
             (livestreaming_id, &[zed_id], "livestreaming"),
-            (replace_id, &[zed_id], "replace")
-        ],)
+            (replace_id, &[zed_id], "replace"),
+        ]),
     );
 
     // Update member permissions
@@ -94,14 +94,14 @@ async fn test_channels(db: &Arc<Database>) {
     assert!(set_channel_admin.is_ok());
 
     let result = db.get_channels_for_user(b_id).await.unwrap();
-    assert_eq!(
+    assert_channel_tree_matches(
         result.channels,
         channel_tree(&[
             (zed_id, &[], "zed"),
             (crdb_id, &[zed_id], "crdb"),
             (livestreaming_id, &[zed_id], "livestreaming"),
-            (replace_id, &[zed_id], "replace")
-        ],)
+            (replace_id, &[zed_id], "replace"),
+        ]),
     );
 
     // Remove a single channel
@@ -891,10 +891,10 @@ fn assert_channel_tree(actual: Vec<Channel>, expected: &[(ChannelId, &[ChannelId
     let actual = actual
         .iter()
         .map(|channel| (channel.id, channel.parent_path.as_slice()))
-        .collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
-        actual,
-        expected.to_vec(),
-        "wrong channel ids and parent paths"
-    );
+        .collect::<HashSet<_>>();
+    let expected = expected
+        .iter()
+        .map(|(id, parents)| (*id, *parents))
+        .collect::<HashSet<_>>();
+    pretty_assertions::assert_eq!(actual, expected, "wrong channel ids and parent paths");
 }
