@@ -1,10 +1,11 @@
 use super::find_channel_by_name;
+use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
-use assistant_tool::{Tool, ToolResult, ToolResultOutput};
+use assistant_tool::{Tool, ToolResult, ToolResultContent, ToolResultOutput};
 use channel::{ChannelBuffer, ChannelStore};
 use gpui::{App, Entity, Task};
 use icons::IconName;
-use language_model::{LanguageModelRequest, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -121,16 +122,7 @@ impl Tool for EditChannelNotesTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        let schema = schemars::schema_for!(EditChannelNotesInput);
-        let mut json = serde_json::to_value(schema)?;
-
-        match format {
-            LanguageModelToolSchemaFormat::JsonSchema => Ok(json),
-            LanguageModelToolSchemaFormat::JsonSchemaSubset => {
-                assistant_tool::adapt_schema_to_format(&mut json, format)?;
-                Ok(json)
-            }
-        }
+        json_schema_for::<EditChannelNotesInput>(format)
     }
 
     fn ui_text(&self, input: &serde_json::Value) -> String {
@@ -157,7 +149,7 @@ impl Tool for EditChannelNotesTool {
         _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<assistant_tool::ActionLog>,
-        _model: Arc<dyn language_model::LanguageModel>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<gpui::AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -208,7 +200,10 @@ impl Tool for EditChannelNotesTool {
             cx.update(|cx| Self::apply_edits(&channel_buffer, edits, cx))??;
 
             let message = format!("Edited notes for channel '{}'", channel_name);
-            Ok(ToolResultOutput::from(message))
+            Ok(ToolResultOutput {
+                content: ToolResultContent::Text(message),
+                output: None,
+            })
         });
 
         ToolResult::from(task)
