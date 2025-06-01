@@ -1073,7 +1073,6 @@ impl Database {
                 }
             };
 
-            // Swap the channel_order values atomically using a temporary value to avoid conflicts
             let current_order = channel.channel_order;
             let sibling_order = sibling_channel.channel_order;
 
