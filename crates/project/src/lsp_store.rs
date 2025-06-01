@@ -9400,9 +9400,6 @@ impl LspStore {
         name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Vec<WorktreeId>> {
-        let server_name = self
-            .language_server_adapter_for_id(server_id)
-            .map(|adapter| adapter.name());
         let local = match &mut self.mode {
             LspStoreMode::Local(local) => local,
             _ => {
@@ -9475,7 +9472,7 @@ impl LspStore {
         cx.notify();
         cx.emit(LspStoreEvent::LanguageServerUpdate {
             language_server_id: server_id,
-            name: server_name,
+            name: Some(name.clone()),
             message: proto::update_language_server::Variant::StatusUpdate(proto::StatusUpdate {
                 message: None,
                 status: proto::status_update::Status::Stopped as i32,
@@ -10165,6 +10162,16 @@ impl LspStore {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.wait_for_remote_buffer(id, cx)
         })
+    }
+
+    pub fn restart_language_server(&self, server_id: LanguageServerId, cx: &mut Context<Self>) {
+        dbg!("TODO kb restart language server");
+        // let a = self.stop_local_language_server(server_id, name, cx);
+    }
+
+    pub fn disable_language_server(&self, server_id: LanguageServerId, cx: &mut Context<Self>) {
+        dbg!("TODO kb disable language server");
+        // let a = self.stop_local_language_server(server_id, name, cx);
     }
 
     fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {

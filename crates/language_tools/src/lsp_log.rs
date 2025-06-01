@@ -44,7 +44,7 @@ trait Message: AsRef<str> {
     }
 }
 
-struct LogMessage {
+pub(super) struct LogMessage {
     message: String,
     typ: MessageType,
 }
@@ -71,7 +71,7 @@ impl Message for LogMessage {
     }
 }
 
-struct TraceMessage {
+pub(super) struct TraceMessage {
     message: String,
 }
 
@@ -99,7 +99,7 @@ impl Message for RpcMessage {
     type Level = ();
 }
 
-struct LanguageServerState {
+pub(super) struct LanguageServerState {
     name: Option<LanguageServerName>,
     worktree_id: Option<WorktreeId>,
     kind: LanguageServerKind,
@@ -204,18 +204,19 @@ pub(crate) struct LogMenuItem {
 
 actions!(dev, [OpenLanguageServerLogs]);
 
-pub fn init(cx: &mut App) {
+pub fn init(cx: &mut App) -> Entity<LogStore> {
     let log_store = cx.new(LogStore::new);
 
+    let subscription_log_store = log_store.clone();
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         let project = workspace.project();
         if project.read(cx).is_local() || project.read(cx).is_via_ssh() {
-            log_store.update(cx, |store, cx| {
+            subscription_log_store.update(cx, |store, cx| {
                 store.add_project(project, cx);
             });
         }
 
-        let log_store = log_store.clone();
+        let log_store = subscription_log_store.clone();
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, window, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() || project.is_via_ssh() {
@@ -231,6 +232,8 @@ pub fn init(cx: &mut App) {
         });
     })
     .detach();
+
+    log_store
 }
 
 impl LogStore {
@@ -354,7 +357,7 @@ impl LogStore {
         );
     }
 
-    fn get_language_server_state(
+    pub(super) fn get_language_server_state(
         &mut self,
         id: LanguageServerId,
     ) -> Option<&mut LanguageServerState> {
@@ -480,11 +483,14 @@ impl LogStore {
         cx.notify();
     }
 
-    fn server_logs(&self, server_id: LanguageServerId) -> Option<&VecDeque<LogMessage>> {
+    pub(super) fn server_logs(&self, server_id: LanguageServerId) -> Option<&VecDeque<LogMessage>> {
         Some(&self.language_servers.get(&server_id)?.log_messages)
     }
 
-    fn server_trace(&self, server_id: LanguageServerId) -> Option<&VecDeque<TraceMessage>> {
+    pub(super) fn server_trace(
+        &self,
+        server_id: LanguageServerId,
+    ) -> Option<&VecDeque<TraceMessage>> {
         Some(&self.language_servers.get(&server_id)?.trace_messages)
     }
 
@@ -527,6 +533,14 @@ impl LogStore {
     ) -> Option<()> {
         self.language_servers.get_mut(&server_id)?.rpc_state.take();
         Some(())
+    }
+
+    pub fn open_server_log(&mut self, server_id: LanguageServerId, cx: &mut Context<Self>) {
+        dbg!("TODO kb open server log");
+    }
+
+    pub fn open_server_trace(&mut self, server_id: LanguageServerId, cx: &mut Context<Self>) {
+        dbg!("TODO kb open server trace");
     }
 
     fn on_io(
