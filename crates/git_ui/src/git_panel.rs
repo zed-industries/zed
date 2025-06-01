@@ -80,7 +80,8 @@ actions!(
         FocusEditor,
         FocusChanges,
         ToggleFillCoAuthors,
-        GenerateCommitMessage
+        GenerateCommitMessage,
+        ToggleUntrackedSection
     ]
 );
 
@@ -356,6 +357,7 @@ pub struct GitPanel {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     modal_open: bool,
     show_placeholders: bool,
+    collapse_untracked_files_section: bool,
     _settings_subscription: Subscription,
 }
 
@@ -490,6 +492,9 @@ impl GitPanel {
             }
         });
 
+        let settings = GitPanelSettings::get_global(cx);
+        let collapse_untracked_files_section = settings.collapse_untracked_files_section;
+
         let mut git_panel = Self {
             active_repository,
             commit_editor,
@@ -525,6 +530,7 @@ impl GitPanel {
             entry_count: 0,
             horizontal_scrollbar,
             vertical_scrollbar,
+            collapse_untracked_files_section,
             _settings_subscription,
         };
         git_panel.schedule_update(false, window, cx);
@@ -1375,6 +1381,16 @@ impl GitPanel {
         }
     }
 
+    fn toggle_untracked_section(
+        &mut self,
+        _: &ToggleUntrackedSection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.collapse_untracked_files_section = !self.collapse_untracked_files_section;
+        self.update_visible_entries(cx);
+    }
+    
     fn stage_selected(&mut self, _: &git::StageFile, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(selected_entry) = self.get_selected_entry() else {
             return;
@@ -2448,8 +2464,10 @@ impl GitPanel {
             self.entries.push(GitListEntry::Header(GitHeaderEntry {
                 header: Section::New,
             }));
-            self.entries
-                .extend(new_entries.into_iter().map(GitListEntry::GitStatusEntry));
+            if !self.collapse_untracked_files_section {
+                self.entries
+                    .extend(new_entries.into_iter().map(GitListEntry::GitStatusEntry));
+            }
         }
 
         if let Some((repo_path, _)) = max_width_item {
@@ -3704,9 +3722,40 @@ impl GitPanel {
         header: &GitHeaderEntry,
         _: bool,
         _: &Window,
-        _: &Context<Self>,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let id: ElementId = ElementId::Name(format!("header_{}", ix).into());
+
+        if header.header == Section::New {
+            let icon_name = if self.collapse_untracked_files_section {
+                IconName::ChevronRight
+            } else {
+                IconName::ChevronDown
+            };
+
+            return h_flex()
+                .id(id)
+                .h(self.list_item_height())
+                .w_full()
+                .items_end()
+                .px(rems(0.75)) // ~12px
+                .pb(rems(0.3125)) // ~ 5px
+                .cursor_pointer()
+                .on_click(cx.listener(|this: &mut GitPanel, _, _window, current_cx: &mut Context<Self>| {
+                    this.collapse_untracked_files_section = !this.collapse_untracked_files_section;
+                    this.update_visible_entries(current_cx);
+                }))
+                .child(Icon::new(icon_name).size(IconSize::Small).color(Color::Muted))
+                .child(div().w(rems(0.25)))
+                .child(
+                    Label::new(header.title())
+                        .color(Color::Muted)
+                        .size(LabelSize::Small)
+                        .line_height_style(LineHeightStyle::UiLabel)
+                        .single_line(),
+                )
+                .into_any_element();
+        }
 
         h_flex()
             .id(id)
@@ -4107,6 +4156,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::expand_commit_editor))
+            .on_action(cx.listener(Self::toggle_untracked_section))
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
@@ -4946,5 +4996,108 @@ mod tests {
                 },),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_collapse_untracked_files_section(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+            "project": {
+                ".git": {},
+                "tracked.rs": "// tracked file",
+                "untracked.rs": "// untracked file",
+                "new_file.txt": "new content"
+            },
+        }),
+        )
+            .await;
+
+        fs.set_status_for_repo(
+            Path::new("/root/project/.git"),
+            &[
+                (Path::new("tracked.rs"), StatusCode::Modified.worktree()),
+                (Path::new("untracked.rs"), StatusCode::Added.worktree()),
+                (Path::new("new_file.txt"), StatusCode::Added.worktree()),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/root/project")], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .nth(0)
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+            .await;
+
+        cx.executor().run_until_parked();
+
+        let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
+        let panel = cx.new_window_entity(|window, cx| {
+            GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
+        });
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        cx.update_window_entity(&panel, |panel, _, cx| {
+            let untracked_header_idx = panel.entries.iter().position(|e| {
+                matches!(e, GitListEntry::Header(h) if h.header == Section::New)
+            });
+            assert!(untracked_header_idx.is_some(), "Should have untracked header");
+
+            let untracked_files_count = panel.entries.iter().filter(|e| {
+                matches!(e, GitListEntry::GitStatusEntry(entry) if entry.status.is_created())
+            }).count();
+            assert_eq!(untracked_files_count, 2, "Should have 2 untracked files visible by default");
+
+            panel.collapse_untracked_files_section = true;
+            panel.update_visible_entries(cx);
+        });
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        panel.read_with(cx, |panel, _| {
+            let collapsed_untracked_files_count = panel.entries.iter().filter(|e| {
+                matches!(e, GitListEntry::GitStatusEntry(entry) if entry.status.is_created())
+            }).count();
+            assert_eq!(collapsed_untracked_files_count, 0, "Untracked files should be hidden when collapsed");
+        });
+
+        cx.update_window_entity(&panel, |panel, _, cx| {
+            panel.collapse_untracked_files_section = false;
+            panel.update_visible_entries(cx);
+        });
+
+        let handle = cx.update_window_entity(&panel, |panel, _, _| {
+            std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
+        });
+        cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
+        handle.await;
+
+        panel.read_with(cx, |panel, _| {
+            let expanded_untracked_files_count = panel.entries.iter().filter(|e| {
+                matches!(e, GitListEntry::GitStatusEntry(entry) if entry.status.is_created())
+            }).count();
+            assert_eq!(expanded_untracked_files_count, 2, "Untracked files should be visible when expanded");
+        });
     }
 }

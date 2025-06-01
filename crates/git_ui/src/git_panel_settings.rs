@@ -70,6 +70,11 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub sort_by_path: Option<bool>,
+
+    /// Whether untracked entries should be collapsed by default.
+    /// 
+    /// Default: false (expanded)
+    pub collapse_untracked_files_section: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -81,6 +86,7 @@ pub struct GitPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
+    pub collapse_untracked_files_section: bool,
 }
 
 impl Settings for GitPanelSettings {

@@ -694,7 +694,11 @@
       //
       // Default: inherits editor scrollbar settings
       "show": null
-    }
+    },
+    // Whether to show the untracked files section in the git panel
+    //
+    // Default: false
+    "collapse_untracked_files_section": false
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

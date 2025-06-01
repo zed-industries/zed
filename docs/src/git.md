@@ -23,6 +23,50 @@ In the panel you can see the state of your project at a glance—which repositor
 
 Zed monitors your repository so that changes you make on the command line are instantly reflected.
 
+### Git Panel Settings
+The Git Panel can be customized through your settings file. You can configure its appearance, behavior, and default states.
+To customize the Git Panel, add a git_panel object to your settings.json:
+```
+{
+  "git_panel": {
+    "collapse_untracked_files_section": true
+  }
+}
+```
+The `collapse_untracked_files_section` setting is particularly useful for projects with many generated or temporary files. When enabled, the untracked files section shows only a header with a chevron icon that you can click to expand and view the files.
+You can also toggle the untracked section visibility using the `git_panel::ToggleUntrackedSection` action, which can be bound to a custom keybinding in your keymap.
+
+```
+{
+  "bindings": {
+    "cmd-alt-u": "git_panel::ToggleUntrackedSection"
+  }
+}
+```
+
+Important: This action works when the Git Panel is focused! If you want to toggle the untracked section from anywhere in Zed, you can use: 
+
+```
+{
+  "bindings": {
+      "cmd-alt-shift-f": "git_panel::ToggleFocus",
+      "cmd-alt-shift-u": "git_panel::ToggleUntrackedSection"
+  }
+}
+```
+This way you can ensure the Git Panel is focused before toggling the untracked section.
+
+
+Available Git Panel settings include:
+
+ - `button`: Whether to show the Git Panel button in the status bar (default: true)
+ - `dock`: Where to dock the panel, either "left" or "right" (default: "left")
+ - `default_width`: Width of the panel in pixels (default: 360)
+ - `status_style`: How to display file status indicators, either "icon" or "label_color" (default: "icon")
+ - `fallback_branch_name`: Default branch name when Git's init.defaultBranch is not set (default: "main")
+ - `sort_by_path`: Sort entries by file path instead of by status (default: false)
+ - `collapse_untracked_files_section`: Whether untracked files should be collapsed by default (default: false)
+
 ## Project Diff
 
 You can see all of the changes captured by Git in Zed by opening the Project Diff ({#kb git::Diff}), accessible via the {#action git::Diff} action in the Command Palette or the Git Panel.
