@@ -3210,35 +3210,31 @@ async fn reorder_channel(
         .reorder_channel(channel_id, direction, session.user_id())
         .await?;
 
-    // Get the root channel to find all connections that need updates
-    let root_id = updated_channels
-        .first()
-        .map(|channel| channel.root_id())
-        .unwrap_or(channel_id);
+    if let Some(root_id) = updated_channels.first().map(|channel| channel.root_id()) {
+        let connection_pool = session.connection_pool().await;
+        for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
+            let channels = updated_channels
+                .iter()
+                .filter_map(|channel| {
+                    if role.can_see_channel(channel.visibility) {
+                        Some(channel.to_proto())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
 
-    let connection_pool = session.connection_pool().await;
-    for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
-        let channels = updated_channels
-            .iter()
-            .filter_map(|channel| {
-                if role.can_see_channel(channel.visibility) {
-                    Some(channel.to_proto())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+            if channels.is_empty() {
+                continue;
+            }
 
-        if channels.is_empty() {
-            continue;
+            let update = proto::UpdateChannels {
+                channels,
+                ..Default::default()
+            };
+
+            session.peer.send(connection_id, update.clone())?;
         }
-
-        let update = proto::UpdateChannels {
-            channels,
-            ..Default::default()
-        };
-
-        session.peer.send(connection_id, update.clone())?;
     }
 
     response.send(Ack {})?;

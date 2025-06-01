@@ -1005,7 +1005,7 @@ impl Database {
         user_id: UserId,
     ) -> Result<Vec<Channel>> {
         self.transaction(|tx| async move {
-            let channel = self.get_channel_internal(channel_id, &tx).await?;
+            let mut channel = self.get_channel_internal(channel_id, &tx).await?;
 
             log::info!(
                 "Reordering channel {} (parent_path: '{}', order: {})",
@@ -1056,7 +1056,7 @@ impl Database {
                 }
             };
 
-            let sibling_channel = match sibling_channel {
+            let mut sibling_channel = match sibling_channel {
                 Some(sibling) => {
                     log::info!(
                         "Found sibling {} (parent_path: '{}', order: {})",
@@ -1068,15 +1068,10 @@ impl Database {
                 }
                 None => {
                     log::warn!("No sibling found to swap with");
-                    // No sibling to swap with, return current channel unchanged
-                    return Ok(vec![Channel::from_model(channel)]);
+                    // No sibling to swap with
+                    return Ok(vec![]);
                 }
             };
-
-            // Validate that we're not swapping identical orders
-            if channel.channel_order == sibling_channel.channel_order {
-                return Err(anyhow!("Channels have identical order values, cannot swap").into());
-            }
 
             // Swap the channel_order values atomically using a temporary value to avoid conflicts
             let current_order = channel.channel_order;
@@ -1089,6 +1084,7 @@ impl Database {
             }
             .update(&*tx)
             .await?;
+            sibling_channel.channel_order = current_order;
 
             channel::ActiveModel {
                 id: ActiveValue::Unchanged(channel.id),
@@ -1097,28 +1093,18 @@ impl Database {
             }
             .update(&*tx)
             .await?;
-
-            // Return only the two channels that were swapped
-            let updated_channel = channel::Entity::find_by_id(channel.id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("Channel not found after update"))?;
-
-            let updated_sibling = channel::Entity::find_by_id(sibling_channel.id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("Sibling channel not found after update"))?;
-
-            let swapped_channels = vec![
-                Channel::from_model(updated_channel),
-                Channel::from_model(updated_sibling),
-            ];
+            channel.channel_order = sibling_order;
 
             log::info!(
                 "Reorder complete. Swapped channels {} and {}",
                 channel.id,
                 sibling_channel.id
             );
+
+            let swapped_channels = vec![
+                Channel::from_model(channel),
+                Channel::from_model(sibling_channel),
+            ];
 
             Ok(swapped_channels)
         })

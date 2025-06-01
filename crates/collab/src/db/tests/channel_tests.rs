@@ -502,9 +502,8 @@ async fn test_channel_reordering(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    // Should return just gamma (no change)
-    assert_eq!(updated_channels.len(), 1);
-    assert_eq!(updated_channels[0].id, gamma_id);
+    // Should return just nothing
+    assert_eq!(updated_channels.len(), 0);
 
     // Test moving alpha down (should swap with gamma)
     let updated_channels = db
@@ -542,9 +541,8 @@ async fn test_channel_reordering(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    // Should return just beta (no change)
-    assert_eq!(updated_channels.len(), 1);
-    assert_eq!(updated_channels[0].id, beta_id);
+    // Should return nothing
+    assert_eq!(updated_channels.len(), 0);
 
     // Adding a channel to an existing ordering should add it to the end
     let delta_id = db
