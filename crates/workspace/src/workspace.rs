@@ -119,12 +119,12 @@ use crate::persistence::{
 fn debug_color_name(color: Hsla) -> &'static str {
     let h = color.h;
     println!("debug_color_name: hue={}", h);
-    
+
     // Define color names that match the pane color generation
     const COLOR_NAMES: &[&str] = &[
         "red",      // 0/12 = 0.0
         "orange",   // 1/12 = 0.083
-        "yellow",   // 2/12 = 0.167  
+        "yellow",   // 2/12 = 0.167
         "lime",     // 3/12 = 0.25
         "green",    // 4/12 = 0.333
         "teal",     // 5/12 = 0.417
@@ -135,7 +135,7 @@ fn debug_color_name(color: Hsla) -> &'static str {
         "pink",     // 10/12 = 0.833
         "brown"     // 11/12 = 0.917
     ];
-    
+
     // Calculate which color index this hue corresponds to
     let index = (h * COLOR_NAMES.len() as f32).round() as usize % COLOR_NAMES.len();
     COLOR_NAMES[index]
@@ -3610,6 +3610,7 @@ impl Workspace {
                 FocusTarget::Pane(p, b, p.read(cx).last_visit_ts)
             })
         });
+        println!("total number of panes: {}", panes.len());
 
         let docks = self.all_docks();
         let docks_iter = docks.iter().filter_map(|d| {
@@ -3640,6 +3641,7 @@ impl Workspace {
                 FocusTarget::Dock(d, b, last_visit_ts)
             })
         });
+        println!("total number of docks: {}", docks.len());
 
         let mut best: Option<FocusTarget> = None;
         let mut best_dist = f32::MAX;
@@ -3906,7 +3908,9 @@ impl Workspace {
     }
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
-        self.center.bounding_box_for_pane(pane)
+        let bounds = self.center.bounding_box_for_pane(pane);
+        println!("bounding_box_for_pane for {:?}: {:?}", Entity::entity_id(pane), bounds);
+        bounds
     }
 
     /// Bounding box of a dock's *visible chrome*.
@@ -3928,39 +3932,48 @@ impl Workspace {
             return None;
         }
 
-        // For navigation purposes, use a reasonable default size to avoid entity read conflicts
-        // during action handling. The exact size isn't critical for adjacency detection.
-        let panel_size = match position {
-            DockPosition::Left | DockPosition::Right => px(300.0), // Typical sidebar width
-            DockPosition::Bottom => px(250.0),                     // Typical bottom panel height
-        };
+        // Get the actual dock size instead of using hardcoded fallbacks
+        let panel_size = dock.read(cx).active_panel_size(_window, cx).unwrap_or_else(|| {
+            // Fallback to reasonable defaults if no active panel
+            match position {
+                DockPosition::Left | DockPosition::Right => px(300.0),
+                DockPosition::Bottom => px(250.0),
+            }
+        });
 
+        let window_bounds = _window.window_bounds().get_bounds();
+        println!("workspace bounds: {:?}", self.bounds);
+        println!("window bounds: {:?}", window_bounds);
+        
+        // Use window bounds instead of workspace bounds for more accurate sizing
+        let workspace_bounds = window_bounds;
+        
         // Calculate dock bounds based on position and panel size
         let bounds = match position {
             DockPosition::Left => Some(Bounds {
-                origin: self.bounds.origin,
+                origin: workspace_bounds.origin,
                 size: Size {
                     width: panel_size,
-                    height: self.bounds.size.height,
+                    height: workspace_bounds.size.height,
                 },
             }),
             DockPosition::Right => Some(Bounds {
                 origin: Point {
-                    x: self.bounds.origin.x + self.bounds.size.width - panel_size,
-                    y: self.bounds.origin.y,
+                    x: workspace_bounds.origin.x + workspace_bounds.size.width - panel_size,
+                    y: workspace_bounds.origin.y,
                 },
                 size: Size {
                     width: panel_size,
-                    height: self.bounds.size.height,
+                    height: workspace_bounds.size.height,
                 },
             }),
             DockPosition::Bottom => Some(Bounds {
                 origin: Point {
-                    x: self.bounds.origin.x,
-                    y: self.bounds.origin.y + self.bounds.size.height - panel_size,
+                    x: workspace_bounds.origin.x,
+                    y: workspace_bounds.origin.y + workspace_bounds.size.height - panel_size,
                 },
                 size: Size {
-                    width: self.bounds.size.width,
+                    width: workspace_bounds.size.width,
                     height: panel_size,
                 },
             }),
@@ -6280,6 +6293,9 @@ impl Render for Workspace {
                                             this.update(cx, |this, cx| {
                                                 let bounds_changed = this.bounds != bounds;
                                                 this.bounds = bounds;
+                                                
+                                                // Update center pane group bounds for single pane navigation
+                                                this.center.set_single_pane_bounds(bounds);
 
                                                 if bounds_changed {
                                                     this.left_dock.update(cx, |dock, cx| {

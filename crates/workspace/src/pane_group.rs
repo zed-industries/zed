@@ -28,6 +28,8 @@ const VERTICAL_MIN_SIZE: f32 = 100.;
 #[derive(Clone)]
 pub struct PaneGroup {
     pub root: Member,
+    /// Bounds for the root when it's a single pane
+    single_pane_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
 }
 
 pub struct PaneRenderResult {
@@ -37,12 +39,16 @@ pub struct PaneRenderResult {
 
 impl PaneGroup {
     pub fn with_root(root: Member) -> Self {
-        Self { root }
+        Self { 
+            root,
+            single_pane_bounds: Arc::new(Mutex::new(None)),
+        }
     }
 
     pub fn new(pane: Entity<Pane>) -> Self {
         Self {
             root: Member::Pane(pane),
+            single_pane_bounds: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -67,7 +73,16 @@ impl PaneGroup {
 
     pub fn bounding_box_for_pane(&self, pane: &Entity<Pane>) -> Option<Bounds<Pixels>> {
         match &self.root {
-            Member::Pane(_) => None,
+            Member::Pane(root_pane) => {
+                // For a single pane, check if it matches the requested pane
+                if pane == root_pane {
+                    let bounds = *self.single_pane_bounds.lock();
+                    println!("Single pane matches, bounds: {:?}", bounds);
+                    bounds
+                } else {
+                    None
+                }
+            },
             Member::Axis(axis) => axis.bounding_box_for_pane(pane),
         }
     }
@@ -134,6 +149,11 @@ impl PaneGroup {
         cx: &mut App,
     ) -> impl IntoElement {
         self.root.render(0, zoomed, render_cx, window, cx).element
+    }
+    
+    /// Set bounds for a single pane (used during layout)
+    pub fn set_single_pane_bounds(&self, bounds: Bounds<Pixels>) {
+        *self.single_pane_bounds.lock() = Some(bounds);
     }
 
     pub fn panes(&self) -> Vec<&Entity<Pane>> {
