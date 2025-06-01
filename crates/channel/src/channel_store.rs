@@ -1044,6 +1044,18 @@ impl ChannelStore {
         });
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn reset(&mut self) {
+        self.channel_invitations.clear();
+        self.channel_index.clear();
+        self.channel_participants.clear();
+        self.outgoing_invites.clear();
+        self.opened_buffers.clear();
+        self.opened_chats.clear();
+        self.disconnect_channel_buffers_task = None;
+        self.channel_states.clear();
+    }
+
     pub(crate) fn update_channels(
         &mut self,
         payload: proto::UpdateChannels,
