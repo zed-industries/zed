@@ -6,7 +6,7 @@ use crate::{
     Background, Bounds, ContentMask, DevicePixels, GpuSpecs, MonochromeSprite, PathVertex,
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
 };
-use blade_graphics::{self as gpu, DrawIndirectArgs};
+use blade_graphics::{self as gpu};
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 #[cfg(target_os = "macos")]
@@ -103,6 +103,22 @@ struct ShaderSurfacesData {
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
     color: Background,
+}
+
+/// Argument buffer layout for `draw_indirect` commands.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
+pub struct DrawIndirectArgs {
+    /// The number of vertices to draw.
+    pub vertex_count: u32,
+    /// The number of instances to draw.
+    pub instance_count: u32,
+    /// The Index of the first vertex to draw.
+    pub first_vertex: u32,
+    /// The instance ID of the first instance to draw.
+    ///
+    /// Has to be 0, unless [`Features::INDIRECT_FIRST_INSTANCE`](crate::Features::INDIRECT_FIRST_INSTANCE) is enabled.
+    pub first_instance: u32,
 }
 
 struct BladePipelines {
@@ -649,7 +665,11 @@ impl BladeRenderer {
                                 b_path_sprites: instance_buf,
                             },
                         );
-                        encoder.draw_indirect(indirect_buf, paths.len() as u32);
+
+                        for i in 0..paths.len() {
+                            encoder.draw_indirect(indirect_buf.buffer.at(indirect_buf.offset
+                                + (i * mem::size_of::<DrawIndirectArgs>()) as u64));
+                        }
                     }
                     PrimitiveBatch::Underlines(underlines) => {
                         let instance_buf =
