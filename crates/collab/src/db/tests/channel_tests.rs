@@ -427,13 +427,13 @@ async fn test_channel_reordering(db: &Arc<Database>) {
 
     // Initial order should be: root, alpha (order=1), beta (order=2), gamma (order=3)
     let result = db.get_channels_for_user(admin_id).await.unwrap();
-    assert_channel_tree(
+    assert_channel_tree_order(
         result.channels,
         &[
-            (root_id, &[]),
-            (alpha_id, &[root_id]),
-            (beta_id, &[root_id]),
-            (gamma_id, &[root_id]),
+            (root_id, &[], 1),
+            (alpha_id, &[root_id], 1),
+            (beta_id, &[root_id], 2),
+            (gamma_id, &[root_id], 3),
         ],
     );
 
@@ -451,13 +451,13 @@ async fn test_channel_reordering(db: &Arc<Database>) {
 
     // Now order should be: root, beta (order=1), alpha (order=2), gamma (order=3)
     let result = db.get_channels_for_user(admin_id).await.unwrap();
-    assert_channel_tree(
+    assert_channel_tree_order(
         result.channels,
         &[
-            (root_id, &[]),
-            (beta_id, &[root_id]),
-            (alpha_id, &[root_id]),
-            (gamma_id, &[root_id]),
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (alpha_id, &[root_id], 2),
+            (gamma_id, &[root_id], 3),
         ],
     );
 
@@ -485,13 +485,13 @@ async fn test_channel_reordering(db: &Arc<Database>) {
 
     // Now order should be: root, beta (order=1), gamma (order=2), alpha (order=3)
     let result = db.get_channels_for_user(admin_id).await.unwrap();
-    assert_channel_tree(
+    assert_channel_tree_order(
         result.channels,
         &[
-            (root_id, &[]),
-            (beta_id, &[root_id]),
-            (gamma_id, &[root_id]),
-            (alpha_id, &[root_id]),
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (gamma_id, &[root_id], 2),
+            (alpha_id, &[root_id], 3),
         ],
     );
 
@@ -895,6 +895,24 @@ fn assert_channel_tree(actual: Vec<Channel>, expected: &[(ChannelId, &[ChannelId
     let expected = expected
         .iter()
         .map(|(id, parents)| (*id, *parents))
+        .collect::<HashSet<_>>();
+    pretty_assertions::assert_eq!(actual, expected, "wrong channel ids and parent paths");
+}
+
+fn assert_channel_tree_order(actual: Vec<Channel>, expected: &[(ChannelId, &[ChannelId], i32)]) {
+    let actual = actual
+        .iter()
+        .map(|channel| {
+            (
+                channel.id,
+                channel.parent_path.as_slice(),
+                channel.channel_order,
+            )
+        })
+        .collect::<HashSet<_>>();
+    let expected = expected
+        .iter()
+        .map(|(id, parents, order)| (*id, *parents, *order))
         .collect::<HashSet<_>>();
     pretty_assertions::assert_eq!(actual, expected, "wrong channel ids and parent paths");
 }

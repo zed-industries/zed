@@ -1083,50 +1083,10 @@ impl Database {
                 return Err(anyhow!("Channels have identical order values, cannot swap").into());
             }
 
-            // Bounds checking for channel_order values
-            const MIN_CHANNEL_ORDER: i32 = 1;
-            const MAX_CHANNEL_ORDER: i32 = 999_999;
-
-            if channel.channel_order < MIN_CHANNEL_ORDER
-                || channel.channel_order > MAX_CHANNEL_ORDER
-            {
-                return Err(anyhow!(
-                    "Channel order {} is out of valid range ({}-{})",
-                    channel.channel_order,
-                    MIN_CHANNEL_ORDER,
-                    MAX_CHANNEL_ORDER
-                )
-                .into());
-            }
-
-            if sibling_channel.channel_order < MIN_CHANNEL_ORDER
-                || sibling_channel.channel_order > MAX_CHANNEL_ORDER
-            {
-                return Err(anyhow!(
-                    "Sibling channel order {} is out of valid range ({}-{})",
-                    sibling_channel.channel_order,
-                    MIN_CHANNEL_ORDER,
-                    MAX_CHANNEL_ORDER
-                )
-                .into());
-            }
-
             // Swap the channel_order values atomically using a temporary value to avoid conflicts
             let current_order = channel.channel_order;
             let sibling_order = sibling_channel.channel_order;
-            let temp_order = i32::MAX; // Use max value as temporary to avoid conflicts
 
-            // Three-step swap to avoid unique constraint violations
-            // Step 1: Set current channel to temp value
-            channel::ActiveModel {
-                id: ActiveValue::Unchanged(channel.id),
-                channel_order: ActiveValue::Set(temp_order),
-                ..Default::default()
-            }
-            .update(&*tx)
-            .await?;
-
-            // Step 2: Set sibling to current's original value
             channel::ActiveModel {
                 id: ActiveValue::Unchanged(sibling_channel.id),
                 channel_order: ActiveValue::Set(current_order),
@@ -1135,7 +1095,6 @@ impl Database {
             .update(&*tx)
             .await?;
 
-            // Step 3: Set current to sibling's original value
             channel::ActiveModel {
                 id: ActiveValue::Unchanged(channel.id),
                 channel_order: ActiveValue::Set(sibling_order),
