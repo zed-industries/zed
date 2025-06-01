@@ -1248,7 +1248,9 @@ impl Pane {
 
             return None;
         };
+
         let active_item_id = self.active_item_id();
+
         Some(self.close_item_by_id(
             active_item_id,
             action.save_intent.unwrap_or(SaveIntent::Close),
@@ -1317,21 +1319,15 @@ impl Pane {
         action: &CloseItemsToTheLeft,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Task<Result<()>> {
         if self.items.is_empty() {
-            return None;
+            return Task::ready(Ok(()));
         }
 
         let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
 
-        Some(self.close_items_to_the_left_by_id(
-            active_item_id,
-            action,
-            pinned_item_ids,
-            window,
-            cx,
-        ))
+        self.close_items_to_the_left_by_id(active_item_id, action, pinned_item_ids, window, cx)
     }
 
     pub fn close_items_to_the_left_by_id(
@@ -1359,19 +1355,15 @@ impl Pane {
         action: &CloseItemsToTheRight,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Task<Result<()>> {
         if self.items.is_empty() {
-            return None;
+            return Task::ready(Ok(()));
         }
+
         let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
-        Some(self.close_items_to_the_right_by_id(
-            active_item_id,
-            action,
-            pinned_item_ids,
-            window,
-            cx,
-        ))
+
+        self.close_items_to_the_right_by_id(active_item_id, action, pinned_item_ids, window, cx)
     }
 
     pub fn close_items_to_the_right_by_id(
@@ -3342,16 +3334,14 @@ impl Render for Pane {
             )
             .on_action(cx.listener(
                 |pane: &mut Self, action: &CloseItemsToTheLeft, window, cx| {
-                    if let Some(task) = pane.close_items_to_the_left(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_items_to_the_left(action, window, cx)
+                        .detach_and_log_err(cx)
                 },
             ))
             .on_action(cx.listener(
                 |pane: &mut Self, action: &CloseItemsToTheRight, window, cx| {
-                    if let Some(task) = pane.close_items_to_the_right(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_items_to_the_right(action, window, cx)
+                        .detach_and_log_err(cx)
                 },
             ))
             .on_action(
@@ -4492,7 +4482,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["C*", "D", "E"], cx);
@@ -4519,7 +4508,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
@@ -4762,6 +4750,94 @@ mod tests {
         });
         //  Non-pinned tab of other pane should be active
         assert_item_labels(&pane2, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn ensure_item_closing_actions_do_not_panic_when_no_items_exist(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        assert_item_labels(&pane, [], cx);
+
+        // pane.update_in(cx, |pane, window, cx| {
+        //     pane.close_active_item(
+        //         &CloseActiveItem {
+        //             save_intent: None,
+        //             close_pinned: false,
+        //         },
+        //         window,
+        //         cx,
+        //     )
+        // })
+        // .unwrap()
+        // .await
+        // .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(
+                &CloseInactiveItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_clean_items(
+                &CloseCleanItems {
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items_to_the_right(
+                &CloseItemsToTheRight {
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items_to_the_left(
+                &CloseItemsToTheLeft {
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
     }
 
     fn init_test(cx: &mut TestAppContext) {
