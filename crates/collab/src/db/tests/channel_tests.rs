@@ -313,8 +313,8 @@ async fn test_channel_renames(db: &Arc<Database>) {
 
 test_both_dbs!(
     test_db_channel_moving,
-    test_channels_moving_postgres,
-    test_channels_moving_sqlite
+    test_db_channel_moving_postgres,
+    test_db_channel_moving_sqlite
 );
 
 async fn test_db_channel_moving(db: &Arc<Database>) {
@@ -343,16 +343,14 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let livestreaming_dag_id = db
-        .create_sub_channel("livestreaming_dag", livestreaming_id, a_id)
+    let livestreaming_sub_id = db
+        .create_sub_channel("livestreaming_sub", livestreaming_id, a_id)
         .await
         .unwrap();
 
-    // ========================================================================
     // sanity check
-    // Initial DAG:
     //     /- gpui2
-    // zed -- crdb - livestreaming - livestreaming_dag
+    // zed -- crdb - livestreaming - livestreaming_sub
     let result = db.get_channels_for_user(a_id).await.unwrap();
     assert_channel_tree(
         result.channels,
@@ -360,8 +358,45 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
             (zed_id, &[]),
             (crdb_id, &[zed_id]),
             (livestreaming_id, &[zed_id, crdb_id]),
-            (livestreaming_dag_id, &[zed_id, crdb_id, livestreaming_id]),
+            (livestreaming_sub_id, &[zed_id, crdb_id, livestreaming_id]),
             (gpui2_id, &[zed_id]),
+        ],
+    );
+
+    // Check that we can do a simple leaf -> leaf move
+    db.move_channel(livestreaming_sub_id, crdb_id, a_id)
+        .await
+        .unwrap();
+
+    //     /- gpui2
+    // zed -- crdb -- livestreaming
+    //             \- livestreaming_sub
+    let result = db.get_channels_for_user(a_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (zed_id, &[]),
+            (crdb_id, &[zed_id]),
+            (livestreaming_id, &[zed_id, crdb_id]),
+            (livestreaming_sub_id, &[zed_id, crdb_id]),
+            (gpui2_id, &[zed_id]),
+        ],
+    );
+
+    // Check that we can move a whole subtree at once
+    db.move_channel(crdb_id, gpui2_id, a_id).await.unwrap();
+
+    // zed -- gpui2 -- crdb -- livestreaming
+    //                      \- livestreaming_sub
+    let result = db.get_channels_for_user(a_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (zed_id, &[]),
+            (gpui2_id, &[zed_id]),
+            (crdb_id, &[zed_id, gpui2_id]),
+            (livestreaming_id, &[zed_id, gpui2_id, crdb_id]),
+            (livestreaming_sub_id, &[zed_id, gpui2_id, crdb_id]),
         ],
     );
 }
@@ -510,6 +545,57 @@ async fn test_channel_reordering(db: &Arc<Database>) {
     // Should return just beta (no change)
     assert_eq!(updated_channels.len(), 1);
     assert_eq!(updated_channels[0].id, beta_id);
+
+    // Adding a channel to an existing ordering should add it to the end
+    let delta_id = db
+        .create_sub_channel("delta", root_id, admin_id)
+        .await
+        .unwrap();
+
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (gamma_id, &[root_id], 2),
+            (alpha_id, &[root_id], 3),
+            (delta_id, &[root_id], 4),
+        ],
+    );
+
+    // And moving a channel into an existing ordering should add it to the end
+    let eta_id = db
+        .create_sub_channel("eta", delta_id, admin_id)
+        .await
+        .unwrap();
+
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (gamma_id, &[root_id], 2),
+            (alpha_id, &[root_id], 3),
+            (delta_id, &[root_id], 4),
+            (eta_id, &[root_id, delta_id], 1),
+        ],
+    );
+
+    db.move_channel(eta_id, root_id, admin_id).await.unwrap();
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (gamma_id, &[root_id], 2),
+            (alpha_id, &[root_id], 3),
+            (delta_id, &[root_id], 4),
+            (eta_id, &[root_id], 5),
+        ],
+    );
 }
 
 test_both_dbs!(
@@ -557,6 +643,20 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
 
     // Can't move a channel into its ancestor
     db.move_channel(projects_id, livestreaming_id, user_id)
+        .await
+        .unwrap_err();
+    let result = db.get_channels_for_user(user_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (zed_id, &[]),
+            (projects_id, &[zed_id]),
+            (livestreaming_id, &[zed_id, projects_id]),
+        ],
+    );
+
+    // Can't un-root a root channel
+    db.move_channel(zed_id, livestreaming_id, user_id)
         .await
         .unwrap_err();
     let result = db.get_channels_for_user(user_id).await.unwrap();
@@ -899,6 +999,7 @@ fn assert_channel_tree(actual: Vec<Channel>, expected: &[(ChannelId, &[ChannelId
     pretty_assertions::assert_eq!(actual, expected, "wrong channel ids and parent paths");
 }
 
+#[track_caller]
 fn assert_channel_tree_order(actual: Vec<Channel>, expected: &[(ChannelId, &[ChannelId], i32)]) {
     let actual = actual
         .iter()

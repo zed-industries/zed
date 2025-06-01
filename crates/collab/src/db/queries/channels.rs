@@ -64,15 +64,7 @@ impl Database {
                 .map_or(String::new(), |parent| parent.path());
 
             // Find the maximum channel_order among siblings to set the new channel at the end
-            let max_order = channel::Entity::find()
-                .filter(channel::Column::ParentPath.eq(&parent_path))
-                .select_only()
-                .column_as(channel::Column::ChannelOrder.max(), "max_order")
-                .into_tuple::<Option<i32>>()
-                .one(&*tx)
-                .await?
-                .flatten()
-                .unwrap_or(0);
+            let max_order = max_order(&parent_path, &tx).await?;
 
             log::info!(
                 "Creating channel '{}' with parent_path='{}', max_order={}, new_order={}",
@@ -968,11 +960,14 @@ impl Database {
             }
 
             let root_id = channel.root_id();
+            let new_parent_path = new_parent.path();
             let old_path = format!("{}{}/", channel.parent_path, channel.id);
-            let new_path = format!("{}{}/", new_parent.path(), channel.id);
+            let new_path = format!("{}{}/", &new_parent_path, channel.id);
+            let new_order = max_order(&new_parent_path, &tx).await? + 1;
 
             let mut model = channel.into_active_model();
             model.parent_path = ActiveValue::Set(new_parent.path());
+            model.channel_order = ActiveValue::Set(new_order);
             let channel = model.update(&*tx).await?;
 
             let descendent_ids =
@@ -1129,6 +1124,20 @@ impl Database {
         })
         .await
     }
+}
+
+async fn max_order(parent_path: &str, tx: &TransactionHandle) -> Result<i32> {
+    let max_order = channel::Entity::find()
+        .filter(channel::Column::ParentPath.eq(parent_path))
+        .select_only()
+        .column_as(channel::Column::ChannelOrder.max(), "max_order")
+        .into_tuple::<Option<i32>>()
+        .one(&**tx)
+        .await?
+        .flatten()
+        .unwrap_or(0);
+
+    Ok(max_order)
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
