@@ -250,6 +250,13 @@ impl TerminalView {
         cx.notify();
     }
 
+    pub fn is_content_limited(&self) -> bool {
+        match &self.mode {
+            TerminalMode::Scrollable => false,
+            TerminalMode::Embedded { max_lines } => max_lines.is_some(),
+        }
+    }
+
     /// Sets the marked (pre-edit) text from the IME.
     pub(crate) fn set_marked_text(
         &mut self,

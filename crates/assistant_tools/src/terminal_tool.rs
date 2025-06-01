@@ -1,4 +1,7 @@
-use crate::schema::json_schema_for;
+use crate::{
+    schema::json_schema_for,
+    ui::{COLLAPSED_LINES, ToolOutputPreview},
+};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
@@ -634,8 +637,27 @@ impl ToolCard for TerminalToolCard {
                         .bg(cx.theme().colors().editor_background)
                         .rounded_b_md()
                         .text_ui_sm(cx)
-                        .child(terminal.clone()),
-                ).child()
+                        .child(
+                            ToolOutputPreview::new(terminal.clone().into())
+                                .with_total_lines(self.content_line_count)
+                                .toggle_state(terminal.read(cx).is_content_limited())
+                                .on_toggle({
+                                    let terminal = terminal.clone();
+                                    move |is_expanded, _, cx| {
+                                        terminal.update(cx, |terminal, cx| {
+                                            terminal.set_embedded_mode(
+                                                if is_expanded {
+                                                    None
+                                                } else {
+                                                    Some(COLLAPSED_LINES)
+                                                },
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                        ),
+                )
             })
             .into_any()
     }
