@@ -114,22 +114,31 @@ use crate::persistence::{
     model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
 };
 
+
 #[cfg(debug_assertions)]
 fn debug_color_name(color: Hsla) -> &'static str {
     let h = color.h;
-    if h < 30.0 / 360.0 || h >= 330.0 / 360.0 {
-        "red"
-    } else if h < 90.0 / 360.0 {
-        "yellow"
-    } else if h < 150.0 / 360.0 {
-        "green"
-    } else if h < 210.0 / 360.0 {
-        "cyan"
-    } else if h < 270.0 / 360.0 {
-        "blue"
-    } else {
-        "magenta"
-    }
+    println!("debug_color_name: hue={}", h);
+    
+    // Define color names that match the pane color generation
+    const COLOR_NAMES: &[&str] = &[
+        "red",      // 0/12 = 0.0
+        "orange",   // 1/12 = 0.083
+        "yellow",   // 2/12 = 0.167  
+        "lime",     // 3/12 = 0.25
+        "green",    // 4/12 = 0.333
+        "teal",     // 5/12 = 0.417
+        "cyan",     // 6/12 = 0.5
+        "blue",     // 7/12 = 0.583
+        "purple",   // 8/12 = 0.667
+        "magenta",  // 9/12 = 0.75
+        "pink",     // 10/12 = 0.833
+        "brown"     // 11/12 = 0.917
+    ];
+    
+    // Calculate which color index this hue corresponds to
+    let index = (h * COLOR_NAMES.len() as f32).round() as usize % COLOR_NAMES.len();
+    COLOR_NAMES[index]
 }
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
@@ -3605,12 +3614,6 @@ impl Workspace {
         let docks = self.all_docks();
         let docks_iter = docks.iter().filter_map(|d| {
             // Read dock state once and extract what we need
-            #[cfg(debug_assertions)]
-            let (is_open, last_visit_ts, position, debug_color) = {
-                let dock_read = d.read(cx);
-                (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position(), dock_read.debug_color)
-            };
-            #[cfg(not(debug_assertions))]
             let (is_open, last_visit_ts, position) = {
                 let dock_read = d.read(cx);
                 (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position())
@@ -3618,7 +3621,7 @@ impl Workspace {
 
             if !is_open {
                 #[cfg(debug_assertions)]
-                println!("dock {:?} ({}) closed", position, debug_color_name(debug_color));
+                println!("dock {:?} ({}) closed", position, debug_color_name(d.read(cx).debug_color));
                 #[cfg(not(debug_assertions))]
                 println!("dock {:?} closed", position);
                 return None;
@@ -3629,15 +3632,7 @@ impl Workspace {
                 println!(
                     "candidate dock {:?} ({}) -> {:?}",
                     position,
-                    debug_color_name(debug_color),
-                    b
-                );
-                #[cfg(not(debug_assertions))]
-                #[cfg(debug_assertions)]
-                println!(
-                    "candidate dock {:?} ({}) -> {:?}",
-                    position,
-                    debug_color_name(debug_color),
+                    debug_color_name(d.read(cx).debug_color),
                     b
                 );
                 #[cfg(not(debug_assertions))]
@@ -3748,12 +3743,6 @@ impl Workspace {
         });
 
         let docks_iter = docks.iter().filter_map(|d| {
-            #[cfg(debug_assertions)]
-            let (is_open, last_visit_ts, position, debug_color) = {
-                let dock_read = d.read(cx);
-                (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position(), dock_read.debug_color)
-            };
-            #[cfg(not(debug_assertions))]
             let (is_open, last_visit_ts, position) = {
                 let dock_read = d.read(cx);
                 (dock_read.is_open(), dock_read.last_visit_ts, dock_read.position())
@@ -3768,7 +3757,7 @@ impl Workspace {
                 println!(
                     "circular candidate dock {:?} ({}) -> {:?}",
                     position,
-                    debug_color_name(debug_color),
+                    debug_color_name(d.read(cx).debug_color),
                     b
                 );
                 #[cfg(not(debug_assertions))]

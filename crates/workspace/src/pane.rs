@@ -28,8 +28,6 @@ use parking_lot::Mutex;
 
 #[cfg(debug_assertions)]
 use gpui::{Hsla, hsla};
-#[cfg(debug_assertions)]
-use rand::Rng;
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -356,9 +354,16 @@ pub struct ItemNavHistory {
 }
 
 #[cfg(debug_assertions)]
-fn random_debug_color() -> Hsla {
-    let mut rng = rand::thread_rng();
-    let h: f32 = rng.r#gen();
+fn debug_color_for_pane() -> Hsla {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static PANE_COLOR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+    const COLOR_COUNT: usize = 12;
+    
+    // Get next color index and wrap around
+    let color_index = PANE_COLOR_COUNTER.fetch_add(1, Ordering::Relaxed) % COLOR_COUNT;
+    
+    // Convert index to hue that will map back to the same index
+    let h = color_index as f32 / COLOR_COUNT as f32;
     hsla(h, 1.0, 0.5, 1.0)
 }
 
@@ -457,7 +462,7 @@ impl Pane {
             workspace,
             project: project.downgrade(),
             #[cfg(debug_assertions)]
-            debug_color: random_debug_color(),
+            debug_color: debug_color_for_pane(),
             can_drop_predicate,
             custom_drop_handle: None,
             can_split_predicate: None,

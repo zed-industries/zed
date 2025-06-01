@@ -15,9 +15,7 @@ use settings::SettingsStore;
 use std::sync::Arc;
 
 #[cfg(debug_assertions)]
-use gpui::{Hsla, hsla};
-#[cfg(debug_assertions)]
-use rand::Rng;
+use gpui::Hsla;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
 use ui::{prelude::*, right_click_menu};
 
@@ -254,10 +252,16 @@ pub struct PanelButtons {
 }
 
 #[cfg(debug_assertions)]
-fn random_debug_color() -> Hsla {
-    let mut rng = rand::thread_rng();
-    let h: f32 = rng.r#gen();
-    hsla(h, 1.0, 0.5, 1.0)
+fn debug_color_for_dock(position: DockPosition) -> Hsla {
+    // Use hex values for explicit RGB colors
+    let (color_hex, name) = match position {
+        DockPosition::Left => (0xFF0000FF, "red"),     // Pure red
+        DockPosition::Right => (0x00FF00FF, "green"),  // Pure green
+        DockPosition::Bottom => (0x8000FFFF, "purple"), // Purple
+    };
+    
+    println!("Dock {:?} assigned color {} (hex: 0x{:08X})", position, name, color_hex);
+    gpui::rgba(color_hex).into()
 }
 
 impl Dock {
@@ -295,7 +299,11 @@ impl Dock {
                 zoom_layer_open: false,
                 modal_layer,
                 #[cfg(debug_assertions)]
-                debug_color: random_debug_color(),
+                debug_color: {
+                    let color = debug_color_for_dock(position);
+                    println!("Creating dock {:?} with color {:?} (hue: {})", position, color, color.h);
+                    color
+                },
             }
         });
 
@@ -820,6 +828,17 @@ impl Render for Dock {
                     DockPosition::Left => this.border_r_1(),
                     DockPosition::Right => this.border_l_1(),
                     DockPosition::Bottom => this.border_t_1(),
+                })
+                // Re-apply border color after border styles to ensure it's not overridden
+                .border_color({
+                    #[cfg(debug_assertions)]
+                    {
+                        self.debug_color
+                    }
+                    #[cfg(not(debug_assertions))]
+                    {
+                        cx.theme().colors().border
+                    }
                 })
                 .child(
                     div()
