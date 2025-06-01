@@ -444,6 +444,30 @@ pub fn into_mistral(
         }
     }
 
+    // Mistral does not support "interstitial" user messages
+    // (e.g. a user message in between tool calls)
+    let mut non_user_messages = Vec::new();
+    let mut user_messages_after_tools = Vec::new();
+    let mut seen_tool = false;
+
+    for message in messages {
+        match message {
+            mistral::RequestMessage::Tool { .. } => {
+                seen_tool = true;
+                non_user_messages.push(message);
+            }
+            mistral::RequestMessage::User { .. } if seen_tool => {
+                user_messages_after_tools.push(message);
+            }
+            _ => {
+                non_user_messages.push(message);
+            }
+        }
+    }
+
+    non_user_messages.extend(user_messages_after_tools);
+    let messages = non_user_messages;
+
     mistral::Request {
         model,
         messages,
