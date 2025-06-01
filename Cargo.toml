@@ -22,6 +22,7 @@ members = [
     "crates/buffer_diff",
     "crates/call",
     "crates/channel",
+    "crates/channel_tools",
     "crates/cli",
     "crates/client",
     "crates/clock",
@@ -231,6 +232,7 @@ breadcrumbs = { path = "crates/breadcrumbs" }
 buffer_diff = { path = "crates/buffer_diff" }
 call = { path = "crates/call" }
 channel = { path = "crates/channel" }
+channel_tools = { path = "crates/channel_tools" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }

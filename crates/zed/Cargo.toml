@@ -32,6 +32,7 @@ backtrace = "0.3"
 breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
+channel_tools.workspace = true
 chrono.workspace = true
 clap.workspace = true
 cli.workspace = true

@@ -678,6 +678,7 @@ dependencies = [
  "handlebars 4.5.0",
  "html_to_markdown",
  "http_client",
+ "icons",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -686,6 +687,7 @@ dependencies = [
  "log",
  "lsp",
  "markdown",
+ "node_runtime",
  "open",
  "paths",
  "portable-pty",
@@ -694,7 +696,9 @@ dependencies = [
  "prompt_store",
  "rand 0.8.5",
  "regex",
+ "release_channel",
  "reqwest_client",
+ "rpc",
  "rust-embed",
  "schemars",
  "serde",
@@ -707,6 +711,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "terminal_view",
+ "text",
  "theme",
  "tree-sitter-rust",
  "ui",
@@ -1280,9 +1285,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.13.1"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93fcc8f365936c834db5514fc45aee5b1202d677e6b40e48468aaaa8183ca8c7"
+checksum = "19b756939cb2f8dc900aa6dcd505e6e2428e9cae7ff7b028c49e3946efa70878"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -1290,9 +1295,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.29.0"
+version = "0.28.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61b1d86e7705efe1be1b569bab41d4fa1e14e220b60a160f78de2db687add079"
+checksum = "bfa9b6986f250236c27e5a204062434a773a13243d2ffc2955f37bdba4c5c6a1"
 dependencies = [
  "bindgen 0.69.5",
  "cc",
@@ -2664,6 +2669,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "channel_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant_tool",
+ "channel",
+ "client",
+ "clock",
+ "collections",
+ "editor",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "http_client",
+ "icons",
+ "language",
+ "language_model",
+ "log",
+ "node_runtime",
+ "project",
+ "release_channel",
+ "rpc",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "tempfile",
+ "text",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3545,9 +3583,9 @@ dependencies = [
 
 [[package]]
 name = "cosmic-text"
-version = "0.14.0"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e1ecbb5db9a4c2ee642df67bcfa8f044dd867dbbaa21bfab139cbc204ffbf67"
+checksum = "da46a9d5a8905cc538a4a5bceb6a4510de7a51049c5588c0114efce102bcbbe8"
 dependencies = [
  "bitflags 2.9.0",
  "fontdb 0.16.2",
@@ -19707,6 +19745,7 @@ dependencies = [
  "breadcrumbs",
  "call",
  "channel",
+ "channel_tools",
  "chrono",
  "clap",
  "cli",

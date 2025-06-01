@@ -21,6 +21,7 @@ assistant_tool.workspace = true
 async-watch.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
+client.workspace = true
 collections.workspace = true
 component.workspace = true
 derive_more.workspace = true
@@ -31,6 +32,7 @@ gpui.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
 html_to_markdown.workspace = true
 http_client.workspace = true
+icons.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -44,6 +46,8 @@ portable-pty.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 regex.workspace = true
+release_channel.workspace = true
+rpc.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -55,6 +59,7 @@ strsim.workspace = true
 task.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
+text.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -72,13 +77,16 @@ collections = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
 fs = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 language_models.workspace = true
+node_runtime = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 pretty_assertions.workspace = true
 reqwest_client.workspace = true
+rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"]}
 tempfile.workspace = true
