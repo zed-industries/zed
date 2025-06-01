@@ -36,7 +36,7 @@ impl Vim {
                     });
                 });
             });
-            self.switch_mode(Mode::Normal, true, window, cx);
+            self.switch_mode(Mode::Normal, false, window, cx);
             return;
         }
 
