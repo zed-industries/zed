@@ -1205,7 +1205,7 @@ impl Pane {
         action: &CloseActiveItem,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Task<Result<()>> {
         if self.items.is_empty() {
             // Close the window when there's no active items to close, if configured
             if WorkspaceSettings::get_global(cx)
@@ -1215,7 +1215,7 @@ impl Pane {
                 window.dispatch_action(Box::new(CloseWindow), cx);
             }
 
-            return None;
+            return Task::ready(Ok(()));
         }
         if self.is_tab_pinned(self.active_item_index) && !action.close_pinned {
             // Activate any non-pinned tab in same pane
@@ -1226,7 +1226,7 @@ impl Pane {
                 .map(|(index, _item)| index);
             if let Some(index) = non_pinned_tab_index {
                 self.activate_item(index, false, false, window, cx);
-                return None;
+                return Task::ready(Ok(()));
             }
 
             // Activate any non-pinned tab in different pane
@@ -1246,15 +1246,17 @@ impl Pane {
                 })
                 .ok();
 
-            return None;
+            return Task::ready(Ok(()));
         };
+
         let active_item_id = self.active_item_id();
-        Some(self.close_item_by_id(
+
+        self.close_item_by_id(
             active_item_id,
             action.save_intent.unwrap_or(SaveIntent::Close),
             window,
             cx,
-        ))
+        )
     }
 
     pub fn close_item_by_id(
@@ -1317,21 +1319,15 @@ impl Pane {
         action: &CloseItemsToTheLeft,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Task<Result<()>> {
         if self.items.is_empty() {
-            return None;
+            return Task::ready(Ok(()));
         }
 
         let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
 
-        Some(self.close_items_to_the_left_by_id(
-            active_item_id,
-            action,
-            pinned_item_ids,
-            window,
-            cx,
-        ))
+        self.close_items_to_the_left_by_id(active_item_id, action, pinned_item_ids, window, cx)
     }
 
     pub fn close_items_to_the_left_by_id(
@@ -1359,19 +1355,15 @@ impl Pane {
         action: &CloseItemsToTheRight,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Task<Result<()>> {
         if self.items.is_empty() {
-            return None;
+            return Task::ready(Ok(()));
         }
+
         let active_item_id = self.active_item_id();
         let pinned_item_ids = self.pinned_item_ids();
-        Some(self.close_items_to_the_right_by_id(
-            active_item_id,
-            action,
-            pinned_item_ids,
-            window,
-            cx,
-        ))
+
+        self.close_items_to_the_right_by_id(active_item_id, action, pinned_item_ids, window, cx)
     }
 
     pub fn close_items_to_the_right_by_id(
@@ -3323,9 +3315,8 @@ impl Render for Pane {
             })
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, window, cx| {
-                    if let Some(task) = pane.close_active_item(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_active_item(action, window, cx)
+                        .detach_and_log_err(cx)
                 }),
             )
             .on_action(
@@ -3342,16 +3333,14 @@ impl Render for Pane {
             )
             .on_action(cx.listener(
                 |pane: &mut Self, action: &CloseItemsToTheLeft, window, cx| {
-                    if let Some(task) = pane.close_items_to_the_left(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_items_to_the_left(action, window, cx)
+                        .detach_and_log_err(cx)
                 },
             ))
             .on_action(cx.listener(
                 |pane: &mut Self, action: &CloseItemsToTheRight, window, cx| {
-                    if let Some(task) = pane.close_items_to_the_right(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_items_to_the_right(action, window, cx)
+                        .detach_and_log_err(cx)
                 },
             ))
             .on_action(
@@ -3362,9 +3351,8 @@ impl Render for Pane {
             )
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, window, cx| {
-                    if let Some(task) = pane.close_active_item(action, window, cx) {
-                        task.detach_and_log_err(cx)
-                    }
+                    pane.close_active_item(action, window, cx)
+                        .detach_and_log_err(cx)
                 }),
             )
             .on_action(
@@ -3776,31 +3764,7 @@ mod tests {
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
-
-    #[gpui::test]
-    async fn test_remove_active_empty(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-
-        let project = Project::test(fs, None, cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-
-        pane.update_in(cx, |pane, window, cx| {
-            assert!(
-                pane.close_active_item(
-                    &CloseActiveItem {
-                        save_intent: None,
-                        close_pinned: false
-                    },
-                    window,
-                    cx
-                )
-                .is_none()
-            )
-        });
-    }
+    use util::TryFutureExt;
 
     #[gpui::test]
     async fn test_add_item_capped_to_max_tabs(cx: &mut TestAppContext) {
@@ -4147,7 +4111,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
@@ -4167,7 +4130,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C"], cx);
@@ -4182,7 +4144,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "C*"], cx);
@@ -4197,7 +4158,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
@@ -4240,7 +4200,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*", "D"], cx);
@@ -4260,7 +4219,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
@@ -4275,7 +4233,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B*"], cx);
@@ -4290,7 +4247,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A*"], cx);
@@ -4333,7 +4289,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
@@ -4353,7 +4308,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
@@ -4373,7 +4327,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["B*", "C"], cx);
@@ -4388,7 +4341,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["C*"], cx);
@@ -4492,7 +4444,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["C*", "D", "E"], cx);
@@ -4519,7 +4470,6 @@ mod tests {
                 cx,
             )
         })
-        .unwrap()
         .await
         .unwrap();
         assert_item_labels(&pane, ["A", "B", "C*"], cx);
@@ -4724,7 +4674,8 @@ mod tests {
                 },
                 window,
                 cx,
-            );
+            )
+            .unwrap();
         });
         // Non-pinned tab should be active
         assert_item_labels(&pane, ["A!", "B*", "C"], cx);
@@ -4758,10 +4709,98 @@ mod tests {
                 },
                 window,
                 cx,
-            );
+            )
+            .unwrap();
         });
         //  Non-pinned tab of other pane should be active
         assert_item_labels(&pane2, ["B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn ensure_item_closing_actions_do_not_panic_when_no_items_exist(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        assert_item_labels(&pane, [], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(
+                &CloseInactiveItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_all_items(
+                &CloseAllItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_clean_items(
+                &CloseCleanItems {
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items_to_the_right(
+                &CloseItemsToTheRight {
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items_to_the_left(
+                &CloseItemsToTheLeft {
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
     }
 
     fn init_test(cx: &mut TestAppContext) {

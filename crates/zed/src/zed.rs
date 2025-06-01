@@ -2126,7 +2126,6 @@ mod tests {
                 pane.update(cx, |pane, cx| {
                     drop(editor);
                     pane.close_active_item(&Default::default(), window, cx)
-                        .unwrap()
                 })
             })
             .unwrap();
