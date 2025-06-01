@@ -1,8 +1,13 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
+use editor::{Editor, EditorElement, EditorStyle};
+use fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
+    Window,
+};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -24,7 +29,11 @@ use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
 use std::{collections::BTreeMap, sync::Arc};
-use ui::{ButtonLike, Indicator, List, prelude::*};
+use theme::ThemeSettings;
+use ui::{
+    Button, ButtonLike, ButtonSize, ButtonStyle, Indicator, Label, List, div, h_flex, prelude::*,
+    v_flex,
+};
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
@@ -37,10 +46,19 @@ const LMSTUDIO_SITE: &str = "https://lmstudio.ai/";
 const PROVIDER_ID: &str = "lmstudio";
 const PROVIDER_NAME: &str = "LM Studio";
 
-#[derive(Default, Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LmStudioSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+}
+
+impl Default for LmStudioSettings {
+    fn default() -> Self {
+        Self {
+            api_url: "http://localhost:1234/api/v0".to_string(),
+            available_models: Vec::new(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -233,9 +251,10 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, _window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
         let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new(|cx| ConfigurationView::new(state, window, cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
@@ -551,12 +570,50 @@ struct RawToolCall {
 }
 
 struct ConfigurationView {
+    api_url_editor: Entity<Editor>,
     state: gpui::Entity<State>,
     loading_models_task: Option<Task<()>>,
+    check_server_task: Option<Task<()>>,
+    check_result: Option<String>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Entity<State>, cx: &mut Context<Self>) -> Self {
+    fn validate_api_url(api_url: &str) -> Result<String, String> {
+        if api_url.trim().is_empty() {
+            return Err("API URL cannot be empty".to_string());
+        }
+
+        let api_url = api_url.trim().to_string();
+
+        if !api_url.starts_with("http://") && !api_url.starts_with("https://") {
+            return Err("API URL must start with http:// or https://".to_string());
+        }
+
+        Ok(api_url)
+    }
+
+    pub fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let api_url_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            // Load current URL from settings
+            let current_url = AllLanguageModelSettings::get_global(cx)
+                .lmstudio
+                .api_url
+                .clone();
+            editor.set_text(current_url, window, cx);
+            editor.set_placeholder_text("http://localhost:1234/api/v0", cx);
+            editor
+        });
+
+        // Subscribe to editor changes to clear check result when URL is modified
+        let _editor_subscription = cx.subscribe(
+            &api_url_editor,
+            |this, _editor, _event: &editor::EditorEvent, cx| {
+                this.check_result = None;
+                cx.notify();
+            },
+        );
+
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             async move |this, cx| {
@@ -575,8 +632,11 @@ impl ConfigurationView {
         }));
 
         Self {
+            api_url_editor,
             state,
             loading_models_task,
+            check_server_task: None,
+            check_result: None,
         }
     }
 
@@ -584,6 +644,102 @@ impl ConfigurationView {
         self.state
             .update(cx, |state, cx| state.fetch_models(cx))
             .detach_and_log_err(cx);
+    }
+
+    fn save_api_url(&mut self, _: &gpui::ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let input_url = self.api_url_editor.read(cx).text(cx);
+
+        // Validate URL using helper function
+        let api_url = match Self::validate_api_url(&input_url) {
+            Ok(url) => url,
+            Err(_) => return, // Invalid URL, do nothing
+        };
+
+        // Clear check result when saving new URL
+        self.check_result = None;
+
+        // Save to settings
+        let fs = <dyn fs::Fs>::global(cx);
+        settings::update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+            settings.lmstudio = Some(crate::settings::LmStudioSettingsContent {
+                api_url: Some(api_url),
+                available_models: settings
+                    .lmstudio
+                    .as_ref()
+                    .and_then(|s| s.available_models.clone()),
+            });
+        });
+
+        // Trigger reconnection
+        self.retry_connection(cx);
+    }
+
+    fn check_server(&mut self, _: &gpui::ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        let input_url = self.api_url_editor.read(cx).text(cx);
+
+        // Validate URL using helper function
+        let api_url = match Self::validate_api_url(&input_url) {
+            Ok(url) => url,
+            Err(error) => {
+                self.check_result = Some(error);
+                cx.notify();
+                return;
+            }
+        };
+
+        // Clear previous result and show checking state
+        self.check_result = None;
+
+        let http_client = self.state.read(cx).http_client.clone();
+
+        let task = cx.spawn(async move |this, cx| {
+            let result = match get_models(http_client.as_ref(), &api_url, None).await {
+                Ok(models) => {
+                    let model_count = models.len();
+                    if model_count > 0 {
+                        format!("Connected successfully! Found {} model(s)", model_count)
+                    } else {
+                        "Connected, but no models available".to_string()
+                    }
+                }
+                Err(e) => format!("Connection failed: {}", e),
+            };
+
+            this.update(cx, |this, cx| {
+                this.check_server_task = None;
+                this.check_result = Some(result);
+                cx.notify();
+            })
+            .ok();
+        });
+
+        self.check_server_task = Some(task);
+        cx.notify();
+    }
+
+    fn render_api_url_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.ui_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3),
+            white_space: WhiteSpace::Normal,
+            ..Default::default()
+        };
+        EditorElement::new(
+            &self.api_url_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
     }
 }
 
@@ -598,6 +754,70 @@ impl Render for ConfigurationView {
         } else {
             v_flex()
                 .gap_2()
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(Label::new("API URL"))
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_2()
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .px_2()
+                                        .py_1()
+                                        .bg(cx.theme().colors().editor_background)
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .rounded_sm()
+                                        .child(self.render_api_url_editor(cx)),
+                                )
+                                .child(
+                                    Button::new("check_server", "Check")
+                                        .style(ButtonStyle::Subtle)
+                                        .size(ButtonSize::Compact)
+                                        .on_click(cx.listener(Self::check_server)),
+                                )
+                                .child(
+                                    Button::new("save_api_url", "Save")
+                                        .style(ButtonStyle::Filled)
+                                        .size(ButtonSize::Compact)
+                                        .on_click(cx.listener(Self::save_api_url)),
+                                ),
+                        )
+                        .when_some(self.check_server_task.as_ref(), |parent, _task| {
+                            parent.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child(Label::new("Checking server connection...")),
+                            )
+                        })
+                        .when_some(self.check_result.as_ref(), |parent, result| {
+                            let is_success = result.starts_with("Connected");
+                            parent.child(
+                                h_flex()
+                                    .gap_2()
+                                    .items_center()
+                                    .child(Indicator::dot().color(if is_success {
+                                        Color::Success
+                                    } else {
+                                        Color::Error
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(if is_success {
+                                                cx.theme().status().success
+                                            } else {
+                                                cx.theme().status().error
+                                            })
+                                            .child(Label::new(result.clone())),
+                                    ),
+                            )
+                        }),
+                )
                 .child(
                     v_flex().gap_1().child(Label::new(lmstudio_intro)).child(
                         List::new()

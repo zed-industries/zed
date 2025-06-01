@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{convert::TryFrom, sync::Arc, time::Duration};
 
-pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
-
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
