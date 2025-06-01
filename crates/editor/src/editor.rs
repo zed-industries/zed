@@ -4987,7 +4987,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_completions_menu(true, None, window, cx);
+        self.open_or_update_completions_menu(true, None, window, cx);
     }
 
     pub fn show_completions(
@@ -4996,10 +4996,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_completions_menu(false, options.trigger.as_deref(), window, cx);
+        self.open_or_update_completions_menu(false, options.trigger.as_deref(), window, cx);
     }
 
-    fn open_completions_menu(
+    fn open_or_update_completions_menu(
         &mut self,
         ignore_completion_provider: bool,
         trigger: Option<&str>,
@@ -5054,8 +5054,16 @@ impl Editor {
                     _ => false,
                 };
                 if query_matches {
-                    menu.filter(query.clone(), provider.clone(), window, cx);
-                    return;
+                    let position_matches = if menu.initial_position == position {
+                        true
+                    } else {
+                        let snapshot = self.buffer.read(cx).read(cx);
+                        menu.initial_position.to_offset(&snapshot) == position.to_offset(&snapshot)
+                    };
+                    if position_matches {
+                        menu.filter(query.clone(), provider.clone(), window, cx);
+                        return;
+                    }
                 }
             }
         };
