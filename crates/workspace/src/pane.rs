@@ -392,6 +392,11 @@ pub struct DraggedTab {
 
 impl EventEmitter<Event> for Pane {}
 
+pub enum Side {
+    Left,
+    Right,
+}
+
 impl Pane {
     pub fn new(
         workspace: WeakEntity<Workspace>,
@@ -1314,63 +1319,31 @@ impl Pane {
         })
     }
 
-    pub fn close_items_to_the_left(
-        &mut self,
-        action: &CloseItemsToTheLeft,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        if self.items.is_empty() {
-            return Task::ready(Ok(()));
-        }
-
-        let active_item_id = self.active_item_id();
-        let pinned_item_ids = self.pinned_item_ids();
-
-        self.close_items_to_the_left_by_id(active_item_id, action, pinned_item_ids, window, cx)
-    }
-
     pub fn close_items_to_the_left_by_id(
         &mut self,
-        item_id: EntityId,
+        item_id: Option<EntityId>,
         action: &CloseItemsToTheLeft,
-        pinned_item_ids: HashSet<EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        if self.items.is_empty() {
-            return Task::ready(Ok(()));
-        }
-
-        let to_the_left_item_ids = self.to_the_left_item_ids(item_id);
-
-        self.close_items(window, cx, SaveIntent::Close, move |item_id| {
-            to_the_left_item_ids.contains(&item_id)
-                && (action.close_pinned || !pinned_item_ids.contains(&item_id))
-        })
-    }
-
-    pub fn close_items_to_the_right(
-        &mut self,
-        action: &CloseItemsToTheRight,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        if self.items.is_empty() {
-            return Task::ready(Ok(()));
-        }
-
-        let active_item_id = self.active_item_id();
-        let pinned_item_ids = self.pinned_item_ids();
-
-        self.close_items_to_the_right_by_id(active_item_id, action, pinned_item_ids, window, cx)
+        self.close_items_to_the_side_by_id(item_id, Side::Left, action.close_pinned, window, cx)
     }
 
     pub fn close_items_to_the_right_by_id(
         &mut self,
-        item_id: EntityId,
+        item_id: Option<EntityId>,
         action: &CloseItemsToTheRight,
-        pinned_item_ids: HashSet<EntityId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.close_items_to_the_side_by_id(item_id, Side::Right, action.close_pinned, window, cx)
+    }
+
+    pub fn close_items_to_the_side_by_id(
+        &mut self,
+        item_id: Option<EntityId>,
+        side: Side,
+        close_pinned: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1378,11 +1351,13 @@ impl Pane {
             return Task::ready(Ok(()));
         }
 
-        let to_the_right_item_ids = self.to_the_right_item_ids(item_id);
+        let item_id = item_id.unwrap_or_else(|| self.active_item_id());
+        let to_the_side_item_ids = self.to_the_side_item_ids(item_id, side);
+        let pinned_item_ids = self.pinned_item_ids();
 
         self.close_items(window, cx, SaveIntent::Close, move |item_id| {
-            to_the_right_item_ids.contains(&item_id)
-                && (action.close_pinned || !pinned_item_ids.contains(&item_id))
+            to_the_side_item_ids.contains(&item_id)
+                && (close_pinned || !pinned_item_ids.contains(&item_id))
         })
     }
 
@@ -2436,9 +2411,8 @@ impl Pane {
                                     .disabled(!has_items_to_left)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
                                         pane.close_items_to_the_left_by_id(
-                                            item_id,
+                                            Some(item_id),
                                             &close_items_to_the_left_action,
-                                            pane.pinned_item_ids(),
                                             window,
                                             cx,
                                         )
@@ -2451,9 +2425,8 @@ impl Pane {
                                     .disabled(!has_items_to_right)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
                                         pane.close_items_to_the_right_by_id(
-                                            item_id,
+                                            Some(item_id),
                                             &close_items_to_the_right_action,
-                                            pane.pinned_item_ids(),
                                             window,
                                             cx,
                                         )
@@ -3102,19 +3075,20 @@ impl Pane {
             .collect()
     }
 
-    fn to_the_left_item_ids(&self, item_id: EntityId) -> HashSet<EntityId> {
-        self.items()
-            .take_while(|item| item.item_id() != item_id)
-            .map(|item| item.item_id())
-            .collect()
-    }
-
-    fn to_the_right_item_ids(&self, item_id: EntityId) -> HashSet<EntityId> {
-        self.items()
-            .rev()
-            .take_while(|item| item.item_id() != item_id)
-            .map(|item| item.item_id())
-            .collect()
+    fn to_the_side_item_ids(&self, item_id: EntityId, side: Side) -> HashSet<EntityId> {
+        match side {
+            Side::Left => self
+                .items()
+                .take_while(|item| item.item_id() != item_id)
+                .map(|item| item.item_id())
+                .collect(),
+            Side::Right => self
+                .items()
+                .rev()
+                .take_while(|item| item.item_id() != item_id)
+                .map(|item| item.item_id())
+                .collect(),
+        }
     }
 
     pub fn drag_split_direction(&self) -> Option<SplitDirection> {
@@ -3333,25 +3307,19 @@ impl Render for Pane {
             )
             .on_action(cx.listener(
                 |pane: &mut Self, action: &CloseItemsToTheLeft, window, cx| {
-                    pane.close_items_to_the_left(action, window, cx)
+                    pane.close_items_to_the_left_by_id(None, action, window, cx)
                         .detach_and_log_err(cx)
                 },
             ))
             .on_action(cx.listener(
                 |pane: &mut Self, action: &CloseItemsToTheRight, window, cx| {
-                    pane.close_items_to_the_right(action, window, cx)
+                    pane.close_items_to_the_right_by_id(None, action, window, cx)
                         .detach_and_log_err(cx)
                 },
             ))
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseAllItems, window, cx| {
                     pane.close_all_items(action, window, cx)
-                        .detach_and_log_err(cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseActiveItem, window, cx| {
-                    pane.close_active_item(action, window, cx)
                         .detach_and_log_err(cx)
                 }),
             )
@@ -4436,7 +4404,8 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_items_to_the_left(
+            pane.close_items_to_the_left_by_id(
+                None,
                 &CloseItemsToTheLeft {
                     close_pinned: false,
                 },
@@ -4462,7 +4431,8 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*", "D", "E"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_items_to_the_right(
+            pane.close_items_to_the_right_by_id(
+                None,
                 &CloseItemsToTheRight {
                     close_pinned: false,
                 },
@@ -4779,7 +4749,8 @@ mod tests {
         .unwrap();
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_items_to_the_right(
+            pane.close_items_to_the_right_by_id(
+                None,
                 &CloseItemsToTheRight {
                     close_pinned: false,
                 },
@@ -4791,7 +4762,8 @@ mod tests {
         .unwrap();
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_items_to_the_left(
+            pane.close_items_to_the_left_by_id(
+                None,
                 &CloseItemsToTheLeft {
                     close_pinned: false,
                 },
