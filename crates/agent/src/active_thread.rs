@@ -1814,9 +1814,11 @@ impl ActiveThread {
 
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
+        let configured_model = thread.configured_model();
+        let model = configured_model.as_ref().map(|m| &m.model);
         let added_context = thread
             .context_for_message(message_id)
-            .map(|context| AddedContext::new_attached(context, cx))
+            .map(|context| AddedContext::new_attached(context, model, cx))
             .collect::<Vec<_>>();
 
         let tool_uses = thread.tool_uses_for_message(message_id, cx);

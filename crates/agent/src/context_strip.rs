@@ -11,6 +11,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::Buffer;
+use language_model::LanguageModelRegistry;
 use project::ProjectItem;
 use ui::{PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::Workspace;
@@ -98,11 +99,23 @@ impl ContextStrip {
                 .as_ref()
                 .and_then(|thread_store| thread_store.upgrade())
                 .and_then(|thread_store| thread_store.read(cx).prompt_store().as_ref());
+
+            let current_model = LanguageModelRegistry::global(cx)
+                .read(cx)
+                .default_model()
+                .map(|configured_model| configured_model.model);
+
             self.context_store
                 .read(cx)
                 .context()
                 .flat_map(|context| {
-                    AddedContext::new_pending(context.clone(), prompt_store, project, cx)
+                    AddedContext::new_pending(
+                        context.clone(),
+                        prompt_store,
+                        project,
+                        current_model.as_ref(),
+                        cx,
+                    )
                 })
                 .collect::<Vec<_>>()
         } else {
