@@ -287,18 +287,18 @@ impl OllamaLanguageModel {
                         content: msg.string_contents(),
                     },
                     Role::Assistant => {
+                        let content = msg.string_contents();
                         let mut thinking = None;
-                        for content in msg.content.iter() {
+                        for content in msg.content.into_iter() {
                             if let MessageContent::Thinking { text, .. } = content {
                                 if !text.is_empty() {
-                                    thinking = Some(text.clone());
+                                    thinking = Some(text);
                                     break;
                                 }
                             }
                         }
-
                         ChatMessage::Assistant {
-                            content: msg.string_contents(),
+                            content,
                             tool_calls: None,
                             thinking,
                         }
