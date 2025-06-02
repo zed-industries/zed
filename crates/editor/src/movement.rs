@@ -247,9 +247,10 @@ pub fn line_end(
     display_point: DisplayPoint,
     stop_at_soft_boundaries: bool,
 ) -> DisplayPoint {
+    dbg!(display_point, map.line_len(display_point.row()));
     let soft_line_end = map.clip_point(
         DisplayPoint::new(display_point.row(), map.line_len(display_point.row())),
-        Bias::Left,
+        Bias::Right,
     );
     if stop_at_soft_boundaries && display_point != soft_line_end {
         soft_line_end
@@ -1236,6 +1237,43 @@ mod tests {
                     DisplayPoint::new(DisplayRow(4), 2),
                     SelectionGoal::HorizontalPosition(max_point_x.0)
                 ),
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_move_to_end_of_soft_wrapped_line(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            init_test(cx);
+        });
+
+        let mut cx = EditorTestContext::new(cx).await;
+        let editor = cx.editor.clone();
+        let window = cx.window;
+        _ = cx.update_window(window, |_, window, cx| {
+            let _text_layout_details = editor.read(cx).text_layout_details(window);
+
+            let multibuffer = MultiBuffer::build_simple("mmmmmmmmmmmmmmmmmmmmmmmnnnnnn", cx);
+            let display_map = cx.new(|cx| {
+                DisplayMap::new(
+                    multibuffer,
+                    font("Helvetica"),
+                    px(14.0),
+                    Some(px(200.)),
+                    0,
+                    0,
+                    FoldPlaceholder::test(),
+                    DiagnosticSeverity::Warning,
+                    cx,
+                )
+            });
+            let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+            assert_eq!(snapshot.text(), "mmmmmmmmmmmmmmmmmmmmmmm\nnnnnnn");
+
+            // Test moving to end of first soft-wrapped line
+            assert_eq!(
+                line_end(&snapshot, DisplayPoint::new(DisplayRow(0), 0), true),
+                DisplayPoint::new(DisplayRow(0), 23)
             );
         });
     }

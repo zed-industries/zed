@@ -761,16 +761,18 @@ impl WrapSnapshot {
     }
 
     pub fn make_wrap_point(&self, point: Point, bias: Bias) -> WrapPoint {
-        self.tab_point_to_wrap_point(self.tab_snapshot.make_tab_point(point, bias))
+        self.tab_point_to_wrap_point(self.tab_snapshot.make_tab_point(point, bias), bias)
     }
 
-    pub fn tab_point_to_wrap_point(&self, point: TabPoint) -> WrapPoint {
+    pub fn tab_point_to_wrap_point(&self, point: TabPoint, bias: Bias) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<(TabPoint, WrapPoint)>(&());
-        cursor.seek(&point, Bias::Right, &());
+        cursor.seek(&point, bias, &());
         WrapPoint(cursor.start().1.0 + (point.0 - cursor.start().0.0))
     }
 
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
+        dbg!(point, bias);
+
         if bias == Bias::Left {
             let mut cursor = self.transforms.cursor::<WrapPoint>(&());
             cursor.seek(&point, Bias::Right, &());
@@ -780,7 +782,14 @@ impl WrapSnapshot {
             }
         }
 
-        self.tab_point_to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
+        dbg!(point);
+        let tab_point = self.to_tab_point(point);
+        dbg!(&tab_point);
+        let clipped_tab_point = self.tab_snapshot.clip_point(tab_point, bias);
+        dbg!(&clipped_tab_point);
+        let result = self.tab_point_to_wrap_point(clipped_tab_point);
+        dbg!(&result);
+        result
     }
 
     pub fn prev_row_boundary(&self, mut point: WrapPoint) -> u32 {

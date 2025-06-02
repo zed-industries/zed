@@ -1103,7 +1103,7 @@ impl DisplaySnapshot {
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
         let mut clipped = self.block_snapshot.clip_point(point.0, bias);
-        if self.clip_at_line_ends {
+        if dbg!(self.clip_at_line_ends) {
             clipped = self.clip_at_line_end(DisplayPoint(clipped)).0
         }
         DisplayPoint(clipped)

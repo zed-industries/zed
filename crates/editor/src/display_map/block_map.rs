@@ -1570,12 +1570,15 @@ impl BlockSnapshot {
                         }
                     }
                     None => {
+                        dbg!();
                         let input_point = if point.row >= output_end_row.0 {
+                            dbg!();
                             let line_len = self.wrap_snapshot.line_len(input_end_row.0 - 1);
                             self.wrap_snapshot
                                 .clip_point(WrapPoint::new(input_end_row.0 - 1, line_len), bias)
                         } else {
                             let output_overshoot = point.0.saturating_sub(output_start);
+                            dbg!(input_start, output_overshoot);
                             self.wrap_snapshot
                                 .clip_point(WrapPoint(input_start + output_overshoot), bias)
                         };
