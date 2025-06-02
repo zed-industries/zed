@@ -333,14 +333,8 @@ impl AddedContext {
 
     fn file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
         let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let name = full_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned().into())
-            .unwrap_or_else(|| full_path_string.clone());
-        let parent = full_path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned().into());
+        let (name, parent) =
+            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
         AddedContext {
             kind: ContextKind::File,
             name,
@@ -370,14 +364,8 @@ impl AddedContext {
 
     fn directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
         let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let name = full_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned().into())
-            .unwrap_or_else(|| full_path_string.clone());
-        let parent = full_path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned().into());
+        let (name, parent) =
+            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
         AddedContext {
             kind: ContextKind::Directory,
             name,
@@ -606,22 +594,22 @@ impl AddedContext {
     }
 
     fn image(context: ImageContext, cx: &App) -> AddedContext {
-        let project_path = context.project_path.as_ref();
-
-        let name = project_path
-            .and_then(|p| p.path.file_name())
-            .and_then(|name| name.to_str())
-            .unwrap_or("Image")
-            .to_string();
-
-        let icon_path = project_path.and_then(|p| FileIcons::get_icon(&p.path, cx));
+        let (name, parent, icon_path) = if let Some(full_path) = context.full_path.as_ref() {
+            let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
+            let (name, parent) =
+                extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
+            let icon_path = FileIcons::get_icon(&full_path, cx);
+            (name, parent, icon_path)
+        } else {
+            ("Image".into(), None, None)
+        };
 
         AddedContext {
             kind: ContextKind::Image,
-            name: name.into(),
-            parent: None,
+            name,
+            parent,
             tooltip: None,
-            icon_path: icon_path,
+            icon_path,
             status: match context.status() {
                 ImageStatus::Loading => ContextStatus::Loading {
                     message: "Loading…".into(),
@@ -647,6 +635,22 @@ impl AddedContext {
             handle: AgentContextHandle::Image(context),
         }
     }
+}
+
+fn extract_file_name_and_directory_from_full_path(
+    path: &Path,
+    name_fallback: &SharedString,
+) -> (SharedString, Option<SharedString>) {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned().into())
+        .unwrap_or_else(|| name_fallback.clone());
+    let parent = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned().into());
+
+    (name, parent)
 }
 
 #[derive(Debug, Clone)]
@@ -779,6 +783,7 @@ impl Component for AddedContext {
                 ImageContext {
                     context_id: next_context_id.post_inc(),
                     project_path: None,
+                    full_path: None,
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
                 },
@@ -792,6 +797,7 @@ impl Component for AddedContext {
                 ImageContext {
                     context_id: next_context_id.post_inc(),
                     project_path: None,
+                    full_path: None,
                     original_image: Arc::new(Image::empty()),
                     image_task: cx
                         .background_spawn(async move {
@@ -810,6 +816,7 @@ impl Component for AddedContext {
                 ImageContext {
                     context_id: next_context_id.post_inc(),
                     project_path: None,
+                    full_path: None,
                     original_image: Arc::new(Image::empty()),
                     image_task: Task::ready(None).shared(),
                 },
