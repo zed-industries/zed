@@ -932,6 +932,7 @@ pub struct Editor {
     /// typing enters text into each of them, even the ones that aren't focused.
     pub(crate) show_cursor_when_unfocused: bool,
     columnar_selection_tail: Option<Anchor>,
+    columnar_display_point: Option<DisplayPoint>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
     select_prev_state: Option<SelectNextState>,
@@ -1797,6 +1798,7 @@ impl Editor {
             selections,
             scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
+            columnar_display_point: None,
             add_selections_state: None,
             select_next_state: None,
             select_prev_state: None,
@@ -3319,12 +3321,18 @@ impl Editor {
                     SelectMode::Character,
                 );
             });
+            if position.column() != goal_column {
+                self.columnar_display_point = Some(DisplayPoint::new(position.row(), goal_column));
+            } else {
+                self.columnar_display_point = None;
+            }
         }
 
         let tail = self.selections.newest::<Point>(cx).tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
         if !reset {
+            self.columnar_display_point = None;
             self.select_columns(
                 tail.to_display_point(&display_map),
                 position,
@@ -3347,7 +3355,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
-            let tail = tail.to_display_point(&display_map);
+            let tail = self
+                .columnar_display_point
+                .unwrap_or_else(|| tail.to_display_point(&display_map));
             self.select_columns(tail, position, goal_column, &display_map, window, cx);
         } else if let Some(mut pending) = self.selections.pending_anchor() {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -3463,7 +3473,7 @@ impl Editor {
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
-                if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
+                if !display_map.is_block_line(row) {
                     let start = display_map
                         .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
                         .to_point(display_map);
@@ -3481,8 +3491,19 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
+        let mut non_empty_ranges = selection_ranges
+            .iter()
+            .filter(|selection_range| selection_range.start != selection_range.end)
+            .peekable();
+
+        let ranges = if non_empty_ranges.peek().is_some() {
+            non_empty_ranges.cloned().collect()
+        } else {
+            selection_ranges
+        };
+
         self.change_selections(None, window, cx, |s| {
-            s.select_ranges(selection_ranges);
+            s.select_ranges(ranges);
         });
         cx.notify();
     }
