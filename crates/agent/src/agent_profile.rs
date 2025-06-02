@@ -32,10 +32,19 @@ impl AgentProfile {
             .collect()
     }
 
-    pub fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {
+    fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {
         match source {
             ToolSource::Native => *settings.tools.get(&Arc::from(name)).unwrap_or(&false),
-            ToolSource::ContextServer { id } => false,
+            ToolSource::ContextServer { id } => {
+                if settings.enable_all_context_servers {
+                    return true;
+                }
+
+                let Some(preset) = settings.context_servers.get(&Arc::from(id)) else {
+                    return false;
+                };
+                *preset.tools.get(&Arc::from(name)).unwrap_or(&false)
+            }
         }
     }
 
@@ -49,10 +58,14 @@ impl AgentProfile {
 
 #[cfg(test)]
 mod tests {
+    use agent_settings::ContextServerPreset;
     use assistant_tool::ToolRegistry;
+    use collections::IndexMap;
     use gpui::{AppContext, TestAppContext};
     use http_client::FakeHttpClient;
+    use project::Project;
     use settings::{Settings, SettingsStore};
+    use ui::SharedString;
 
     use super::*;
 
@@ -68,7 +81,7 @@ mod tests {
                 .unwrap()
                 .clone()
         });
-        let tool_set = cx.new(|_| ToolWorkingSet::default());
+        let tool_set = default_tool_set(cx);
 
         let profile = AgentProfile::new(id.clone(), tool_set);
 
@@ -91,14 +104,180 @@ mod tests {
         assert_eq!(enabled_tools, expected_tools);
     }
 
+    #[gpui::test]
+    async fn test_custom_mcp_settings(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let id = AgentProfileId("custom_mcp".into());
+        let profile_settings = cx.read(|cx| {
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(&id)
+                .unwrap()
+                .clone()
+        });
+        let tool_set = default_tool_set(cx);
+
+        let profile = AgentProfile::new(id.clone(), tool_set);
+
+        let mut enabled_tools = cx
+            .read(|cx| profile.enabled_tools(cx))
+            .into_iter()
+            .map(|tool| tool.name())
+            .collect::<Vec<_>>();
+        enabled_tools.sort();
+
+        let mut expected_tools = profile_settings.context_servers["mcp"]
+            .tools
+            .iter()
+            .filter_map(|(key, enabled)| enabled.then(|| key.to_string()))
+            .collect::<Vec<_>>();
+        expected_tools.sort();
+
+        assert_eq!(enabled_tools, expected_tools);
+    }
+
+    #[gpui::test]
+    async fn test_all_tools(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let id = AgentProfileId("write_plus_all_mcp".into());
+        let profile_settings = cx.read(|cx| {
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(&id)
+                .unwrap()
+                .clone()
+        });
+        let tool_set = default_tool_set(cx);
+
+        let profile = AgentProfile::new(id.clone(), tool_set);
+
+        let mut enabled_tools = cx
+            .read(|cx| profile.enabled_tools(cx))
+            .into_iter()
+            .map(|tool| tool.name())
+            .collect::<Vec<_>>();
+        enabled_tools.sort();
+
+        let mut expected_tools = profile_settings
+            .tools
+            .into_iter()
+            .filter_map(|(tool, enabled)| enabled.then_some(tool.to_string()))
+            // Provider dependent
+            .filter(|tool| tool != "web_search")
+            .collect::<Vec<_>>();
+        // Plus all registered MCP tools
+        expected_tools.extend(["enabled_mcp_tool".into(), "disabled_mcp_tool".into()]);
+        expected_tools.sort();
+
+        assert_eq!(enabled_tools, expected_tools);
+    }
+
     fn init_test_settings(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            Project::init_settings(cx);
             AgentSettings::register(cx);
             language_model::init_settings(cx);
             ToolRegistry::default_global(cx);
             assistant_tools::init(FakeHttpClient::with_404_response(), cx);
         });
+
+        cx.update(|cx| {
+            let mut agent_settings = AgentSettings::get_global(cx).clone();
+            agent_settings.profiles.insert(
+                AgentProfileId("write_plus_all_mcp".into()),
+                AgentProfileSettings {
+                    name: "write_plus_all_mcp".into(),
+                    enable_all_context_servers: true,
+                    ..agent_settings.profiles[&AgentProfileId::default()].clone()
+                },
+            );
+            agent_settings.profiles.insert(
+                AgentProfileId("custom_mcp".into()),
+                AgentProfileSettings {
+                    name: "mcp".into(),
+                    tools: IndexMap::default(),
+                    enable_all_context_servers: false,
+                    context_servers: IndexMap::from_iter([("mcp".into(), context_server_preset())]),
+                },
+            );
+            AgentSettings::override_global(agent_settings, cx);
+        })
+    }
+
+    fn context_server_preset() -> ContextServerPreset {
+        ContextServerPreset {
+            tools: IndexMap::from_iter([
+                ("enabled_mcp_tool".into(), true),
+                ("disabled_mcp_tool".into(), false),
+            ]),
+        }
+    }
+
+    fn default_tool_set(cx: &mut TestAppContext) -> Entity<ToolWorkingSet> {
+        cx.new(|_| {
+            let mut tool_set = ToolWorkingSet::default();
+            tool_set.insert(Arc::new(FakeTool::new("enabled_mcp_tool", "mcp")));
+            tool_set.insert(Arc::new(FakeTool::new("disabled_mcp_tool", "mcp")));
+            tool_set
+        })
+    }
+
+    struct FakeTool {
+        name: String,
+        source: SharedString,
+    }
+
+    impl FakeTool {
+        fn new(name: impl Into<String>, source: impl Into<SharedString>) -> Self {
+            Self {
+                name: name.into(),
+                source: source.into(),
+            }
+        }
+    }
+
+    impl Tool for FakeTool {
+        fn name(&self) -> String {
+            self.name.clone()
+        }
+
+        fn source(&self) -> ToolSource {
+            ToolSource::ContextServer {
+                id: self.source.clone(),
+            }
+        }
+
+        fn description(&self) -> String {
+            unimplemented!()
+        }
+
+        fn icon(&self) -> ui::IconName {
+            unimplemented!()
+        }
+
+        fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+            unimplemented!()
+        }
+
+        fn ui_text(&self, _input: &serde_json::Value) -> String {
+            unimplemented!()
+        }
+
+        fn run(
+            self: Arc<Self>,
+            _input: serde_json::Value,
+            _request: Arc<language_model::LanguageModelRequest>,
+            _project: Entity<Project>,
+            _action_log: Entity<assistant_tool::ActionLog>,
+            _model: Arc<dyn language_model::LanguageModel>,
+            _window: Option<gpui::AnyWindowHandle>,
+            _cx: &mut App,
+        ) -> assistant_tool::ToolResult {
+            unimplemented!()
+        }
     }
 }
