@@ -2232,19 +2232,15 @@ impl Thread {
     ) -> Task<()> {
         let tool_name: Arc<str> = tool.name().into();
 
-        let tool_result = if self.tools.read(cx).is_disabled(&tool.source(), &tool_name) {
-            Task::ready(Err(anyhow!("tool is disabled: {tool_name}"))).into()
-        } else {
-            tool.run(
-                input,
-                request,
-                self.project.clone(),
-                self.action_log.clone(),
-                model,
-                window,
-                cx,
-            )
-        };
+        let tool_result = tool.run(
+            input,
+            request,
+            self.project.clone(),
+            self.action_log.clone(),
+            model,
+            window,
+            cx,
+        );
 
         // Store the card separately if it exists
         if let Some(card) = tool_result.card.clone() {
