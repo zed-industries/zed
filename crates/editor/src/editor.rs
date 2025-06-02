@@ -19539,69 +19539,65 @@ fn process_completion_for_edit(
     let replace_range = {
         let buffer = buffer.read(cx);
 
-        let CompletionSource::Lsp {
+        if let CompletionSource::Lsp {
             insert_range: Some(insert_range),
             ..
         } = &completion.source
-        else {
-            return CompletionEdit {
-                new_text,
-                replace_range: completion.replace_range.to_offset(&buffer),
-                snippet,
-            };
-        };
-
-        let should_replace = match intent {
-            CompletionIntent::CompleteWithInsert => false,
-            CompletionIntent::CompleteWithReplace => true,
-            CompletionIntent::Complete | CompletionIntent::Compose => {
-                let insert_mode =
-                    language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                        .completions
-                        .lsp_insert_mode;
-                match insert_mode {
-                    LspInsertMode::Insert => false,
-                    LspInsertMode::Replace => true,
-                    LspInsertMode::ReplaceSubsequence => {
-                        let mut text_to_replace = buffer.chars_for_range(
-                            buffer.anchor_before(completion.replace_range.start)
-                                ..buffer.anchor_after(completion.replace_range.end),
-                        );
-                        let mut current_needle = text_to_replace.next();
-                        for haystack_ch in completion.label.text.chars() {
-                            if let Some(needle_ch) = current_needle {
-                                if haystack_ch.to_ascii_lowercase()
-                                    == needle_ch.to_ascii_lowercase()
-                                {
-                                    current_needle = text_to_replace.next();
+        {
+            let should_replace = match intent {
+                CompletionIntent::CompleteWithInsert => false,
+                CompletionIntent::CompleteWithReplace => true,
+                CompletionIntent::Complete | CompletionIntent::Compose => {
+                    let insert_mode =
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                            .completions
+                            .lsp_insert_mode;
+                    match insert_mode {
+                        LspInsertMode::Insert => false,
+                        LspInsertMode::Replace => true,
+                        LspInsertMode::ReplaceSubsequence => {
+                            let mut text_to_replace = buffer.chars_for_range(
+                                buffer.anchor_before(completion.replace_range.start)
+                                    ..buffer.anchor_after(completion.replace_range.end),
+                            );
+                            let mut current_needle = text_to_replace.next();
+                            for haystack_ch in completion.label.text.chars() {
+                                if let Some(needle_ch) = current_needle {
+                                    if haystack_ch.to_ascii_lowercase()
+                                        == needle_ch.to_ascii_lowercase()
+                                    {
+                                        current_needle = text_to_replace.next();
+                                    }
                                 }
                             }
+                            current_needle.is_none()
                         }
-                        current_needle.is_none()
-                    }
-                    LspInsertMode::ReplaceSuffix => {
-                        let range_after_cursor = insert_range.end..completion.replace_range.end;
-                        let text_after_cursor = buffer
-                            .text_for_range(
-                                buffer.anchor_before(range_after_cursor.start)
-                                    ..buffer.anchor_after(range_after_cursor.end),
-                            )
-                            .collect::<String>()
-                            .to_ascii_lowercase();
-                        completion
-                            .label
-                            .text
-                            .to_ascii_lowercase()
-                            .ends_with(&text_after_cursor)
+                        LspInsertMode::ReplaceSuffix => {
+                            let range_after_cursor = insert_range.end..completion.replace_range.end;
+                            let text_after_cursor = buffer
+                                .text_for_range(
+                                    buffer.anchor_before(range_after_cursor.start)
+                                        ..buffer.anchor_after(range_after_cursor.end),
+                                )
+                                .collect::<String>()
+                                .to_ascii_lowercase();
+                            completion
+                                .label
+                                .text
+                                .to_ascii_lowercase()
+                                .ends_with(&text_after_cursor)
+                        }
                     }
                 }
-            }
-        };
+            };
 
-        if should_replace {
-            completion.replace_range.to_offset(&buffer)
+            if should_replace {
+                completion.replace_range.to_offset(&buffer)
+            } else {
+                insert_range.to_offset(&buffer)
+            }
         } else {
-            insert_range.to_offset(&buffer)
+            completion.replace_range.to_offset(&buffer)
         }
     };
 
