@@ -3,8 +3,8 @@ use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewSessionModal,
-    NewSessionMode, Pause, Restart, ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewProcessModal,
+    NewProcessMode, Pause, Restart, ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop,
     ToggleIgnoreBreakpoints, ToggleSessionPicker, ToggleThreadPicker, persistence,
     spawn_task_or_modal,
 };
@@ -341,7 +341,7 @@ impl DebugPanel {
             window.defer(cx, move |window, cx| {
                 workspace
                     .update(cx, |workspace, cx| {
-                        NewSessionModal::show(workspace, window, NewSessionMode::Launch, None, cx);
+                        NewProcessModal::show(workspace, window, NewProcessMode::Launch, None, cx);
                     })
                     .ok();
             });
