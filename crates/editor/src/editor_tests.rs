@@ -10617,6 +10617,16 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             expected_with_replace_subsequence_mode: "language_nameˇname: 2".into(),
             expected_with_replace_suffix_mode: "language_nameˇname: 2".into(),
         },
+        Run {
+            run_description: "Replace range ends before cursor - should extend to cursor",
+            initial_state: "before editˇo after".into(),
+            buffer_marked_text: "before <{ed}>it|o after".into(),
+            completion_text: "editor",
+            expected_with_insert_mode: "before editorˇo after".into(),
+            expected_with_replace_mode: "before editorˇo after".into(),
+            expected_with_replace_subsequence_mode: "before editorˇo after".into(),
+            expected_with_replace_suffix_mode: "before editorˇo after".into(),
+        },
     ];
 
     for run in runs {
