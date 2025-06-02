@@ -387,7 +387,7 @@ impl ContextProvider for PythonContextProvider {
                 let file_path = location_file
                     .as_ref()
                     .and_then(|f| f.path().parent())
-                    .map(|p| Arc::from(p))
+                    .map(Arc::from)
                     .unwrap_or_else(|| Arc::from("".as_ref()));
                     
                 toolchains
