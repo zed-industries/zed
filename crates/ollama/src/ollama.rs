@@ -544,7 +544,6 @@ mod tests {
 
     #[test]
     fn serialize_chat_request_with_images() {
-        // Base64 encoded 1x1 pixel PNG image
         let base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
         let request = ChatRequest {
@@ -579,18 +578,15 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&request).unwrap();
-        // Empty images array should be skipped in serialization
         assert!(!serialized.contains("images"));
     }
 
     #[test]
     fn test_model_supports_vision() {
-        // Test model with vision support
         let vision_model = Model::new("llava:latest", Some("LLaVA"), None, None, Some(true));
         assert!(vision_model.name.contains("llava"));
         assert_eq!(vision_model.supports_vision(), Some(true));
 
-        // Test model without vision support
         let text_model = Model::new(
             "llama3.2:latest",
             Some("Llama 3.2"),
@@ -619,9 +615,7 @@ mod tests {
         };
 
         let serialized = serde_json::to_string(&request).unwrap();
-        println!("Serialized JSON: {}", serialized);
 
-        // Verify the images array contains the base64 string directly
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
         let images_array = parsed["images"].as_array().unwrap();
         assert_eq!(images_array.len(), 1);
