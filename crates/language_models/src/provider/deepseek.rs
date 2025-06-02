@@ -13,7 +13,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -290,15 +291,11 @@ impl LanguageModel for DeepSeekLanguageModel {
     }
 
     fn supports_tools(&self) -> bool {
-        self.model == deepseek::Model::Chat
+        true
     }
 
-    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
-        match choice {
-            LanguageModelToolChoice::Auto => true,
-            LanguageModelToolChoice::Any => true,
-            LanguageModelToolChoice::None => true,
-        }
+    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
+        true
     }
 
     fn supports_images(&self) -> bool {
@@ -371,107 +368,58 @@ pub fn into_deepseek(
 ) -> deepseek::Request {
     let is_reasoner = *model == deepseek::Model::Reasoner;
 
-    let messages = if is_reasoner {
-        let len = request.messages.len();
-        request
-            .messages
-            .into_iter()
-            .fold(Vec::with_capacity(len), |mut acc, msg| {
-                let role = msg.role;
-                let content = msg.string_contents();
-
-                if let Some(last_msg) = acc.last_mut() {
-                    match (last_msg, role) {
-                        (deepseek::RequestMessage::User { content: last }, Role::User) => {
-                            last.push(' ');
-                            last.push_str(&content);
-                            return acc;
-                        }
-
-                        (
-                            deepseek::RequestMessage::Assistant {
-                                content: last_content,
-                                ..
+    let mut messages = Vec::new();
+    for message in request.messages {
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
+                    .push(match message.role {
+                        Role::User => deepseek::RequestMessage::User { content: text },
+                        Role::Assistant => deepseek::RequestMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => deepseek::RequestMessage::System { content: text },
+                    }),
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Image(_) => {}
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = deepseek::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: deepseek::ToolCallContent::Function {
+                            function: deepseek::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
                             },
-                            Role::Assistant,
-                        ) => {
-                            *last_content = last_content
-                                .take()
-                                .map(|c| {
-                                    let mut s = String::with_capacity(c.len() + content.len() + 1);
-                                    s.push_str(&c);
-                                    s.push(' ');
-                                    s.push_str(&content);
-                                    s
-                                })
-                                .or(Some(content));
+                        },
+                    };
 
-                            return acc;
-                        }
-                        _ => {}
-                    }
-                }
-
-                acc.push(match role {
-                    Role::User => deepseek::RequestMessage::User { content },
-                    Role::Assistant => deepseek::RequestMessage::Assistant {
-                        content: Some(content),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => deepseek::RequestMessage::System { content },
-                });
-                acc
-            })
-    } else {
-        let mut messages = Vec::new();
-        for message in request.messages {
-            for content in message.content {
-                match content {
-                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                        .push(match message.role {
-                            Role::User => deepseek::RequestMessage::User { content: text },
-                            Role::Assistant => deepseek::RequestMessage::Assistant {
-                                content: Some(text),
-                                tool_calls: Vec::new(),
-                            },
-                            Role::System => deepseek::RequestMessage::System { content: text },
-                        }),
-                    MessageContent::RedactedThinking(_) => {}
-                    MessageContent::Image(_) => {}
-                    MessageContent::ToolUse(tool_use) => {
-                        let tool_call = deepseek::ToolCall {
-                            id: tool_use.id.to_string(),
-                            content: deepseek::ToolCallContent::Function {
-                                function: deepseek::FunctionContent {
-                                    name: tool_use.name.to_string(),
-                                    arguments: serde_json::to_string(&tool_use.input)
-                                        .unwrap_or_default(),
-                                },
-                            },
-                        };
-
-                        if let Some(deepseek::RequestMessage::Assistant { tool_calls, .. }) =
-                            messages.last_mut()
-                        {
-                            tool_calls.push(tool_call);
-                        } else {
-                            messages.push(deepseek::RequestMessage::Assistant {
-                                content: None,
-                                tool_calls: vec![tool_call],
-                            });
-                        }
-                    }
-                    MessageContent::ToolResult(tool_result) => {
-                        messages.push(deepseek::RequestMessage::Tool {
-                            content: tool_result.content.to_string(),
-                            tool_call_id: tool_result.tool_use_id.to_string(),
+                    if let Some(deepseek::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
+                    } else {
+                        messages.push(deepseek::RequestMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
                         });
                     }
                 }
+                MessageContent::ToolResult(tool_result) => {
+                    match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            messages.push(deepseek::RequestMessage::Tool {
+                                content: text.to_string(),
+                                tool_call_id: tool_result.tool_use_id.to_string(),
+                            });
+                        }
+                        LanguageModelToolResultContent::Image(_) => {}
+                    };
+                }
             }
         }
-        messages
-    };
+    }
 
     deepseek::Request {
         model: model.id().to_string(),
