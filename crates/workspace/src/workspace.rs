@@ -3502,7 +3502,14 @@ impl Workspace {
 
         match target {
             Some(ActivateInDirectionTarget::Pane(pane)) => {
-                window.focus(&pane.focus_handle(cx));
+                let pane = pane.read(cx);
+                if let Some(item) = pane.active_item() {
+                    item.item_focus_handle(cx).focus(window);
+                } else {
+                    log::error!(
+                        "Could not find a focus target when in switching focus in {direction} direction for a pane",
+                    );
+                }
             }
             Some(ActivateInDirectionTarget::Dock(dock)) => {
                 // Defer this to avoid a panic when the dock's active panel is already on the stack.

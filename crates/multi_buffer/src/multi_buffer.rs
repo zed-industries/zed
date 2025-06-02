@@ -5780,7 +5780,7 @@ impl MultiBufferSnapshot {
             // then add to the indent stack with the depth found
             let mut found_indent = false;
             let mut last_row = first_row;
-            if line_indent.is_line_empty() {
+            if line_indent.is_line_blank() {
                 while !found_indent {
                     let Some((target_row, new_line_indent, _)) = row_indents.next() else {
                         break;
@@ -5790,7 +5790,7 @@ impl MultiBufferSnapshot {
                         break;
                     }
 
-                    if new_line_indent.is_line_empty() {
+                    if new_line_indent.is_line_blank() {
                         continue;
                     }
                     last_row = target_row.min(end_row);

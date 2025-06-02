@@ -16,7 +16,7 @@ use std::{
 use collections::{HashMap, IndexMap};
 use gpui::{App, AppContext as _, Entity, Subscription};
 use language::{
-    Attach, CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate,
+    Attach, CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate,
     language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
@@ -151,7 +151,7 @@ impl LanguageServerTree {
         &'a mut self,
         path: ProjectPath,
         query: AdapterQuery<'_>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let settings_location = SettingsLocation {
@@ -181,7 +181,7 @@ impl LanguageServerTree {
             LanguageServerName,
             (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
         >,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let worktree_id = path.worktree_id;
@@ -401,7 +401,7 @@ impl<'tree> ServerTreeRebase<'tree> {
         &'a mut self,
         path: ProjectPath,
         query: AdapterQuery<'_>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let settings_location = SettingsLocation {

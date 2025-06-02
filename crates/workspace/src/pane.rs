@@ -899,7 +899,14 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.close_items_over_max_tabs(window, cx);
+        let item_already_exists = self
+            .items
+            .iter()
+            .any(|existing_item| existing_item.item_id() == item.item_id());
+
+        if !item_already_exists {
+            self.close_items_over_max_tabs(window, cx);
+        }
 
         if item.is_singleton(cx) {
             if let Some(&entry_id) = item.project_entry_ids(cx).first() {
@@ -1402,6 +1409,9 @@ impl Pane {
                 continue;
             };
             if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
+                continue;
+            }
+            if self.is_tab_pinned(index) {
                 continue;
             }
 
@@ -2053,13 +2063,17 @@ impl Pane {
                 self.set_preview_item_id(None, cx);
             }
 
-            self.workspace
-                .update(cx, |_, cx| {
-                    cx.defer_in(window, move |_, window, cx| {
-                        move_item(&pane, &pane, id, destination_index, window, cx)
-                    });
-                })
-                .ok()?;
+            if ix == destination_index {
+                cx.notify();
+            } else {
+                self.workspace
+                    .update(cx, |_, cx| {
+                        cx.defer_in(window, move |_, window, cx| {
+                            move_item(&pane, &pane, id, destination_index, window, cx)
+                        });
+                    })
+                    .ok()?;
+            }
 
             Some(())
         });
@@ -2073,13 +2087,17 @@ impl Pane {
 
             let id = self.item_for_index(ix)?.item_id();
 
-            self.workspace
-                .update(cx, |_, cx| {
-                    cx.defer_in(window, move |_, window, cx| {
-                        move_item(&pane, &pane, id, destination_index, window, cx)
-                    });
-                })
-                .ok()?;
+            if ix == destination_index {
+                cx.notify()
+            } else {
+                self.workspace
+                    .update(cx, |_, cx| {
+                        cx.defer_in(window, move |_, window, cx| {
+                            move_item(&pane, &pane, id, destination_index, window, cx)
+                        });
+                    })
+                    .ok()?;
+            }
 
             Some(())
         });
@@ -3787,6 +3805,312 @@ mod tests {
             ],
             cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_allow_pinning_dirty_item_at_max_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(1));
+        let item_a = add_labeled_item(&pane, "A", true, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A*^!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_allow_pinning_non_dirty_item_at_max_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(1));
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pin_tabs_incrementally_at_max_capacity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(3));
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        assert_item_labels(&pane, ["A*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A*!"], cx);
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A!", "B*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*!"], cx);
+
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pin_tabs_left_to_right_after_opening_at_max_capacity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(3));
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        assert_item_labels(&pane, ["A*"], cx);
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C*!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pin_tabs_right_to_left_after_opening_at_max_capacity(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(3));
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        assert_item_labels(&pane, ["A*"], cx);
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C*!", "A", "B"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C!", "B*!", "A"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C!", "B*!", "A!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pinned_tabs_never_closed_at_max_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "C", "D", "E*"], cx);
+
+        set_max_tabs(cx, Some(3));
+        add_labeled_item(&pane, "F", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "F*"], cx);
+
+        add_labeled_item(&pane, "G", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "G*"], cx);
+
+        add_labeled_item(&pane, "H", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "H*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_always_allows_one_unpinned_item_over_max_tabs_regardless_of_pinned_count(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(3));
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+
+        assert_item_labels(&pane, ["A!", "B!", "C*!"], cx);
+
+        let item_d = add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "C!", "D*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_d.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C!", "D*!"], cx);
+
+        add_labeled_item(&pane, "E", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "C!", "D!", "E*"], cx);
+
+        add_labeled_item(&pane, "F", false, cx);
+        assert_item_labels(&pane, ["A!", "B!", "C!", "D!", "F*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_can_open_one_item_when_all_tabs_are_dirty_at_max(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(3));
+
+        add_labeled_item(&pane, "A", true, cx);
+        assert_item_labels(&pane, ["A*^"], cx);
+
+        add_labeled_item(&pane, "B", true, cx);
+        assert_item_labels(&pane, ["A^", "B*^"], cx);
+
+        add_labeled_item(&pane, "C", true, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C*^"], cx);
+
+        add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C^", "D*"], cx);
+
+        add_labeled_item(&pane, "E", false, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C^", "E*"], cx);
+
+        add_labeled_item(&pane, "F", false, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C^", "F*"], cx);
+
+        add_labeled_item(&pane, "G", true, cx);
+        assert_item_labels(&pane, ["A^", "B^", "C^", "G*^"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_toggle_pin_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_pin_tab(&TogglePinTab, window, cx);
+        });
+        assert_item_labels(&pane, ["B*!", "A", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_pin_tab(&TogglePinTab, window, cx);
+        });
+        assert_item_labels(&pane, ["B*", "A", "C"], cx);
     }
 
     #[gpui::test]
