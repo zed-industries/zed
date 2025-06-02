@@ -25,8 +25,11 @@ fn init_git_hosting_provider_settings(cx: &mut App) {
 }
 
 fn update_git_hosting_providers_from_settings(cx: &mut App) {
+    let settings_store = cx.global::<SettingsStore>();
     let settings = GitHostingProviderSettings::get_global(cx);
     let provider_registry = GitHostingProviderRegistry::global(cx);
+
+    // todo!(Check if we should be clearing the registry)
 
     for provider in settings.git_hosting_providers.iter() {
         let Some(url) = Url::parse(&provider.base_url).log_err() else {
@@ -66,7 +69,7 @@ pub struct GitHostingProviderConfig {
     pub name: String,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GitHostingProviderSettings {
     /// The list of custom Git hosting providers.
     #[serde(default)]

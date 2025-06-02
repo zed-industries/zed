@@ -131,6 +131,10 @@ impl Global for GlobalGitHostingProviderRegistry {}
 #[derive(Default)]
 struct GitHostingProviderRegistryState {
     providers: BTreeMap<String, Arc<dyn GitHostingProvider + Send + Sync + 'static>>,
+    // TODO when do we update this?
+    // - add a worktree: subscribe to those settings, keep it in sync w/ them
+    // - remove a worktree: remove the key (?)
+    local_providers: HashMap<WorktreeId, BTreeMap<X, Y>>,
 }
 
 #[derive(Default)]

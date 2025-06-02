@@ -11,9 +11,11 @@ use buffer_diff::{
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
+    GitHostingProvider,
     repository::RepoPath,
     status::{StatusCode, TrackedStatus},
 };
+use git_hosting_providers::GitHostingProviderSettings;
 use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
@@ -214,6 +216,55 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
     });
+}
+
+#[gpui::test]
+async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| GitHostingProviderSettings::register(cx));
+
+    let fs = FakeFs::new(cx.executor());
+    let str_path = path!("/dir");
+    let path = Path::new(str_path);
+
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{
+                    "git_hosting_providers": [
+                        {
+                            "provider": "gitlab",
+                            "base_url": "https://google.com",
+                            "name": "foo"
+                        }
+                    ]
+                }"#
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (worktree, _) =
+        project.read_with(cx, |project, cx| project.find_worktree(path, cx).unwrap());
+    cx.executor().run_until_parked();
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+    cx.update_global::<SettingsStore, _>(|settings, _| {
+        dbg!(&settings);
+
+        let settings_location = SettingsLocation {
+            worktree_id,
+            path: Path::new(""),
+        };
+
+        let provider = settings.get::<GitHostingProviderSettings>(Some(settings_location));
+
+        let provider_config = provider.git_hosting_providers.first().unwrap();
+        assert_eq!(&provider_config.name, "foo");
+        assert_eq!(&provider_config.base_url, "https://google.com");
+    })
 }
 
 #[gpui::test]
