@@ -4,14 +4,11 @@ use futures::{Stream, TryFutureExt, stream};
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, StopReason,
-};
-use language_model::{
-    LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, MessageContent, RateLimiter, Role,
+    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason,
 };
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
@@ -56,6 +53,8 @@ pub struct AvailableModel {
     pub supports_tools: Option<bool>,
     /// Whether the model supports vision
     pub supports_images: Option<bool>,
+    /// Whether to enable think mode
+    pub supports_thinking: Option<bool>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -102,6 +101,7 @@ impl State {
                             None,
                             Some(capabilities.supports_tools()),
                             Some(capabilities.supports_vision()),
+                            Some(capabilities.supports_thinking()),
                         );
                         Ok(ollama_model)
                     }
@@ -223,6 +223,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     keep_alive: model.keep_alive.clone(),
                     supports_tools: model.supports_tools,
                     supports_vision: model.supports_images,
+                    supports_thinking: model.supports_thinking,
                 },
             );
         }
@@ -306,15 +307,26 @@ impl OllamaLanguageModel {
                                 Some(images)
                             },
                         },
-                        Role::Assistant => ChatMessage::Assistant {
-                            content: msg.string_contents(),
-                            tool_calls: None,
-                            images: if images.is_empty() {
-                                None
-                            } else {
-                                Some(images)
-                            },
-                        },
+                        Role::Assistant => {
+                            let content = msg.string_contents();
+                            let thinking =
+                                msg.content.into_iter().find_map(|content| match content {
+                                    MessageContent::Thinking { text, .. } if !text.is_empty() => {
+                                        Some(text)
+                                    }
+                                    _ => None,
+                                });
+                            ChatMessage::Assistant {
+                                content,
+                                tool_calls: None,
+                                images: if images.is_empty() {
+                                    None
+                                } else {
+                                    Some(images)
+                                },
+                                thinking,
+                            }
+                        }
                         Role::System => ChatMessage::System {
                             content: msg.string_contents(),
                         },
@@ -329,6 +341,7 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
+            think: self.model.supports_thinking,
             tools: request.tools.into_iter().map(tool_into_ollama).collect(),
         }
     }
@@ -464,8 +477,15 @@ fn map_to_language_model_completion_events(
                     content,
                     tool_calls,
                     images: _,
+                    thinking,
                 } => {
-                    // Check for tool calls
+                    if let Some(text) = thinking {
+                        events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                            text,
+                            signature: None,
+                        }));
+                    }
+
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         match tool_call {
                             OllamaToolCall::Function(function) => {
@@ -486,7 +506,7 @@ fn map_to_language_model_completion_events(
                                 state.used_tools = true;
                             }
                         }
-                    } else {
+                    } else if !content.is_empty() {
                         events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                     }
                 }

@@ -39,6 +39,7 @@ pub struct Model {
     pub keep_alive: Option<KeepAlive>,
     pub supports_tools: Option<bool>,
     pub supports_vision: Option<bool>,
+    pub supports_thinking: Option<bool>,
 }
 
 fn get_max_tokens(name: &str) -> usize {
@@ -69,6 +70,7 @@ impl Model {
         max_tokens: Option<usize>,
         supports_tools: Option<bool>,
         supports_vision: Option<bool>,
+        supports_thinking: Option<bool>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -79,6 +81,7 @@ impl Model {
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
             supports_vision,
+            supports_thinking,
         }
     }
 
@@ -103,6 +106,7 @@ pub enum ChatMessage {
         tool_calls: Option<Vec<OllamaToolCall>>,
         #[serde(skip_serializing_if = "Option::is_none")]
         images: Option<Vec<String>>,
+        thinking: Option<String>,
     },
     User {
         content: String,
@@ -147,6 +151,7 @@ pub struct ChatRequest {
     pub keep_alive: KeepAlive,
     pub options: Option<ChatOptions>,
     pub tools: Vec<OllamaTool>,
+    pub think: Option<bool>,
 }
 
 impl ChatRequest {
@@ -225,6 +230,10 @@ impl ModelShow {
 
     pub fn supports_vision(&self) -> bool {
         self.capabilities.iter().any(|v| v == "vision")
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.capabilities.iter().any(|v| v == "thinking")
     }
 }
 
@@ -471,9 +480,11 @@ mod tests {
                 content,
                 tool_calls,
                 images: _,
+                thinking,
             } => {
                 assert!(content.is_empty());
                 assert!(tool_calls.is_some_and(|v| !v.is_empty()));
+                assert!(thinking.is_none());
             }
             _ => panic!("Deserialized wrong role"),
         }
@@ -549,6 +560,7 @@ mod tests {
             stream: false,
             keep_alive: KeepAlive::default(),
             options: None,
+            think: None,
             tools: vec![],
         };
 
@@ -568,6 +580,7 @@ mod tests {
             stream: false,
             keep_alive: KeepAlive::default(),
             options: None,
+            think: None,
             tools: vec![],
         };
 
@@ -588,6 +601,7 @@ mod tests {
             stream: false,
             keep_alive: KeepAlive::default(),
             options: None,
+            think: None,
             tools: vec![],
         };
 
