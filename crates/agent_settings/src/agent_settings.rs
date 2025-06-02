@@ -372,7 +372,7 @@ impl AgentSettingsContent {
                                 None,
                                 None,
                                 Some(language_model.supports_tools()),
-                                Some(false),
+                                None,
                             )),
                             api_url,
                         });
