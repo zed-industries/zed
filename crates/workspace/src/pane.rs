@@ -786,7 +786,6 @@ impl Pane {
 
     /// Should only be used when deserializing a pane.
     pub fn set_pinned_count(&mut self, count: usize) {
-        dbg!(count);
         self.pinned_tab_count = count;
     }
 
