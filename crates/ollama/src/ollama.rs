@@ -101,8 +101,6 @@ pub enum ChatMessage {
     Assistant {
         content: String,
         tool_calls: Option<Vec<OllamaToolCall>>,
-        // Thinking contains the text that was inside thinking tags in the
-        // original model output when ChatRequest.Think is enabled.
         thinking: Option<String>,
     },
     User {
@@ -146,11 +144,6 @@ pub struct ChatRequest {
     pub keep_alive: KeepAlive,
     pub options: Option<ChatOptions>,
     pub tools: Vec<OllamaTool>,
-    /// Controls whether models with thinking/reasoning capabilities will produce their reasoning process.
-    ///
-    /// When set to `true`, models that support this feature will return their step-by-step
-    /// thinking before generating a final response. This is useful for understanding the
-    /// model's reasoning process and for debugging complex reasoning chains.
     pub think: Option<bool>,
 }
 

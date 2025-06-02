@@ -288,15 +288,10 @@ impl OllamaLanguageModel {
                     },
                     Role::Assistant => {
                         let content = msg.string_contents();
-                        let mut thinking = None;
-                        for content in msg.content.into_iter() {
-                            if let MessageContent::Thinking { text, .. } = content {
-                                if !text.is_empty() {
-                                    thinking = Some(text);
-                                    break;
-                                }
-                            }
-                        }
+                        let thinking = msg.content.into_iter().find_map(|content| match content {
+                            MessageContent::Thinking { text, .. } if !text.is_empty() => Some(text),
+                            _ => None,
+                        });
                         ChatMessage::Assistant {
                             content,
                             tool_calls: None,
@@ -453,15 +448,13 @@ fn map_to_language_model_completion_events(
                     tool_calls,
                     thinking,
                 } => {
-                    // Handle thinking content if present
-                    if let Some(thinking_text) = thinking {
+                    if let Some(text) = thinking {
                         events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                            text: thinking_text,
+                            text,
                             signature: None,
                         }));
                     }
 
-                    // Check for tool calls
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         match tool_call {
                             OllamaToolCall::Function(function) => {
