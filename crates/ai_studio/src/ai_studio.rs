@@ -4,13 +4,16 @@ mod provider_registry;
 mod chat_interface;
 pub mod workflow;
 pub mod ai_config;
+pub mod models;
+pub mod agents;
 
 pub use studio::*;
-pub use model_manager::*;
+pub use model_manager::ModelManager as OldModelManager;
 pub use provider_registry::*;
 pub use chat_interface::*;
 pub use workflow::*;
-pub use ai_config::*;
+pub use models::{ModelManager, ModelConfig, ModelType, ModelProvider, ModelParameters, ModelCapability};
+pub use agents::{AgentManager, AgentConfig};
 
 use gpui::{actions, App, AppContext, Window};
 

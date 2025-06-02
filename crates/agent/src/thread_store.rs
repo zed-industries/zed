@@ -676,6 +676,8 @@ pub struct SerializedThread {
     pub model: Option<SerializedLanguageModel>,
     #[serde(default)]
     pub completion_mode: Option<CompletionMode>,
+    #[serde(default)]
+    pub tool_use_limit_reached: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -763,6 +765,8 @@ pub struct SerializedMessage {
     pub context: String,
     #[serde(default)]
     pub creases: Vec<SerializedCrease>,
+    #[serde(default)]
+    pub is_hidden: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -821,6 +825,7 @@ impl LegacySerializedThread {
             exceeded_window_error: None,
             model: None,
             completion_mode: None,
+            tool_use_limit_reached: false,
         }
     }
 }
@@ -846,6 +851,7 @@ impl LegacySerializedMessage {
             tool_results: self.tool_results,
             context: String::new(),
             creases: Vec::new(),
+            is_hidden: false,
         }
     }
 }

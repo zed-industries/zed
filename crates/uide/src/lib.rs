@@ -38,6 +38,7 @@ pub mod query;
 pub mod index;
 pub mod universal;
 pub mod error;
+pub mod semantic_schema;
 
 // Core types
 pub use engine::UnifiedDataEngine;

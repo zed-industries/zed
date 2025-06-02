@@ -9,6 +9,8 @@ use gpui::{
 };
 use lmstudio;
 use settings::{Settings, update_settings_file};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use ui::{
     prelude::*, Button, ButtonStyle, IconButton,
     IconName, Label, LabelCommon,
@@ -118,6 +120,13 @@ impl ConfigurationView {
             connection_check_tasks: BTreeMap::new(),
             expanded_server_models: HashSet::default(),
         }
+    }
+
+    // Helper function to create unique IDs
+    fn hash_id(input: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        input.hash(&mut hasher);
+        hasher.finish()
     }
 
     // Helper methods for text input creation and updates
@@ -325,7 +334,7 @@ impl ConfigurationView {
 
         // Create new server
         let new_server = LmStudioServer {
-            id: format!("server_{}", uuid::Uuid::new_v4()),
+            id: uuid::Uuid::new_v4().to_string(),
             name: self.new_server_name.clone(),
             api_url: self.new_server_url.clone(),
             enabled: true,
@@ -743,7 +752,7 @@ impl ConfigurationView {
                             .child(Label::new("Edit Server").size(LabelSize::Default))
                             .child(div().flex_1())
                             .child(
-                                IconButton::new("close", IconName::Close)
+                                IconButton::new(("close-edit-server", index), IconName::Close)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.cancel_edit_server(cx);
                                     }))
@@ -756,7 +765,7 @@ impl ConfigurationView {
                                     .child(self.server_edit_name_input.as_ref().unwrap().clone())
                                     .child(self.server_edit_url_input.as_ref().unwrap().clone())
                                     .child(
-                                        Button::new("save", "Save")
+                                        Button::new(("save-server", index), "Save")
                                             .style(ButtonStyle::Filled)
                                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                                 if let Err(e) = this.edit_server(index, cx) {
@@ -771,7 +780,7 @@ impl ConfigurationView {
                             .flex_row()
                             .gap_1()
                             .child(
-                                Switch::new(gpui::SharedString::from(server_id.clone()), ToggleState::Selected)
+                                Switch::new(gpui::SharedString::from(server_id.clone()), if server.enabled { ToggleState::Selected } else { ToggleState::Unselected })
                                     .color(SwitchColor::Default)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.toggle_server(index, cx);
@@ -792,19 +801,19 @@ impl ConfigurationView {
                                 }
                             )
                             .child(
-                                IconButton::new("expand", IconName::ChevronDown)
+                                IconButton::new(("expand-server", Self::hash_id(&server_id)), IconName::ChevronDown)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.toggle_server_models(&server_id, cx);
                                     }))
                             )
                             .child(
-                                IconButton::new("edit", IconName::Pencil)
+                                IconButton::new(("edit-server", index), IconName::Pencil)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.start_edit_server(index, cx);
                                     }))
                             )
                             .child(
-                                IconButton::new("remove", IconName::Trash)
+                                IconButton::new(("remove-server", index), IconName::Trash)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.remove_server(index, cx);
                                     }))
@@ -840,7 +849,7 @@ impl ConfigurationView {
                             .child(Label::new(&model.name).size(LabelSize::Default))
                             .child(self.edit_max_tokens_input.as_ref().unwrap().clone())
                             .child(
-                                Button::new("save", "Save")
+                                Button::new(("save-model-tokens", Self::hash_id(&format!("{}-{}", server_id, model.name))), "Save")
                                     .style(ButtonStyle::Filled)
                                     .on_click(cx.listener({
                                         let server_id = server_id.clone();
@@ -853,7 +862,7 @@ impl ConfigurationView {
                                     }))
                             )
                             .child(
-                                IconButton::new("cancel", IconName::Close)
+                                IconButton::new(("cancel-edit-tokens", Self::hash_id(&format!("{}-{}", server_id, model.name))), IconName::Close)
                                     .on_click(cx.listener(move |this, _event, _window, cx| {
                                         this.cancel_edit_max_tokens(cx);
                                     }))
@@ -865,7 +874,7 @@ impl ConfigurationView {
                         h_flex()
                             .gap_1()
                             .child(
-                                Switch::new(gpui::SharedString::from(model_switch_id.clone()), ToggleState::Selected)
+                                Switch::new(gpui::SharedString::from(model_switch_id.clone()), if model.enabled { ToggleState::Selected } else { ToggleState::Unselected })
                                     .color(SwitchColor::Default)
                                     .on_click(cx.listener({
                                         let server_id_clone = server_id_clone.clone();
@@ -889,7 +898,7 @@ impl ConfigurationView {
                                     .size(LabelSize::Small)
                             )
                             .child(
-                                IconButton::new("edit-tokens", IconName::Pencil)
+                                IconButton::new(("edit-model-tokens", Self::hash_id(&format!("{}-{}", server_id_clone, model_name_clone))), IconName::Pencil)
                                     .on_click(cx.listener({
                                         let server_id_clone = server_id_clone.clone();
                                         let model_name_clone = model_name_clone.clone();
@@ -905,7 +914,7 @@ impl ConfigurationView {
                                     }))
                             )
                             .child(
-                                IconButton::new("remove", IconName::Trash)
+                                IconButton::new(("remove-model", Self::hash_id(&format!("{}-{}", server_id_clone, model_name_clone))), IconName::Trash)
                                     .on_click(cx.listener({
                                         let server_id_clone = server_id_clone.clone();
                                         let model_name_clone = model_name_clone.clone();
@@ -930,7 +939,7 @@ impl ConfigurationView {
                     .child(Label::new("Add Server").size(LabelSize::Default))
                     .child(div().flex_1())
                     .child(
-                        IconButton::new("close", IconName::Close)
+                        IconButton::new("close-add-server", IconName::Close)
                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                 this.cancel_add_server(cx);
                             }))
@@ -942,7 +951,7 @@ impl ConfigurationView {
                     .child(self.new_server_name_input.as_ref().unwrap().clone())
                     .child(self.new_server_url_input.as_ref().unwrap().clone())
                     .child(
-                        Button::new("add", "Add")
+                        Button::new("add-server-submit", "Add")
                             .style(ButtonStyle::Filled)
                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                 if let Err(e) = this.add_server(cx) {
@@ -965,7 +974,7 @@ impl ConfigurationView {
                     .child(Label::new("Add Model").size(LabelSize::Default))
                     .child(div().flex_1())
                     .child(
-                        IconButton::new("close", IconName::Close)
+                        IconButton::new(("close-add-model", Self::hash_id(&server_id)), IconName::Close)
                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                 this.cancel_add_model(cx);
                             }))
@@ -978,8 +987,12 @@ impl ConfigurationView {
                     .child(self.new_model_display_name_input.as_ref().unwrap().clone())
                     .child(self.new_model_max_tokens_input.as_ref().unwrap().clone())
                     .child(
-                        Button::new("add", "Add")
-                            .style(ButtonStyle::Filled)
+                        Button::new(("add-model-submit", Self::hash_id(&server_id)), "Add")
+                            .style(ButtonStyle::Subtle)
+                            .icon(IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .label_size(LabelSize::Small)
+                            .icon_position(IconPosition::Start)
                             .on_click(cx.listener(move |this, _event, _window, cx| {
                                 if let Err(e) = this.add_model(&server_id, cx) {
                                     log::error!("Failed to add model: {}", e);
@@ -1029,7 +1042,30 @@ impl Render for ConfigurationView {
                                     .child("Configure LM Studio servers and models")
                             )
                     )
-                    .child(self.render_server_list(window, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(Label::new("Servers").size(LabelSize::Default))
+                                    .child(
+                                        Button::new("add-server", "Add Server")
+                                            .style(ButtonStyle::Filled)
+                                            .icon(IconName::Plus)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                                this.is_adding_server = true;
+                                                cx.notify();
+                                            }))
+                                    )
+                            )
+                            .child(self.render_server_list(window, cx))
+                    )
                     .child(
                         if self.is_adding_server {
                             self.render_add_server(window, cx).into_any_element()
@@ -1042,7 +1078,7 @@ impl Render for ConfigurationView {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(Label::new("Expanded Models").size(LabelSize::Default))
+                            .child(Label::new("Models").size(LabelSize::Default))
                             .children(
                                 servers_data.into_iter().map(|(server_id, server_name)| {
                                     // Get server data without borrowing cx
@@ -1058,7 +1094,27 @@ impl Render for ConfigurationView {
                                         .flex()
                                         .flex_col()
                                         .gap_1()
-                                        .child(Label::new(&server_name).size(LabelSize::Small))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .justify_between()
+                                                .items_center()
+                                                .child(Label::new(&server_name).size(LabelSize::Small))
+                                                .child(
+                                                    Button::new(("add-model", server_id.len()), "Add Model")
+                                                        .style(ButtonStyle::Subtle)
+                                                        .icon(IconName::Plus)
+                                                        .icon_size(IconSize::Small)
+                                                        .label_size(LabelSize::Small)
+                                                        .icon_position(IconPosition::Start)
+                                                        .on_click(cx.listener({
+                                                            move |this, _event, _window, cx| {
+                                                                this.is_adding_model = true;
+                                                                cx.notify();
+                                                            }
+                                                        }))
+                                                )
+                                        )
                                         .child(self.render_model_list(&server, window, cx))
                                         .child(
                                             if self.is_adding_model {

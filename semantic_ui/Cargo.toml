@@ -1,0 +1,29 @@
+[package]
+name = "semantic_ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+tokio = { version = "1.0", features = ["full"] }
+dashmap = "5.0"
+tracing = "0.1"
+thiserror = "1.0"
+
+# GPUI dependencies
+gpui = { path = "../gpui" }
+ui = { path = "../ui" }
+ui_input = { path = "../ui_input" }
+
+# Vector/embedding support (optional for now)
+# candle-core = { version = "0.3", optional = true }
+# candle-nn = { version = "0.3", optional = true }
+
+[features]
+default = []
+embeddings = []  # For future semantic similarity features 

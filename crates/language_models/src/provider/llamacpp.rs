@@ -64,7 +64,7 @@ impl Default for LlamaCppSettings {
             model_configurations: vec![ModelConfiguration::default()],
             gpu_layers: 0,
             thread_count: None,
-            default_temperature: 0.3,
+            default_temperature: 0.7,
             default_context_size: 4096,
             default_max_tokens: 1000,
             default_top_k: 40,
@@ -123,7 +123,7 @@ impl Default for ModelConfiguration {
             id: uuid::Uuid::new_v4().to_string(),
             name: "Default Configuration".to_string(),
             description: None,
-            temperature: 0.3,
+            temperature: 0.7,
             context_size: 4096,
             max_tokens: 1000,
             top_k: 40,
@@ -242,8 +242,8 @@ impl State {
                                 display_name,
                                 model_type: "gguf".to_string(),
                                 context_size: 4096, // Default, will be read from model
-                                supports_tools: false, // Llama.cpp doesn't support function calling yet
-                                capabilities: vec!["text-generation".to_string()],
+                                supports_tools: true, // Enable tool support for llama.cpp models
+                                capabilities: vec!["text-generation".to_string(), "function-calling".to_string()],
                             };
                             self.available_models.push(info);
                         }
@@ -381,8 +381,12 @@ impl LanguageModel for LlamaCppLanguageModel {
         false
     }
 
-    fn supports_tool_choice(&self, _choice: LanguageModelToolChoice) -> bool {
-        false
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto => self.supports_tools(),
+            LanguageModelToolChoice::Any => self.supports_tools(),
+            LanguageModelToolChoice::None => true,
+        }
     }
 
     fn telemetry_id(&self) -> String {
@@ -510,7 +514,8 @@ fn run_llama_inference(
     
     // Create context
     let ctx_params = LlamaContextParams::default()
-        .with_n_ctx(std::num::NonZeroU32::new(context_size as u32));
+        .with_n_ctx(std::num::NonZeroU32::new(context_size as u32))
+        .with_n_batch(context_size as u32); // Set batch size to match context size
     
     let mut ctx = model
         .new_context(&backend, ctx_params)
@@ -524,8 +529,9 @@ fn run_llama_inference(
         .filter(|msg| matches!(msg.role, language_model::Role::System))
         .collect();
     
+    let mut system_content = String::new();
     if !system_messages.is_empty() {
-        let system_content = system_messages.iter()
+        let system_text = system_messages.iter()
             .flat_map(|msg| msg.content.iter())
             .filter_map(|c| match c {
                 MessageContent::Text(text) => Some(text.as_str()),
@@ -534,9 +540,38 @@ fn run_llama_inference(
             .collect::<Vec<_>>()
             .join(" ");
         
-        if !system_content.is_empty() {
-            prompt_parts.push(format!("System: {}", system_content));
+        if !system_text.is_empty() {
+            system_content.push_str(&system_text);
         }
+    }
+    
+    // Only add tools to system message if tools are actually present AND needed
+    if !request.tools.is_empty() {
+        if !system_content.is_empty() {
+            system_content.push_str("\n\n");
+        }
+        system_content.push_str("You have access to tools. Use them when appropriate.\n\n# Available Tools\n\n");
+        
+        for tool in &request.tools {
+            system_content.push_str(&format!(
+                "## {}\n{}\n\n",
+                tool.name,
+                tool.description
+            ));
+        }
+        
+        system_content.push_str("To use a tool, respond with JSON: {\"tool_name\": \"name\", \"arguments\": {...}}\n");
+    }
+    
+    // Only add system content if we actually have some
+    if !system_content.is_empty() {
+        prompt_parts.push(format!("System: {}", system_content));
+    } else if !request.tools.is_empty() {
+        // Add a minimal system instruction when tools are available
+        prompt_parts.push("System: You are an AI assistant with access to tools. Use tools when appropriate to help the user. Respond directly without unnecessary greetings.".to_string());
+    } else {
+        // Add a minimal system instruction to guide behavior
+        prompt_parts.push("System: You are an AI assistant. Respond directly to the user's question without adding greetings or extra commentary.".to_string());
     }
     
     // Add conversation history
@@ -551,28 +586,84 @@ fn run_llama_inference(
             language_model::Role::System => "System", // Won't reach here
         };
         
-        let content = msg.content.iter()
-            .filter_map(|c| match c {
-                MessageContent::Text(text) => Some(text.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+        let mut content_parts = Vec::new();
         
+        for content in &msg.content {
+            match content {
+                MessageContent::Text(text) => {
+                    content_parts.push(text.clone());
+                }
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = format!(
+                        "Used tool: {}\nArguments: {}\nTool call ID: {}",
+                        tool_use.name,
+                        tool_use.raw_input,
+                        tool_use.id
+                    );
+                    content_parts.push(tool_call);
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    let result_text = format!(
+                        "Tool result (ID: {}):\n{}",
+                        tool_result.tool_use_id,
+                        tool_result.content.to_str().unwrap_or("[non-text result]")
+                    );
+                    content_parts.push(result_text);
+                }
+                MessageContent::Thinking { text, .. } => {
+                    content_parts.push(format!("[Thinking: {}]", text));
+                }
+                MessageContent::RedactedThinking(_) => {
+                    content_parts.push("[Thinking: <redacted>]".to_string());
+                }
+                MessageContent::Image(_) => {
+                    content_parts.push("[Image: not supported by llama.cpp]".to_string());
+                }
+            }
+        }
+        
+        let content = content_parts.join("\n");
         if !content.is_empty() {
             prompt_parts.push(format!("{}: {}", role, content));
+        } else if matches!(msg.role, language_model::Role::User) {
+            // Always include user messages, even if empty, to maintain conversation structure
+            prompt_parts.push(format!("{}: ", role));
+            log::debug!("Added empty user message to maintain conversation flow");
+        } else {
+            // Even if content is empty, we should indicate the role
+            log::debug!("Message with role {} has no content", role);
+        }
+    }
+    
+    // Debug logging
+    log::info!("Total messages: {}, prompt parts: {}", request.messages.len(), prompt_parts.len());
+    if prompt_parts.is_empty() && !request.messages.is_empty() {
+        log::warn!("No prompt parts generated despite having {} messages", request.messages.len());
+        for (i, msg) in request.messages.iter().enumerate() {
+            log::warn!("Message {}: role={:?}, content_count={}", i, msg.role, msg.content.len());
         }
     }
     
     // Create the full prompt with proper formatting
     let full_prompt = if prompt_parts.is_empty() {
-        "Human: Hello\n\nAssistant:".to_string()
+        // Only use this fallback if there are literally no messages at all
+        if request.messages.is_empty() {
+            "Assistant:".to_string()
+        } else {
+            // If we have messages but no prompt_parts, something went wrong
+            // Just create a minimal assistant prompt
+            "Assistant:".to_string()
+        }
     } else {
+        // Normal case: build prompt from the conversation
         format!("{}\n\nAssistant:", prompt_parts.join("\n\n"))
     };
     
     // Debug: log the prompt being used
-    log::info!("Llama.cpp prompt: {}", full_prompt);
+    log::info!("Llama.cpp prompt length: {} chars", full_prompt.len());
+    log::info!("Full prompt being sent to model:\n{}", full_prompt);
+    log::info!("Request tools count: {}", request.tools.len());
+    log::info!("Request messages count: {}", request.messages.len());
     
     // Tokenize the prompt
     let tokens_list = model.str_to_token(&full_prompt, AddBos::Always)
@@ -585,10 +676,20 @@ fn run_llama_inference(
         return Ok(());
     }
     
-    // Create batch for processing
-    let mut batch = LlamaBatch::new(context_size, 1);
+    log::info!("Prompt tokenized to {} tokens, context size: {}", tokens_list.len(), context_size);
     
-    // Process the prompt tokens
+    // Check if prompt fits in context
+    if tokens_list.len() >= context_size {
+        let _ = tx.unbounded_send(Err(LanguageModelCompletionError::Other(
+            anyhow::anyhow!("Prompt too long: {} tokens exceed context size of {}", tokens_list.len(), context_size)
+        )));
+        return Ok(());
+    }
+    
+    // Create batch for the entire prompt (this is the correct approach)
+    let mut batch = LlamaBatch::new(tokens_list.len().max(1), 1);
+    
+    // Process the prompt tokens all at once
     for (i, &token) in tokens_list.iter().enumerate() {
         let is_last = i == tokens_list.len() - 1;
         batch.add(token, i as i32, &[0], is_last)
@@ -609,14 +710,18 @@ fn run_llama_inference(
     // Buffer for accumulating partial UTF-8 sequences
     let mut token_buffer = Vec::new();
     
+    // Buffer for tool call detection
+    let mut generation_buffer = String::new();
+    
     // Track recent tokens for repetition penalty
     let mut recent_tokens = Vec::new();
     
     // Generation loop
     for generation_step in 0..max_tokens {
         // Get logits from the appropriate position
+        // After batch processing, logits are available at the position of the last token in the last batch
         let logits = if generation_step == 0 {
-            // First generation step: logits are at the last prompt position
+            // First generation step: logits are at the last position of the prompt batch
             ctx.get_logits_ith((tokens_list.len() - 1) as i32)
         } else {
             // Subsequent steps: logits are at position 0 (single token batch)
@@ -643,12 +748,15 @@ fn run_llama_inference(
         for &recent_token in recent_tokens.iter().rev().take(penalty_window) {
             for candidate in candidates_p.data.iter_mut() {
                 if candidate.id() == recent_token {
-                    let new_logit = if candidate.logit() > 0.0 {
-                        candidate.logit() / repetition_penalty
+                    let current_logit = candidate.logit();
+                    let new_logit = if current_logit > 0.0 {
+                        current_logit / repetition_penalty
                     } else {
-                        candidate.logit() * repetition_penalty
+                        current_logit * repetition_penalty
                     };
                     *candidate = LlamaTokenData::new(candidate.id(), new_logit, candidate.p());
+                    log::trace!("Applied repetition penalty to token {}: {:.3} -> {:.3}", 
+                              recent_token.0, current_logit, new_logit);
                 }
             }
         }
@@ -656,12 +764,22 @@ fn run_llama_inference(
         // Use proper probabilistic sampling with temperature, top-k, and top-p
         let new_token_id = sample_token_probabilistic(&mut candidates_p, temperature, config.top_k, config.top_p);
         
-        // Check for EOS
-        if new_token_id == model.token_eos() {
+        // Safety check: ensure token ID is valid
+        if new_token_id.0 < 0 || new_token_id.0 as usize >= n_vocab {
+            log::error!("Invalid token ID generated: {}, vocab size: {}", new_token_id.0, n_vocab);
             break;
         }
         
-        // Add token to recent tokens for repetition penalty
+        log::debug!("Generated token {} (temp: {:.2}, top_k: {}, top_p: {:.2})", 
+                   new_token_id.0, temperature, config.top_k, config.top_p);
+        
+        // Check for EOS first - this is critical
+        if new_token_id == model.token_eos() {
+            log::info!("EOS token detected, stopping generation");
+            break;
+        }
+        
+        // Add token to recent tokens for repetition penalty BEFORE processing
         recent_tokens.push(new_token_id);
         if recent_tokens.len() > 128 {
             recent_tokens.remove(0); // Keep only recent 128 tokens
@@ -670,11 +788,56 @@ fn run_llama_inference(
         // Convert token to string with proper UTF-8 handling
         match model.token_to_str(new_token_id, Special::Tokenize) {
             Ok(token_str) => {
-                // Token decoded successfully, send it
-                log::debug!("Generated token: {:?} -> '{}'", new_token_id.0, token_str);
-                if tx.unbounded_send(Ok(LanguageModelCompletionEvent::Text(token_str))).is_err() {
-                    // Receiver dropped, stop generation
-                    break;
+                // Add to generation buffer for tool call detection
+                generation_buffer.push_str(&token_str);
+                
+                // Check for tool call patterns - re-enabled with better detection
+                let emit_text = true;
+                
+                // Only detect complete JSON tool calls that are clearly formatted
+                if generation_buffer.len() > 20 { // Check after minimum text for efficiency
+                    // Look for complete JSON object pattern at the end
+                    if let Some(last_brace) = generation_buffer.rfind('}') {
+                        if let Some(first_brace) = generation_buffer[..=last_brace].rfind('{') {
+                            let potential_json = generation_buffer[first_brace..=last_brace].trim();
+                            
+                            // Only try to parse if it looks like a complete tool call
+                            if potential_json.len() > 15 && 
+                               potential_json.contains("\"tool_name\"") &&
+                               potential_json.contains("\"arguments\"") &&
+                               potential_json.starts_with('{') &&
+                               potential_json.ends_with('}') {
+                                
+                                log::debug!("Potential complete tool call detected: {}", potential_json);
+                                
+                                if let Some(tool_use) = try_parse_tool_call(potential_json) {
+                                    log::info!("Valid tool call parsed: {}, stopping generation", tool_use.name);
+                                    
+                                    // Send the tool use event
+                                    if tx.unbounded_send(Ok(LanguageModelCompletionEvent::ToolUse(tool_use))).is_err() {
+                                        break;
+                                    }
+                                    
+                                    // Send stop event for tool use
+                                    if tx.unbounded_send(Ok(LanguageModelCompletionEvent::Stop(language_model::StopReason::ToolUse))).is_err() {
+                                        break;
+                                    }
+                                    break; // Stop generation after tool call
+                                } else {
+                                    log::debug!("JSON detected but failed to parse as tool call: {}", potential_json);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Send token as text
+                if emit_text {
+                    log::debug!("Generated token: {:?} -> '{}'", new_token_id.0, token_str);
+                    if tx.unbounded_send(Ok(LanguageModelCompletionEvent::Text(token_str))).is_err() {
+                        // Receiver dropped, stop generation
+                        break;
+                    }
                 }
             }
             Err(_) => {
@@ -764,15 +927,45 @@ fn sample_token_probabilistic(
 ) -> LlamaToken {
     use rand::Rng;
     
-    if temperature <= 0.0 {
-        // Greedy sampling
+    // Ensure we have candidates
+    if candidates.data.is_empty() {
+        log::warn!("No candidates for sampling, returning default token");
+        return LlamaToken(0);
+    }
+    
+    // Validate all token data first
+    candidates.data.retain(|candidate| {
+        candidate.logit().is_finite() && candidate.id().0 >= 0
+    });
+    
+    if candidates.data.is_empty() {
+        log::warn!("All candidates invalid after filtering, returning default token");
+        return LlamaToken(0);
+    }
+    
+    // Clamp temperature to reasonable range
+    let temperature = temperature.clamp(0.01, 2.0);
+    
+    if temperature <= 0.01 {
+        // Greedy sampling for very low temperature
         return candidates.data.iter()
             .max_by(|a, b| a.logit().partial_cmp(&b.logit()).unwrap_or(std::cmp::Ordering::Equal))
             .map(|token_data| token_data.id())
             .unwrap_or(LlamaToken(0));
     }
     
-    // Apply temperature
+    // Sort by logit (descending) for proper top-k/top-p filtering
+    candidates.data.sort_by(|a, b| b.logit().partial_cmp(&a.logit()).unwrap_or(std::cmp::Ordering::Equal));
+    
+    // Apply top-k filtering if specified
+    let effective_top_k = if top_k > 0 && (top_k as usize) < candidates.data.len() {
+        top_k as usize
+    } else {
+        candidates.data.len()
+    };
+    candidates.data.truncate(effective_top_k);
+    
+    // Apply temperature scaling
     for candidate in candidates.data.iter_mut() {
         *candidate = LlamaTokenData::new(
             candidate.id(),
@@ -780,17 +973,6 @@ fn sample_token_probabilistic(
             candidate.p(),
         );
     }
-    
-    // Sort by logit (descending)
-    candidates.data.sort_by(|a, b| b.logit().partial_cmp(&a.logit()).unwrap_or(std::cmp::Ordering::Equal));
-    
-    // Apply top-k filtering
-    let k = if top_k > 0 && (top_k as usize) < candidates.data.len() {
-        top_k as usize
-    } else {
-        candidates.data.len()
-    };
-    candidates.data.truncate(k);
     
     // Convert logits to probabilities using softmax
     let max_logit = candidates.data[0].logit();
@@ -803,19 +985,28 @@ fn sample_token_probabilistic(
         sum += prob;
     }
     
-    // Normalize probabilities
-    for prob in &mut probs {
-        *prob /= sum;
+    // Ensure sum is not zero or NaN
+    if sum <= 0.0 || sum.is_nan() || sum.is_infinite() {
+        log::warn!("Invalid probability sum: {}, falling back to uniform distribution", sum);
+        // Uniform distribution fallback
+        let uniform_prob = 1.0 / probs.len() as f32;
+        probs.fill(uniform_prob);
+    } else {
+        // Normalize probabilities
+        for prob in &mut probs {
+            *prob /= sum;
+        }
     }
     
-    // Apply top-p (nucleus) sampling
-    if top_p < 1.0 {
+    // Apply top-p (nucleus) sampling if specified
+    let effective_top_p = top_p.clamp(0.0, 1.0);
+    if effective_top_p < 1.0 {
         let mut cumsum = 0.0f32;
         let mut cutoff = probs.len();
         
         for (i, &prob) in probs.iter().enumerate() {
             cumsum += prob;
-            if cumsum >= top_p {
+            if cumsum >= effective_top_p {
                 cutoff = i + 1;
                 break;
             }
@@ -840,13 +1031,58 @@ fn sample_token_probabilistic(
     
     for (i, &prob) in probs.iter().enumerate() {
         cumsum += prob;
-        if cumsum >= r {
-            return candidates.data[i].id();
+        if cumsum >= r || i == probs.len() - 1 {
+            let selected_token = candidates.data[i].id();
+            // Final validation of selected token
+            if selected_token.0 >= 0 {
+                return selected_token;
+            }
         }
     }
     
-    // Fallback to last token
-    candidates.data.last().map(|t| t.id()).unwrap_or(LlamaToken(0))
+    // Fallback: return the first valid token
+    for candidate in &candidates.data {
+        if candidate.id().0 >= 0 {
+            return candidate.id();
+        }
+    }
+    
+    // Ultimate fallback
+    LlamaToken(0)
+}
+
+// Helper function to parse tool calls from JSON content
+#[allow(dead_code)]
+fn try_parse_tool_call(json_content: &str) -> Option<language_model::LanguageModelToolUse> {
+    // Clean the JSON content
+    let cleaned_json = json_content.trim();
+    
+    // Try to parse the JSON
+    let parsed = serde_json::from_str::<serde_json::Value>(cleaned_json).ok()?;
+    
+    // Look for tool_name and arguments fields (flexible field names)
+    let tool_name = parsed.get("tool_name")
+        .or_else(|| parsed.get("tool"))
+        .or_else(|| parsed.get("function"))
+        .and_then(|v| v.as_str())?;
+    
+    let arguments = parsed.get("arguments")
+        .or_else(|| parsed.get("args"))
+        .or_else(|| parsed.get("parameters"))
+        .or_else(|| parsed.get("input"))?;
+    
+    // Generate a unique ID for this tool use
+    let tool_use_id = uuid::Uuid::new_v4().to_string();
+    
+    log::info!("Successfully parsed tool call: {} with args: {}", tool_name, arguments);
+    
+    Some(language_model::LanguageModelToolUse {
+        id: tool_use_id.into(),
+        name: tool_name.into(),
+        raw_input: cleaned_json.to_string(),
+        input: arguments.clone(),
+        is_input_complete: true,
+    })
 }
 
 struct ConfigurationView {

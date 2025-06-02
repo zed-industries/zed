@@ -290,6 +290,7 @@ impl TerminalInlineAssistant {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                intent: None,
                 mode: None,
                 messages: vec![request_message],
                 tools: Vec::new(),

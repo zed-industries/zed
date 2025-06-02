@@ -104,12 +104,13 @@ pub enum LanguageModelToolSchemaFormat {
     JsonSchemaSubset,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     EndTurn,
     MaxTokens,
     ToolUse,
+    Refusal,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -55,15 +55,53 @@ pub struct Model {
 
 fn get_max_tokens(name: &str) -> usize {
     /// Default context length for unknown models.
-    const DEFAULT_TOKENS: usize = 2048;
+    const DEFAULT_TOKENS: usize = 4096;
     /// Maximum allowed context length
-    const MAXIMUM_TOKENS: usize = 32768;
+    const MAXIMUM_TOKENS: usize = 128000;
 
     // Map known models to their context sizes
     let tokens = match name.split(':').next().unwrap_or_default() {
-        "text-embedding-nomic-embed-text-v1.5" | "granite-code" => 2048,
-        "qwen3-32b" => 32768,
+        // Embedding models
+        "text-embedding-nomic-embed-text-v1.5" => 2048,
+        
+        // Code models
+        "granite-code" => 2048,
         "deepseek-coder-v2-lite-instruct" => 163840,
+        "starcoder2" => 16384,
+        "codegemma" => 8192,
+        
+        // Qwen models
+        "qwen3-32b" | "qwen3-70b" => 32768,
+        "qwen3-8b" | "qwen3-14b" | "qwen3" => 32768,  // Qwen3 models typically have 32k context
+        "qwen2.5" | "qwen2.5-coder" => 32768,
+        "qwen2" => 32768,
+        "qwen" => 8192,
+        
+        // Llama models
+        "llama3.1" | "llama3.2" | "llama3.3" => 128000,
+        "llama3" => 8192,
+        "llama2" => 4096,
+        "codellama" => 16384,
+        
+        // Mistral models
+        "mistral" | "codestral" | "mixtral" | "dolphin-mixtral" => 32768,
+        
+        // Gemma models
+        "gemma2" | "gemma3" => 8192,
+        "gemma" => 8192,
+        
+        // Phi models
+        "phi3" | "phi3.5" | "phi4" => 128000,
+        "phi" => 2048,
+        
+        // Other models
+        "yi" | "yi-coder" => 4096,
+        "vicuna" => 4096,
+        "stablelm2" => 4096,
+        "deepseek-v3" | "deepseek-r1" => 128000,
+        "command-r" => 128000,
+        "tinyllama" => 2048,
+        
         _ => DEFAULT_TOKENS,
     };
     
@@ -442,13 +480,8 @@ pub async fn stream_chat_completion(
     api_url: &str,
     request: ChatCompletionRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponse>>> {
-    // Check if we would exceed the token limit
-    if let Some(model) = Model::from_id(&request.model).ok() {
-        if let Some((total_tokens, max_tokens)) = model.would_exceed_token_limit(&request.messages) {
-            return Err(anyhow!("Request would exceed the model's token limit. Estimated tokens: {}, Max tokens: {}", 
-                              total_tokens, max_tokens));
-        }
-    }
+    // Note: Context window management is now handled at the Thread level,
+    // so we don't need to check token limits here.
 
     let endpoint = format!("{}/chat/completions", api_url);
     
@@ -640,7 +673,7 @@ pub async fn get_models(
                                     .map(|simplified| {
                                         log::debug!("Converting simplified model: id={}", simplified.id);
                                         LocalModelListing {
-                                            id: simplified.id,
+                                            id: simplified.id.clone(),
                                             object: simplified.object,
                                             r#type: ModelType::Llm,  // Assume LLM type
                                             publisher: simplified.owned_by.unwrap_or_else(|| "unknown".to_string()),
@@ -648,7 +681,7 @@ pub async fn get_models(
                                             compatibility_type: CompatibilityType::Gguf,  // Default
                                             quantization: None,
                                             state: ModelState::Loaded,  // Assume it's loaded
-                                            max_context_length: Some(8192),  // Default
+                                            max_context_length: Some(get_max_tokens(&simplified.id)),
                                             loaded_context_length: None,
                                         }
                                     })
@@ -689,7 +722,7 @@ pub async fn get_models(
                                                         compatibility_type: CompatibilityType::Gguf,
                                                         quantization: None,
                                                         state: ModelState::Loaded,
-                                                        max_context_length: Some(8192),
+                                                        max_context_length: Some(get_max_tokens(id)),
                                                         loaded_context_length: None,
                                                     };
                                                     
@@ -765,7 +798,7 @@ pub async fn get_models(
                                                                     compatibility_type: CompatibilityType::Gguf,  // Default
                                                                     quantization: None,
                                                                     state: ModelState::Loaded,  // Assume it's loaded
-                                                                    max_context_length: Some(8192),  // Default
+                                                                    max_context_length: Some(get_max_tokens(key)),
                                                                     loaded_context_length: None,
                                                                 };
                                                                 models.push(model);

@@ -1,0 +1,56 @@
+# Zed Custom Workflow Configuration
+# This file tracks your custom modifications and their organization
+
+[upstream]
+repository = "https://github.com/zed-industries/zed.git"
+branch = "main"
+
+[custom]
+base_branch = "custom-main"
+features = [
+    "lmstudio-fixes",
+    "conversation-loop-fix", 
+    "uide-improvements",
+    "tool-use-improvements"
+]
+
+[branches]
+# Feature: LMStudio Integration Fixes
+lmstudio-fixes = {
+    description = "Fixes for LMStudio provider configuration and settings",
+    files = [
+        "crates/language_models/src/providers/lmstudio.rs",
+        "crates/language_models/src/settings.rs"
+    ],
+    depends_on = []
+}
+
+# Feature: Conversation Loop Prevention  
+conversation-loop-fix = {
+    description = "Prevents infinite loops in agent tool usage",
+    files = [
+        "crates/agent/src/tool_use.rs",
+        "crates/agent/src/thread.rs"
+    ],
+    depends_on = []
+}
+
+# Feature: UIDE Improvements
+uide-improvements = {
+    description = "Enhanced UIDE tool functionality and schema handling", 
+    files = [
+        "crates/uide/src/lib.rs",
+        "crates/assistant_tools/src/uide_tool.rs"
+    ],
+    depends_on = []
+}
+
+# Feature: Tool Use Improvements
+tool-use-improvements = {
+    description = "Better tool result handling and error messages",
+    files = [
+        "crates/agent/src/tool_use.rs",
+        "crates/language_model/src/request.rs"
+    ],
+    depends_on = ["conversation-loop-fix"]
+} 

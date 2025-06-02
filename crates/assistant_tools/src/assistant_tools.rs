@@ -18,6 +18,7 @@ mod templates;
 mod terminal_tool;
 mod thinking_tool;
 mod ui;
+mod uide_tool;
 mod web_search_tool;
 
 use std::sync::Arc;
@@ -29,6 +30,7 @@ use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
+use uide_tool::UideTool;
 use web_search_tool::WebSearchTool;
 
 pub(crate) use templates::*;
@@ -70,6 +72,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(FetchTool::new(http_client));
     registry.register_tool(EditFileTool);
     registry.register_tool(ContextProtocolTool::new());
+    registry.register_tool(UideTool);
 
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(

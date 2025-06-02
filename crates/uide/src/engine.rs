@@ -489,6 +489,7 @@ impl UnifiedDataEngine {
         Ok(serde_json::Value::Object(obj))
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn value_to_json_value(&self, value: Value) -> Result<serde_json::Value> {
         match value {
             Value::Null => Ok(serde_json::Value::Null),
@@ -510,6 +511,7 @@ impl UnifiedDataEngine {
         }
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn json_value_to_value(&self, value: serde_json::Value) -> Result<Value> {
         match value {
             serde_json::Value::Null => Ok(Value::Null),
@@ -613,15 +615,6 @@ impl Default for crate::query::TextSearchParams {
             fuzzy: false,
             phrase: false,
             boost: 1.0,
-        }
-    }
-}
-
-impl Default for crate::query::StructuralSearchParams {
-    fn default() -> Self {
-        Self {
-            field_boosts: HashMap::new(),
-            exact_match: false,
         }
     }
 }

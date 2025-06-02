@@ -467,7 +467,7 @@ pub struct TextSearchParams {
 }
 
 /// Structural search parameters
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct StructuralSearchParams {
     pub field_boosts: HashMap<String, f64>,
     pub exact_match: bool,

@@ -426,15 +426,21 @@ impl ToolUseState {
                 let content = match tool_result {
                     ToolResultContent::Text(text) => {
                         let truncated = truncate_lines_to_byte_limit(&text, tool_output_limit);
-
-                        LanguageModelToolResultContent::Text(
-                            format!(
-                                "Tool result too long. The first {} bytes:\n\n{}",
-                                truncated.len(),
-                                truncated
+                        
+                        // Only add "Tool result too long" prefix if the text was actually truncated
+                        if truncated.len() < text.len() {
+                            LanguageModelToolResultContent::Text(
+                                format!(
+                                    "Tool result too long. The first {} bytes:\n\n{}",
+                                    truncated.len(),
+                                    truncated
+                                )
+                                .into(),
                             )
-                            .into(),
-                        )
+                        } else {
+                            // Text wasn't truncated, return it as-is
+                            LanguageModelToolResultContent::Text(text.into())
+                        }
                     }
                     ToolResultContent::Image(language_model_image) => {
                         if language_model_image.estimate_tokens() < tool_output_limit {

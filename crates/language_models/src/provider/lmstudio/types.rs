@@ -50,21 +50,12 @@ impl LmStudioSettings {
     }
     
     pub fn migrate_from_legacy(legacy_api_url: &str) -> Self {
-        let mut settings = Self::default();
-        
-        if !legacy_api_url.is_empty() {
-            let server = LmStudioServer {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: "Default LM Studio Server".to_string(),
-                api_url: legacy_api_url.to_string(),
-                enabled: true,
-                available_models: None,
-            };
-            
-            settings.servers.push(server);
+        // Don't automatically create a default server from legacy settings
+        // Users should manually configure their LM Studio servers instead
+        log::debug!("Migrating from legacy LM Studio api_url '{}' - not creating default server", legacy_api_url);
+        Self {
+            servers: Vec::new(),
         }
-        
-        settings
     }
     
     pub fn first_enabled_server(&self) -> Option<&LmStudioServer> {

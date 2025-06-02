@@ -2204,6 +2204,7 @@ impl AssistantContext {
                             StopReason::ToolUse => {}
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
+                            StopReason::Refusal => {}
                         }
                     }
                 })
@@ -2261,6 +2262,7 @@ impl AssistantContext {
         let mut completion_request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: None,
             mode: None,
             messages: Vec::new(),
             tools: Vec::new(),

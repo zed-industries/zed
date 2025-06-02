@@ -1574,7 +1574,7 @@
       "api_url": "https://api.openai.com/v1"
     },
     "lmstudio": {
-      "api_url": "http://localhost:1234/api/v0"
+      "api_url": "http://localhost:1234/v1"
     },
     "deepseek": {
       "api_url": "https://api.deepseek.com"

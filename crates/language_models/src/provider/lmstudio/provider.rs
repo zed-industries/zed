@@ -31,15 +31,8 @@ pub struct State {
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        if !self.available_models.is_empty() {
-            return true;
-        }
-        
-        if self.available_models.iter().any(|model| model.server_id.is_some()) {
-            return true;
-        }
-        
-        false
+        // Consider authenticated if we have any models available
+        !self.available_models.is_empty()
     }
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -161,7 +154,10 @@ impl LmStudioLanguageModelProvider {
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_model_task: None,
-                _subscription: cx.observe_global::<AllLanguageModelSettings>(|_, _| {}),
+                _subscription: cx.observe_global::<AllLanguageModelSettings>(|this: &mut State, cx| {
+                    // Restart fetch models task when settings change
+                    this.restart_fetch_models_task(cx);
+                }),
             };
             
             state.restart_fetch_models_task(cx);
@@ -213,6 +209,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let settings = AllLanguageModelSettings::get_global(cx);
         let mut models: std::collections::BTreeMap<String, lmstudio::Model> = std::collections::BTreeMap::default();
 
         // Add models from the LM Studio API
@@ -222,59 +219,73 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
             models.insert(model.name.clone(), model.clone());
         }
 
-        // Override with available models from settings and filter out disabled models
-        let servers = &AllLanguageModelSettings::get_global(cx).lmstudio.servers;
-        log::info!("Processing {} servers from settings", servers.len());
+        // Filter models based on server and model enablement settings
+        log::info!("Processing {} servers from settings", settings.lmstudio.servers.len());
         
-        // First, filter out any models on disabled servers
-        let enabled_servers: Vec<&super::types::LmStudioServer> = servers.iter()
+        // Create a set of enabled server IDs for quick lookup
+        let enabled_server_ids: std::collections::HashSet<String> = settings.lmstudio.servers.iter()
             .filter(|server| server.enabled)
+            .map(|server| server.id.clone())
             .collect();
             
-        log::info!("Found {} enabled servers", enabled_servers.len());
+        log::info!("Found {} enabled servers", enabled_server_ids.len());
         
-        // Then build a list of enabled models
-        let mut enabled_models = std::collections::HashSet::new();
-        for server in &enabled_servers {
+        if enabled_server_ids.is_empty() {
+            log::info!("No enabled servers found, returning empty model list");
+            return Vec::new();
+        }
+
+        // Apply custom max tokens and filter disabled models
+        for server in &settings.lmstudio.servers {
+            if !server.enabled {
+                continue;
+            }
+            
             if let Some(available_models) = &server.available_models {
-                for model in available_models {
-                    if model.enabled {
-                        // Only include enabled models from enabled servers
-                        if let Some(server_id) = &model.server_id {
-                            let key = format!("{}:{}", server_id, model.name);
-                            log::info!("Marking model as enabled: {}", &key);
-                            enabled_models.insert(key);
-                            
-                            // Update thread-local cache with custom max tokens if available
-                            if let Some(custom_max_tokens) = model.custom_max_tokens {
-                                log::info!("Updating custom max tokens for model {}: {}", model.name, custom_max_tokens);
-                                lmstudio::update_custom_max_tokens(server_id, &model.name, Some(custom_max_tokens));
-                            } else {
-                                // Clear any existing custom setting
-                                lmstudio::update_custom_max_tokens(server_id, &model.name, None);
+                for model_config in available_models {
+                    if !model_config.enabled {
+                        // Remove disabled models from our list
+                        if let Some(server_id) = &model_config.server_id {
+                            if server_id == &server.id {
+                                models.remove(&model_config.name);
+                                log::info!("Removing disabled model: {}", model_config.name);
                             }
                         }
+                        continue;
+                    }
+                    
+                    // Apply custom max tokens for enabled models
+                    if let Some(custom_max_tokens) = model_config.custom_max_tokens {
+                        log::info!("Updating custom max tokens for model {}: {}", model_config.name, custom_max_tokens);
+                        lmstudio::update_custom_max_tokens(&server.id, &model_config.name, Some(custom_max_tokens));
+                    } else {
+                        // Clear any existing custom setting
+                        lmstudio::update_custom_max_tokens(&server.id, &model_config.name, None);
                     }
                 }
             }
         }
         
-        // Now filter out any models that aren't enabled
-        let final_models = models.into_iter()
+        // Filter models to only include those from enabled servers
+        let final_models: Vec<Arc<dyn LanguageModel>> = models.into_iter()
             .filter_map(|(name, model)| {
-                let server_id = model.server_id.as_ref()?;
-                let key = format!("{}:{}", server_id, name);
-                
-                if enabled_models.contains(&key) {
-                    log::info!("Including enabled model: {}", &key);
-                    Some(self.create_language_model(model))
+                if let Some(server_id) = &model.server_id {
+                    if enabled_server_ids.contains(server_id) {
+                        log::info!("Including model from enabled server: {} (server: {})", name, server_id);
+                        Some(self.create_language_model(model))
+                    } else {
+                        log::info!("Filtering out model from disabled server: {} (server: {})", name, server_id);
+                        None
+                    }
                 } else {
-                    log::info!("Filtering out disabled model: {}", &key);
-                    None
+                    // Models without server_id are legacy - include them if any server is enabled
+                    log::info!("Including legacy model without server_id: {}", name);
+                    Some(self.create_language_model(model))
                 }
             })
             .collect();
 
+        log::info!("Returning {} final models", final_models.len());
         final_models
     }
 

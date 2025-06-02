@@ -14,6 +14,29 @@ use serde::{Deserialize, Serialize};
 use util::ResultExt;
 use zed_llm_client::CompletionMode;
 
+#[derive(PartialEq, Eq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum CompletionIntent {
+    /// The user intends to 'commit' this result, if possible
+    /// completion confirmations should run side effects.
+    ///
+    /// For LSP completions, will respect the setting `completions.lsp_insert_mode`.
+    Complete,
+    /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `insert`.
+    CompleteWithInsert,
+    /// Similar to [Self::Complete], but behaves like `lsp_insert_mode` is set to `replace`.
+    CompleteWithReplace,
+    /// The user intends to continue 'composing' this completion
+    /// completion confirmations should not run side effects and
+    /// let the user continue composing their action
+    Compose,
+    /// Thread summarization intent
+    ThreadSummarization,
+    /// Thread context summarization intent
+    ThreadContextSummarization,
+    /// User prompt intent
+    UserPrompt,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct LanguageModelImage {
     /// A base64-encoded PNG image.
@@ -271,6 +294,7 @@ pub enum LanguageModelToolChoice {
 pub struct LanguageModelRequest {
     pub thread_id: Option<String>,
     pub prompt_id: Option<String>,
+    pub intent: Option<CompletionIntent>,
     pub mode: Option<CompletionMode>,
     pub messages: Vec<LanguageModelRequestMessage>,
     pub tools: Vec<LanguageModelRequestTool>,

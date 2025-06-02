@@ -1301,6 +1301,7 @@ impl MessageEditor {
                     let request = language_model::LanguageModelRequest {
                         thread_id: None,
                         prompt_id: None,
+                        intent: None,
                         mode: None,
                         messages: vec![request_message],
                         tools: vec![],
@@ -2250,9 +2251,7 @@ impl MessageEditor {
     /// Render TTS controls with modern toggle button and compact language/gender selection
     fn render_tts_controls(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         // Only show TTS controls if the service is available
-        if self.tts_service.is_none() {
-            return None;
-        }
+        self.tts_service.as_ref()?;
         
         let is_editor_empty = self.is_editor_empty(cx);
         let is_speaking = self.tts_is_speaking;

@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 
 use anyhow::Result;
 use gpui::App;
@@ -382,9 +383,24 @@ impl settings::Settings for AllLanguageModelSettings {
                 }
             }
 
-            // Update the servers list from settings
-            if let Some(servers) = lmstudio.as_ref().and_then(|s| s.servers.clone()) {
-                settings.lmstudio.servers = servers;
+            // Merge the servers list from settings instead of replacing
+            if let Some(new_servers) = lmstudio.as_ref().and_then(|s| s.servers.clone()) {
+                // If we don't have any servers yet, just use the new ones
+                if settings.lmstudio.servers.is_empty() {
+                    settings.lmstudio.servers = new_servers;
+                } else {
+                    // Merge servers by ID, keeping existing ones and adding new ones
+                    let mut server_map: HashMap<String, provider::lmstudio::LmStudioServer> = 
+                        settings.lmstudio.servers.iter().map(|s| (s.id.clone(), s.clone())).collect();
+                    
+                    // Update existing servers or add new ones
+                    for new_server in new_servers {
+                        server_map.insert(new_server.id.clone(), new_server);
+                    }
+                    
+                    // Convert back to Vec, maintaining order
+                    settings.lmstudio.servers = server_map.into_values().collect();
+                }
             }
 
             // Handle legacy model list and migrate to server-specific models if needed

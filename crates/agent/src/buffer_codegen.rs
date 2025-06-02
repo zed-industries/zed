@@ -464,6 +464,7 @@ impl CodegenAlternative {
             LanguageModelRequest {
                 thread_id: None,
                 prompt_id: None,
+                intent: None,
                 mode: None,
                 tools: Vec::new(),
                 tool_choice: None,

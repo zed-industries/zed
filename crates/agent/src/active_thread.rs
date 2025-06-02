@@ -1393,6 +1393,7 @@ impl ActiveThread {
                     let request = language_model::LanguageModelRequest {
                         thread_id: None,
                         prompt_id: None,
+                        intent: None,
                         mode: None,
                         messages: vec![request_message],
                         tools: vec![],
@@ -1539,7 +1540,7 @@ impl ActiveThread {
                                 message_id,
                                 Role::User,
                                 vec![MessageSegment::Text(edited_text)],
-                                Some(context.loaded_context),
+                                Some(context.loaded_context), None,
                                 cx,
                             );
                             for message_id in this.messages_after(message_id) {
