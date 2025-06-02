@@ -639,7 +639,7 @@ impl ToolCard for TerminalToolCard {
                         .child(
                             ToolOutputPreview::new(terminal.clone().into())
                                 .with_total_lines(self.content_line_count)
-                                .toggle_state(terminal.read(cx).is_content_limited())
+                                .toggle_state(!terminal.read(cx).is_content_limited(window))
                                 .on_toggle({
                                     let terminal = terminal.clone();
                                     move |is_expanded, _, cx| {

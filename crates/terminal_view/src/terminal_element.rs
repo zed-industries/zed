@@ -605,17 +605,6 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        // todo! remove
-        // if self.embedded {
-        //     let scrollable = {
-        //         let term = self.terminal.read(cx);
-        //         !term.scrolled_to_top() && !term.scrolled_to_bottom() && self.focused
-        //     };
-        //     if scrollable {
-        //         self.interactivity.occlude_mouse();
-        //     }
-        // }
-
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
@@ -638,8 +627,10 @@ impl Element for TerminalElement {
                                 .0;
 
                         let mut line_count = self.terminal.read(cx).total_lines();
-                        if let Some(max_lines) = max_lines {
-                            line_count = line_count.min(*max_lines);
+                        if !self.focused {
+                            if let Some(max_lines) = max_lines {
+                                line_count = line_count.min(*max_lines);
+                            }
                         }
                         style.size.height = (line_count * line_height).into();
                     }

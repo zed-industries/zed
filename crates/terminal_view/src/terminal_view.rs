@@ -250,10 +250,12 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub fn is_content_limited(&self) -> bool {
+    pub fn is_content_limited(&self, window: &Window) -> bool {
         match &self.mode {
             TerminalMode::Scrollable => false,
-            TerminalMode::Embedded { max_lines } => max_lines.is_some(),
+            TerminalMode::Embedded { max_lines } => {
+                !self.focus_handle.is_focused(window) && max_lines.is_some()
+            }
         }
     }
 
@@ -841,6 +843,7 @@ impl TerminalView {
     fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
+            || matches!(self.mode, TerminalMode::Embedded { .. })
         {
             return None;
         }
