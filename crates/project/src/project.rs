@@ -35,6 +35,7 @@ pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
+pub use manifest_tree::ManifestTree;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -891,11 +892,13 @@ impl Project {
                 cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let environment = cx.new(|_| ProjectEnvironment::new(env));
+            let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::local(
                     languages.clone(),
                     worktree_store.clone(),
                     environment.clone(),
+                    manifest_tree.clone(),
                     cx,
                 )
             });
@@ -963,6 +966,7 @@ impl Project {
                     prettier_store.clone(),
                     toolchain_store.clone(),
                     environment.clone(),
+                    manifest_tree,
                     languages.clone(),
                     client.http_client(),
                     fs.clone(),
@@ -3101,16 +3105,13 @@ impl Project {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
-    ) -> Task<Option<ToolchainList>> {
-        if let Some(toolchain_store) = self.toolchain_store.clone() {
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
+        if let Some(toolchain_store) = self.toolchain_store.as_ref().map(Entity::downgrade) {
             cx.spawn(async move |cx| {
-                cx.update(|cx| {
-                    toolchain_store
-                        .read(cx)
-                        .list_toolchains(path, language_name, cx)
-                })
-                .ok()?
-                .await
+                toolchain_store
+                    .update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
+                    .ok()?
+                    .await
             })
         } else {
             Task::ready(None)

@@ -548,6 +548,8 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.record_current_action(cx);
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, _, cx| {
                 let selections = editor.selections.all::<Point>(cx);
@@ -560,7 +562,7 @@ impl Vim {
                     .into_iter()
                     .map(|row| {
                         let start_of_line = Point::new(row, 0);
-                        (start_of_line..start_of_line, "\n".to_string())
+                        (start_of_line..start_of_line, "\n".repeat(count))
                     })
                     .collect::<Vec<_>>();
                 editor.edit(edits, cx);
@@ -575,10 +577,17 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.record_current_action(cx);
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.transact(window, cx, |editor, _, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 let selections = editor.selections.all::<Point>(cx);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let (_map, display_selections) = editor.selections.all_display(cx);
+                let original_positions = display_selections
+                    .iter()
+                    .map(|s| (s.id, s.head()))
+                    .collect::<HashMap<_, _>>();
 
                 let selection_end_rows: BTreeSet<u32> = selections
                     .into_iter()
@@ -588,10 +597,18 @@ impl Vim {
                     .into_iter()
                     .map(|row| {
                         let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
-                        (end_of_line..end_of_line, "\n".to_string())
+                        (end_of_line..end_of_line, "\n".repeat(count))
                     })
                     .collect::<Vec<_>>();
                 editor.edit(edits, cx);
+
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|_, selection| {
+                        if let Some(position) = original_positions.get(&selection.id) {
+                            selection.collapse_to(*position, SelectionGoal::None);
+                        }
+                    });
+                });
             });
         });
     }
@@ -1331,10 +1348,19 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_insert_empty_line_above(cx: &mut gpui::TestAppContext) {
+    async fn test_insert_empty_line(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.simulate("[ space", "ˇ").await.assert_matches();
         cx.simulate("[ space", "The ˇquick").await.assert_matches();
+        cx.simulate_at_each_offset(
+            "3 [ space",
+            indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"},
+        )
+        .await
+        .assert_matches();
         cx.simulate_at_each_offset(
             "[ space",
             indoc! {"
@@ -1346,6 +1372,36 @@ mod test {
         .assert_matches();
         cx.simulate(
             "[ space",
+            indoc! {"
+            The quick
+            ˇ
+            brown fox"},
+        )
+        .await
+        .assert_matches();
+
+        cx.simulate("] space", "ˇ").await.assert_matches();
+        cx.simulate("] space", "The ˇquick").await.assert_matches();
+        cx.simulate_at_each_offset(
+            "3 ] space",
+            indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate_at_each_offset(
+            "] space",
+            indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "] space",
             indoc! {"
             The quick
             ˇ

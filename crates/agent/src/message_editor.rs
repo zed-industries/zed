@@ -112,6 +112,7 @@ pub(crate) fn create_editor(
         editor.set_placeholder_text("Message the agent – @ to include context", cx);
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
+        editor.set_use_modal_editing(true);
         editor.set_context_menu_options(ContextMenuOptions {
             min_entries_visible: 12,
             max_entries_visible: 12,

@@ -10479,6 +10479,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
         run_description: &'static str,
         initial_state: String,
         buffer_marked_text: String,
+        completion_label: &'static str,
         completion_text: &'static str,
         expected_with_insert_mode: String,
         expected_with_replace_mode: String,
@@ -10491,6 +10492,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Start of word matches completion text",
             initial_state: "before ediˇ after".into(),
             buffer_marked_text: "before <edi|> after".into(),
+            completion_label: "editor",
             completion_text: "editor",
             expected_with_insert_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
@@ -10501,6 +10503,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Accept same text at the middle of the word",
             initial_state: "before ediˇtor after".into(),
             buffer_marked_text: "before <edi|tor> after".into(),
+            completion_label: "editor",
             completion_text: "editor",
             expected_with_insert_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
@@ -10511,6 +10514,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "End of word matches completion text -- cursor at end",
             initial_state: "before torˇ after".into(),
             buffer_marked_text: "before <tor|> after".into(),
+            completion_label: "editor",
             completion_text: "editor",
             expected_with_insert_mode: "before editorˇ after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
@@ -10521,6 +10525,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "End of word matches completion text -- cursor at start",
             initial_state: "before ˇtor after".into(),
             buffer_marked_text: "before <|tor> after".into(),
+            completion_label: "editor",
             completion_text: "editor",
             expected_with_insert_mode: "before editorˇtor after".into(),
             expected_with_replace_mode: "before editorˇ after".into(),
@@ -10531,6 +10536,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Prepend text containing whitespace",
             initial_state: "pˇfield: bool".into(),
             buffer_marked_text: "<p|field>: bool".into(),
+            completion_label: "pub ",
             completion_text: "pub ",
             expected_with_insert_mode: "pub ˇfield: bool".into(),
             expected_with_replace_mode: "pub ˇ: bool".into(),
@@ -10541,6 +10547,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Add element to start of list",
             initial_state: "[element_ˇelement_2]".into(),
             buffer_marked_text: "[<element_|element_2>]".into(),
+            completion_label: "element_1",
             completion_text: "element_1",
             expected_with_insert_mode: "[element_1ˇelement_2]".into(),
             expected_with_replace_mode: "[element_1ˇ]".into(),
@@ -10551,6 +10558,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Add element to start of list -- first and second elements are equal",
             initial_state: "[elˇelement]".into(),
             buffer_marked_text: "[<el|element>]".into(),
+            completion_label: "element",
             completion_text: "element",
             expected_with_insert_mode: "[elementˇelement]".into(),
             expected_with_replace_mode: "[elementˇ]".into(),
@@ -10561,6 +10569,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Ends with matching suffix",
             initial_state: "SubˇError".into(),
             buffer_marked_text: "<Sub|Error>".into(),
+            completion_label: "SubscriptionError",
             completion_text: "SubscriptionError",
             expected_with_insert_mode: "SubscriptionErrorˇError".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
@@ -10571,6 +10580,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Suffix is a subsequence -- contiguous",
             initial_state: "SubˇErr".into(),
             buffer_marked_text: "<Sub|Err>".into(),
+            completion_label: "SubscriptionError",
             completion_text: "SubscriptionError",
             expected_with_insert_mode: "SubscriptionErrorˇErr".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
@@ -10581,6 +10591,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Suffix is a subsequence -- non-contiguous -- replace intended",
             initial_state: "Suˇscrirr".into(),
             buffer_marked_text: "<Su|scrirr>".into(),
+            completion_label: "SubscriptionError",
             completion_text: "SubscriptionError",
             expected_with_insert_mode: "SubscriptionErrorˇscrirr".into(),
             expected_with_replace_mode: "SubscriptionErrorˇ".into(),
@@ -10591,11 +10602,45 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             run_description: "Suffix is a subsequence -- non-contiguous -- replace unintended",
             initial_state: "foo(indˇix)".into(),
             buffer_marked_text: "foo(<ind|ix>)".into(),
+            completion_label: "node_index",
             completion_text: "node_index",
             expected_with_insert_mode: "foo(node_indexˇix)".into(),
             expected_with_replace_mode: "foo(node_indexˇ)".into(),
             expected_with_replace_subsequence_mode: "foo(node_indexˇix)".into(),
             expected_with_replace_suffix_mode: "foo(node_indexˇix)".into(),
+        },
+        Run {
+            run_description: "Replace range ends before cursor - should extend to cursor",
+            initial_state: "before editˇo after".into(),
+            buffer_marked_text: "before <{ed}>it|o after".into(),
+            completion_label: "editor",
+            completion_text: "editor",
+            expected_with_insert_mode: "before editorˇo after".into(),
+            expected_with_replace_mode: "before editorˇo after".into(),
+            expected_with_replace_subsequence_mode: "before editorˇo after".into(),
+            expected_with_replace_suffix_mode: "before editorˇo after".into(),
+        },
+        Run {
+            run_description: "Uses label for suffix matching",
+            initial_state: "before ediˇtor after".into(),
+            buffer_marked_text: "before <edi|tor> after".into(),
+            completion_label: "editor",
+            completion_text: "editor()",
+            expected_with_insert_mode: "before editor()ˇtor after".into(),
+            expected_with_replace_mode: "before editor()ˇ after".into(),
+            expected_with_replace_subsequence_mode: "before editor()ˇ after".into(),
+            expected_with_replace_suffix_mode: "before editor()ˇ after".into(),
+        },
+        Run {
+            run_description: "Case insensitive subsequence and suffix matching",
+            initial_state: "before EDiˇtoR after".into(),
+            buffer_marked_text: "before <EDi|toR> after".into(),
+            completion_label: "editor",
+            completion_text: "editor",
+            expected_with_insert_mode: "before editorˇtoR after".into(),
+            expected_with_replace_mode: "before editorˇ after".into(),
+            expected_with_replace_subsequence_mode: "before editorˇ after".into(),
+            expected_with_replace_suffix_mode: "before editorˇ after".into(),
         },
     ];
 
@@ -10637,7 +10682,7 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             handle_completion_request_with_insert_and_replace(
                 &mut cx,
                 &run.buffer_marked_text,
-                vec![run.completion_text],
+                vec![(run.completion_label, run.completion_text)],
                 counter.clone(),
             )
             .await;
@@ -10697,7 +10742,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     handle_completion_request_with_insert_and_replace(
         &mut cx,
         &buffer_marked_text,
-        vec![completion_text],
+        vec![(completion_text, completion_text)],
         counter.clone(),
     )
     .await;
@@ -10731,7 +10776,7 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     handle_completion_request_with_insert_and_replace(
         &mut cx,
         &buffer_marked_text,
-        vec![completion_text],
+        vec![(completion_text, completion_text)],
         counter.clone(),
     )
     .await;
@@ -10818,7 +10863,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     handle_completion_request_with_insert_and_replace(
         &mut cx,
         completion_marked_buffer,
-        vec![completion_text],
+        vec![(completion_text, completion_text)],
         Arc::new(AtomicUsize::new(0)),
     )
     .await;
@@ -10872,7 +10917,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     handle_completion_request_with_insert_and_replace(
         &mut cx,
         completion_marked_buffer,
-        vec![completion_text],
+        vec![(completion_text, completion_text)],
         Arc::new(AtomicUsize::new(0)),
     )
     .await;
@@ -10921,7 +10966,7 @@ async fn test_completion_replacing_surrounding_text_with_multicursors(cx: &mut T
     handle_completion_request_with_insert_and_replace(
         &mut cx,
         completion_marked_buffer,
-        vec![completion_text],
+        vec![(completion_text, completion_text)],
         Arc::new(AtomicUsize::new(0)),
     )
     .await;
@@ -17085,6 +17130,64 @@ async fn test_indent_guide_ends_before_empty_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_indent_guide_ignored_only_whitespace_lines(cx: &mut TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        function component() {
+        \treturn (
+        \t\t\t
+        \t\t<div>
+        \t\t\t<abc></abc>
+        \t\t</div>
+        \t)
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..8,
+        vec![
+            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 2, 5, 1),
+            indent_guide(buffer_id, 4, 4, 2),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_fallback_to_next_non_entirely_whitespace_line(cx: &mut TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        function component() {
+        \treturn (
+        \t
+        \t\t<div>
+        \t\t\t<abc></abc>
+        \t\t</div>
+        \t)
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..8,
+        vec![
+            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 2, 5, 1),
+            indent_guide(buffer_id, 4, 4, 2),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
 async fn test_indent_guide_continuing_off_screen(cx: &mut TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
@@ -21068,25 +21171,41 @@ pub fn handle_completion_request(
 /// Similar to `handle_completion_request`, but a [`CompletionTextEdit::InsertAndReplace`] will be
 /// given instead, which also contains an `insert` range.
 ///
-/// This function uses the cursor position to mimic what Rust-Analyzer provides as the `insert` range,
-/// that is, `replace_range.start..cursor_pos`.
+/// This function uses markers to define ranges:
+/// - `|` marks the cursor position
+/// - `<>` marks the replace range
+/// - `[]` marks the insert range (optional, defaults to `replace_range.start..cursor_pos`which is what Rust-Analyzer provides)
 pub fn handle_completion_request_with_insert_and_replace(
     cx: &mut EditorLspTestContext,
     marked_string: &str,
-    completions: Vec<&'static str>,
+    completions: Vec<(&'static str, &'static str)>, // (label, new_text)
     counter: Arc<AtomicUsize>,
 ) -> impl Future<Output = ()> {
     let complete_from_marker: TextRangeMarker = '|'.into();
     let replace_range_marker: TextRangeMarker = ('<', '>').into();
+    let insert_range_marker: TextRangeMarker = ('{', '}').into();
+
     let (_, mut marked_ranges) = marked_text_ranges_by(
         marked_string,
-        vec![complete_from_marker.clone(), replace_range_marker.clone()],
+        vec![
+            complete_from_marker.clone(),
+            replace_range_marker.clone(),
+            insert_range_marker.clone(),
+        ],
     );
 
     let complete_from_position =
         cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
     let replace_range =
         cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
+
+    let insert_range = match marked_ranges.remove(&insert_range_marker) {
+        Some(ranges) if !ranges.is_empty() => cx.to_lsp_range(ranges[0].clone()),
+        _ => lsp::Range {
+            start: replace_range.start,
+            end: complete_from_position,
+        },
+    };
 
     let mut request =
         cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
@@ -21101,16 +21220,13 @@ pub fn handle_completion_request_with_insert_and_replace(
                 Ok(Some(lsp::CompletionResponse::Array(
                     completions
                         .iter()
-                        .map(|completion_text| lsp::CompletionItem {
-                            label: completion_text.to_string(),
+                        .map(|(label, new_text)| lsp::CompletionItem {
+                            label: label.to_string(),
                             text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
                                 lsp::InsertReplaceEdit {
-                                    insert: lsp::Range {
-                                        start: replace_range.start,
-                                        end: complete_from_position,
-                                    },
+                                    insert: insert_range,
                                     replace: replace_range,
-                                    new_text: completion_text.to_string(),
+                                    new_text: new_text.to_string(),
                                 },
                             )),
                             ..Default::default()
