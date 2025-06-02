@@ -1294,7 +1294,10 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
+    // Whether to activate ViMode on search
+    // Default: false
+    "activate_vimode_on_search": false
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": 15,

@@ -1777,7 +1777,7 @@ impl SearchableItem for TerminalView {
 
     /// Clear stored matches
     fn clear_matches(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.terminal().update(cx, |term, _| term.matches.clear())
+        self.terminal().update(cx, |term, _| term.clear_matches())
     }
 
     /// Store matches returned from find_matches somewhere for rendering
@@ -1810,7 +1810,7 @@ impl SearchableItem for TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.terminal()
-            .update(cx, |term, _| term.activate_match(index));
+            .update(cx, |term, cx| term.activate_match(index, cx));
         cx.notify();
     }
 

@@ -147,6 +147,7 @@ enum InternalEvent {
     // Vi mode events
     ToggleViMode,
     ViMotion(ViMotion),
+    MoveViCursorToAlacPoint(AlacPoint),
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -908,6 +909,14 @@ impl Terminal {
                 term.scroll_to_point(*point);
                 self.refresh_hovered_word(window);
             }
+            InternalEvent::MoveViCursorToAlacPoint(point) => {
+                if !self.vi_mode_enabled {
+                    self.vi_mode_enabled = true;
+                    term.toggle_vi_mode();
+                }
+                term.vi_goto_point(*point);
+                self.refresh_hovered_word(window);
+            }
             InternalEvent::ToggleViMode => {
                 self.vi_mode_enabled = !self.vi_mode_enabled;
                 term.toggle_vi_mode();
@@ -1126,13 +1135,26 @@ impl Terminal {
     //- Activate match on terminal (scrolling and selection)
     //- Editor search snapping behavior
 
-    pub fn activate_match(&mut self, index: usize) {
+    pub fn activate_match(&mut self, index: usize, cx: &Context<Self>) {
         if let Some(search_match) = self.matches.get(index).cloned() {
             self.set_selection(Some((make_selection(&search_match), *search_match.end())));
 
-            self.events
-                .push_back(InternalEvent::ScrollToAlacPoint(*search_match.start()));
+            if TerminalSettings::get_global(cx).activate_vimode_on_search {
+                if !self.vi_mode_enabled {
+                    self.events.push_back(InternalEvent::ToggleViMode);
+                }
+                self.events
+                    .push_back(InternalEvent::MoveViCursorToAlacPoint(*search_match.end()));
+            } else {
+                self.events
+                    .push_back(InternalEvent::ScrollToAlacPoint(*search_match.start()));
+            }
         }
+    }
+
+    pub fn clear_matches(&mut self) {
+        self.matches.clear();
+        self.set_selection(None);
     }
 
     pub fn select_matches(&mut self, matches: &[RangeInclusive<AlacPoint>]) {

@@ -48,6 +48,7 @@ pub struct TerminalSettings {
     pub max_scroll_history_lines: Option<usize>,
     pub toolbar: Toolbar,
     pub scrollbar: ScrollbarSettings,
+    pub activate_vimode_on_search: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -223,6 +224,10 @@ pub struct TerminalSettingsContent {
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Whether to activate Vimode on search
+    ///
+    /// Default: false
+    pub activate_vimode_on_search: bool,
 }
 
 impl settings::Settings for TerminalSettings {
