@@ -99,6 +99,8 @@ mod tests {
             // Provider dependent
             .filter(|tool| tool != "web_search")
             .collect::<Vec<_>>();
+        // Plus all registered MCP tools
+        expected_tools.extend(["enabled_mcp_tool".into(), "disabled_mcp_tool".into()]);
         expected_tools.sort();
 
         assert_eq!(enabled_tools, expected_tools);
@@ -138,10 +140,10 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_all_tools(cx: &mut TestAppContext) {
+    async fn test_only_built_in(cx: &mut TestAppContext) {
         init_test_settings(cx);
 
-        let id = AgentProfileId("write_plus_all_mcp".into());
+        let id = AgentProfileId("write_minus_mcp".into());
         let profile_settings = cx.read(|cx| {
             AgentSettings::get_global(cx)
                 .profiles
@@ -167,8 +169,6 @@ mod tests {
             // Provider dependent
             .filter(|tool| tool != "web_search")
             .collect::<Vec<_>>();
-        // Plus all registered MCP tools
-        expected_tools.extend(["enabled_mcp_tool".into(), "disabled_mcp_tool".into()]);
         expected_tools.sort();
 
         assert_eq!(enabled_tools, expected_tools);
@@ -188,10 +188,10 @@ mod tests {
         cx.update(|cx| {
             let mut agent_settings = AgentSettings::get_global(cx).clone();
             agent_settings.profiles.insert(
-                AgentProfileId("write_plus_all_mcp".into()),
+                AgentProfileId("write_minus_mcp".into()),
                 AgentProfileSettings {
-                    name: "write_plus_all_mcp".into(),
-                    enable_all_context_servers: true,
+                    name: "write_minus_mcp".into(),
+                    enable_all_context_servers: false,
                     ..agent_settings.profiles[&AgentProfileId::default()].clone()
                 },
             );
