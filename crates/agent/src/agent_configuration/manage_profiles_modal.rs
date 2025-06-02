@@ -7,10 +7,7 @@ use assistant_tool::ToolWorkingSet;
 use convert_case::{Case, Casing as _};
 use editor::Editor;
 use fs::Fs;
-use gpui::{
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, WeakEntity,
-    prelude::*,
-};
+use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
 use settings::{Settings as _, update_settings_file};
 use ui::{
     KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
@@ -20,7 +17,7 @@ use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
-use crate::{AgentPanel, ManageProfiles, ThreadStore};
+use crate::{AgentPanel, ManageProfiles};
 
 use super::tool_picker::ToolPickerMode;
 
@@ -103,7 +100,6 @@ pub struct NewProfileMode {
 pub struct ManageProfilesModal {
     fs: Arc<dyn Fs>,
     tools: Entity<ToolWorkingSet>,
-    thread_store: WeakEntity<ThreadStore>,
     focus_handle: FocusHandle,
     mode: Mode,
 }
@@ -119,9 +115,8 @@ impl ManageProfilesModal {
                 let fs = workspace.app_state().fs.clone();
                 let thread_store = panel.read(cx).thread_store();
                 let tools = thread_store.read(cx).tools();
-                let thread_store = thread_store.downgrade();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut this = Self::new(fs, tools, thread_store, window, cx);
+                    let mut this = Self::new(fs, tools, window, cx);
 
                     if let Some(profile_id) = action.customize_tools.clone() {
                         this.configure_builtin_tools(profile_id, window, cx);
@@ -136,7 +131,6 @@ impl ManageProfilesModal {
     pub fn new(
         fs: Arc<dyn Fs>,
         tools: Entity<ToolWorkingSet>,
-        thread_store: WeakEntity<ThreadStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -145,7 +139,6 @@ impl ManageProfilesModal {
         Self {
             fs,
             tools,
-            thread_store,
             focus_handle,
             mode: Mode::choose_profile(window, cx),
         }
@@ -206,7 +199,6 @@ impl ManageProfilesModal {
                 ToolPickerMode::McpTools,
                 self.fs.clone(),
                 self.tools.clone(),
-                self.thread_store.clone(),
                 profile_id.clone(),
                 profile,
                 cx,
@@ -244,7 +236,6 @@ impl ManageProfilesModal {
                 ToolPickerMode::BuiltinTools,
                 self.fs.clone(),
                 self.tools.clone(),
-                self.thread_store.clone(),
                 profile_id.clone(),
                 profile,
                 cx,

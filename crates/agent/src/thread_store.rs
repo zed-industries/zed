@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use agent_settings::{AgentProfileId, AgentProfileSettings, CompletionMode};
+use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
+use assistant_tool::{ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -511,72 +511,6 @@ impl ThreadStore {
                 cx.notify();
             })
         })
-    }
-
-    pub fn load_profile(&self, profile: AgentProfileSettings, cx: &mut Context<Self>) {
-        self.tools.update(cx, |tools, cx| {
-            tools.disable_all_tools(cx);
-            tools.enable(
-                ToolSource::Native,
-                &profile
-                    .tools
-                    .into_iter()
-                    .filter_map(|(tool, enabled)| enabled.then(|| tool))
-                    .collect::<Vec<_>>(),
-                cx,
-            );
-        });
-
-        if profile.enable_all_context_servers {
-            for context_server_id in self
-                .project
-                .read(cx)
-                .context_server_store()
-                .read(cx)
-                .all_server_ids()
-            {
-                self.tools.update(cx, |tools, cx| {
-                    tools.enable_source(
-                        ToolSource::ContextServer {
-                            id: context_server_id.0.into(),
-                        },
-                        cx,
-                    );
-                });
-            }
-            // Enable all the tools from all context servers, but disable the ones that are explicitly disabled
-            for (context_server_id, preset) in profile.context_servers {
-                self.tools.update(cx, |tools, cx| {
-                    tools.disable(
-                        ToolSource::ContextServer {
-                            id: context_server_id.into(),
-                        },
-                        &preset
-                            .tools
-                            .into_iter()
-                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool))
-                            .collect::<Vec<_>>(),
-                        cx,
-                    )
-                })
-            }
-        } else {
-            for (context_server_id, preset) in profile.context_servers {
-                self.tools.update(cx, |tools, cx| {
-                    tools.enable(
-                        ToolSource::ContextServer {
-                            id: context_server_id.into(),
-                        },
-                        &preset
-                            .tools
-                            .into_iter()
-                            .filter_map(|(tool, enabled)| enabled.then(|| tool))
-                            .collect::<Vec<_>>(),
-                        cx,
-                    )
-                })
-            }
-        }
     }
 
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {

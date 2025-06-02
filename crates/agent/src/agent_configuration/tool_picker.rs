@@ -8,11 +8,9 @@ use assistant_tool::{ToolSource, ToolWorkingSet};
 use fs::Fs;
 use gpui::{App, Context, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, Window};
 use picker::{Picker, PickerDelegate};
-use settings::{Settings as _, update_settings_file};
+use settings::update_settings_file;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt as _;
-
-use crate::ThreadStore;
 
 pub struct ToolPicker {
     picker: Entity<Picker<ToolPickerDelegate>>,
@@ -71,7 +69,6 @@ pub enum PickerItem {
 
 pub struct ToolPickerDelegate {
     tool_picker: WeakEntity<ToolPicker>,
-    thread_store: WeakEntity<ThreadStore>,
     fs: Arc<dyn Fs>,
     items: Arc<Vec<PickerItem>>,
     profile_id: AgentProfileId,
@@ -86,7 +83,6 @@ impl ToolPickerDelegate {
         mode: ToolPickerMode,
         fs: Arc<dyn Fs>,
         tool_set: Entity<ToolWorkingSet>,
-        thread_store: WeakEntity<ThreadStore>,
         profile_id: AgentProfileId,
         profile: AgentProfileSettings,
         cx: &mut Context<ToolPicker>,
@@ -95,7 +91,6 @@ impl ToolPickerDelegate {
 
         Self {
             tool_picker: cx.entity().downgrade(),
-            thread_store,
             fs,
             items,
             profile_id,
@@ -258,15 +253,6 @@ impl PickerDelegate for ToolPickerDelegate {
             *self.profile.tools.entry(tool_name.clone()).or_default() = !is_enabled;
             is_enabled
         };
-
-        let active_profile_id = &AgentSettings::get_global(cx).default_profile;
-        if active_profile_id == &self.profile_id {
-            self.thread_store
-                .update(cx, |this, cx| {
-                    this.load_profile(self.profile.clone(), cx);
-                })
-                .log_err();
-        }
 
         update_settings_file::<AgentSettings>(self.fs.clone(), cx, {
             let profile_id = self.profile_id.clone();
