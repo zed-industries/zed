@@ -348,6 +348,7 @@ impl LocalToolchainStore {
                 .ok()
                 .flatten()?;
             let worktree_id = snapshot.id();
+            let worktree_root = snapshot.abs_path().to_path_buf();
             let relative_path = manifest_tree
                 .update(cx, |this, cx| {
                     this.root_for_path(
@@ -377,7 +378,14 @@ impl LocalToolchainStore {
 
             cx.background_spawn(async move {
                 Some((
-                    toolchains.list(abs_path.to_path_buf(), project_env).await,
+                    toolchains
+                        .list(
+                            worktree_root,
+                            Some(relative_path.path.clone())
+                                .filter(|_| *relative_path.path != *Path::new("")),
+                            project_env,
+                        )
+                        .await,
                     relative_path.path,
                 ))
             })
