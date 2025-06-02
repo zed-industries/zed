@@ -579,12 +579,12 @@
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn",
       "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }],
-      "ctrl-alt-0": "workspace::ResetActiveDockSize",
-      "ctrl-alt-=": "workspace::IncreaseActiveDockSize",
-      "ctrl-alt--": "workspace::DecreaseActiveDockSize",
-      "ctrl-alt-shift-0": "workspace::ResetDocksSize",
-      "ctrl-alt-shift-=": "workspace::IncreaseOpenDocksSize",
-      "ctrl-alt-shift--": "workspace::DecreaseOpenDocksSize"
+      "alt-0": "workspace::ResetActiveDockSize",
+      "alt--": "workspace::DecreaseActiveDockSize",
+      "alt-=": "workspace::IncreaseActiveDockSize",
+      "ctrl-alt-0": "workspace::ResetDocksSize",
+      "ctrl-alt--": "workspace::DecreaseOpenDocksSize",
+      "ctrl-alt-=": "workspace::IncreaseOpenDocksSize"
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
