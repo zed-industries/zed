@@ -173,23 +173,23 @@ impl SlashCommandCompletionProvider {
                     .await?
                     .into_iter()
                     .map(|new_argument| {
-                            let confirm =
-                                editor
-                                    .clone()
-                                    .zip(workspace.clone())
-                                    .map(|(editor, workspace)| {
-                                        Arc::new({
-                                            let mut completed_arguments = arguments.clone();
-                                            if new_argument.replace_previous_arguments {
-                                                completed_arguments.clear();
-                                            } else {
-                                                completed_arguments.pop();
-                                            }
-                                            completed_arguments.push(new_argument.new_text.clone());
+                        let confirm =
+                            editor
+                                .clone()
+                                .zip(workspace.clone())
+                                .map(|(editor, workspace)| {
+                                    Arc::new({
+                                        let mut completed_arguments = arguments.clone();
+                                        if new_argument.replace_previous_arguments {
+                                            completed_arguments.clear();
+                                        } else {
+                                            completed_arguments.pop();
+                                        }
+                                        completed_arguments.push(new_argument.new_text.clone());
 
-                                            let command_range = command_range.clone();
-                                            let command_name = command_name.clone();
-                                            move |intent: CompletionIntent,
+                                        let command_range = command_range.clone();
+                                        let command_name = command_name.clone();
+                                        move |intent: CompletionIntent,
                                               window: &mut Window,
                                               cx: &mut App| {
                                             if new_argument.after_completion.run()
@@ -213,31 +213,31 @@ impl SlashCommandCompletionProvider {
                                                 !new_argument.after_completion.run()
                                             }
                                         }
-                                        }) as Arc<_>
-                                    });
+                                    }) as Arc<_>
+                                });
 
-                            let mut new_text = new_argument.new_text.clone();
-                            if new_argument.after_completion == AfterCompletion::Continue {
-                                new_text.push(' ');
-                            }
+                        let mut new_text = new_argument.new_text.clone();
+                        if new_argument.after_completion == AfterCompletion::Continue {
+                            new_text.push(' ');
+                        }
 
-                            project::Completion {
-                                replace_range: if new_argument.replace_previous_arguments {
-                                    argument_range.clone()
-                                } else {
-                                    last_argument_range.clone()
-                                },
-                                label: new_argument.label,
-                                icon_path: None,
-                                new_text,
-                                documentation: None,
-                                confirm,
-                                insert_text_mode: None,
-                                source: CompletionSource::Custom,
-                            }
-                        })
-                        .collect();
-                
+                        project::Completion {
+                            replace_range: if new_argument.replace_previous_arguments {
+                                argument_range.clone()
+                            } else {
+                                last_argument_range.clone()
+                            },
+                            label: new_argument.label,
+                            icon_path: None,
+                            new_text,
+                            documentation: None,
+                            confirm,
+                            insert_text_mode: None,
+                            source: CompletionSource::Custom,
+                        }
+                    })
+                    .collect();
+
                 Ok(vec![project::CompletionResponse {
                     completions,
                     is_incomplete: false,
