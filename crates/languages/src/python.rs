@@ -689,6 +689,9 @@ fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
 
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
+    fn manifest_name(&self) -> language::ManifestName {
+        ManifestName::from(SharedString::new_static("pyproject.toml"))
+    }
     async fn list(
         &self,
         worktree_root: PathBuf,

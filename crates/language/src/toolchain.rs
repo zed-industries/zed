@@ -14,7 +14,7 @@ use collections::HashMap;
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
 
-use crate::LanguageName;
+use crate::{LanguageName, ManifestName};
 
 /// Represents a single toolchain.
 #[derive(Clone, Debug)]
@@ -48,6 +48,8 @@ pub trait ToolchainLister: Send + Sync {
     ) -> ToolchainList;
     // Returns a term which we should use in UI to refer to a toolchain.
     fn term(&self) -> SharedString;
+    /// Returns the name of the manifest file for this toolchain.
+    fn manifest_name(&self) -> ManifestName;
 }
 
 #[async_trait(?Send)]
