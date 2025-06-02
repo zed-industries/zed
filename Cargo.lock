@@ -2987,7 +2987,6 @@ dependencies = [
  "anyhow",
  "assistant_context_editor",
  "assistant_slash_command",
- "assistant_tool",
  "async-stripe",
  "async-trait",
  "async-tungstenite",
