@@ -539,7 +539,7 @@ pub fn show_link_definition(
             let result = match &trigger_point {
                 TriggerPoint::Text(_) => {
                     if let Some((url_range, url)) = find_url(&buffer, buffer_position, cx.clone()) {
-                        this.update(cx, |_, _| {
+                        this.read_with(cx, |_, _| {
                             let range = maybe!({
                                 let start =
                                     snapshot.anchor_in_excerpt(excerpt_id, url_range.start)?;
@@ -665,7 +665,7 @@ pub(crate) fn find_url(
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.update(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -727,7 +727,7 @@ pub(crate) fn find_url_from_range(
 ) -> Option<String> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.update(&mut cx, |buffer, _| buffer.snapshot()) else {
+    let Ok(snapshot) = buffer.read_with(&mut cx, |buffer, _| buffer.snapshot()) else {
         return None;
     };
 
@@ -786,7 +786,7 @@ pub(crate) async fn find_file(
     cx: &mut AsyncWindowContext,
 ) -> Option<(Range<text::Anchor>, ResolvedPath)> {
     let project = project?;
-    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
     let scope = snapshot.language_scope_at(position);
     let (range, candidate_file_path) = surrounding_filename(snapshot, position)?;
 

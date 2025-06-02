@@ -9,11 +9,10 @@ use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
+use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use assistant_settings::AssistantSettings;
 use db::kvp::KEY_VALUE_STORE;
-
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
     scroll::ScrollbarAutoHide,
@@ -42,6 +41,7 @@ use language_model::{
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
+use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
@@ -64,13 +64,12 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::AppState;
-
-use notifications::status_toast::{StatusToast, ToastIcon};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
 };
+use zed_llm_client::CompletionIntent;
 
 actions!(
     git_panel,
@@ -198,7 +197,9 @@ impl GitHeaderEntry {
         let this = &self.header;
         let status = status_entry.status;
         match this {
-            Section::Conflict => repo.has_conflict(&status_entry.repo_path),
+            Section::Conflict => {
+                repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path)
+            }
             Section::Tracked => !status.is_created(),
             Section::New => status.is_created(),
         }
@@ -481,10 +482,10 @@ impl GitPanel {
             hide_task: None,
         };
 
-        let mut assistant_enabled = AssistantSettings::get_global(cx).enabled;
+        let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
         let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-            if assistant_enabled != AssistantSettings::get_global(cx).enabled {
-                assistant_enabled = AssistantSettings::get_global(cx).enabled;
+            if assistant_enabled != AgentSettings::get_global(cx).enabled {
+                assistant_enabled = AgentSettings::get_global(cx).enabled;
                 cx.notify();
             }
         });
@@ -1733,7 +1734,7 @@ impl GitPanel {
             }
         });
 
-        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, cx| {
              async move {
@@ -1765,6 +1766,7 @@ impl GitPanel {
                 let request = LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
+                    intent: Some(CompletionIntent::GenerateGitCommitMessage),
                     mode: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: Role::User,
@@ -2331,7 +2333,7 @@ impl GitPanel {
         let repo = repo.read(cx);
 
         for entry in repo.cached_status() {
-            let is_conflict = repo.has_conflict(&entry.repo_path);
+            let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
             let is_new = entry.status.is_created();
             let staging = entry.status.staging();
 
@@ -2502,7 +2504,7 @@ impl GitPanel {
                 continue;
             };
             self.entry_count += 1;
-            if repo.has_conflict(&status_entry.repo_path) {
+            if repo.had_conflict_on_last_merge_head_change(&status_entry.repo_path) {
                 self.conflicted_count += 1;
                 if self.entry_staging(status_entry).has_staged() {
                     self.conflicted_staged_count += 1;
@@ -4047,7 +4049,7 @@ impl GitPanel {
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    assistant_settings::AssistantSettings::get_global(cx)
+    agent_settings::AgentSettings::get_global(cx)
         .enabled
         .then(|| {
             let ConfiguredModel { provider, model } =
@@ -4765,14 +4767,12 @@ mod tests {
     use super::*;
 
     fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            AssistantSettings::register(cx);
+            AgentSettings::register(cx);
             WorktreeSettings::register(cx);
             workspace::init_settings(cx);
             theme::init(LoadThemes::JustBase, cx);
@@ -4839,7 +4839,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let app_state = workspace.update(cx, |workspace, _| workspace.app_state().clone());
+        let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
         let panel = cx.new_window_entity(|window, cx| {
             GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
         });
@@ -4850,7 +4850,7 @@ mod tests {
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
 
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [
@@ -4925,7 +4925,7 @@ mod tests {
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
-        let entries = panel.update(cx, |panel, _| panel.entries.clone());
+        let entries = panel.read_with(cx, |panel, _| panel.entries.clone());
         pretty_assertions::assert_eq!(
             entries,
             [

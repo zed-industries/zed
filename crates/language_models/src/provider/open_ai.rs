@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, WrappedTextContent,
+    RateLimiter, Role, StopReason,
 };
 use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
@@ -400,18 +400,14 @@ pub fn into_open_ai(
                         tool_calls.push(tool_call);
                     } else {
                         messages.push(open_ai::RequestMessage::Assistant {
-                            content: open_ai::MessageContent::empty(),
+                            content: None,
                             tool_calls: vec![tool_call],
                         });
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content = match &tool_result.content {
-                        LanguageModelToolResultContent::Text(text)
-                        | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                            text,
-                            ..
-                        }) => {
+                        LanguageModelToolResultContent::Text(text) => {
                             vec![open_ai::MessagePart::Text {
                                 text: text.to_string(),
                             }]
@@ -474,7 +470,13 @@ fn add_message_content_part(
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(open_ai::RequestMessage::User { content }))
-        | (Role::Assistant, Some(open_ai::RequestMessage::Assistant { content, .. }))
+        | (
+            Role::Assistant,
+            Some(open_ai::RequestMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        )
         | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
             content.push_part(new_part);
         }
@@ -484,7 +486,7 @@ fn add_message_content_part(
                     content: open_ai::MessageContent::from(vec![new_part]),
                 },
                 Role::Assistant => open_ai::RequestMessage::Assistant {
-                    content: open_ai::MessageContent::from(vec![new_part]),
+                    content: Some(open_ai::MessageContent::from(vec![new_part])),
                     tool_calls: Vec::new(),
                 },
                 Role::System => open_ai::RequestMessage::System {
@@ -858,6 +860,7 @@ mod tests {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: None,
             mode: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
