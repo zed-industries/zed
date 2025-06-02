@@ -258,8 +258,7 @@ async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
             provider
                 .list_hosting_providers()
                 .into_iter()
-                .find(|provider| provider.name() == "foo")
-                .is_some(),
+                .any(|provider| provider.name() == "foo")
         );
     });
 
@@ -275,11 +274,10 @@ async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let provider = GitHostingProviderRegistry::global(cx);
         assert!(
-            provider
+            !provider
                 .list_hosting_providers()
                 .into_iter()
-                .find(|provider| provider.name() == "foo")
-                .is_none(),
+                .any(|provider| provider.name() == "foo")
         );
     });
 }
