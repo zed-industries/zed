@@ -637,24 +637,27 @@ impl ToolCard for TerminalToolCard {
                         .rounded_b_md()
                         .text_ui_sm(cx)
                         .child(
-                            ToolOutputPreview::new(terminal.clone().into())
-                                .with_total_lines(self.content_line_count)
-                                .toggle_state(!terminal.read(cx).is_content_limited(window))
-                                .on_toggle({
-                                    let terminal = terminal.clone();
-                                    move |is_expanded, _, cx| {
-                                        terminal.update(cx, |terminal, cx| {
-                                            terminal.set_embedded_mode(
-                                                if is_expanded {
-                                                    None
-                                                } else {
-                                                    Some(COLLAPSED_LINES)
-                                                },
-                                                cx,
-                                            );
-                                        });
-                                    }
-                                }),
+                            ToolOutputPreview::new(
+                                terminal.clone().into_any_element(),
+                                terminal.entity_id(),
+                            )
+                            .with_total_lines(self.content_line_count)
+                            .toggle_state(!terminal.read(cx).is_content_limited(window))
+                            .on_toggle({
+                                let terminal = terminal.clone();
+                                move |is_expanded, _, cx| {
+                                    terminal.update(cx, |terminal, cx| {
+                                        terminal.set_embedded_mode(
+                                            if is_expanded {
+                                                None
+                                            } else {
+                                                Some(COLLAPSED_LINES)
+                                            },
+                                            cx,
+                                        );
+                                    });
+                                }
+                            }),
                         ),
                 )
             })

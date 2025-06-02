@@ -1,4 +1,4 @@
-use gpui::{AnyView, prelude::*};
+use gpui::{AnyElement, EntityId, prelude::*};
 use ui::{Tooltip, prelude::*};
 
 #[derive(IntoElement)]
@@ -6,9 +6,11 @@ pub struct ToolOutputPreview<F>
 where
     F: Fn(bool, &mut Window, &mut App) + 'static,
 {
-    content: AnyView,
+    content: AnyElement,
+    entity_id: EntityId,
     full_height: bool,
     total_lines: usize,
+    collapsed_fade: bool,
     on_toggle: Option<F>,
 }
 
@@ -18,11 +20,13 @@ impl<F> ToolOutputPreview<F>
 where
     F: Fn(bool, &mut Window, &mut App) + 'static,
 {
-    pub fn new(content: AnyView) -> Self {
+    pub fn new(content: AnyElement, entity_id: EntityId) -> Self {
         Self {
             content,
+            entity_id,
             full_height: true,
             total_lines: 0,
+            collapsed_fade: false,
             on_toggle: None,
         }
     }
@@ -34,6 +38,11 @@ where
 
     pub fn toggle_state(mut self, full_height: bool) -> Self {
         self.full_height = full_height;
+        self
+    }
+
+    pub fn with_collapsed_fade(mut self) -> Self {
+        self.collapsed_fade = true;
         self
     }
 
@@ -49,9 +58,8 @@ where
 {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         if self.total_lines <= COLLAPSED_LINES {
-            return self.content.into_any_element();
+            return self.content;
         }
-        let entity_id = self.content.entity_id();
         let border_color = cx.theme().colors().border.opacity(0.6);
 
         let (icon, tooltip_label) = if self.full_height {
@@ -60,11 +68,29 @@ where
             (IconName::ChevronDown, "Expand")
         };
 
+        let gradient_overlay =
+            if self.collapsed_fade && !self.full_height {
+                Some(div().absolute().bottom_5().left_0().w_full().h_2_5().bg(
+                    gpui::linear_gradient(
+                        0.,
+                        gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
+                        gpui::linear_color_stop(
+                            cx.theme().colors().editor_background.opacity(0.),
+                            1.,
+                        ),
+                    ),
+                ))
+            } else {
+                None
+            };
+
         v_flex()
+            .relative()
             .child(self.content)
+            .children(gradient_overlay)
             .child(
                 h_flex()
-                    .id(("expand-button", entity_id))
+                    .id(("expand-button", self.entity_id))
                     .flex_none()
                     .cursor_pointer()
                     .h_5()
