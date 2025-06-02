@@ -1935,7 +1935,8 @@ impl Pane {
                         workspace.prompt_for_new_path(lister, window, cx)
                     })
                 })??;
-                let Some(new_path) = new_path.await.ok().flatten() else {
+                let Some(new_path) = new_path.await.ok().flatten().into_iter().flatten().next()
+                else {
                     return Ok(false);
                 };
 

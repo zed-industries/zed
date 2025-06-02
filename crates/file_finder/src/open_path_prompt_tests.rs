@@ -270,7 +270,7 @@ fn build_open_path_prompt(
 ) -> (Entity<Picker<OpenPathDelegate>>, &mut VisualTestContext) {
     let (tx, _) = futures::channel::oneshot::channel();
     let lister = project::DirectoryLister::Project(project.clone());
-    let delegate = OpenPathDelegate::new(tx, lister.clone());
+    let delegate = OpenPathDelegate::new(tx, lister.clone(), false);
 
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     (

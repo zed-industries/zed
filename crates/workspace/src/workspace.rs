@@ -902,7 +902,7 @@ type PromptForNewPath = Box<
         DirectoryLister,
         &mut Window,
         &mut Context<Workspace>,
-    ) -> oneshot::Receiver<Option<PathBuf>>,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
 type PromptForOpenPath = Box<
@@ -1910,7 +1910,7 @@ impl Workspace {
         lister: DirectoryLister,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<Option<PathBuf>> {
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         if self.project.read(cx).is_via_collab()
             || self.project.read(cx).is_via_ssh()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
@@ -1955,7 +1955,7 @@ impl Workspace {
                 }
             };
 
-            tx.send(abs_path).ok();
+            tx.send(abs_path.map(|path| vec![path])).ok();
             anyhow::Ok(())
         })
         .detach();

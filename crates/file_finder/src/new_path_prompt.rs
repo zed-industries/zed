@@ -12,8 +12,10 @@ use std::{
 };
 use ui::{Context, ListItem, Window};
 use ui::{LabelLike, ListItemSpacing, highlight_ranges, prelude::*};
-use util::{ResultExt, maybe};
+use util::ResultExt;
 use workspace::Workspace;
+
+use crate::OpenPathDelegate;
 
 pub(crate) struct NewPathPrompt;
 
@@ -52,7 +54,7 @@ impl Match {
             || self.suffix.as_ref().is_some_and(|s| s.ends_with('/'))
     }
 
-    fn relative_path(&self, lister: &DirectoryLister) -> String {
+    fn relative_path(&self) -> String {
         if let Some(path_match) = &self.path_match {
             if let Some(suffix) = &self.suffix {
                 format!(
@@ -70,12 +72,7 @@ impl Match {
         }
     }
 
-    fn project_path(
-        &self,
-        project: &Project,
-        lister: &DirectoryLister,
-        cx: &App,
-    ) -> Option<ProjectPath> {
+    fn project_path(&self, project: &Project, cx: &App) -> Option<ProjectPath> {
         let worktree_id = if let Some(path_match) = &self.path_match {
             WorktreeId::from_usize(path_match.worktree_id)
         } else if let Some(worktree) = project.visible_worktrees(cx).find(|worktree| {
@@ -86,12 +83,10 @@ impl Match {
         }) {
             worktree.read(cx).id()
         } else {
-            // TODO kb
-            // todo(): we should find_or_create a workspace.
             return None;
         };
 
-        let path = PathBuf::from(self.relative_path(lister));
+        let path = PathBuf::from(self.relative_path());
 
         Some(ProjectPath {
             worktree_id,
@@ -203,11 +198,11 @@ impl Match {
     }
 }
 
+// TODO kb remove
 pub struct NewPathDelegate {
-    tx: Option<oneshot::Sender<Option<PathBuf>>>,
+    tx: Option<oneshot::Sender<Option<ProjectPath>>>,
     lister: DirectoryLister,
     selected_index: usize,
-    directory_state: Option<DirectoryState>,
     matches: Vec<Match>,
     cancel_flag: Arc<AtomicBool>,
     should_dismiss: bool,
@@ -231,23 +226,12 @@ impl NewPathPrompt {
     fn prompt_for_new_path(
         workspace: &mut Workspace,
         lister: DirectoryLister,
-        tx: oneshot::Sender<Option<PathBuf>>,
+        tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let project = workspace.project().clone();
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate = NewPathDelegate {
-                project,
-                lister: lister.clone(),
-                tx: Some(tx),
-                selected_index: 0,
-                matches: Vec::new(),
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-                last_selected_dir: None,
-                should_dismiss: true,
-            };
-
+            let delegate = OpenPathDelegate::new(tx, lister.clone(), true);
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
             picker.set_query(query, window, cx);
@@ -353,29 +337,19 @@ impl PickerDelegate for NewPathDelegate {
 
     fn confirm_completion(
         &mut self,
-        query: String,
-        window: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        _: String,
+        _: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<String> {
-        Some(
-            maybe!({
-                let m = self.matches.get(self.selected_index)?;
-                let directory_state = self.directory_state.as_ref()?;
-                let candidate = directory_state.match_candidates.get(*m)?;
-                Some(format!(
-                    "{}{}{}{}",
-                    directory_state.path,
-                    candidate.path.string,
-                    if candidate.is_dir {
-                        MAIN_SEPARATOR_STR
-                    } else {
-                        ""
-                    },
-                    if candidate.is_dir { DIR_INDICATOR } else { "" }
-                ))
-            })
-            .unwrap_or(query),
-        )
+        let m = self.matches.get(self.selected_index)?;
+        if m.is_dir(self.project.read(cx), cx) {
+            let path = m.relative_path();
+            let result = format!("{}/", path);
+            self.last_selected_dir = Some(path);
+            Some(result)
+        } else {
+            None
+        }
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
