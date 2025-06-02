@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfile, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -360,7 +360,7 @@ pub struct Thread {
     >,
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
-    profile: AgentProfileId,
+    profile: AgentProfile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -408,7 +408,7 @@ impl Thread {
     ) -> Self {
         let (detailed_summary_tx, detailed_summary_rx) = postage::watch::channel();
         let configured_model = LanguageModelRegistry::read_global(cx).default_model();
-        let profile = AgentSettings::get_global(cx).default_profile.clone();
+        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
 
         Self {
             id: ThreadId::new(),
@@ -451,7 +451,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
-            profile,
+            profile: AgentProfile::new(profile_id),
         }
     }
 
@@ -498,7 +498,7 @@ impl Thread {
         let completion_mode = serialized
             .completion_mode
             .unwrap_or_else(|| AgentSettings::get_global(cx).preferred_completion_mode);
-        let profile = serialized
+        let profile_id = serialized
             .profile
             .unwrap_or_else(|| AgentSettings::get_global(cx).default_profile.clone());
 
@@ -576,7 +576,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
-            profile,
+            profile: AgentProfile::new(profile_id),
         }
     }
 
@@ -1187,7 +1187,7 @@ impl Thread {
                     }),
                 completion_mode: Some(this.completion_mode),
                 tool_use_limit_reached: this.tool_use_limit_reached,
-                profile: Some(this.profile.clone()),
+                profile: Some(this.profile.id.clone()),
             })
         })
     }
@@ -2880,7 +2880,7 @@ struct PendingCompletion {
 mod tests {
     use super::*;
     use crate::{ThreadStore, context::load_context, context_store::ContextStore, thread_store};
-    use agent_settings::{AgentSettings, LanguageModelParameters};
+    use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
     use editor::EditorSettings;
     use gpui::TestAppContext;
@@ -3308,7 +3308,7 @@ fn main() {{
 
         // Check that we are starting with the default profile
         let profile = cx.read(|cx| thread.read(cx).profile.clone());
-        assert_eq!(profile, AgentProfileId::default());
+        assert_eq!(profile, AgentProfile::default());
     }
 
     #[gpui::test]
@@ -3347,7 +3347,7 @@ fn main() {{
             })
         });
 
-        assert_eq!(deserialized.profile, AgentProfileId::default());
+        assert_eq!(deserialized.profile, AgentProfile::default());
     }
 
     #[gpui::test]

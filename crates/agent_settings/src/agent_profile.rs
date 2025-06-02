@@ -75,3 +75,14 @@ pub struct AgentProfileSettings {
 pub struct ContextServerPreset {
     pub tools: IndexMap<Arc<str>, bool>,
 }
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AgentProfile {
+    pub id: AgentProfileId,
+}
+
+impl AgentProfile {
+    pub fn new(id: AgentProfileId) -> Self {
+        Self { id }
+    }
+}
