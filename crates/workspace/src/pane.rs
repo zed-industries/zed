@@ -2063,7 +2063,9 @@ impl Pane {
                 self.set_preview_item_id(None, cx);
             }
 
-            if ix != destination_index {
+            if ix == destination_index {
+                cx.notify();
+            } else {
                 self.workspace
                     .update(cx, |_, cx| {
                         cx.defer_in(window, move |_, window, cx| {
