@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -595,6 +595,13 @@ impl Thread {
 
     pub fn profile(&self) -> &AgentProfile {
         &self.profile
+    }
+
+    pub fn set_profile(&mut self, id: AgentProfileId, cx: &mut Context<Self>) {
+        if &id != self.profile.id() {
+            self.profile = AgentProfile::new(id, self.tools.clone());
+            cx.emit(ThreadEvent::ProfileChanged);
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -2869,6 +2876,7 @@ pub enum ThreadEvent {
     ToolUseLimitReached,
     CancelEditing,
     CompletionCanceled,
+    ProfileChanged,
 }
 
 impl EventEmitter<ThreadEvent> for Thread {}

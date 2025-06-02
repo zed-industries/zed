@@ -175,8 +175,7 @@ impl MessageEditor {
             )
         });
 
-        let incompatible_tools =
-            cx.new(|cx| IncompatibleToolsState::new(thread.read(cx).tools().clone(), cx));
+        let incompatible_tools = cx.new(|cx| IncompatibleToolsState::new(thread.clone(), cx));
 
         let subscriptions = vec![
             cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),

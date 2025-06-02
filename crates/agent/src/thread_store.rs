@@ -25,7 +25,7 @@ use prompt_store::{
     UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsStore};
+use settings::Settings as _;
 use ui::Window;
 use util::ResultExt as _;
 
@@ -147,12 +147,7 @@ impl ThreadStore {
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> (Self, oneshot::Receiver<()>) {
-        let mut subscriptions = vec![
-            cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
-                this.load_default_profile(cx);
-            }),
-            cx.subscribe(&project, Self::handle_project_event),
-        ];
+        let mut subscriptions = vec![cx.subscribe(&project, Self::handle_project_event)];
 
         if let Some(prompt_store) = prompt_store.as_ref() {
             subscriptions.push(cx.subscribe(
@@ -200,7 +195,6 @@ impl ThreadStore {
             _reload_system_prompt_task: reload_system_prompt_task,
             _subscriptions: subscriptions,
         };
-        this.load_default_profile(cx);
         this.register_context_server_handlers(cx);
         this.reload(cx).detach_and_log_err(cx);
         (this, ready_rx)
@@ -520,12 +514,6 @@ impl ThreadStore {
         })
     }
 
-    fn load_default_profile(&self, cx: &mut Context<Self>) {
-        let assistant_settings = AgentSettings::get_global(cx);
-
-        self.load_profile_by_id(assistant_settings.default_profile.clone(), cx);
-    }
-
     pub fn load_profile_by_id(&self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
         let assistant_settings = AgentSettings::get_global(cx);
 
@@ -656,10 +644,9 @@ impl ThreadStore {
                                                 .log_err();
 
                                             if let Some(tool_ids) = tool_ids {
-                                                this.update(cx, |this, cx| {
+                                                this.update(cx, |this, _| {
                                                     this.context_server_tool_ids
                                                         .insert(server_id, tool_ids);
-                                                    this.load_default_profile(cx);
                                                 })
                                                 .log_err();
                                             }
@@ -675,7 +662,6 @@ impl ThreadStore {
                             tool_working_set.update(cx, |tool_working_set, _| {
                                 tool_working_set.remove(&tool_ids);
                             });
-                            self.load_default_profile(cx);
                         }
                     }
                     _ => {}

@@ -124,6 +124,7 @@ impl ProfileSelector {
 
         entry.handler({
             let fs = self.fs.clone();
+            let thread = self.thread.clone();
             let thread_store = self.thread_store.clone();
             let profile_id = profile_id.clone();
             move |_window, cx| {
@@ -132,6 +133,10 @@ impl ProfileSelector {
                     move |settings, _cx| {
                         settings.set_profile(profile_id.clone());
                     }
+                });
+
+                thread.update(cx, |this, cx| {
+                    this.set_profile(profile_id.clone(), cx);
                 });
 
                 thread_store
