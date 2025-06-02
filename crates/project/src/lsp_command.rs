@@ -2263,7 +2263,7 @@ impl LspCommand for GetCompletions {
         })?;
 
         // If completions were filtered out due to errors that may be transient, mark the result
-        // incomplete so that it is requeried.
+        // incomplete so that it is re-queried.
         if unfiltered_completions_count != completions.len() {
             is_incomplete = true;
         }

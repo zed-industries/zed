@@ -5176,8 +5176,8 @@ impl Editor {
                 return;
             };
 
-            // TODO: Ideally completions from different sources would be selectively requeried, so
-            // that having one source with `is_incomplete: true` doesn't cause all to be requeried.
+            // TODO: Ideally completions from different sources would be selectively re-queried, so
+            // that having one source with `is_incomplete: true` doesn't cause all to be re-queried.
             let mut completions = Vec::new();
             let mut is_incomplete = false;
             if let Some(provider_responses) = provider_responses.await.log_err() {
