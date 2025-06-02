@@ -19599,7 +19599,7 @@ fn process_completion_for_edit(
                             if replace_range
                                 .end
                                 .cmp(&cursor_position, &buffer_snapshot)
-                                .is_ge()
+                                .is_gt()
                             {
                                 let range_after_cursor = *cursor_position..replace_range.end;
                                 let text_after_cursor = buffer
