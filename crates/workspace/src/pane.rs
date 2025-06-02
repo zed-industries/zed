@@ -25,7 +25,7 @@ use gpui::{
 use itertools::Itertools;
 use language::DiagnosticSeverity;
 use parking_lot::Mutex;
-use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
@@ -1921,24 +1921,55 @@ impl Pane {
                 })?
                 .await?;
             } else if can_save_as && is_singleton {
-                let abs_path = pane.update_in(cx, |pane, window, cx| {
+                let new_path = pane.update_in(cx, |pane, window, cx| {
                     pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
-                        workspace.prompt_for_new_path(window, cx)
+                        let lister = if workspace.project().read(cx).is_local() {
+                            DirectoryLister::Local(
+                                workspace.project().clone(),
+                                workspace.app_state().fs.clone(),
+                            )
+                        } else {
+                            DirectoryLister::Project(workspace.project().clone())
+                        };
+                        workspace.prompt_for_new_path(lister, window, cx)
                     })
                 })??;
-                if let Some(abs_path) = abs_path.await.ok().flatten() {
+                let Some(new_path) = new_path.await.ok().flatten() else {
+                    return Ok(false);
+                };
+
+                let project_path = pane
+                    .update(cx, |pane, cx| {
+                        pane.project
+                            .update(cx, |project, cx| {
+                                project.find_or_create_worktree(new_path, true, cx)
+                            })
+                            .ok()
+                    })
+                    .ok()
+                    .flatten();
+                let save_task = if let Some(project_path) = project_path {
+                    let (worktree, path) = project_path.await?;
+                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+                    let new_path = ProjectPath {
+                        worktree_id,
+                        path: path.into(),
+                    };
+
                     pane.update_in(cx, |pane, window, cx| {
-                        if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
+                        if let Some(item) = pane.item_for_path(new_path.clone(), cx) {
                             pane.remove_item(item.item_id(), false, false, window, cx);
                         }
 
-                        item.save_as(project, abs_path, window, cx)
+                        item.save_as(project, new_path, window, cx)
                     })?
-                    .await?;
                 } else {
                     return Ok(false);
-                }
+                };
+
+                save_task.await?;
+                return Ok(true);
             }
         }
 

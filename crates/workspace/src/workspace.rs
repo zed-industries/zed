@@ -899,9 +899,10 @@ pub enum OpenVisible {
 type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
+        DirectoryLister,
         &mut Window,
         &mut Context<Workspace>,
-    ) -> oneshot::Receiver<Option<ProjectPath>>,
+    ) -> oneshot::Receiver<Option<PathBuf>>,
 >;
 
 type PromptForOpenPath = Box<
@@ -1906,15 +1907,16 @@ impl Workspace {
 
     pub fn prompt_for_new_path(
         &mut self,
+        lister: DirectoryLister,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<Option<ProjectPath>> {
+    ) -> oneshot::Receiver<Option<PathBuf>> {
         if self.project.read(cx).is_via_collab()
             || self.project.read(cx).is_via_ssh()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, window, cx);
+            let rx = prompt(self, lister, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
             return rx;
         }
@@ -1942,7 +1944,7 @@ impl Workspace {
                         workspace.show_portal_error(err.to_string(), cx);
 
                         let prompt = workspace.on_prompt_for_new_path.take().unwrap();
-                        let rx = prompt(workspace, window, cx);
+                        let rx = prompt(workspace, lister, window, cx);
                         workspace.on_prompt_for_new_path = Some(prompt);
                         rx
                     })?;
@@ -1953,27 +1955,7 @@ impl Workspace {
                 }
             };
 
-            let project_path = abs_path.and_then(|abs_path| {
-                workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.project.update(cx, |project, cx| {
-                            project.find_or_create_worktree(abs_path, true, cx)
-                        })
-                    })
-                    .ok()
-            });
-
-            if let Some(project_path) = project_path {
-                let (worktree, path) = project_path.await?;
-                let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
-                tx.send(Some(ProjectPath {
-                    worktree_id,
-                    path: path.into(),
-                }))
-                .ok();
-            } else {
-                tx.send(None).ok();
-            }
+            tx.send(abs_path).ok();
             anyhow::Ok(())
         })
         .detach();
