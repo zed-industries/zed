@@ -26,7 +26,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
-use streaming_fuzzy_matcher::{FuzzyMatchResult, StreamingFuzzyMatcher};
+use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
 use util::debug_panic;
 use zed_llm_client::CompletionIntent;
 
@@ -54,6 +54,7 @@ impl Template for EditFilePromptTemplate {
 pub enum EditAgentOutputEvent {
     ResolvingEditRange(Range<Anchor>),
     UnresolvedEditRange,
+    AmbiguousEditRange(Vec<Range<usize>>),
     Edited,
 }
 
@@ -269,16 +270,29 @@ impl EditAgent {
                 }
             }
 
-            let (edit_events_, resolved_old_text) = resolve_old_text.await?;
+            let (edit_events_, mut resolved_old_text) = resolve_old_text.await?;
             edit_events = edit_events_;
 
             // If we can't resolve the old text, restart the loop waiting for a
             // new edit (or for the stream to end).
-            let Some(resolved_old_text) = resolved_old_text else {
-                output_events
-                    .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
-                    .ok();
-                continue;
+            let resolved_old_text = match resolved_old_text.len() {
+                1 => resolved_old_text.pop().unwrap(),
+                0 => {
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
+                        .ok();
+                    continue;
+                }
+                _ => {
+                    let ranges = resolved_old_text
+                        .into_iter()
+                        .map(|text| text.range)
+                        .collect();
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::AmbiguousEditRange(ranges))
+                        .ok();
+                    continue;
+                }
             };
 
             // Compute edits in the background and apply them as they become
@@ -405,7 +419,7 @@ impl EditAgent {
         mut edit_events: T,
         cx: &mut AsyncApp,
     ) -> (
-        Task<Result<(T, Option<ResolvedOldText>)>>,
+        Task<Result<(T, Vec<ResolvedOldText>)>>,
         async_watch::Receiver<Option<Range<usize>>>,
     )
     where
@@ -425,35 +439,29 @@ impl EditAgent {
                 }
             }
 
-            let match_result = matcher.finish();
-            match match_result {
-                FuzzyMatchResult::SingleMatch(old_range) => {
-                    old_range_tx.send(Some(old_range.clone()))?;
-                    let line_indent =
-                        LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
-                    Ok((
-                        edit_events,
-                        Some(ResolvedOldText {
-                            range: old_range,
-                            indent: line_indent,
-                        }),
-                    ))
-                }
-                FuzzyMatchResult::MultipleMatches { match_count, match_lines, .. } => {
-                    // Multiple matches found - report as unresolved
-                    old_range_tx.send(None)?;
-                    log::warn!(
-                        "Multiple matches ({}) found for old text on lines: {:?}. Please provide more context.",
-                        match_count,
-                        match_lines
-                    );
-                    Ok((edit_events, None))
-                }
-                FuzzyMatchResult::NoMatch => {
-                    old_range_tx.send(None)?;
-                    Ok((edit_events, None))
-                }
+            let matches = matcher.finish();
+            if matches.is_empty() {
+                old_range_tx.send(None)?;
+                return Ok((edit_events, Vec::new()));
             }
+
+            let line_indent = LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
+            let old_range = if matches.len() == 1 {
+                matches.first()
+            } else {
+                None
+            };
+            old_range_tx.send(old_range.cloned())?;
+
+            let resolved_old_texts = matches
+                .into_iter()
+                .map(|range| ResolvedOldText {
+                    range,
+                    indent: line_indent.clone(),
+                })
+                .collect::<Vec<_>>();
+
+            Ok((edit_events, resolved_old_texts))
         });
 
         (task, old_range_rx)
@@ -1339,24 +1347,20 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_non_unique_text_error(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;
-        let buffer = cx.new(|cx| {
-            Buffer::local(
-                indoc! {"
-                    function foo() {
-                        return 42;
-                    }
+        let original_text = indoc! {"
+                function foo() {
+                    return 42;
+                }
 
-                    function bar() {
-                        return 42;
-                    }
+                function bar() {
+                    return 42;
+                }
 
-                    function baz() {
-                        return 42;
-                    }
-                "},
-                cx,
-            )
-        });
+                function baz() {
+                    return 42;
+                }
+            "};
+        let buffer = cx.new(|cx| Buffer::local(original_text, cx));
         let (apply, mut events) = agent.edit(
             buffer.clone(),
             String::new(),
@@ -1365,7 +1369,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        // Try to edit the non-unique text "return 42;"
+        // When <old_text> matches text in more than one place
         simulate_llm_output(
             &agent,
             indoc! {"
@@ -1381,10 +1385,8 @@ mod tests {
         );
         apply.await.unwrap();
 
-        // The text should remain unchanged when there are multiple matches
+        // Then the text should remain unchanged
         let result_text = buffer.read_with(cx, |buffer, _| buffer.snapshot().text());
-
-        // Expected behavior: text remains unchanged when there are multiple matches
         assert_eq!(
             result_text,
             indoc! {"
@@ -1403,11 +1405,12 @@ mod tests {
             "Text should remain unchanged when there are multiple matches"
         );
 
-        // The events should include UnresolvedEditRange when there are multiple matches
+        // And AmbiguousEditRange even should be emitted
         let events = drain_events(&mut events);
+        let ambigous_ranges = vec![17..31, 52..66, 87..101];
         assert!(
-            events.contains(&EditAgentOutputEvent::UnresolvedEditRange),
-            "Should emit UnresolvedEditRange for non-unique text"
+            events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambigous_ranges)),
+            "Should emit AmbiguousEditRange for non-unique text"
         );
     }
 

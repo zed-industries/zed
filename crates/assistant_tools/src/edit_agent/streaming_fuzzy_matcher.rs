@@ -11,26 +11,8 @@ pub struct StreamingFuzzyMatcher {
     snapshot: TextBufferSnapshot,
     query_lines: Vec<String>,
     incomplete_line: String,
-    best_matches: FuzzyMatchResult,
+    best_matches: Vec<Range<usize>>,
     matrix: SearchMatrix,
-}
-
-/// Result of fuzzy matching operation
-#[derive(Debug, Clone, PartialEq)]
-pub enum FuzzyMatchResult {
-    /// Single match found
-    SingleMatch(Range<usize>),
-    /// Multiple matches found with the same cost
-    MultipleMatches {
-        /// The first match found
-        first_match: Range<usize>,
-        /// Total number of matches found with the same cost
-        match_count: usize,
-        /// Line numbers where matches start
-        match_lines: Vec<u32>,
-    },
-    /// No match found
-    NoMatch,
 }
 
 impl StreamingFuzzyMatcher {
@@ -40,7 +22,7 @@ impl StreamingFuzzyMatcher {
             snapshot,
             query_lines: Vec::new(),
             incomplete_line: String::new(),
-            best_matches: FuzzyMatchResult::NoMatch,
+            best_matches: Vec::new(),
             matrix: SearchMatrix::new(buffer_line_count + 1),
         }
     }
@@ -76,17 +58,17 @@ impl StreamingFuzzyMatcher {
             // Update best matches based on the result
             self.best_matches = self.resolve_location_fuzzy();
 
-            match &self.best_matches {
-                FuzzyMatchResult::SingleMatch(range) => Some(range.clone()),
-                FuzzyMatchResult::MultipleMatches { first_match, .. } => Some(first_match.clone()),
-                FuzzyMatchResult::NoMatch => None,
+            if let Some(first_match) = self.best_matches.first() {
+                Some(first_match.clone())
+            } else {
+                None
             }
         } else {
             // No complete lines yet, return the current best match if any
-            match &self.best_matches {
-                FuzzyMatchResult::SingleMatch(range) => Some(range.clone()),
-                FuzzyMatchResult::MultipleMatches { first_match, .. } => Some(first_match.clone()),
-                FuzzyMatchResult::NoMatch => None,
+            if let Some(first_match) = self.best_matches.first() {
+                Some(first_match.clone())
+            } else {
+                None
             }
         }
     }
@@ -95,7 +77,7 @@ impl StreamingFuzzyMatcher {
     ///
     /// This processes any remaining incomplete line before returning the final
     /// match result.
-    pub fn finish(&mut self) -> FuzzyMatchResult {
+    pub fn finish(&mut self) -> Vec<Range<usize>> {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {
             self.query_lines.push(self.incomplete_line.clone());
@@ -106,11 +88,11 @@ impl StreamingFuzzyMatcher {
         self.best_matches.clone()
     }
 
-    fn resolve_location_fuzzy(&mut self) -> FuzzyMatchResult {
+    fn resolve_location_fuzzy(&mut self) -> Vec<Range<usize>> {
         let new_query_line_count = self.query_lines.len();
         let old_query_line_count = self.matrix.rows.saturating_sub(1);
         if new_query_line_count == old_query_line_count {
-            return FuzzyMatchResult::NoMatch;
+            return Vec::new();
         }
 
         self.matrix.resize_rows(new_query_line_count + 1);
@@ -217,22 +199,7 @@ impl StreamingFuzzyMatcher {
             }
         }
 
-        match valid_matches.len() {
-            0 => FuzzyMatchResult::NoMatch,
-            1 => FuzzyMatchResult::SingleMatch(valid_matches[0].1.clone()),
-            _ => {
-                let first_match = valid_matches[0].1.clone();
-                let match_lines = valid_matches
-                    .iter()
-                    .map(|(start_row, _)| *start_row)
-                    .collect();
-                FuzzyMatchResult::MultipleMatches {
-                    first_match,
-                    match_count: valid_matches.len(),
-                    match_lines,
-                }
-            }
-        }
+        valid_matches.into_iter().map(|(_, range)| range).collect()
     }
 }
 
@@ -692,30 +659,30 @@ mod tests {
             matcher.push(chunk);
         }
 
-        let result = matcher.finish();
+        let actual_ranges = matcher.finish();
 
         // If no expected ranges, we expect no match
         if expected_ranges.is_empty() {
-            assert_eq!(
-                result,
-                FuzzyMatchResult::NoMatch,
+            assert!(
+                actual_ranges.is_empty(),
                 "Expected no match for query: {:?}, but found: {:?}",
                 query,
-                result
+                actual_ranges
             );
         } else {
-            let mut actual_ranges = Vec::new();
-            if let FuzzyMatchResult::SingleMatch(range) = result {
-                actual_ranges.push(range);
-            }
-
+            // The new `finish` directly returns Vec<Range<usize>>
+            // `generate_marked_text` expects a slice of ranges.
             let text_with_actual_range = generate_marked_text(&text, &actual_ranges, false);
             pretty_assertions::assert_eq!(
                 text_with_actual_range,
                 text_with_expected_range,
-                "Query: {:?}, Chunks: {:?}",
+                "Query: {:?}, Chunks: {:?}\nExpected marked text: {}\nActual marked text: {}\nExpected ranges: {:?}\nActual ranges: {:?}",
                 query,
-                chunks
+                chunks,
+                text_with_expected_range,
+                text_with_actual_range,
+                expected_ranges,
+                actual_ranges
             );
         }
     }
@@ -743,11 +710,12 @@ mod tests {
 
     fn finish(mut finder: StreamingFuzzyMatcher) -> Option<String> {
         let snapshot = finder.snapshot.clone();
-        match finder.finish() {
-            FuzzyMatchResult::SingleMatch(range) => {
-                Some(snapshot.text_for_range(range).collect::<String>())
-            }
-            _ => None,
+        let matches = finder.finish(); // This is Vec<Range<usize>>
+        if let Some(range) = matches.first() {
+            // Return text of the first match, similar to old SingleMatch behavior
+            Some(snapshot.text_for_range(range.clone()).collect::<String>())
+        } else {
+            None
         }
     }
 }
