@@ -230,6 +230,8 @@ pub enum Event {
         item: Box<dyn ItemHandle>,
     },
     Split(SplitDirection),
+    ItemPinned,
+    ItemUnpinned,
     JoinAll,
     JoinIntoNext,
     ChangeItemTitle,
@@ -274,6 +276,8 @@ impl fmt::Debug for Event {
                 .field("item", &item.id())
                 .field("save_intent", save_intent)
                 .finish(),
+            Event::ItemPinned => f.write_str("ItemPinned"),
+            Event::ItemUnpinned => f.write_str("ItemUnpinned"),
         }
     }
 }
@@ -780,11 +784,13 @@ impl Pane {
         }
     }
 
-    pub(crate) fn set_pinned_count(&mut self, count: usize) {
+    /// Should only be used when deserializing a pane.
+    pub fn set_pinned_count(&mut self, count: usize) {
+        dbg!(count);
         self.pinned_tab_count = count;
     }
 
-    pub(crate) fn pinned_count(&self) -> usize {
+    pub fn pinned_count(&self) -> usize {
         self.pinned_tab_count
     }
 
@@ -2074,6 +2080,7 @@ impl Pane {
                     })
                     .ok()?;
             }
+            cx.emit(Event::ItemPinned);
 
             Some(())
         });
@@ -2098,6 +2105,7 @@ impl Pane {
                     })
                     .ok()?;
             }
+            cx.emit(Event::ItemUnpinned);
 
             Some(())
         });
