@@ -663,6 +663,7 @@ mod tests {
             ("p.q.r", log::LevelFilter::Info),  // Should be overridden by kv
             ("x.y.z", log::LevelFilter::Warn),  // Not overridden
             ("crate::module::default", log::LevelFilter::Error), // Module in default
+            ("crate::module::user", log::LevelFilter::Off), // Module disabled in default
         ];
 
         // Environment filters - these should override default but be overridden by kv
@@ -757,6 +758,22 @@ mod tests {
             ),
             EnabledStatus::Disabled,
             "Default filters correctly limit log level for modules"
+        );
+
+        assert_eq!(
+            map.is_enabled(&scope_new(&[""]), Some("crate::module::user"), Level::Error),
+            EnabledStatus::Disabled,
+            "Module turned off in default filters is not enabled"
+        );
+
+        assert_eq!(
+            map.is_enabled(
+                &scope_new(&["crate"]),
+                Some("crate::module::user"),
+                Level::Error
+            ),
+            EnabledStatus::Disabled,
+            "Module turned off in default filters is not enabled, even with crate name as scope"
         );
 
         // Test non-conflicting but similar paths
