@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings};
-use assistant_tool::{Tool, ToolWorkingSet};
+use assistant_tool::{Tool, ToolSource, ToolWorkingSet};
 use gpui::{App, Entity};
 use settings::Settings;
 
@@ -28,13 +28,15 @@ impl AgentProfile {
             .read(cx)
             .tools(cx)
             .into_iter()
-            .filter(|tool| {
-                *settings
-                    .tools
-                    .get(&Arc::from(tool.name()))
-                    .unwrap_or(&false)
-            })
+            .filter(|tool| Self::is_enabled(&settings, tool.source(), tool.name()))
             .collect()
+    }
+
+    pub fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {
+        match source {
+            ToolSource::Native => *settings.tools.get(&Arc::from(name)).unwrap_or(&false),
+            ToolSource::ContextServer { id } => false,
+        }
     }
 
     fn settings(&self, cx: &App) -> Option<AgentProfileSettings> {

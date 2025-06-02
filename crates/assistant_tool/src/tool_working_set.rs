@@ -102,7 +102,7 @@ impl ToolWorkingSet {
         tool_id
     }
 
-    pub fn is_enabled(&self, source: &ToolSource, name: &Arc<str>) -> bool {
+    fn is_enabled(&self, source: &ToolSource, name: &Arc<str>) -> bool {
         self.enabled_tools_by_source
             .get(source)
             .map_or(false, |enabled_tools| enabled_tools.contains(name))
