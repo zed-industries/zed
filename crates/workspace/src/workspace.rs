@@ -6192,25 +6192,15 @@ impl Render for Workspace {
                                     }
                                 })
                                 .children(self.zoomed.as_ref().and_then(|view| {
-                                    let zoomed_view = view.upgrade()?;
-                                    let div = div()
+                                    Some(div()
                                         .occlude()
                                         .absolute()
                                         .overflow_hidden()
                                         .border_color(colors.border)
                                         .bg(colors.background)
-                                        .child(zoomed_view)
+                                        .child(view.upgrade()?)
                                         .inset_0()
-                                        .shadow_lg();
-
-                                    Some(match self.zoomed_position {
-                                        Some(DockPosition::Left) => div.right_2().border_r_1(),
-                                        Some(DockPosition::Right) => div.left_2().border_l_1(),
-                                        Some(DockPosition::Bottom) => div.top_2().border_t_1(),
-                                        None => {
-                                            div.top_2().bottom_2().left_2().right_2().border_1()
-                                        }
-                                    })
+                                        .shadow_lg())
                                 }))
                                 .children(self.render_notifications(window, cx)),
                         )
