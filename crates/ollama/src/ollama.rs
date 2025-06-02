@@ -93,10 +93,6 @@ impl Model {
     pub fn max_token_count(&self) -> usize {
         self.max_tokens
     }
-
-    pub fn supports_vision(&self) -> Option<bool> {
-        self.supports_vision
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -105,9 +101,13 @@ pub enum ChatMessage {
     Assistant {
         content: String,
         tool_calls: Option<Vec<OllamaToolCall>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<String>>,
     },
     User {
         content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<String>>,
     },
     System {
         content: String,
@@ -147,19 +147,12 @@ pub struct ChatRequest {
     pub keep_alive: KeepAlive,
     pub options: Option<ChatOptions>,
     pub tools: Vec<OllamaTool>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub images: Vec<String>,
 }
 
 impl ChatRequest {
     pub fn with_tools(mut self, tools: Vec<OllamaTool>) -> Self {
         self.stream = false;
         self.tools = tools;
-        self
-    }
-
-    pub fn with_images(mut self, images: Vec<String>) -> Self {
-        self.images = images;
         self
     }
 }
@@ -477,6 +470,7 @@ mod tests {
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                images: _,
             } => {
                 assert!(content.is_empty());
                 assert!(tool_calls.is_some_and(|v| !v.is_empty()));
@@ -550,12 +544,12 @@ mod tests {
             model: "llava".to_string(),
             messages: vec![ChatMessage::User {
                 content: "What do you see in this image?".to_string(),
+                images: Some(vec![base64_image.to_string()]),
             }],
             stream: false,
             keep_alive: KeepAlive::default(),
             options: None,
             tools: vec![],
-            images: vec![base64_image.to_string()],
         };
 
         let serialized = serde_json::to_string(&request).unwrap();
@@ -568,34 +562,17 @@ mod tests {
         let request = ChatRequest {
             model: "llama3.2".to_string(),
             messages: vec![ChatMessage::User {
-                content: "Hello".to_string(),
+                content: "Hello, world!".to_string(),
+                images: None,
             }],
             stream: false,
             keep_alive: KeepAlive::default(),
             options: None,
             tools: vec![],
-            images: vec![],
         };
 
         let serialized = serde_json::to_string(&request).unwrap();
         assert!(!serialized.contains("images"));
-    }
-
-    #[test]
-    fn test_model_supports_vision() {
-        let vision_model = Model::new("llava:latest", Some("LLaVA"), None, None, Some(true));
-        assert!(vision_model.name.contains("llava"));
-        assert_eq!(vision_model.supports_vision(), Some(true));
-
-        let text_model = Model::new(
-            "llama3.2:latest",
-            Some("Llama 3.2"),
-            None,
-            None,
-            Some(false),
-        );
-        assert!(!text_model.name.contains("llava"));
-        assert_eq!(text_model.supports_vision(), Some(false));
     }
 
     #[test]
@@ -606,19 +583,19 @@ mod tests {
             model: "llava".to_string(),
             messages: vec![ChatMessage::User {
                 content: "What do you see?".to_string(),
+                images: Some(vec![base64_image.to_string()]),
             }],
             stream: false,
             keep_alive: KeepAlive::default(),
             options: None,
             tools: vec![],
-            images: vec![base64_image.to_string()],
         };
 
         let serialized = serde_json::to_string(&request).unwrap();
 
         let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
-        let images_array = parsed["images"].as_array().unwrap();
-        assert_eq!(images_array.len(), 1);
-        assert_eq!(images_array[0].as_str().unwrap(), base64_image);
+        let message_images = parsed["messages"][0]["images"].as_array().unwrap();
+        assert_eq!(message_images.len(), 1);
+        assert_eq!(message_images[0].as_str().unwrap(), base64_image);
     }
 }
