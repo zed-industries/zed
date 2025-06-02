@@ -326,6 +326,9 @@ impl DebugPanel {
         .detach_and_log_err(cx);
     }
 
+    // f5 if a session is stopped: continue
+    // else f5 if there is no session running: start a new session based on the last scheduled scenario
+    // (and drop dead sessions that derived from that scenario?)
     pub(crate) fn rerun_last_session(
         &mut self,
         workspace: &mut Workspace,
@@ -1420,13 +1423,11 @@ impl workspace::DebuggerProvider for DebuggerProvider {
         self.0.read(cx).debug_scenario_scheduled_last
     }
 
-    fn have_stopped_session(&self, cx: &App) -> bool {
+    fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus> {
         maybe!({
             let session = self.0.read(cx).active_session()?;
             let thread = session.read(cx).running_state().read(cx).thread_id()?;
-            let status = session.read(cx).session(cx).read(cx).thread_state(thread)?;
-            Some(status == ThreadStatus::Stopped)
+            session.read(cx).session(cx).read(cx).thread_state(thread)
         })
-        .unwrap_or(false)
     }
 }

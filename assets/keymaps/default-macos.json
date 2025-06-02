@@ -652,6 +652,13 @@
     }
   },
   {
+    "context": "Workspace && debugger_running",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": "zed::NoAction"
+    }
+  },
+  {
     "context": "Workspace && debugger_stopped",
     "use_key_equivalents": true,
     "bindings": {

@@ -590,6 +590,12 @@
     }
   },
   {
+    "context": "Workspace && debugger_running",
+    "bindings": {
+      "f5": "zed::NoAction"
+    }
+  },
+  {
     "context": "Workspace && debugger_stopped",
     "bindings": {
       "f5": "debugger::Continue"
