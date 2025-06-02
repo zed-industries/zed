@@ -172,18 +172,8 @@ impl ToolchainSelectorDelegate {
                 let relative_path = this
                     .read_with(cx, |this, _| this.delegate.relative_path.clone())
                     .ok()?;
-                let placeholder_text = format!(
-                    "Select a {} for `{}`…",
-                    term.to_lowercase(),
-                    relative_path.to_string_lossy()
-                )
-                .into();
-                let _ = this.update_in(cx, move |this, window, cx| {
-                    this.delegate.placeholder_text = placeholder_text;
-                    this.refresh_placeholder(window, cx);
-                });
 
-                let available_toolchains = project
+                let (available_toolchains, relative_path) = project
                     .update(cx, |this, cx| {
                         this.available_toolchains(
                             ProjectPath {
@@ -196,6 +186,16 @@ impl ToolchainSelectorDelegate {
                     })
                     .ok()?
                     .await?;
+                let placeholder_text = format!(
+                    "Select a {} for `{}`…",
+                    term.to_lowercase(),
+                    relative_path.to_string_lossy()
+                )
+                .into();
+                let _ = this.update_in(cx, move |this, window, cx| {
+                    this.delegate.placeholder_text = placeholder_text;
+                    this.refresh_placeholder(window, cx);
+                });
 
                 let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.candidates = available_toolchains;

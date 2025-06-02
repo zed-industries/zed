@@ -694,7 +694,7 @@ impl ToolchainLister for PythonToolchainProvider {
     }
     async fn list(
         &self,
-        worktree_root: PathBuf,
+        root: PathBuf,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -705,7 +705,7 @@ impl ToolchainLister for PythonToolchainProvider {
             &environment,
         );
         let mut config = Configuration::default();
-        config.workspace_directories = Some(vec![worktree_root.clone()]);
+        config.workspace_directories = Some(vec![root.clone()]);
         for locator in locators.iter() {
             locator.configure(&config);
         }
@@ -718,7 +718,7 @@ impl ToolchainLister for PythonToolchainProvider {
             .lock()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
-        let wr = worktree_root;
+        let wr = root;
         let wr_venv = get_worktree_venv_declaration(&wr);
         // Sort detected environments by:
         //     environment name matching activation file (<workdir>/.venv)

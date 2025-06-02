@@ -87,7 +87,7 @@ impl ToolchainStore {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &mut Context<Self>,
-    ) -> Task<Option<ToolchainList>> {
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => {
                 local.update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
@@ -187,7 +187,7 @@ impl ToolchainStore {
             })?
             .await;
         let has_values = toolchains.is_some();
-        let groups = if let Some(toolchains) = &toolchains {
+        let groups = if let Some((toolchains, _)) = &toolchains {
             toolchains
                 .groups
                 .iter()
@@ -201,8 +201,8 @@ impl ToolchainStore {
         } else {
             vec![]
         };
-        let toolchains = if let Some(toolchains) = toolchains {
-            toolchains
+        let (toolchains, relative_path) = if let Some((toolchains, relative_path)) = toolchains {
+            let toolchains = toolchains
                 .toolchains
                 .into_iter()
                 .map(|toolchain| {
@@ -213,15 +213,17 @@ impl ToolchainStore {
                         raw_json: toolchain.as_json.to_string(),
                     }
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (toolchains, relative_path)
         } else {
-            vec![]
+            (vec![], Arc::from(Path::new("")))
         };
 
         Ok(proto::ListToolchainsResponse {
             has_values,
             toolchains,
             groups,
+            relative_worktree_path: Some(relative_path.to_string_lossy().into_owned()),
         })
     }
     pub fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
@@ -323,7 +325,7 @@ impl LocalToolchainStore {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &mut Context<Self>,
-    ) -> Task<Option<ToolchainList>> {
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
         let registry = self.languages.clone();
 
         let manifest_tree = self.manifest_tree.downgrade();
@@ -374,7 +376,10 @@ impl LocalToolchainStore {
                 .await;
 
             cx.background_spawn(async move {
-                Some(toolchains.list(abs_path.to_path_buf(), project_env).await)
+                Some((
+                    toolchains.list(abs_path.to_path_buf(), project_env).await,
+                    relative_path.path,
+                ))
             })
             .await
         })
@@ -437,7 +442,7 @@ impl RemoteToolchainStore {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
-    ) -> Task<Option<ToolchainList>> {
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
         let project_id = self.project_id;
         let client = self.client.clone();
         cx.background_spawn(async move {
@@ -477,11 +482,20 @@ impl RemoteToolchainStore {
                     Some((usize::try_from(group.start_index).ok()?, group.name.into()))
                 })
                 .collect();
-            Some(ToolchainList {
-                toolchains,
-                default: None,
-                groups,
-            })
+            let relative_path = Arc::from(Path::new(
+                response
+                    .relative_worktree_path
+                    .as_deref()
+                    .unwrap_or_default(),
+            ));
+            Some((
+                ToolchainList {
+                    toolchains,
+                    default: None,
+                    groups,
+                },
+                relative_path,
+            ))
         })
     }
     pub(crate) fn active_toolchain(
