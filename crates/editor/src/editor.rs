@@ -5385,7 +5385,7 @@ impl Editor {
             &completion,
             intent,
             &buffer_handle,
-            &completions_menu.initial_position,
+            &completions_menu.initial_position.text_anchor,
             cx,
         );
 
@@ -19507,16 +19507,14 @@ fn process_completion_for_edit(
     completion: &Completion,
     intent: CompletionIntent,
     buffer: &Entity<Buffer>,
-    initial_position: &Anchor,
+    cursor_position: &text::Anchor,
     cx: &mut Context<Editor>,
 ) -> CompletionEdit {
+    let buffer = buffer.read(cx);
+    let buffer_snapshot = buffer.snapshot();
     let (snippet, new_text) = if completion.is_snippet() {
         let mut snippet_source = completion.new_text.clone();
-        if let Some(scope) = buffer
-            .read(cx)
-            .snapshot()
-            .language_scope_at(initial_position.text_anchor)
-        {
+        if let Some(scope) = buffer_snapshot.language_scope_at(cursor_position) {
             if scope.prefers_label_for_snippet_in_completion() {
                 if let Some(label) = completion.label() {
                     if matches!(
@@ -19536,9 +19534,7 @@ fn process_completion_for_edit(
         (None, completion.new_text.clone())
     };
 
-    let replace_range = {
-        let buffer = buffer.read(cx);
-
+    let mut range_to_replace = {
         if let CompletionSource::Lsp {
             insert_range: Some(insert_range),
             ..
@@ -19573,37 +19569,55 @@ fn process_completion_for_edit(
                             current_needle.is_none()
                         }
                         LspInsertMode::ReplaceSuffix => {
-                            let range_after_cursor = insert_range.end..completion.replace_range.end;
-                            let text_after_cursor = buffer
-                                .text_for_range(
-                                    buffer.anchor_before(range_after_cursor.start)
-                                        ..buffer.anchor_after(range_after_cursor.end),
-                                )
-                                .collect::<String>()
-                                .to_ascii_lowercase();
-                            completion
-                                .label
-                                .text
-                                .to_ascii_lowercase()
-                                .ends_with(&text_after_cursor)
+                            if completion
+                                .replace_range
+                                .end
+                                .cmp(&cursor_position, &buffer_snapshot)
+                                .is_ge()
+                            {
+                                let range_after_cursor =
+                                    *cursor_position..completion.replace_range.end;
+                                let text_after_cursor = buffer
+                                    .text_for_range(
+                                        buffer.anchor_before(range_after_cursor.start)
+                                            ..buffer.anchor_after(range_after_cursor.end),
+                                    )
+                                    .collect::<String>()
+                                    .to_ascii_lowercase();
+                                completion
+                                    .label
+                                    .text
+                                    .to_ascii_lowercase()
+                                    .ends_with(&text_after_cursor)
+                            } else {
+                                true
+                            }
                         }
                     }
                 }
             };
 
             if should_replace {
-                completion.replace_range.to_offset(&buffer)
+                completion.replace_range.clone()
             } else {
-                insert_range.to_offset(&buffer)
+                insert_range.clone()
             }
         } else {
-            completion.replace_range.to_offset(&buffer)
+            completion.replace_range.clone()
         }
     };
 
+    if range_to_replace
+        .end
+        .cmp(&cursor_position, &buffer_snapshot)
+        .is_lt()
+    {
+        range_to_replace.end = *cursor_position;
+    }
+
     CompletionEdit {
         new_text,
-        replace_range,
+        replace_range: range_to_replace.to_offset(&buffer),
         snippet,
     }
 }
