@@ -271,7 +271,6 @@ impl Tool for TerminalTool {
                 })?;
 
                 card.update(cx, |card, _| {
-                    // todo! card.finish()?
                     card.terminal = Some(terminal_view.clone());
                     card.start_instant = Instant::now();
                 })
@@ -292,7 +291,6 @@ impl Tool for TerminalTool {
                 );
 
                 card.update(cx, |card, _| {
-                    // todo! card.finish()?
                     card.command_finished = true;
                     card.exit_status = exit_status;
                     card.was_content_truncated = processed_content.len() < previous_len;
@@ -481,8 +479,6 @@ impl ToolCard for TerminalToolCard {
         let time_elapsed = self
             .elapsed_time
             .unwrap_or_else(|| self.start_instant.elapsed());
-        // todo! should we really hide when failed??
-        let should_hide_terminal = tool_failed || self.finished_with_empty_output;
 
         let header_bg = cx
             .theme()
@@ -583,7 +579,7 @@ impl ToolCard for TerminalToolCard {
                         ),
                 )
             })
-            .when(!should_hide_terminal, |header| {
+            .when(!self.finished_with_empty_output, |header| {
                 header.child(
                     Disclosure::new(
                         ("terminal-tool-disclosure", self.entity_id),
@@ -627,40 +623,43 @@ impl ToolCard for TerminalToolCard {
                         ),
                     ),
             )
-            .when(self.preview_expanded && !should_hide_terminal, |this| {
-                this.child(
-                    div()
-                        .pt_2()
-                        .border_t_1()
-                        .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
-                        .rounded_b_md()
-                        .text_ui_sm(cx)
-                        .child(
-                            ToolOutputPreview::new(
-                                terminal.clone().into_any_element(),
-                                terminal.entity_id(),
-                            )
-                            .with_total_lines(self.content_line_count)
-                            .toggle_state(!terminal.read(cx).is_content_limited(window))
-                            .on_toggle({
-                                let terminal = terminal.clone();
-                                move |is_expanded, _, cx| {
-                                    terminal.update(cx, |terminal, cx| {
-                                        terminal.set_embedded_mode(
-                                            if is_expanded {
-                                                None
-                                            } else {
-                                                Some(COLLAPSED_LINES)
-                                            },
-                                            cx,
-                                        );
-                                    });
-                                }
-                            }),
-                        ),
-                )
-            })
+            .when(
+                self.preview_expanded && !self.finished_with_empty_output,
+                |this| {
+                    this.child(
+                        div()
+                            .pt_2()
+                            .border_t_1()
+                            .border_color(border_color)
+                            .bg(cx.theme().colors().editor_background)
+                            .rounded_b_md()
+                            .text_ui_sm(cx)
+                            .child(
+                                ToolOutputPreview::new(
+                                    terminal.clone().into_any_element(),
+                                    terminal.entity_id(),
+                                )
+                                .with_total_lines(self.content_line_count)
+                                .toggle_state(!terminal.read(cx).is_content_limited(window))
+                                .on_toggle({
+                                    let terminal = terminal.clone();
+                                    move |is_expanded, _, cx| {
+                                        terminal.update(cx, |terminal, cx| {
+                                            terminal.set_embedded_mode(
+                                                if is_expanded {
+                                                    None
+                                                } else {
+                                                    Some(COLLAPSED_LINES)
+                                                },
+                                                cx,
+                                            );
+                                        });
+                                    }
+                                }),
+                            ),
+                    )
+                },
+            )
             .into_any()
     }
 }
