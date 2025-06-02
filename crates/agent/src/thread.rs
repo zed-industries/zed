@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_settings::{AgentProfile, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -321,6 +321,18 @@ pub enum QueueState {
     Started,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentProfile {
+    pub id: AgentProfileId,
+    tool_set: Entity<ToolWorkingSet>,
+}
+
+impl AgentProfile {
+    pub fn new(id: AgentProfileId, tool_set: Entity<ToolWorkingSet>) -> Self {
+        Self { id, tool_set }
+    }
+}
+
 /// A thread of conversation with the LLM.
 pub struct Thread {
     id: ThreadId,
@@ -451,7 +463,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
-            profile: AgentProfile::new(profile_id),
+            profile: AgentProfile::new(profile_id, tools),
         }
     }
 
@@ -560,7 +572,7 @@ impl Thread {
             pending_checkpoint: None,
             project: project.clone(),
             prompt_builder,
-            tools,
+            tools: tools.clone(),
             tool_use,
             action_log: cx.new(|_| ActionLog::new(project)),
             initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
@@ -576,7 +588,7 @@ impl Thread {
             request_callback: None,
             remaining_turns: u32::MAX,
             configured_model,
-            profile: AgentProfile::new(profile_id),
+            profile: AgentProfile::new(profile_id, tools),
         }
     }
 
@@ -3303,12 +3315,16 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, _context_store, _model) =
+        let (_workspace, thread_store, thread, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Check that we are starting with the default profile
         let profile = cx.read(|cx| thread.read(cx).profile.clone());
-        assert_eq!(profile, AgentProfile::default());
+        let tool_set = cx.read(|cx| thread_store.read(cx).tools());
+        assert_eq!(
+            profile,
+            AgentProfile::new(AgentProfileId::default(), tool_set)
+        );
     }
 
     #[gpui::test]
@@ -3321,7 +3337,7 @@ fn main() {{
         )
         .await;
 
-        let (_workspace, _thread_store, thread, _context_store, _model) =
+        let (_workspace, thread_store, thread, _context_store, _model) =
             setup_test_environment(cx, project.clone()).await;
 
         // Profile gets serialized with default values
@@ -3346,8 +3362,12 @@ fn main() {{
                 )
             })
         });
+        let tool_set = cx.read(|cx| thread_store.read(cx).tools());
 
-        assert_eq!(deserialized.profile, AgentProfile::default());
+        assert_eq!(
+            deserialized.profile,
+            AgentProfile::new(AgentProfileId::default(), tool_set)
+        );
     }
 
     #[gpui::test]
