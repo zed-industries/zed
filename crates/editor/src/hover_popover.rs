@@ -1095,14 +1095,15 @@ mod tests {
         //prompt autocompletion menu
         cx.simulate_keystroke(".");
         handle_completion_request(
-            &mut cx,
             indoc! {"
                         one.|<>
                         two
                         three
                     "},
             vec!["first_completion", "second_completion"],
+            true,
             counter.clone(),
+            &mut cx,
         )
         .await;
         cx.condition(|editor, _| editor.context_menu_visible()) // wait until completion menu is visible

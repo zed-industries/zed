@@ -555,6 +555,23 @@ impl std::fmt::Debug for Completion {
     }
 }
 
+/// Response from a source of completions.
+pub struct CompletionResponse {
+    pub completions: Vec<Completion>,
+    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// can be filtered instead.
+    pub is_incomplete: bool,
+}
+
+/// Response from language server completion request.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CoreCompletionResponse {
+    pub completions: Vec<CoreCompletion>,
+    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// can be filtered instead.
+    pub is_incomplete: bool,
+}
+
 /// A generic completion that can come from different sources.
 #[derive(Clone, Debug)]
 pub(crate) struct CoreCompletion {
@@ -3430,7 +3447,7 @@ impl Project {
         position: T,
         context: CompletionContext,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.completions(buffer, position, context, cx)

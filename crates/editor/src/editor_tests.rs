@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
     JoinLines,
+    code_context_menus::CodeContextMenu,
     inline_completion_tests::FakeInlineCompletionProvider,
     linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
@@ -11184,14 +11185,15 @@ async fn test_completion(cx: &mut TestAppContext) {
     "});
     cx.simulate_keystroke(".");
     handle_completion_request(
-        &mut cx,
         indoc! {"
             one.|<>
             two
             three
         "},
         vec!["first_completion", "second_completion"],
+        true,
         counter.clone(),
+        &mut cx,
     )
     .await;
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -11291,7 +11293,6 @@ async fn test_completion(cx: &mut TestAppContext) {
         additional edit
     "});
     handle_completion_request(
-        &mut cx,
         indoc! {"
             one.second_completion
             two s
@@ -11299,7 +11300,9 @@ async fn test_completion(cx: &mut TestAppContext) {
             additional edit
         "},
         vec!["fourth_completion", "fifth_completion", "sixth_completion"],
+        true,
         counter.clone(),
+        &mut cx,
     )
     .await;
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -11309,7 +11312,6 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.simulate_keystroke("i");
 
     handle_completion_request(
-        &mut cx,
         indoc! {"
             one.second_completion
             two si
@@ -11317,7 +11319,9 @@ async fn test_completion(cx: &mut TestAppContext) {
             additional edit
         "},
         vec!["fourth_completion", "fifth_completion", "sixth_completion"],
+        true,
         counter.clone(),
+        &mut cx,
     )
     .await;
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -11351,10 +11355,11 @@ async fn test_completion(cx: &mut TestAppContext) {
         editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
     });
     handle_completion_request(
-        &mut cx,
         "editor.<clo|>",
         vec!["close", "clobber"],
+        true,
         counter.clone(),
+        &mut cx,
     )
     .await;
     cx.condition(|editor, _| editor.context_menu_visible())
@@ -11369,6 +11374,128 @@ async fn test_completion(cx: &mut TestAppContext) {
     cx.assert_editor_state("editor.closeˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_completion_reuse(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    let counter = Arc::new(AtomicUsize::new(0));
+    cx.set_state("objˇ");
+    cx.simulate_keystroke(".");
+
+    // Initial completion request returns complete results
+    let is_incomplete = false;
+    handle_completion_request(
+        "obj.|<>",
+        vec!["a", "ab", "abc"],
+        is_incomplete,
+        counter.clone(),
+        &mut cx,
+    )
+    .await;
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+    cx.assert_editor_state("obj.ˇ");
+    check_displayed_completions(vec!["a", "ab", "abc"], &mut cx);
+
+    // Type "a" - filters existing completions
+    cx.simulate_keystroke("a");
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+    cx.assert_editor_state("obj.aˇ");
+    check_displayed_completions(vec!["a", "ab", "abc"], &mut cx);
+
+    // Type "b" - filters existing completions
+    cx.simulate_keystroke("b");
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+    cx.assert_editor_state("obj.abˇ");
+    check_displayed_completions(vec!["ab", "abc"], &mut cx);
+
+    // Type "c" - filters existing completions
+    cx.simulate_keystroke("c");
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+    cx.assert_editor_state("obj.abcˇ");
+    check_displayed_completions(vec!["abc"], &mut cx);
+
+    // Backspace to delete "c" - filters existing completions
+    cx.update_editor(|editor, window, cx| {
+        editor.backspace(&Backspace, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+    cx.assert_editor_state("obj.abˇ");
+    check_displayed_completions(vec!["ab", "abc"], &mut cx);
+
+    // Moving cursor to the left dismisses menu.
+    cx.update_editor(|editor, window, cx| {
+        editor.move_left(&MoveLeft, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
+    cx.assert_editor_state("obj.aˇb");
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.context_menu_visible(), false);
+    });
+
+    // Type "b" - new request
+    cx.simulate_keystroke("b");
+    let is_incomplete = false;
+    handle_completion_request(
+        "obj.<ab|>a",
+        vec!["ab", "abc"],
+        is_incomplete,
+        counter.clone(),
+        &mut cx,
+    )
+    .await;
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 2);
+    cx.assert_editor_state("obj.abˇb");
+    check_displayed_completions(vec!["ab", "abc"], &mut cx);
+
+    // Backspace to delete "b" - since query was "ab" and is now "a", new request is made.
+    cx.update_editor(|editor, window, cx| {
+        editor.backspace(&Backspace, window, cx);
+    });
+    let is_incomplete = false;
+    handle_completion_request(
+        "obj.<a|>b",
+        vec!["a", "ab", "abc"],
+        is_incomplete,
+        counter.clone(),
+        &mut cx,
+    )
+    .await;
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 3);
+    cx.assert_editor_state("obj.aˇb");
+    check_displayed_completions(vec!["a", "ab", "abc"], &mut cx);
+
+    // Backspace to delete "a" - dismisses menu.
+    cx.update_editor(|editor, window, cx| {
+        editor.backspace(&Backspace, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(counter.load(atomic::Ordering::Acquire), 3);
+    cx.assert_editor_state("obj.ˇb");
+    cx.update_editor(|editor, _, _| {
+        assert_eq!(editor.context_menu_visible(), false);
+    });
 }
 
 #[gpui::test]
@@ -12051,9 +12178,11 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
         let task_completion_item = closure_completion_item.clone();
         counter_clone.fetch_add(1, atomic::Ordering::Release);
         async move {
-            Ok(Some(lsp::CompletionResponse::Array(vec![
-                task_completion_item,
-            ])))
+            Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                is_incomplete: true,
+                item_defaults: None,
+                items: vec![task_completion_item],
+            })))
         }
     });
 
@@ -21109,6 +21238,22 @@ pub fn handle_signature_help_request(
     }
 }
 
+#[track_caller]
+pub fn check_displayed_completions(expected: Vec<&'static str>, cx: &mut EditorLspTestContext) {
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow().as_ref() {
+            let entries = menu.entries.borrow();
+            let entries = entries
+                .iter()
+                .map(|entry| entry.string.as_str())
+                .collect::<Vec<_>>();
+            assert_eq!(entries, expected);
+        } else {
+            panic!("Expected completions menu");
+        }
+    });
+}
+
 /// Handle completion request passing a marked string specifying where the completion
 /// should be triggered from using '|' character, what range should be replaced, and what completions
 /// should be returned using '<' and '>' to delimit the range.
@@ -21116,10 +21261,11 @@ pub fn handle_signature_help_request(
 /// Also see `handle_completion_request_with_insert_and_replace`.
 #[track_caller]
 pub fn handle_completion_request(
-    cx: &mut EditorLspTestContext,
     marked_string: &str,
     completions: Vec<&'static str>,
+    is_incomplete: bool,
     counter: Arc<AtomicUsize>,
+    cx: &mut EditorLspTestContext,
 ) -> impl Future<Output = ()> {
     let complete_from_marker: TextRangeMarker = '|'.into();
     let replace_range_marker: TextRangeMarker = ('<', '>').into();
@@ -21143,8 +21289,10 @@ pub fn handle_completion_request(
                     params.text_document_position.position,
                     complete_from_position
                 );
-                Ok(Some(lsp::CompletionResponse::Array(
-                    completions
+                Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                    is_incomplete: is_incomplete,
+                    item_defaults: None,
+                    items: completions
                         .iter()
                         .map(|completion_text| lsp::CompletionItem {
                             label: completion_text.to_string(),
@@ -21155,7 +21303,7 @@ pub fn handle_completion_request(
                             ..Default::default()
                         })
                         .collect(),
-                )))
+                })))
             }
         });
 
