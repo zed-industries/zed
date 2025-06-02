@@ -1799,6 +1799,7 @@ mod test {
     use std::path::Path;
 
     use crate::{
+        VimAddon,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -2150,5 +2151,36 @@ mod test {
             a
             a
             ˇa"});
+    }
+
+    #[gpui::test]
+    async fn test_del_marks(cx: &mut TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            ˇa
+            b
+            a
+            b
+            a
+        "})
+            .await;
+
+        cx.simulate_shared_keystrokes("m a").await;
+
+        let mark = cx.update_editor(|editor, window, cx| {
+            let vim = editor.addon::<VimAddon>().unwrap().entity.clone();
+            vim.update(cx, |vim, cx| vim.get_mark("a", editor, window, cx))
+        });
+        assert!(mark.is_some());
+
+        cx.simulate_shared_keystrokes(": d e l m space a").await;
+        cx.simulate_shared_keystrokes("enter").await;
+
+        let mark = cx.update_editor(|editor, window, cx| {
+            let vim = editor.addon::<VimAddon>().unwrap().entity.clone();
+            vim.update(cx, |vim, cx| vim.get_mark("a", editor, window, cx))
+        });
+        assert!(mark.is_none())
     }
 }
