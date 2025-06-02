@@ -7,7 +7,7 @@ use crate::{
     ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
     ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
@@ -24,7 +24,7 @@ use gpui::{
 
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{Fs, ProjectPath, WorktreeId};
+use project::{Fs, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -942,68 +942,69 @@ impl DebugPanel {
         cx.notify();
     }
 
-    pub(crate) fn save_scenario(
-        &self,
-        scenario: &DebugScenario,
-        worktree_id: WorktreeId,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<ProjectPath>> {
-        self.workspace
-            .update(cx, |workspace, cx| {
-                let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
-                    return Task::ready(Err(anyhow!("Couldn't get worktree path")));
-                };
+    // TODO: restore once we have proper comment preserving file edits
+    // pub(crate) fn save_scenario(
+    //     &self,
+    //     scenario: &DebugScenario,
+    //     worktree_id: WorktreeId,
+    //     window: &mut Window,
+    //     cx: &mut App,
+    // ) -> Task<Result<ProjectPath>> {
+    //     self.workspace
+    //         .update(cx, |workspace, cx| {
+    //             let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
+    //                 return Task::ready(Err(anyhow!("Couldn't get worktree path")));
+    //             };
 
-                let serialized_scenario = serde_json::to_value(scenario);
+    //             let serialized_scenario = serde_json::to_value(scenario);
 
-                cx.spawn_in(window, async move |workspace, cx| {
-                    let serialized_scenario = serialized_scenario?;
-                    let fs =
-                        workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
+    //             cx.spawn_in(window, async move |workspace, cx| {
+    //                 let serialized_scenario = serialized_scenario?;
+    //                 let fs =
+    //                     workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
-                    path.push(paths::local_settings_folder_relative_path());
-                    if !fs.is_dir(path.as_path()).await {
-                        fs.create_dir(path.as_path()).await?;
-                    }
-                    path.pop();
+    //                 path.push(paths::local_settings_folder_relative_path());
+    //                 if !fs.is_dir(path.as_path()).await {
+    //                     fs.create_dir(path.as_path()).await?;
+    //                 }
+    //                 path.pop();
 
-                    path.push(paths::local_debug_file_relative_path());
-                    let path = path.as_path();
+    //                 path.push(paths::local_debug_file_relative_path());
+    //                 let path = path.as_path();
 
-                    if !fs.is_file(path).await {
-                        let content =
-                            serde_json::to_string_pretty(&serde_json::Value::Array(vec![
-                                serialized_scenario,
-                            ]))?;
+    //                 if !fs.is_file(path).await {
+    //                     fs.create_file(path, Default::default()).await?;
+    //                     fs.write(
+    //                         path,
+    //                         initial_local_debug_tasks_content().to_string().as_bytes(),
+    //                     )
+    //                     .await?;
+    //                 }
 
-                        fs.create_file(path, Default::default()).await?;
-                        fs.save(path, &content.into(), Default::default()).await?;
-                    } else {
-                        let content = fs.load(path).await?;
-                        let mut values = serde_json::from_str::<Vec<serde_json::Value>>(&content)?;
-                        values.push(serialized_scenario);
-                        fs.save(
-                            path,
-                            &serde_json::to_string_pretty(&values).map(Into::into)?,
-                            Default::default(),
-                        )
-                        .await?;
-                    }
+    //                 let content = fs.load(path).await?;
+    //                 let mut values =
+    //                     serde_json_lenient::from_str::<Vec<serde_json::Value>>(&content)?;
+    //                 values.push(serialized_scenario);
+    //                 fs.save(
+    //                     path,
+    //                     &serde_json_lenient::to_string_pretty(&values).map(Into::into)?,
+    //                     Default::default(),
+    //                 )
+    //                 .await?;
 
-                    workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .project()
-                            .read(cx)
-                            .project_path_for_absolute_path(&path, cx)
-                            .context(
-                                "Couldn't get project path for .zed/debug.json in active worktree",
-                            )
-                    })?
-                })
-            })
-            .unwrap_or_else(|err| Task::ready(Err(err)))
-    }
+    //                 workspace.update(cx, |workspace, cx| {
+    //                     workspace
+    //                         .project()
+    //                         .read(cx)
+    //                         .project_path_for_absolute_path(&path, cx)
+    //                         .context(
+    //                             "Couldn't get project path for .zed/debug.json in active worktree",
+    //                         )
+    //                 })?
+    //             })
+    //         })
+    //         .unwrap_or_else(|err| Task::ready(Err(err)))
+    // }
 
     pub(crate) fn toggle_thread_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.thread_picker_menu_handle.toggle(window, cx);
