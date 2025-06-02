@@ -1646,31 +1646,31 @@ impl ContextEditor {
         let context = self.context.read(cx);
 
         let mut text = String::new();
-        for message in context.messages(cx) {
-            if message.offset_range.start > selection.range().end {
-                break;
-            } else if message.offset_range.end >= selection.range().start {
-                let range = cmp::max(message.offset_range.start, selection.range().start)
-                    ..cmp::min(message.offset_range.end, selection.range().end);
-                // If selection is empty, we want to copy the entire line
-                if selection.range().is_empty() {
-                    let snapshot = context.buffer().read(cx).snapshot();
-                    let point = snapshot.offset_to_point(range.start);
-                    selection.start = snapshot.point_to_offset(Point::new(point.row, 0));
-                    selection.end = snapshot.point_to_offset(cmp::min(
-                        Point::new(point.row + 1, 0),
-                        snapshot.max_point(),
-                    ));
-                    for chunk in context.buffer().read(cx).text_for_range(selection.range()) {
-                        text.push_str(chunk);
-                    }
+
+        // If selection is empty, we want to copy the entire line
+        if selection.range().is_empty() {
+            let snapshot = context.buffer().read(cx).snapshot();
+            let point = snapshot.offset_to_point(selection.range().start);
+            selection.start = snapshot.point_to_offset(Point::new(point.row, 0));
+            selection.end = snapshot
+                .point_to_offset(cmp::min(Point::new(point.row + 1, 0), snapshot.max_point()));
+            for chunk in context.buffer().read(cx).text_for_range(selection.range()) {
+                text.push_str(chunk);
+            }
+        } else {
+            for message in context.messages(cx) {
+                if message.offset_range.start >= selection.range().end {
                     break;
-                } else if !range.is_empty() {
-                    for chunk in context.buffer().read(cx).text_for_range(range) {
-                        text.push_str(chunk);
-                    }
-                    if message.offset_range.end < selection.range().end {
-                        text.push('\n');
+                } else if message.offset_range.end >= selection.range().start {
+                    let range = cmp::max(message.offset_range.start, selection.range().start)
+                        ..cmp::min(message.offset_range.end, selection.range().end);
+                    if !range.is_empty() {
+                        for chunk in context.buffer().read(cx).text_for_range(range) {
+                            text.push_str(chunk);
+                        }
+                        if message.offset_range.end < selection.range().end {
+                            text.push('\n');
+                        }
                     }
                 }
             }
