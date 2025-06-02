@@ -865,6 +865,8 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
+  // Whether to automatically close files that have been deleted on disk.
+  "close_on_file_delete": false,
   // Maximum number of tabs per pane. Unset for unlimited.
   "max_tabs": null,
   // Settings related to the editor's tab bar.

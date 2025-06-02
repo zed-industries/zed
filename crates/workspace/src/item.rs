@@ -856,10 +856,26 @@ impl<T: Item> ItemHandle for Entity<T> {
 
                         ItemEvent::UpdateTab => {
                             workspace.update_item_dirty_state(item, window, cx);
-                            pane.update(cx, |_, cx| {
-                                cx.emit(pane::Event::ChangeItemTitle);
-                                cx.notify();
-                            });
+
+                            if item.has_deleted_file(cx)
+                                && !item.is_dirty(cx)
+                                && item.workspace_settings(cx).close_on_file_delete
+                            {
+                                pane.update(cx, |pane, cx| {
+                                    pane.close_item_by_id(
+                                        item.item_id(),
+                                        crate::SaveIntent::Close,
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .detach_and_log_err(cx);
+                            } else {
+                                pane.update(cx, |_, cx| {
+                                    cx.emit(pane::Event::ChangeItemTitle);
+                                    cx.notify();
+                                });
+                            }
                         }
 
                         ItemEvent::Edit => {
