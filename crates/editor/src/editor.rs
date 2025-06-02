@@ -19535,11 +19535,38 @@ fn process_completion_for_edit(
     };
 
     let mut range_to_replace = {
+        let replace_range = &completion.replace_range;
         if let CompletionSource::Lsp {
             insert_range: Some(insert_range),
             ..
         } = &completion.source
         {
+            debug_assert_eq!(
+                insert_range.start, replace_range.start,
+                "insert_range and replace_range should start at the same position"
+            );
+            debug_assert!(
+                insert_range
+                    .start
+                    .cmp(&cursor_position, &buffer_snapshot)
+                    .is_le(),
+                "insert_range should start before or at cursor position"
+            );
+            debug_assert!(
+                replace_range
+                    .start
+                    .cmp(&cursor_position, &buffer_snapshot)
+                    .is_le(),
+                "replace_range should start before or at cursor position"
+            );
+            debug_assert!(
+                insert_range
+                    .end
+                    .cmp(&cursor_position, &buffer_snapshot)
+                    .is_le(),
+                "insert_range should end before or at cursor position"
+            );
+
             let should_replace = match intent {
                 CompletionIntent::CompleteWithInsert => false,
                 CompletionIntent::CompleteWithReplace => true,
@@ -19553,8 +19580,8 @@ fn process_completion_for_edit(
                         LspInsertMode::Replace => true,
                         LspInsertMode::ReplaceSubsequence => {
                             let mut text_to_replace = buffer.chars_for_range(
-                                buffer.anchor_before(completion.replace_range.start)
-                                    ..buffer.anchor_after(completion.replace_range.end),
+                                buffer.anchor_before(replace_range.start)
+                                    ..buffer.anchor_after(replace_range.end),
                             );
                             let mut current_needle = text_to_replace.next();
                             for haystack_ch in completion.label.text.chars() {
@@ -19569,14 +19596,12 @@ fn process_completion_for_edit(
                             current_needle.is_none()
                         }
                         LspInsertMode::ReplaceSuffix => {
-                            if completion
-                                .replace_range
+                            if replace_range
                                 .end
                                 .cmp(&cursor_position, &buffer_snapshot)
                                 .is_ge()
                             {
-                                let range_after_cursor =
-                                    *cursor_position..completion.replace_range.end;
+                                let range_after_cursor = *cursor_position..replace_range.end;
                                 let text_after_cursor = buffer
                                     .text_for_range(
                                         buffer.anchor_before(range_after_cursor.start)
@@ -19598,12 +19623,12 @@ fn process_completion_for_edit(
             };
 
             if should_replace {
-                completion.replace_range.clone()
+                replace_range.clone()
             } else {
                 insert_range.clone()
             }
         } else {
-            completion.replace_range.clone()
+            replace_range.clone()
         }
     };
 
