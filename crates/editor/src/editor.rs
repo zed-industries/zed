@@ -19567,10 +19567,17 @@ fn process_completion_for_edit(
                             buffer.anchor_before(completion.replace_range.start)
                                 ..buffer.anchor_after(completion.replace_range.end),
                         );
-                        let mut completion_text = completion.new_text.chars();
-                        text_to_replace.all(|needle_ch| {
-                            completion_text.any(|haystack_ch| haystack_ch == needle_ch)
-                        })
+                        let mut current_needle = text_to_replace.next();
+                        for haystack_ch in completion.label.text.chars() {
+                            if let Some(needle_ch) = current_needle {
+                                if haystack_ch.to_ascii_lowercase()
+                                    == needle_ch.to_ascii_lowercase()
+                                {
+                                    current_needle = text_to_replace.next();
+                                }
+                            }
+                        }
+                        current_needle.is_none()
                     }
                     LspInsertMode::ReplaceSuffix => {
                         let range_after_cursor = insert_range.end..completion.replace_range.end;
@@ -19579,8 +19586,13 @@ fn process_completion_for_edit(
                                 buffer.anchor_before(range_after_cursor.start)
                                     ..buffer.anchor_after(range_after_cursor.end),
                             )
-                            .collect::<String>();
-                        completion.new_text.ends_with(&text_after_cursor)
+                            .collect::<String>()
+                            .to_ascii_lowercase();
+                        completion
+                            .label
+                            .text
+                            .to_ascii_lowercase()
+                            .ends_with(&text_after_cursor)
                     }
                 }
             }
