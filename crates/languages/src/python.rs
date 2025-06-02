@@ -389,7 +389,7 @@ impl ContextProvider for PythonContextProvider {
                     .and_then(|f| f.path().parent())
                     .map(Arc::from)
                     .unwrap_or_else(|| Arc::from("".as_ref()));
-                    
+
                 toolchains
                     .active_toolchain(worktree_id, file_path, "Python".into(), cx)
                     .await
@@ -400,11 +400,11 @@ impl ContextProvider for PythonContextProvider {
             } else {
                 String::from("python3")
             };
-            
+
             let active_toolchain = format!("\"{raw_toolchain}\"");
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
             let raw_toolchain_var = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
-            
+
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
