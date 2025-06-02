@@ -12981,6 +12981,7 @@ dependencies = [
  "dap",
  "dap_adapters",
  "debug_adapter_extension",
+ "editor",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -13018,6 +13019,7 @@ dependencies = [
  "toml 0.8.20",
  "unindent",
  "util",
+ "workspace",
  "worktree",
 ]
 
