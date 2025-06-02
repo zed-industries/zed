@@ -525,6 +525,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "indexed_docs",
+ "indoc",
  "language",
  "language_model",
  "languages",
