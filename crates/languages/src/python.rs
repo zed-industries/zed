@@ -693,9 +693,13 @@ fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
 
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
+    fn manifest_name(&self) -> language::ManifestName {
+        ManifestName::from(SharedString::new_static("pyproject.toml"))
+    }
     async fn list(
         &self,
         worktree_root: PathBuf,
+        subroot_relative_path: Option<Arc<Path>>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -706,7 +710,14 @@ impl ToolchainLister for PythonToolchainProvider {
             &environment,
         );
         let mut config = Configuration::default();
-        config.workspace_directories = Some(vec![worktree_root.clone()]);
+
+        let mut directories = vec![worktree_root.clone()];
+        if let Some(subroot_relative_path) = subroot_relative_path {
+            debug_assert!(subroot_relative_path.is_relative());
+            directories.push(worktree_root.join(subroot_relative_path));
+        }
+
+        config.workspace_directories = Some(directories);
         for locator in locators.iter() {
             locator.configure(&config);
         }
