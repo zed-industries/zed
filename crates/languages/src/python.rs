@@ -306,18 +306,7 @@ impl LspAdapter for PythonLspAdapter {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
-                    .unwrap_or_else(|| {
-                        json!({
-                            "plugins": {
-                                "pycodestyle": {"enabled": false},
-                                "rope_autoimport": {"enabled": true, "memory": true},
-                                "pylsp_mypy": {"enabled": false}
-                            },
-                            "rope": {
-                                "ropeFolder": null
-                            },
-                        })
-                    });
+                    .unwrap_or_default();
 
             // If python.pythonPath is not set in user config, do so using our toolchain picker.
             if let Some(toolchain) = toolchain {
