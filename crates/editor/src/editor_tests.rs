@@ -17128,6 +17128,64 @@ async fn test_indent_guide_ends_before_empty_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_indent_guide_ignored_only_whitespace_lines(cx: &mut TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        function component() {
+        \treturn (
+        \t\t\t
+        \t\t<div>
+        \t\t\t<abc></abc>
+        \t\t</div>
+        \t)
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..8,
+        vec![
+            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 2, 5, 1),
+            indent_guide(buffer_id, 4, 4, 2),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_fallback_to_next_non_entirely_whitespace_line(cx: &mut TestAppContext) {
+    let (buffer_id, mut cx) = setup_indent_guides_editor(
+        &"
+        function component() {
+        \treturn (
+        \t
+        \t\t<div>
+        \t\t\t<abc></abc>
+        \t\t</div>
+        \t)
+        }"
+        .unindent(),
+        cx,
+    )
+    .await;
+
+    assert_indent_guides(
+        0..8,
+        vec![
+            indent_guide(buffer_id, 1, 6, 0),
+            indent_guide(buffer_id, 2, 5, 1),
+            indent_guide(buffer_id, 4, 4, 2),
+        ],
+        None,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
 async fn test_indent_guide_continuing_off_screen(cx: &mut TestAppContext) {
     let (buffer_id, mut cx) = setup_indent_guides_editor(
         &"
