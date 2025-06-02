@@ -3761,6 +3761,7 @@ impl Workspace {
                 }
                 cx.notify();
             }
+            pane::Event::ItemPinned | pane::Event::ItemUnpinned => {}
         }
 
         if serialize_workspace {
