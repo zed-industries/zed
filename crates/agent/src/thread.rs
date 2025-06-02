@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
 
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -41,6 +41,7 @@ use uuid::Uuid;
 use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
 
 use crate::ThreadStore;
+use crate::agent_profile::AgentProfile;
 use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
     SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
@@ -319,18 +320,6 @@ pub enum QueueState {
     Sending,
     Queued { position: usize },
     Started,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AgentProfile {
-    pub id: AgentProfileId,
-    tool_set: Entity<ToolWorkingSet>,
-}
-
-impl AgentProfile {
-    pub fn new(id: AgentProfileId, tool_set: Entity<ToolWorkingSet>) -> Self {
-        Self { id, tool_set }
-    }
 }
 
 /// A thread of conversation with the LLM.
@@ -1199,7 +1188,7 @@ impl Thread {
                     }),
                 completion_mode: Some(this.completion_mode),
                 tool_use_limit_reached: this.tool_use_limit_reached,
-                profile: Some(this.profile.id.clone()),
+                profile: Some(this.profile.id().clone()),
             })
         })
     }

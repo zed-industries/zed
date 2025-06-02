@@ -59,6 +59,7 @@ dependencies = [
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
+ "assistant_tools",
  "async-watch",
  "audio",
  "buffer_diff",
