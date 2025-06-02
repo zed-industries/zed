@@ -101,7 +101,7 @@ impl ProfileSelector {
         profile_id: AgentProfileId,
         profile: &AgentProfileSettings,
         settings: &AgentSettings,
-        _cx: &App,
+        cx: &App,
     ) -> ContextMenuEntry {
         let documentation = match profile.name.to_lowercase().as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
@@ -109,9 +109,10 @@ impl ProfileSelector {
             builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
             _ => None,
         };
+        let thread_profile_id = self.thread.read(cx).profile().id();
 
         let entry = ContextMenuEntry::new(profile.name.clone())
-            .toggleable(IconPosition::End, profile_id == settings.default_profile);
+            .toggleable(IconPosition::End, &profile_id == thread_profile_id);
 
         let entry = if let Some(doc_text) = documentation {
             entry.documentation_aside(documentation_side(settings.dock), move |_| {
@@ -146,7 +147,7 @@ impl ProfileSelector {
 impl Render for ProfileSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = AgentSettings::get_global(cx);
-        let profile_id = &settings.default_profile;
+        let profile_id = self.thread.read(cx).profile().id();
         let profile = settings.profiles.get(profile_id);
 
         let selected_profile = profile

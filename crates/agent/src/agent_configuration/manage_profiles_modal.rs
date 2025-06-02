@@ -520,14 +520,13 @@ impl ManageProfilesModal {
     ) -> impl IntoElement {
         let settings = AgentSettings::get_global(cx);
 
-        let profile_id = &settings.default_profile;
         let profile_name = settings
             .profiles
             .get(&mode.profile_id)
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let icon = match profile_id.as_str() {
+        let icon = match mode.profile_id.as_str() {
             "write" => IconName::Pencil,
             "ask" => IconName::MessageBubbles,
             _ => IconName::UserRoundPen,

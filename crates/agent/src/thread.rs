@@ -593,6 +593,10 @@ impl Thread {
         &self.id
     }
 
+    pub fn profile(&self) -> &AgentProfile {
+        &self.profile
+    }
+
     pub fn is_empty(&self) -> bool {
         self.messages.is_empty()
     }
@@ -927,8 +931,7 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
     ) -> Vec<LanguageModelRequestTool> {
         if model.supports_tools() {
-            self.tools()
-                .read(cx)
+            self.profile
                 .enabled_tools(cx)
                 .into_iter()
                 .filter_map(|tool| {
@@ -2130,7 +2133,7 @@ impl Thread {
         window: Option<AnyWindowHandle>,
         cx: &mut Context<Thread>,
     ) {
-        let available_tools = self.tools.read(cx).enabled_tools(cx);
+        let available_tools = self.profile.enabled_tools(cx);
 
         let tool_list = available_tools
             .iter()
@@ -2353,8 +2356,7 @@ impl Thread {
         let client = self.project.read(cx).client();
 
         let enabled_tool_names: Vec<String> = self
-            .tools()
-            .read(cx)
+            .profile
             .enabled_tools(cx)
             .iter()
             .map(|tool| tool.name())
