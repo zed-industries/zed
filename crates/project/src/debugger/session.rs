@@ -379,16 +379,6 @@ impl RunningMode {
     ) -> Task<Result<()>> {
         let raw = self.binary.request_args.clone();
 
-        // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
-        let launch = match raw.request {
-            dap::StartDebuggingRequestArgumentsRequest::Launch => self.request(Launch {
-                raw: raw.configuration,
-            }),
-            dap::StartDebuggingRequestArgumentsRequest::Attach => self.request(Attach {
-                raw: raw.configuration,
-            }),
-        };
-
         let configuration_done_supported = ConfigurationDone::is_supported(capabilities);
         let exception_filters = capabilities
             .exception_breakpoint_filters
@@ -404,69 +394,80 @@ impl RunningMode {
         let supports_exception_filters = capabilities
             .supports_exception_filter_options
             .unwrap_or_default();
-        let this = self.clone();
+        let mode = self.clone();
         let worktree = self.worktree().clone();
-        let configuration_sequence = cx.spawn({
-            async move |_, cx| {
-                let breakpoint_store =
-                    dap_store.read_with(cx, |dap_store, _| dap_store.breakpoint_store().clone())?;
-                initialized_rx.await?;
-                let errors_by_path = cx
-                    .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))?
+
+        cx.spawn(async move |weak_session, cx| {
+            initialized_rx.await?;
+            // Of relevance: https://github.com/microsoft/vscode/issues/4902#issuecomment-368583522
+            let launch = match raw.request {
+                dap::StartDebuggingRequestArgumentsRequest::Launch => mode.request(Launch {
+                    raw: raw.configuration,
+                }),
+                dap::StartDebuggingRequestArgumentsRequest::Attach => mode.request(Attach {
+                    raw: raw.configuration,
+                }),
+            };
+            let configuration_sequence = cx.spawn({
+                async move |cx| {
+                    let breakpoint_store = dap_store
+                        .read_with(cx, |dap_store, _| dap_store.breakpoint_store().clone())?;
+
+                    let errors_by_path = cx
+                        .update(|cx| mode.send_source_breakpoints(false, &breakpoint_store, cx))?
+                        .await;
+
+                    dap_store.update(cx, |_, cx| {
+                        let Some(worktree) = worktree.upgrade() else {
+                            return;
+                        };
+
+                        for (path, error) in &errors_by_path {
+                            log::error!("failed to set breakpoints for {path:?}: {error}");
+                        }
+
+                        if let Some(failed_path) = errors_by_path.keys().next() {
+                            let failed_path = failed_path
+                                .strip_prefix(worktree.read(cx).abs_path())
+                                .unwrap_or(failed_path)
+                                .display();
+                            let message = format!(
+                                "Failed to set breakpoints for {failed_path}{}",
+                                match errors_by_path.len() {
+                                    0 => unreachable!(),
+                                    1 => "".into(),
+                                    2 => " and 1 other path".into(),
+                                    n => format!(" and {} other paths", n - 1),
+                                }
+                            );
+                            cx.emit(super::dap_store::DapStoreEvent::Notification(message));
+                        }
+                    })?;
+
+                    mode.send_exception_breakpoints(exception_filters, supports_exception_filters)
+                        .await
+                        .ok();
+                    let ret = if configuration_done_supported {
+                        mode.request(ConfigurationDone {})
+                    } else {
+                        Task::ready(Ok(()))
+                    }
                     .await;
-
-                dap_store.update(cx, |_, cx| {
-                    let Some(worktree) = worktree.upgrade() else {
-                        return;
-                    };
-
-                    for (path, error) in &errors_by_path {
-                        log::error!("failed to set breakpoints for {path:?}: {error}");
-                    }
-
-                    if let Some(failed_path) = errors_by_path.keys().next() {
-                        let failed_path = failed_path
-                            .strip_prefix(worktree.read(cx).abs_path())
-                            .unwrap_or(failed_path)
-                            .display();
-                        let message = format!(
-                            "Failed to set breakpoints for {failed_path}{}",
-                            match errors_by_path.len() {
-                                0 => unreachable!(),
-                                1 => "".into(),
-                                2 => " and 1 other path".into(),
-                                n => format!(" and {} other paths", n - 1),
-                            }
-                        );
-                        cx.emit(super::dap_store::DapStoreEvent::Notification(message));
-                    }
-                })?;
-
-                this.send_exception_breakpoints(exception_filters, supports_exception_filters)
-                    .await
-                    .ok();
-                let ret = if configuration_done_supported {
-                    this.request(ConfigurationDone {})
-                } else {
-                    Task::ready(Ok(()))
+                    ret
                 }
-                .await;
-                ret
-            }
-        });
+            });
 
-        let task = cx.background_spawn(futures::future::try_join(launch, configuration_sequence));
-
-        cx.spawn(async move |this, cx| {
+            let task =
+                cx.background_spawn(futures::future::try_join(launch, configuration_sequence));
             task.await?;
-
-            this.update(cx, |this, cx| {
-                if let Some(this) = this.as_running_mut() {
-                    this.is_started = true;
-                    cx.notify();
-                }
-            })
-            .ok();
+            weak_session
+                .update(cx, |this, cx| {
+                    if let Some(this) = this.as_running_mut() {
+                        this.is_started = true;
+                        cx.notify();
+                    }
+                })
+                .ok();
 
             anyhow::Ok(())
         })
