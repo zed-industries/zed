@@ -572,7 +572,7 @@ tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.3", features = ["wasm"] }
+tree-sitter = { version = "0.25.5", features = ["wasm"] }
 tree-sitter-bash = "0.23"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
@@ -617,7 +617,7 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.3"
+zed_llm_client = "0.8.4"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]

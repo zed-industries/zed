@@ -25,6 +25,7 @@ use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{Toast, Workspace, notifications::NotificationId};
+use zed_llm_client::CompletionIntent;
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -105,7 +106,7 @@ impl TerminalInlineAssistant {
         });
         let prompt_editor_render = prompt_editor.clone();
         let block = terminal_view::BlockProperties {
-            height: 2,
+            height: 4,
             render: Box::new(move |_| prompt_editor_render.clone().into_any_element()),
         };
         terminal_view.update(cx, |terminal_view, cx| {
@@ -291,6 +292,7 @@ impl TerminalInlineAssistant {
                 thread_id: None,
                 prompt_id: None,
                 mode: None,
+                intent: Some(CompletionIntent::TerminalInlineAssist),
                 messages: vec![request_message],
                 tools: Vec::new(),
                 tool_choice: None,

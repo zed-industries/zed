@@ -426,10 +426,7 @@ pub fn into_google(
                 }
                 language_model::MessageContent::ToolResult(tool_result) => {
                     match tool_result.content {
-                        language_model::LanguageModelToolResultContent::Text(text)
-                        | language_model::LanguageModelToolResultContent::WrappedText(
-                            language_model::WrappedTextContent { text, .. },
-                        ) => {
+                        language_model::LanguageModelToolResultContent::Text(text) => {
                             vec![Part::FunctionResponsePart(
                                 google_ai::FunctionResponsePart {
                                     function_response: google_ai::FunctionResponse {
@@ -688,10 +685,15 @@ fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
 }
 
 fn convert_usage(usage: &UsageMetadata) -> language_model::TokenUsage {
+    let prompt_tokens = usage.prompt_token_count.unwrap_or(0) as u32;
+    let cached_tokens = usage.cached_content_token_count.unwrap_or(0) as u32;
+    let input_tokens = prompt_tokens - cached_tokens;
+    let output_tokens = usage.candidates_token_count.unwrap_or(0) as u32;
+
     language_model::TokenUsage {
-        input_tokens: usage.prompt_token_count.unwrap_or(0) as u32,
-        output_tokens: usage.candidates_token_count.unwrap_or(0) as u32,
-        cache_read_input_tokens: usage.cached_content_token_count.unwrap_or(0) as u32,
+        input_tokens,
+        output_tokens,
+        cache_read_input_tokens: cached_tokens,
         cache_creation_input_tokens: 0,
     }
 }

@@ -114,6 +114,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
+ "sqlez",
  "streaming_diff",
  "telemetry",
  "telemetry_events",
@@ -133,6 +134,7 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zed_llm_client",
+ "zstd",
 ]
 
 [[package]]
@@ -525,6 +527,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "indexed_docs",
+ "indoc",
  "language",
  "language_model",
  "languages",
@@ -559,6 +562,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -658,9 +662,9 @@ name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
  "agent_settings",
- "aho-corasick",
  "anyhow",
  "assistant_tool",
+ "async-watch",
  "buffer_diff",
  "chrono",
  "client",
@@ -683,6 +687,7 @@ dependencies = [
  "language_model",
  "language_models",
  "log",
+ "lsp",
  "markdown",
  "open",
  "paths",
@@ -2198,6 +2203,7 @@ dependencies = [
  "editor",
  "gpui",
  "itertools 0.14.0",
+ "settings",
  "theme",
  "ui",
  "workspace",
@@ -4031,6 +4037,8 @@ dependencies = [
  "smol",
  "task",
  "telemetry",
+ "tree-sitter",
+ "tree-sitter-go",
  "util",
  "workspace-hack",
  "zlog",
@@ -4730,6 +4738,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
+ "unicode-script",
  "unicode-segmentation",
  "unindent",
  "url",
@@ -5043,6 +5052,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace-hack",
+ "zed_llm_client",
 ]
 
 [[package]]
@@ -6145,6 +6155,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zed_llm_client",
  "zlog",
 ]
 
@@ -7062,6 +7073,7 @@ dependencies = [
  "image",
  "inventory",
  "itertools 0.14.0",
+ "libc",
  "log",
  "lyon",
  "media",
@@ -8927,6 +8939,7 @@ dependencies = [
  "async-compression",
  "async-tar",
  "async-trait",
+ "chrono",
  "collections",
  "dap",
  "futures 0.3.31",
@@ -8980,6 +8993,7 @@ dependencies = [
  "tree-sitter-yaml",
  "unindent",
  "util",
+ "which 6.0.3",
  "workspace",
  "workspace-hack",
 ]
@@ -9567,6 +9581,7 @@ dependencies = [
  "assets",
  "base64 0.22.1",
  "env_logger 0.11.8",
+ "futures 0.3.31",
  "gpui",
  "language",
  "languages",
@@ -15578,6 +15593,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "hex",
+ "log",
  "parking_lot",
  "pretty_assertions",
  "proto",
@@ -16477,9 +16493,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.25.3"
+version = "0.25.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ac5ea5e7f2f1700842ec071401010b9c59bf735295f6e9fa079c3dc035b167"
+checksum = "ac5fff5c47490dfdf473b5228039bfacad9d765d9b6939d26bf7cc064c1c7822"
 dependencies = [
  "cc",
  "regex",
@@ -17112,8 +17128,6 @@ dependencies = [
  "tempfile",
  "tendril",
  "unicase",
- "unicode-script",
- "unicode-segmentation",
  "util_macros",
  "walkdir",
  "workspace-hack",
@@ -19677,7 +19691,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.189.0"
+version = "0.190.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -19873,9 +19887,9 @@ dependencies = [
 
 [[package]]
 name = "zed_llm_client"
-version = "0.8.3"
+version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22a8b9575b215536ed8ad254ba07171e4e13bd029eda3b54cca4b184d2768050"
+checksum = "de7d9523255f4e00ee3d0918e5407bd252d798a4a8e71f6d37f23317a1588203"
 dependencies = [
  "anyhow",
  "serde",

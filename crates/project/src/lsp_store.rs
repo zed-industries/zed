@@ -10,7 +10,8 @@ use crate::{
     lsp_command::{self, *},
     lsp_store,
     manifest_tree::{
-        AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestTree,
+        AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition,
+        ManifestQueryDelegate, ManifestTree,
     },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
@@ -1036,7 +1037,7 @@ impl LocalLspStore {
         else {
             return Vec::new();
         };
-        let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
+        let delegate = Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
         let root = self.lsp_tree.update(cx, |this, cx| {
             this.get(
                 project_path,
@@ -2290,7 +2291,8 @@ impl LocalLspStore {
             })
             .map(|(delegate, servers)| (true, delegate, servers))
             .unwrap_or_else(|| {
-                let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
+                let lsp_delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
+                let delegate = Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
                 let servers = self
                     .lsp_tree
                     .clone()
@@ -2304,7 +2306,7 @@ impl LocalLspStore {
                             )
                             .collect::<Vec<_>>()
                     });
-                (false, delegate, servers)
+                (false, lsp_delegate, servers)
             });
         let servers = servers
             .into_iter()
@@ -3585,6 +3587,7 @@ impl LspStore {
         prettier_store: Entity<PrettierStore>,
         toolchain_store: Entity<ToolchainStore>,
         environment: Entity<ProjectEnvironment>,
+        manifest_tree: Entity<ManifestTree>,
         languages: Arc<LanguageRegistry>,
         http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
@@ -3618,7 +3621,7 @@ impl LspStore {
                 sender,
             )
         };
-        let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
+
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
@@ -4465,10 +4468,13 @@ impl LspStore {
                             )
                             .map(|(delegate, servers)| (true, delegate, servers))
                             .or_else(|| {
-                                let delegate = adapters
+                                let lsp_delegate = adapters
                                     .entry(worktree_id)
                                     .or_insert_with(|| get_adapter(worktree_id, cx))
                                     .clone()?;
+                                let delegate = Arc::new(ManifestQueryDelegate::new(
+                                    worktree.read(cx).snapshot(),
+                                ));
                                 let path = file
                                     .path()
                                     .parent()
@@ -4483,7 +4489,7 @@ impl LspStore {
                                     cx,
                                 );
 
-                                Some((false, delegate, nodes.collect()))
+                                Some((false, lsp_delegate, nodes.collect()))
                             })
                         else {
                             continue;
@@ -6476,7 +6482,7 @@ impl LspStore {
                 worktree_id,
                 path: Arc::from("".as_ref()),
             };
-            let delegate = LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
+            let delegate = Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
             local.lsp_tree.update(cx, |language_server_tree, cx| {
                 for node in language_server_tree.get(
                     path,
@@ -10202,14 +10208,6 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     fn worktree_id(&self) -> WorktreeId {
         self.worktree.id()
-    }
-
-    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool {
-        self.worktree.entry_for_path(path).map_or(false, |entry| {
-            is_dir.map_or(true, |is_required_to_be_dir| {
-                is_required_to_be_dir == entry.is_dir()
-            })
-        })
     }
 
     fn worktree_root_path(&self) -> &Path {

@@ -127,9 +127,7 @@
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-shift-e": "editor::ToggleEditPrediction",
       "f9": "editor::ToggleBreakpoint",
-      "shift-f9": "editor::EditLogBreakpoint",
-      "ctrl-shift-backspace": "editor::GoToPreviousChange",
-      "ctrl-shift-alt-backspace": "editor::GoToNextChange"
+      "shift-f9": "editor::EditLogBreakpoint"
     }
   },
   {
@@ -148,6 +146,8 @@
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
       "ctrl-alt-e": "editor::SelectEnclosingSymbol",
+      "ctrl-shift-backspace": "editor::GoToPreviousChange",
+      "ctrl-shift-alt-backspace": "editor::GoToNextChange",
       "alt-enter": "editor::OpenSelectionsInMultibuffer"
     }
   },
@@ -244,11 +244,14 @@
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "agent::ToggleModelSelector",
       "ctrl-shift-a": "agent::ToggleContextPicker",
-      "ctrl-shift-o": "agent::ToggleNavigationMenu",
+      "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
       "ctrl-alt-e": "agent::RemoveAllContext",
-      "ctrl-shift-e": "project_panel::ToggleFocus"
+      "ctrl-shift-e": "project_panel::ToggleFocus",
+      "ctrl-shift-enter": "agent::ContinueThread",
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "ctrl-alt-b": "agent::ToggleBurnMode"
     }
   },
   {
@@ -926,6 +929,13 @@
     }
   },
   {
+    "context": "FileFinder",
+    "bindings": {
+      "ctrl-shift-a": "file_finder::ToggleSplitMenu",
+      "ctrl-shift-i": "file_finder::ToggleFilterMenu"
+    }
+  },
+  {
     "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrevious",
@@ -1015,6 +1025,13 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "menu::Confirm"
+    }
+  },
+  {
+    "context": "RunModal",
+    "bindings": {
+      "ctrl-tab": "pane::ActivateNextItem",
+      "ctrl-shift-tab": "pane::ActivatePreviousItem"
     }
   }
 ]

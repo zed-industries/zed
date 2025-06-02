@@ -7,7 +7,7 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    StopReason, WrappedTextContent,
+    StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -293,11 +293,7 @@ impl LmStudioLanguageModel {
                     }
                     MessageContent::ToolResult(tool_result) => {
                         match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text)
-                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                                text,
-                                ..
-                            }) => {
+                            LanguageModelToolResultContent::Text(text) => {
                                 messages.push(lmstudio::ChatMessage::Tool {
                                     content: text.to_string(),
                                     tool_call_id: tool_result.tool_use_id.to_string(),

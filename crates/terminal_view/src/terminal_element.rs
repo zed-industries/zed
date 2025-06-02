@@ -413,10 +413,15 @@ impl TerminalElement {
     fn generic_button_handler<E>(
         connection: Entity<Terminal>,
         focus_handle: FocusHandle,
+        steal_focus: bool,
         f: impl Fn(&mut Terminal, &E, &mut Context<Terminal>),
     ) -> impl Fn(&E, &mut Window, &mut App) {
         move |event, window, cx| {
-            window.focus(&focus_handle);
+            if steal_focus {
+                window.focus(&focus_handle);
+            } else if !focus_handle.is_focused(window) {
+                return;
+            }
             connection.update(cx, |terminal, cx| {
                 f(terminal, event, cx);
 
@@ -489,6 +494,7 @@ impl TerminalElement {
             TerminalElement::generic_button_handler(
                 terminal.clone(),
                 focus.clone(),
+                false,
                 move |terminal, e, cx| {
                     terminal.mouse_up(e, cx);
                 },
@@ -499,6 +505,7 @@ impl TerminalElement {
             TerminalElement::generic_button_handler(
                 terminal.clone(),
                 focus.clone(),
+                true,
                 move |terminal, e, cx| {
                     terminal.mouse_down(e, cx);
                 },
@@ -527,6 +534,7 @@ impl TerminalElement {
                 TerminalElement::generic_button_handler(
                     terminal.clone(),
                     focus.clone(),
+                    true,
                     move |terminal, e, cx| {
                         terminal.mouse_down(e, cx);
                     },
@@ -537,6 +545,7 @@ impl TerminalElement {
                 TerminalElement::generic_button_handler(
                     terminal.clone(),
                     focus.clone(),
+                    false,
                     move |terminal, e, cx| {
                         terminal.mouse_up(e, cx);
                     },
@@ -544,9 +553,14 @@ impl TerminalElement {
             );
             self.interactivity.on_mouse_up(
                 MouseButton::Middle,
-                TerminalElement::generic_button_handler(terminal, focus, move |terminal, e, cx| {
-                    terminal.mouse_up(e, cx);
-                }),
+                TerminalElement::generic_button_handler(
+                    terminal,
+                    focus,
+                    false,
+                    move |terminal, e, cx| {
+                        terminal.mouse_up(e, cx);
+                    },
+                ),
             );
         }
     }

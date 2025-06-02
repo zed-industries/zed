@@ -80,6 +80,7 @@ These variables allow you to pull information from the current editor and use it
 - `ZED_FILENAME`: filename of the currently opened file (e.g. `main.rs`)
 - `ZED_DIRNAME`: absolute path of the currently opened file with file name stripped (e.g. `/Users/my-user/path/to/project/src`)
 - `ZED_RELATIVE_FILE`: path of the currently opened file, relative to `ZED_WORKTREE_ROOT` (e.g. `src/main.rs`)
+- `ZED_RELATIVE_DIR`: path of the currently opened file's directory, relative to `ZED_WORKTREE_ROOT` (e.g. `src`)
 - `ZED_STEM`: stem (filename without extension) of the currently opened file (e.g. `main`)
 - `ZED_SYMBOL`: currently selected symbol; should match the last symbol shown in a symbol breadcrumb (e.g. `mod tests > fn test_task_contexts`)
 - `ZED_SELECTED_TEXT`: currently selected text

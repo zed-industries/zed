@@ -6,7 +6,7 @@ use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, StopReason,
+    LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -54,6 +54,8 @@ pub struct AvailableModel {
     pub keep_alive: Option<KeepAlive>,
     /// Whether the model supports tools
     pub supports_tools: Option<bool>,
+    /// Whether to enable think mode
+    pub supports_thinking: Option<bool>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -99,6 +101,7 @@ impl State {
                             None,
                             None,
                             Some(capabilities.supports_tools()),
+                            Some(capabilities.supports_thinking()),
                         );
                         Ok(ollama_model)
                     }
@@ -219,6 +222,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     keep_alive: model.keep_alive.clone(),
                     supports_tools: model.supports_tools,
+                    supports_thinking: model.supports_thinking,
                 },
             );
         }
@@ -282,10 +286,18 @@ impl OllamaLanguageModel {
                     Role::User => ChatMessage::User {
                         content: msg.string_contents(),
                     },
-                    Role::Assistant => ChatMessage::Assistant {
-                        content: msg.string_contents(),
-                        tool_calls: None,
-                    },
+                    Role::Assistant => {
+                        let content = msg.string_contents();
+                        let thinking = msg.content.into_iter().find_map(|content| match content {
+                            MessageContent::Thinking { text, .. } if !text.is_empty() => Some(text),
+                            _ => None,
+                        });
+                        ChatMessage::Assistant {
+                            content,
+                            tool_calls: None,
+                            thinking,
+                        }
+                    }
                     Role::System => ChatMessage::System {
                         content: msg.string_contents(),
                     },
@@ -299,6 +311,7 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
+            think: self.model.supports_thinking,
             tools: request.tools.into_iter().map(tool_into_ollama).collect(),
         }
     }
@@ -433,8 +446,15 @@ fn map_to_language_model_completion_events(
                 ChatMessage::Assistant {
                     content,
                     tool_calls,
+                    thinking,
                 } => {
-                    // Check for tool calls
+                    if let Some(text) = thinking {
+                        events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                            text,
+                            signature: None,
+                        }));
+                    }
+
                     if let Some(tool_call) = tool_calls.and_then(|v| v.into_iter().next()) {
                         match tool_call {
                             OllamaToolCall::Function(function) => {
@@ -455,7 +475,7 @@ fn map_to_language_model_completion_events(
                                 state.used_tools = true;
                             }
                         }
-                    } else {
+                    } else if !content.is_empty() {
                         events.push(Ok(LanguageModelCompletionEvent::Text(content)));
                     }
                 }

@@ -173,6 +173,10 @@ impl Item for SubView {
         self.kind.to_shared_string()
     }
 
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+        Some(self.kind.tab_tooltip())
+    }
+
     fn tab_content(
         &self,
         params: workspace::item::TabContentParams,
@@ -399,6 +403,9 @@ pub(crate) fn new_debugger_pane(
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
+                                    .when_some(item.tab_tooltip_text(cx), |this, tooltip| {
+                                        this.tooltip(Tooltip::text(tooltip))
+                                    })
                                     .map(|this| {
                                         let theme = cx.theme();
                                         if selected {
@@ -547,6 +554,10 @@ impl RunningState {
                     .for_each(|value| Self::substitute_variables_in_config(value, context));
             }
             serde_json::Value::String(s) => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
                     *s = substituted;
                 }
@@ -571,6 +582,10 @@ impl RunningState {
                     .for_each(|value| Self::relativlize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
+                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                    *s = s[1..s.len() - 1].to_string();
+                }
                 resolve_path(s);
 
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
@@ -797,7 +812,7 @@ impl RunningState {
             let request_type = dap_registry
                 .adapter(&adapter)
                 .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                .and_then(|adapter| adapter.validate_config(&config));
+                .and_then(|adapter| adapter.request_kind(&config));
 
             let config_is_valid = request_type.is_ok();
 
@@ -938,7 +953,10 @@ impl RunningState {
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
-                anyhow::bail!("No request or build provided");
+                let Err(e) = request_type else {
+                    unreachable!();
+                };
+                anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
             };
 
             Ok(DebugTaskDefinition {

@@ -5753,15 +5753,28 @@ impl MultiBufferSnapshot {
         let mut result = Vec::new();
         let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
 
+        let mut prev_settings = None;
         while let Some((first_row, mut line_indent, buffer)) = row_indents.next() {
             if first_row > end_row {
                 break;
             }
             let current_depth = indent_stack.len() as u32;
 
-            let settings =
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx);
-            let tab_size = settings.tab_size.get() as u32;
+            // Avoid retrieving the language settings repeatedly for every buffer row.
+            if let Some((prev_buffer_id, _)) = &prev_settings {
+                if prev_buffer_id != &buffer.remote_id() {
+                    prev_settings.take();
+                }
+            }
+            let settings = &prev_settings
+                .get_or_insert_with(|| {
+                    (
+                        buffer.remote_id(),
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx),
+                    )
+                })
+                .1;
+            let tab_size = settings.tab_size.get();
 
             // When encountering empty, continue until found useful line indent
             // then add to the indent stack with the depth found
