@@ -21088,8 +21088,10 @@ pub fn handle_completion_request(
 /// Similar to `handle_completion_request`, but a [`CompletionTextEdit::InsertAndReplace`] will be
 /// given instead, which also contains an `insert` range.
 ///
-/// This function uses the cursor position to mimic what Rust-Analyzer provides as the `insert` range,
-/// that is, `replace_range.start..cursor_pos`.
+/// This function uses markers to define ranges:
+/// - `|` marks the cursor position
+/// - `<>` marks the replace range
+/// - `[]` marks the insert range (optional, defaults to `replace_range.start..cursor_pos`which is what Rust-Analyzer provides)
 pub fn handle_completion_request_with_insert_and_replace(
     cx: &mut EditorLspTestContext,
     marked_string: &str,
@@ -21098,15 +21100,29 @@ pub fn handle_completion_request_with_insert_and_replace(
 ) -> impl Future<Output = ()> {
     let complete_from_marker: TextRangeMarker = '|'.into();
     let replace_range_marker: TextRangeMarker = ('<', '>').into();
+    let insert_range_marker: TextRangeMarker = ('{', '}').into();
+
     let (_, mut marked_ranges) = marked_text_ranges_by(
         marked_string,
-        vec![complete_from_marker.clone(), replace_range_marker.clone()],
+        vec![
+            complete_from_marker.clone(),
+            replace_range_marker.clone(),
+            insert_range_marker.clone(),
+        ],
     );
 
     let complete_from_position =
         cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
     let replace_range =
         cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
+
+    let insert_range = match marked_ranges.remove(&insert_range_marker) {
+        Some(ranges) if !ranges.is_empty() => cx.to_lsp_range(ranges[0].clone()),
+        _ => lsp::Range {
+            start: replace_range.start,
+            end: complete_from_position,
+        },
+    };
 
     let mut request =
         cx.set_request_handler::<lsp::request::Completion, _, _>(move |url, params, _| {
@@ -21125,10 +21141,7 @@ pub fn handle_completion_request_with_insert_and_replace(
                             label: completion_text.to_string(),
                             text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
                                 lsp::InsertReplaceEdit {
-                                    insert: lsp::Range {
-                                        start: replace_range.start,
-                                        end: complete_from_position,
-                                    },
+                                    insert: insert_range,
                                     replace: replace_range,
                                     new_text: completion_text.to_string(),
                                 },
