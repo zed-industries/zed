@@ -12,9 +12,10 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    RateLimiter, Role, StopReason,
 };
-use open_ai::{Model, ResponseStreamEvent, stream_completion};
+use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -264,7 +265,7 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenAI API Key"))?;
+            let api_key = api_key.context("Missing OpenAI API Key")?;
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
@@ -293,6 +294,10 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn supports_tools(&self) -> bool {
         true
+    }
+
+    fn supports_images(&self) -> bool {
+        false
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -357,17 +362,26 @@ pub fn into_open_ai(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                    .push(match message.role {
-                        Role::User => open_ai::RequestMessage::User { content: text },
-                        Role::Assistant => open_ai::RequestMessage::Assistant {
-                            content: Some(text),
-                            tool_calls: Vec::new(),
-                        },
-                        Role::System => open_ai::RequestMessage::System { content: text },
-                    }),
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                    add_message_content_part(
+                        open_ai::MessagePart::Text { text: text },
+                        message.role,
+                        &mut messages,
+                    )
+                }
                 MessageContent::RedactedThinking(_) => {}
-                MessageContent::Image(_) => {}
+                MessageContent::Image(image) => {
+                    add_message_content_part(
+                        open_ai::MessagePart::Image {
+                            image_url: ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        },
+                        message.role,
+                        &mut messages,
+                    );
+                }
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_ai::ToolCall {
                         id: tool_use.id.to_string(),
@@ -392,8 +406,24 @@ pub fn into_open_ai(
                     }
                 }
                 MessageContent::ToolResult(tool_result) => {
+                    let content = match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            vec![open_ai::MessagePart::Text {
+                                text: text.to_string(),
+                            }]
+                        }
+                        LanguageModelToolResultContent::Image(image) => {
+                            vec![open_ai::MessagePart::Image {
+                                image_url: ImageUrl {
+                                    url: image.to_base64_url(),
+                                    detail: None,
+                                },
+                            }]
+                        }
+                    };
+
                     messages.push(open_ai::RequestMessage::Tool {
-                        content: tool_result.content.to_string(),
+                        content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
                 }
@@ -430,6 +460,40 @@ pub fn into_open_ai(
             LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
             LanguageModelToolChoice::None => open_ai::ToolChoice::None,
         }),
+    }
+}
+
+fn add_message_content_part(
+    new_part: open_ai::MessagePart,
+    role: Role,
+    messages: &mut Vec<open_ai::RequestMessage>,
+) {
+    match (role, messages.last_mut()) {
+        (Role::User, Some(open_ai::RequestMessage::User { content }))
+        | (
+            Role::Assistant,
+            Some(open_ai::RequestMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        )
+        | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(match role {
+                Role::User => open_ai::RequestMessage::User {
+                    content: open_ai::MessageContent::from(vec![new_part]),
+                },
+                Role::Assistant => open_ai::RequestMessage::Assistant {
+                    content: Some(open_ai::MessageContent::from(vec![new_part])),
+                    tool_calls: Vec::new(),
+                },
+                Role::System => open_ai::RequestMessage::System {
+                    content: open_ai::MessageContent::from(vec![new_part]),
+                },
+            });
+        }
     }
 }
 
@@ -570,22 +634,24 @@ pub fn count_open_ai_tokens(
                 };
                 tiktoken_rs::num_tokens_from_messages(model, &messages)
             }
-            // Not currently supported by tiktoken_rs. All use the same tokenizer as gpt-4o (o200k_base)
-            Model::O1
-            | Model::FourPointOne
-            | Model::FourPointOneMini
-            | Model::FourPointOneNano
-            | Model::O3Mini
-            | Model::O3
-            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages),
             // Currently supported by tiktoken_rs
+            // Sometimes tiktoken-rs is behind on model support. If that is the case, make a new branch
+            // arm with an override. We enumerate all supported models here so that we can check if new
+            // models are supported yet or not.
             Model::ThreePointFiveTurbo
             | Model::Four
             | Model::FourTurbo
             | Model::FourOmni
             | Model::FourOmniMini
+            | Model::FourPointOne
+            | Model::FourPointOneMini
+            | Model::FourPointOneNano
+            | Model::O1
             | Model::O1Preview
-            | Model::O1Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            | Model::O1Mini
+            | Model::O3
+            | Model::O3Mini
+            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
         }
     })
     .boxed()
@@ -778,6 +844,46 @@ impl Render for ConfigurationView {
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
                 .into_any()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use language_model::LanguageModelRequestMessage;
+
+    use super::*;
+
+    #[gpui::test]
+    fn tiktoken_rs_support(cx: &TestAppContext) {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            mode: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("message".into())],
+                cache: false,
+            }],
+            tools: vec![],
+            tool_choice: None,
+            stop: vec![],
+            temperature: None,
+        };
+
+        // Validate that all models are supported by tiktoken-rs
+        for model in Model::iter() {
+            let count = cx
+                .executor()
+                .block(count_open_ai_tokens(
+                    request.clone(),
+                    model,
+                    &cx.app.borrow(),
+                ))
+                .unwrap();
+            assert!(count > 0);
         }
     }
 }

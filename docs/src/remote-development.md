@@ -158,6 +158,8 @@ Depending on the kind of setting you want to make, which settings file you shoul
 - Server settings should be used for things that affect the server: paths to language servers, etc.
 - Local settings should be used for things that affect the UI: font size, etc.
 
+In addition any extensions you have installed locally will be propagated to the remote server. This means that language servers, etc. will run correctly.
+
 ## Initializing the remote server
 
 Once you provide the SSH options, Zed shells out to `ssh` on your local machine to create a ControlMaster connection with the options you provide.
@@ -200,7 +202,6 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 
 ## Known Limitations
 
-- Zed extensions are not yet supported on remotes, so languages that need them for support do not work.
 - You can't open files from the remote Terminal by typing the `zed` command.
 
 ## Feedback

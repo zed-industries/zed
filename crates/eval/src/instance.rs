@@ -1,5 +1,5 @@
-use agent::{Message, MessageSegment, ThreadStore};
-use anyhow::{Context, Result, anyhow, bail};
+use agent::{Message, MessageSegment, SerializedThread, ThreadStore};
+use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
 use futures::channel::mpsc;
@@ -9,7 +9,7 @@ use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    MessageContent, Role, TokenUsage,
+    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
 };
 use project::lsp_store::OpenLspBufferHandle;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -285,7 +285,7 @@ impl ExampleInstance {
 
                 diagnostics_before = query_lsp_diagnostics(project.clone(), cx).await?;
                 if diagnostics_before.is_some() && language_server.allow_preexisting_diagnostics {
-                    return Err(anyhow!("Example has pre-existing diagnostics. If you want to run this example regardless, set `allow_preexisting_diagnostics` to `true` in `base.toml`"));
+                    anyhow::bail!("Example has pre-existing diagnostics. If you want to run this example regardless, set `allow_preexisting_diagnostics` to `true` in `base.toml`");
                 }
 
                 Some(LanguageServerState {
@@ -296,9 +296,7 @@ impl ExampleInstance {
                 None
             };
 
-            if std::env::var("ZED_EVAL_SETUP_ONLY").is_ok() {
-                return Err(anyhow!("Setup only mode"));
-            }
+            anyhow::ensure!(std::env::var("ZED_EVAL_SETUP_ONLY").is_err(), "Setup only mode");
 
             let last_diff_file_path = this.run_directory.join("last.diff");
 
@@ -312,7 +310,14 @@ impl ExampleInstance {
             thread_store.update(cx, |thread_store, cx| thread_store.load_profile_by_id(profile_id, cx)).expect("Failed to load profile");
 
             let thread =
-                thread_store.update(cx, |thread_store, cx| thread_store.create_thread(cx))?;
+                thread_store.update(cx, |thread_store, cx| {
+                    if let Some(json) = &meta.existing_thread_json {
+                        let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
+                        thread_store.create_thread_from_serialized(serialized, cx)
+                    } else {
+                        thread_store.create_thread(cx)
+                    }
+                })?;
 
 
             thread.update(cx, |thread, _cx| {
@@ -571,6 +576,7 @@ impl ExampleInstance {
                 thread_id: None,
                 prompt_id: None,
                 mode: None,
+                intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
@@ -639,7 +645,7 @@ pub fn wait_for_lang_server(
     let (mut tx, mut rx) = mpsc::channel(1);
 
     let lsp_store = project
-        .update(cx, |project, _| project.lsp_store())
+        .read_with(cx, |project, _| project.lsp_store())
         .unwrap();
 
     let has_lang_server = buffer
@@ -703,7 +709,7 @@ pub fn wait_for_lang_server(
                 anyhow::Ok(())
             },
             _ = timeout.fuse() => {
-                Err(anyhow!("LSP wait timed out after 5 minutes"))
+                anyhow::bail!("LSP wait timed out after 5 minutes");
             }
         };
         drop(subscriptions);
@@ -801,18 +807,16 @@ pub async fn run_git(repo_path: &Path, args: &[&str]) -> Result<String> {
         .output()
         .await?;
 
-    if output.status.success() {
-        Ok(String::from_utf8(output.stdout)?.trim().to_string())
-    } else {
-        Err(anyhow!(
-            "`git {}` within `{}` failed with status: {}\nstderr:\n{}\nstdout:\n{}",
-            args.join(" "),
-            repo_path.display(),
-            output.status,
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout),
-        ))
-    }
+    anyhow::ensure!(
+        output.status.success(),
+        "`git {}` within `{}` failed with status: {}\nstderr:\n{}\nstdout:\n{}",
+        args.join(" "),
+        repo_path.display(),
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+    );
+    Ok(String::from_utf8(output.stdout)?.trim().to_string())
 }
 
 fn messages_to_markdown<'a>(message_iter: impl IntoIterator<Item = &'a Message>) -> String {
@@ -874,9 +878,7 @@ pub async fn send_language_model_request(
                         full_response.push_str(&chunk_str);
                     }
                     Err(err) => {
-                        return Err(anyhow!(
-                            "Error receiving response from language model: {err}"
-                        ));
+                        anyhow::bail!("Error receiving response from language model: {err}");
                     }
                 }
             }
@@ -964,7 +966,15 @@ impl RequestMarkdown {
                         if tool_result.is_error {
                             messages.push_str("**ERROR:**\n");
                         }
-                        messages.push_str(&format!("{}\n\n", tool_result.content));
+
+                        match &tool_result.content {
+                            LanguageModelToolResultContent::Text(text) => {
+                                writeln!(messages, "{text}\n").ok();
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                writeln!(messages, "![Image](data:base64,{})\n", image.source).ok();
+                            }
+                        }
 
                         if let Some(output) = tool_result.output.as_ref() {
                             writeln!(

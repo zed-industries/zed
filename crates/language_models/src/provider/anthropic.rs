@@ -1,6 +1,9 @@
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
-use anthropic::{AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, Usage};
+use anthropic::{
+    AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
+    ToolResultPart, Usage,
+};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -15,8 +18,8 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelId, LanguageModelKnownError, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, MessageContent,
-    RateLimiter, Role,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use schemars::JsonSchema;
@@ -237,8 +240,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::Claude3_7Sonnet,
-            anthropic::Model::Claude3_7SonnetThinking,
+            anthropic::Model::ClaudeSonnet4,
+            anthropic::Model::ClaudeSonnet4Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -346,9 +349,14 @@ pub fn count_anthropic_tokens(
                     MessageContent::ToolUse(_tool_use) => {
                         // TODO: Estimate token usage from tool uses.
                     }
-                    MessageContent::ToolResult(tool_result) => {
-                        string_contents.push_str(&tool_result.content);
-                    }
+                    MessageContent::ToolResult(tool_result) => match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            string_contents.push_str(text);
+                        }
+                        LanguageModelToolResultContent::Image(image) => {
+                            tokens_from_images += image.estimate_tokens();
+                        }
+                    },
                 }
             }
 
@@ -391,7 +399,7 @@ impl AnthropicModel {
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Anthropic API Key"))?;
+            let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             request.await.context("failed to stream completion")
@@ -418,6 +426,10 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn supports_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_images(&self) -> bool {
         true
     }
 
@@ -575,7 +587,20 @@ pub fn into_anthropic(
                             Some(anthropic::RequestContent::ToolResult {
                                 tool_use_id: tool_result.tool_use_id.to_string(),
                                 is_error: tool_result.is_error,
-                                content: tool_result.content.to_string(),
+                                content: match tool_result.content {
+                                    LanguageModelToolResultContent::Text(text) => {
+                                        ToolResultContent::Plain(text.to_string())
+                                    }
+                                    LanguageModelToolResultContent::Image(image) => {
+                                        ToolResultContent::Multipart(vec![ToolResultPart::Image {
+                                            source: anthropic::ImageSource {
+                                                source_type: "base64".to_string(),
+                                                media_type: "image/png".to_string(),
+                                                data: image.source.to_string(),
+                                            },
+                                        }])
+                                    }
+                                },
                                 cache_control,
                             })
                         }
@@ -795,6 +820,7 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
+                        "refusal" => StopReason::Refusal,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn

@@ -5,8 +5,8 @@ use crate::inline_prompt_editor::{
 };
 use crate::terminal_codegen::{CLEAR_INPUT, CodegenEvent, TerminalCodegen};
 use crate::thread_store::{TextThreadStore, ThreadStore};
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};
@@ -25,6 +25,7 @@ use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{Toast, Workspace, notifications::NotificationId};
+use zed_llm_client::CompletionIntent;
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -105,7 +106,7 @@ impl TerminalInlineAssistant {
         });
         let prompt_editor_render = prompt_editor.clone();
         let block = terminal_view::BlockProperties {
-            height: 2,
+            height: 4,
             render: Box::new(move |_| prompt_editor_render.clone().into_any_element()),
         };
         terminal_view.update(cx, |terminal_view, cx| {
@@ -191,7 +192,7 @@ impl TerminalInlineAssistant {
         };
 
         self.prompt_history.retain(|prompt| *prompt != user_prompt);
-        self.prompt_history.push_back(user_prompt.clone());
+        self.prompt_history.push_back(user_prompt);
         if self.prompt_history.len() > PROMPT_HISTORY_MAX_LEN {
             self.prompt_history.pop_front();
         }
@@ -271,7 +272,7 @@ impl TerminalInlineAssistant {
             .inline_assistant_model()
             .context("No inline assistant model")?;
 
-        let temperature = AssistantSettings::temperature_for_model(&model, cx);
+        let temperature = AgentSettings::temperature_for_model(&model, cx);
 
         Ok(cx.background_spawn(async move {
             let mut request_message = LanguageModelRequestMessage {
@@ -291,6 +292,7 @@ impl TerminalInlineAssistant {
                 thread_id: None,
                 prompt_id: None,
                 mode: None,
+                intent: Some(CompletionIntent::TerminalInlineAssist),
                 messages: vec![request_message],
                 tools: Vec::new(),
                 tool_choice: None,

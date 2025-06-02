@@ -261,7 +261,7 @@ impl DeepSeekLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing DeepSeek API Key"))?;
+            let api_key = api_key.context("Missing DeepSeek API Key")?;
             let request =
                 deepseek::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
@@ -299,6 +299,10 @@ impl LanguageModel for DeepSeekLanguageModel {
             LanguageModelToolChoice::Any => true,
             LanguageModelToolChoice::None => true,
         }
+    }
+
+    fn supports_images(&self) -> bool {
+        false
     }
 
     fn telemetry_id(&self) -> String {

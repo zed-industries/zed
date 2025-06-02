@@ -1,10 +1,12 @@
 mod context_server;
+mod dap;
 mod lsp;
 mod slash_command;
 
 use std::ops::Range;
 
 pub use context_server::*;
+pub use dap::*;
 pub use lsp::*;
 pub use slash_command::*;
 
