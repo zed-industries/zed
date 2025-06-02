@@ -114,7 +114,11 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        self.set_scroll_horizontal(20.0, window, cx);
+        if let Some(position_map) = &self.last_position_map {
+            let editor_width = position_map.text_hitbox.bounds.size.width.0;
+            let offset = editor_width / 2.0;
+            self.set_scroll_horizontal(offset, window, cx);
+        }
     }
 
     pub fn scroll_cursor_left(
@@ -123,6 +127,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        self.set_scroll_horizontal(-20.0, window, cx);
+        if let Some(position_map) = &self.last_position_map {
+            let editor_width = position_map.text_hitbox.bounds.size.width.0;
+            let offset = -(editor_width / 2.0);
+            self.set_scroll_horizontal(offset, window, cx);
+        }
     }
 }
