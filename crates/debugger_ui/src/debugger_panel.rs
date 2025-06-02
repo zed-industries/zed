@@ -4,8 +4,9 @@ use crate::session::running::RunningState;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
     FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
-    ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
-    ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
+    ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleExpandItem,
+    ToggleIgnoreBreakpoints, ToggleSessionPicker, ToggleThreadPicker, persistence,
+    spawn_task_or_modal,
 };
 use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
@@ -69,6 +70,7 @@ pub struct DebugPanel {
     pub(crate) thread_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
+    is_zoomed: bool,
     _subscriptions: [Subscription; 1],
 }
 
@@ -103,6 +105,7 @@ impl DebugPanel {
                 fs: workspace.app_state().fs.clone(),
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
+                is_zoomed: false,
                 _subscriptions: [focus_subscription],
                 debug_scenario_scheduled_last: true,
             }
@@ -1013,6 +1016,22 @@ impl DebugPanel {
     pub(crate) fn toggle_session_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.session_picker_menu_handle.toggle(window, cx);
     }
+
+    fn toggle_zoom(
+        &mut self,
+        _: &workspace::ToggleZoom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_zoomed {
+            cx.emit(PanelEvent::ZoomOut);
+        } else {
+            if !self.focus_handle(cx).contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(PanelEvent::ZoomIn);
+        }
+    }
 }
 
 async fn register_session_inner(
@@ -1168,6 +1187,15 @@ impl Panel for DebugPanel {
     }
 
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
+        self.is_zoomed
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.is_zoomed = zoomed;
+        cx.notify();
+    }
 }
 
 impl Render for DebugPanel {
@@ -1308,6 +1336,23 @@ impl Render for DebugPanel {
                     .ok();
                 }
             })
+            .on_action(cx.listener(Self::toggle_zoom))
+            .on_action(cx.listener(|panel, _: &ToggleExpandItem, _, cx| {
+                let Some(session) = panel.active_session() else {
+                    return;
+                };
+                let active_pane = session
+                    .read(cx)
+                    .running_state()
+                    .read(cx)
+                    .active_pane()
+                    .clone();
+                active_pane.update(cx, |pane, cx| {
+                    let is_zoomed = pane.is_zoomed();
+                    pane.set_zoomed(!is_zoomed, cx);
+                    cx.notify();
+                })
+            }))
             .when(self.active_session.is_some(), |this| {
                 this.on_mouse_down(
                     MouseButton::Right,
