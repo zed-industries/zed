@@ -12006,9 +12006,11 @@ async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
         let task_completion_item = closure_completion_item.clone();
         counter_clone.fetch_add(1, atomic::Ordering::Release);
         async move {
-            Ok(Some(lsp::CompletionResponse::Array(vec![
-                task_completion_item,
-            ])))
+            Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                is_incomplete: true,
+                item_defaults: None,
+                items: vec![task_completion_item],
+            })))
         }
     });
 
@@ -21040,8 +21042,10 @@ pub fn handle_completion_request(
                     params.text_document_position.position,
                     complete_from_position
                 );
-                Ok(Some(lsp::CompletionResponse::Array(
-                    completions
+                Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                    is_incomplete: true,
+                    item_defaults: None,
+                    items: completions
                         .iter()
                         .map(|completion_text| lsp::CompletionItem {
                             label: completion_text.to_string(),
@@ -21052,7 +21056,7 @@ pub fn handle_completion_request(
                             ..Default::default()
                         })
                         .collect(),
-                )))
+                })))
             }
         });
 
