@@ -306,7 +306,18 @@ impl LspAdapter for PythonLspAdapter {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                     .and_then(|s| s.settings.clone())
-                    .unwrap_or_default();
+                    .unwrap_or_else(|| {
+                        json!({
+                            "plugins": {
+                                "pycodestyle": {"enabled": false},
+                                "rope_autoimport": {"enabled": true, "memory": true},
+                                "pylsp_mypy": {"enabled": false}
+                            },
+                            "rope": {
+                                "ropeFolder": null
+                            },
+                        })
+                    });
 
             // If python.pythonPath is not set in user config, do so using our toolchain picker.
             if let Some(toolchain) = toolchain {
@@ -379,17 +390,19 @@ impl ContextProvider for PythonContextProvider {
             };
 
         let module_target = self.build_module_target(variables);
-        let worktree_id = location
-            .file_location
-            .buffer
-            .read(cx)
-            .file()
-            .map(|f| f.worktree_id(cx));
+        let location_file = location.file_location.buffer.read(cx).file().cloned();
+        let worktree_id = location_file.as_ref().map(|f| f.worktree_id(cx));
 
         cx.spawn(async move |cx| {
             let raw_toolchain = if let Some(worktree_id) = worktree_id {
+                let file_path = location_file
+                    .as_ref()
+                    .and_then(|f| f.path().parent())
+                    .map(|p| Arc::from(p))
+                    .unwrap_or_else(|| Arc::from("".as_ref()));
+                    
                 toolchains
-                    .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
+                    .active_toolchain(worktree_id, file_path, "Python".into(), cx)
                     .await
                     .map_or_else(
                         || String::from("python3"),
@@ -398,14 +411,16 @@ impl ContextProvider for PythonContextProvider {
             } else {
                 String::from("python3")
             };
+            
             let active_toolchain = format!("\"{raw_toolchain}\"");
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            let raw_toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
+            let raw_toolchain_var = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
+            
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
                     .chain(module_target.into_iter())
-                    .chain([toolchain, raw_toolchain]),
+                    .chain([toolchain, raw_toolchain_var]),
             ))
         })
     }
