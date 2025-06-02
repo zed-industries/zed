@@ -189,7 +189,7 @@ zed --system-specs
 
 will print the system specs to the terminal like so. It is strongly recommended to copy the output verbatim into the issue on GitHub, as it uses markdown formatting to ensure the output is readable.
 
-Additionally, it is extremely benificial to provide the contents of your Zed log when reporting such issues. The log is usually stored at `~/.local/share/zed/logs/Zed.log`. The recommended process for producing a helpful log file is as follows:
+Additionally, it is extremely beneficial to provide the contents of your Zed log when reporting such issues. The log is usually stored at `~/.local/share/zed/logs/Zed.log`. The recommended process for producing a helpful log file is as follows:
 
 ```sh
 truncate -s 0 ~/.local/share/zed/logs/Zed.log # Clear the log file
