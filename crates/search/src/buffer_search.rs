@@ -1022,7 +1022,7 @@ impl BufferSearchBar {
         self.select_match(Direction::Prev, 1, window, cx);
     }
 
-    fn select_all_matches(
+    pub fn select_all_matches(
         &mut self,
         _: &SelectAllMatches,
         window: &mut Window,
