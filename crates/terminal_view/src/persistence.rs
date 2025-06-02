@@ -102,7 +102,6 @@ pub(crate) fn deserialize_terminal_panel(
         })?;
         match &serialized_panel.items {
             SerializedItems::NoSplits(item_ids) => {
-                dbg!("ayy");
                 let items = deserialize_terminal_views(
                     database_id,
                     project,
@@ -119,7 +118,6 @@ pub(crate) fn deserialize_terminal_panel(
                 })?;
             }
             SerializedItems::WithSplits(serialized_pane_group) => {
-                dbg!("lmao");
                 let center_pane = deserialize_pane_group(
                     workspace,
                     project,
@@ -234,7 +232,6 @@ async fn deserialize_pane_group(
                 .log_err()?;
             let active_item = serialized_pane.active_item;
             let pinned_count = serialized_pane.pinned_count;
-            dbg!(pinned_count);
             let terminal = pane
                 .update_in(cx, |pane, window, cx| {
                     populate_pane_items(pane, new_items, active_item, window, cx);
