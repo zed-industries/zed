@@ -4244,7 +4244,6 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
- "serde_json_lenient",
  "settings",
  "shlex",
  "sysinfo",
