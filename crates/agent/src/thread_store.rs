@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentProfileSettings, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
 use chrono::{DateTime, Utc};
@@ -25,7 +25,6 @@ use prompt_store::{
     UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
-use settings::Settings as _;
 use ui::Window;
 use util::ResultExt as _;
 
@@ -512,14 +511,6 @@ impl ThreadStore {
                 cx.notify();
             })
         })
-    }
-
-    pub fn load_profile_by_id(&self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
-        let assistant_settings = AgentSettings::get_global(cx);
-
-        if let Some(profile) = assistant_settings.profiles.get(&profile_id) {
-            self.load_profile(profile.clone(), cx);
-        }
     }
 
     pub fn load_profile(&self, profile: AgentProfileSettings, cx: &mut Context<Self>) {

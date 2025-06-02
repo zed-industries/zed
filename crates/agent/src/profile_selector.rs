@@ -5,22 +5,20 @@ use agent_settings::{
     builtin_profiles,
 };
 use fs::Fs;
-use gpui::{Action, Empty, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
+use gpui::{Action, Empty, Entity, FocusHandle, Subscription, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
     ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, Tooltip,
     prelude::*,
 };
-use util::ResultExt as _;
 
-use crate::{ManageProfiles, Thread, ThreadStore, ToggleProfileSelector};
+use crate::{ManageProfiles, Thread, ToggleProfileSelector};
 
 pub struct ProfileSelector {
     profiles: GroupedAgentProfiles,
     fs: Arc<dyn Fs>,
     thread: Entity<Thread>,
-    thread_store: WeakEntity<ThreadStore>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -30,7 +28,6 @@ impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
         thread: Entity<Thread>,
-        thread_store: WeakEntity<ThreadStore>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -42,7 +39,6 @@ impl ProfileSelector {
             profiles: GroupedAgentProfiles::from_settings(AgentSettings::get_global(cx)),
             fs,
             thread,
-            thread_store,
             menu_handle: PopoverMenuHandle::default(),
             focus_handle,
             _subscriptions: vec![settings_subscription],
@@ -125,7 +121,6 @@ impl ProfileSelector {
         entry.handler({
             let fs = self.fs.clone();
             let thread = self.thread.clone();
-            let thread_store = self.thread_store.clone();
             let profile_id = profile_id.clone();
             move |_window, cx| {
                 update_settings_file::<AgentSettings>(fs.clone(), cx, {
@@ -138,12 +133,6 @@ impl ProfileSelector {
                 thread.update(cx, |this, cx| {
                     this.set_profile(profile_id.clone(), cx);
                 });
-
-                thread_store
-                    .update(cx, |this, cx| {
-                        this.load_profile_by_id(profile_id.clone(), cx);
-                    })
-                    .log_err();
             }
         })
     }
