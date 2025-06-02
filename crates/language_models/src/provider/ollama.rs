@@ -11,7 +11,7 @@ use language_model::{
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, Role,
+    LanguageModelRequest, MessageContent, RateLimiter, Role,
 };
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
@@ -54,6 +54,8 @@ pub struct AvailableModel {
     pub keep_alive: Option<KeepAlive>,
     /// Whether the model supports tools
     pub supports_tools: Option<bool>,
+    /// Whether the model supports vision
+    pub supports_images: Option<bool>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -98,6 +100,7 @@ impl State {
                             name,
                             None,
                             None,
+                            Some(capabilities.supports_tools()),
                             Some(capabilities.supports_tools()),
                         );
                         Ok(ollama_model)
@@ -219,6 +222,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     keep_alive: model.keep_alive.clone(),
                     supports_tools: model.supports_tools,
+                    supports_vision: model.supports_images,
                 },
             );
         }
@@ -273,6 +277,23 @@ pub struct OllamaLanguageModel {
 
 impl OllamaLanguageModel {
     fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
+        let images = self
+            .model
+            .supports_vision()
+            .unwrap_or(false)
+            .then(|| {
+                request
+                    .messages
+                    .iter()
+                    .flat_map(|msg| &msg.content)
+                    .filter_map(|content| match content {
+                        MessageContent::Image(image) => Some(image.to_base64_url()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         ChatRequest {
             model: self.model.name.clone(),
             messages: request
@@ -300,6 +321,7 @@ impl OllamaLanguageModel {
                 ..Default::default()
             }),
             tools: request.tools.into_iter().map(tool_into_ollama).collect(),
+            images,
         }
     }
 }
@@ -326,7 +348,7 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_vision.unwrap_or(false)
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
