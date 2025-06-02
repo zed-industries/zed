@@ -248,7 +248,8 @@ impl TaskTemplate {
 
                     if env
                         .get(variable_name)
-                        .is_some_and(|arg| !arg.trim().is_empty() || !default.is_empty())
+                        .is_some_and(|arg| !arg.trim().is_empty())
+                        || !default.is_empty()
                     {
                         Ok(Some(""))
                     } else {
@@ -792,10 +793,12 @@ mod tests {
                 "${ANOTHER_DEFINED}".into(),
                 "$UNDEFINED_VAR".into(),
                 "${UNDEFINED_BRACES}".into(),
+                "${UNDEFINED_BRACES: 5}".into(),
                 "$EMPTY_VAR".into(),
                 "${WHITESPACE_VAR}".into(),
                 "middle".into(),
                 "${ZED_WORKTREE_ROOT}".into(),
+                "${UNDEFINED_VAR}/bin".into(),
                 "$PATH".into(),
                 "end".into(),
             ],
@@ -833,6 +836,7 @@ mod tests {
                 "start",
                 "$DEFINED_VAR",
                 "${ANOTHER_DEFINED}",
+                "${UNDEFINED_BRACES: 5}".into(),
                 "middle",
                 "${ZED_WORKTREE_ROOT}",
                 "$PATH",
