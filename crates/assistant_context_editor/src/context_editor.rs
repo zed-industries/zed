@@ -1664,6 +1664,7 @@ impl ContextEditor {
                     for chunk in context.buffer().read(cx).text_for_range(selection.range()) {
                         text.push_str(chunk);
                     }
+                    break;
                 } else if !range.is_empty() {
                     for chunk in context.buffer().read(cx).text_for_range(range) {
                         text.push_str(chunk);
@@ -3283,20 +3284,10 @@ mod tests {
             (Role::User, ""),
         ],cx).await;
 
-        let buffer = cx.update(|_window, cx| context.read(cx).buffer().clone());
-
         // Select & Copy whole user message
-        let message_1_range = context.update(&mut cx, |context, cx| {
-            context
-                .messages(cx)
-                .nth(0)
-                .unwrap()
-                .anchor_range
-                .to_offset(&buffer.read(cx).snapshot())
-        });
         assert_copy_paste_context_editor(
             &context_editor,
-            message_1_range,
+            message_range(&context, 0, &mut cx),
             indoc! {"
                 What is the Zed editor?
                 Zed is a modern, high-performance code editor designed from the ground up for speed and collaboration.
@@ -3306,17 +3297,9 @@ mod tests {
         );
 
         // Select & Copy whole assistant message
-        let message_2_range = context.update(&mut cx, |context, cx| {
-            context
-                .messages(cx)
-                .nth(1)
-                .unwrap()
-                .anchor_range
-                .to_offset(&buffer.read(cx).snapshot())
-        });
         assert_copy_paste_context_editor(
             &context_editor,
-            message_2_range,
+            message_range(&context, 1, &mut cx),
             indoc! {"
                 What is the Zed editor?
                 Zed is a modern, high-performance code editor designed from the ground up for speed and collaboration.
@@ -3329,57 +3312,45 @@ mod tests {
 
     #[gpui::test]
     async fn test_copy_paste_no_selection(cx: &mut TestAppContext) {
-        let (_context, context_editor, mut cx) = setup_context_editor_text(
-            vec![(
-                Role::User,
-                indoc! {"
-                    abc
-                    def
-                    ghi
-                "},
-            )],
+        let (context, context_editor, mut cx) = setup_context_editor_text(
+            vec![
+                (Role::User, "user1"),
+                (Role::Assistant, "assistant1"),
+                (Role::Assistant, "assistant2"),
+                (Role::User, ""),
+            ],
             cx,
         )
         .await;
 
-        // Copy and paste first line
-        context_editor.update_in(&mut cx, |context_editor, window, cx| {
-            context_editor.copy(&Default::default(), window, cx);
-            context_editor.paste(&Default::default(), window, cx);
-            assert_eq!(
-                context_editor.editor.read(cx).text(cx),
-                indoc! {"
-                    abc
-                    abc
-                    def
-                    ghi
-                "},
-            );
-        });
+        // Copy and paste first assistant message
+        let message_2_range = message_range(&context, 1, &mut cx);
+        assert_copy_paste_context_editor(
+            &context_editor,
+            message_2_range.start..message_2_range.start,
+            indoc! {"
+                user1
+                assistant1
+                assistant2
+                assistant1
+            "},
+            &mut cx,
+        );
 
-        // Cut and paste first line
-        context_editor.update_in(&mut cx, |context_editor, window, cx| {
-            context_editor.cut(&Default::default(), window, cx);
-            assert_eq!(
-                context_editor.editor.read(cx).text(cx),
-                indoc! {"
-                    abc
-                    def
-                    ghi
-                "},
-            );
-
-            context_editor.paste(&Default::default(), window, cx);
-            assert_eq!(
-                context_editor.editor.read(cx).text(cx),
-                indoc! {"
-                    abc
-                    abc
-                    def
-                    ghi
-                "},
-            );
-        });
+        // Copy and cut second assistant message
+        let message_3_range = message_range(&context, 2, &mut cx);
+        assert_copy_paste_context_editor(
+            &context_editor,
+            message_3_range.start..message_3_range.start,
+            indoc! {"
+                user1
+                assistant1
+                assistant2
+                assistant1
+                assistant2
+            "},
+            &mut cx,
+        );
     }
 
     #[gpui::test]
@@ -3492,6 +3463,21 @@ mod tests {
             .unwrap();
 
         (context, context_editor, cx)
+    }
+
+    fn message_range(
+        context: &Entity<AssistantContext>,
+        message_ix: usize,
+        cx: &mut TestAppContext,
+    ) -> Range<usize> {
+        context.update(cx, |context, cx| {
+            context
+                .messages(cx)
+                .nth(message_ix)
+                .unwrap()
+                .anchor_range
+                .to_offset(&context.buffer().read(cx).snapshot())
+        })
     }
 
     fn assert_copy_paste_context_editor<T: editor::ToOffset>(
