@@ -11,11 +11,10 @@ use buffer_diff::{
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
-    GitHostingProvider,
+    GitHostingProviderRegistry,
     repository::RepoPath,
     status::{StatusCode, TrackedStatus},
 };
-use git_hosting_providers::GitHostingProviderSettings;
 use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
@@ -221,7 +220,10 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
     init_test(cx);
-    cx.update(|cx| GitHostingProviderSettings::register(cx));
+    cx.update(|cx| {
+        GitHostingProviderRegistry::default_global(cx);
+        git_hosting_providers::init(cx);
+    });
 
     let fs = FakeFs::new(cx.executor());
     let str_path = path!("/dir");
@@ -246,25 +248,40 @@ async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let (worktree, _) =
+    let (_worktree, _) =
         project.read_with(cx, |project, cx| project.find_worktree(path, cx).unwrap());
     cx.executor().run_until_parked();
-    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
 
-    cx.update_global::<SettingsStore, _>(|settings, _| {
-        dbg!(&settings);
+    cx.update(|cx| {
+        let provider = GitHostingProviderRegistry::global(cx);
+        assert!(
+            provider
+                .list_hosting_providers()
+                .into_iter()
+                .find(|provider| provider.name() == "foo")
+                .is_some(),
+        );
+    });
 
-        let settings_location = SettingsLocation {
-            worktree_id,
-            path: Path::new(""),
-        };
+    fs.atomic_write(
+        Path::new(path!("/dir/.zed/settings.json")).to_owned(),
+        "{}".into(),
+    )
+    .await
+    .unwrap();
 
-        let provider = settings.get::<GitHostingProviderSettings>(Some(settings_location));
+    cx.run_until_parked();
 
-        let provider_config = provider.git_hosting_providers.first().unwrap();
-        assert_eq!(&provider_config.name, "foo");
-        assert_eq!(&provider_config.base_url, "https://google.com");
-    })
+    cx.update(|cx| {
+        let provider = GitHostingProviderRegistry::global(cx);
+        assert!(
+            provider
+                .list_hosting_providers()
+                .into_iter()
+                .find(|provider| provider.name() == "foo")
+                .is_none(),
+        );
+    });
 }
 
 #[gpui::test]

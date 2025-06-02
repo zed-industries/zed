@@ -4,7 +4,6 @@ use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
-use git_hosting_providers::GitHostingProviderSettings;
 use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Task};
 use lsp::LanguageServerName;
 use paths::{

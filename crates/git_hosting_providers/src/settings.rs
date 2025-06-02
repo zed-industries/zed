@@ -29,21 +29,30 @@ fn update_git_hosting_providers_from_settings(cx: &mut App) {
     let settings = GitHostingProviderSettings::get_global(cx);
     let provider_registry = GitHostingProviderRegistry::global(cx);
 
-    // todo!(Check if we should be clearing the registry)
+    let local_values: Vec<GitHostingProviderConfig> = settings_store
+        .get_all_locals::<GitHostingProviderSettings>()
+        .into_iter()
+        .flat_map(|(_, _, providers)| providers.git_hosting_providers.clone())
+        .collect();
 
-    for provider in settings.git_hosting_providers.iter() {
-        let Some(url) = Url::parse(&provider.base_url).log_err() else {
-            continue;
-        };
+    let iter = settings
+        .git_hosting_providers
+        .clone()
+        .into_iter()
+        .chain(local_values)
+        .filter_map(|provider| {
+            let url = Url::parse(&provider.base_url).log_err()?;
 
-        let provider = match provider.provider {
-            GitHostingProviderKind::Bitbucket => Arc::new(Bitbucket::new(&provider.name, url)) as _,
-            GitHostingProviderKind::Github => Arc::new(Github::new(&provider.name, url)) as _,
-            GitHostingProviderKind::Gitlab => Arc::new(Gitlab::new(&provider.name, url)) as _,
-        };
+            Some(match provider.provider {
+                GitHostingProviderKind::Bitbucket => {
+                    Arc::new(Bitbucket::new(&provider.name, url)) as _
+                }
+                GitHostingProviderKind::Github => Arc::new(Github::new(&provider.name, url)) as _,
+                GitHostingProviderKind::Gitlab => Arc::new(Gitlab::new(&provider.name, url)) as _,
+            })
+        });
 
-        provider_registry.register_hosting_provider(provider);
-    }
+    provider_registry.set_setting_providers(iter);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

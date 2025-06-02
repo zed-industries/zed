@@ -12,7 +12,6 @@ use serde_json::Value;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
-    backtrace::Backtrace,
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
@@ -251,6 +250,7 @@ trait AnySettingValue: 'static + Send + Sync {
         cx: &mut App,
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
     fn json_schema(
@@ -375,6 +375,24 @@ impl SettingsStore {
             .value_for_path(path)
             .downcast_ref::<T>()
             .expect("no default value for setting type")
+    }
+
+    /// Get all values from project specific settings
+    pub fn get_all_locals<T: Settings>(&self) -> Vec<(WorktreeId, Arc<Path>, &T)> {
+        self.setting_values
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
+            .all_local_values()
+            .into_iter()
+            .map(|(id, path, any)| {
+                (
+                    id,
+                    path,
+                    any.downcast_ref::<T>()
+                        .expect("wrong value type for setting"),
+                )
+            })
+            .collect()
     }
 
     /// Override the global value for a setting.
@@ -1049,11 +1067,8 @@ impl SettingsStore {
                     break;
                 }
 
-                dbg!(serde_json::to_string_pretty(&local_settings));
-                dbg!("deserialize", setting_value.setting_type_name());
                 match setting_value.deserialize_setting(local_settings) {
                     Ok(local_settings) => {
-                        dbg!("it worked!");
                         paths_stack.push(Some((*root_id, directory_path.as_ref())));
                         project_settings_stack.push(local_settings);
 
@@ -1088,10 +1103,9 @@ impl SettingsStore {
                         }
                     }
                     Err(error) => {
-                        dbg!("ERROR");
                         return Err(InvalidSettingsError::LocalSettings {
                             path: directory_path.join(local_settings_file_relative_path()),
-                            message: dbg!(error.to_string()),
+                            message: error.to_string(),
                         });
                     }
                 }
@@ -1240,26 +1254,21 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         (key, value)
     }
 
-    fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
-        dbg!(type_name::<T>());
-        dbg!("getting value for path");
-        if let Some(SettingsLocation { worktree_id, path }) = path {
-            dbg!(self.local_values.len());
-            dbg!(&path);
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)> {
+        self.local_values
+            .iter()
+            .map(|(id, path, value)| (*id, path.clone(), value as _))
+            .collect()
+    }
 
+    fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
+        if let Some(SettingsLocation { worktree_id, path }) = path {
             for (settings_root_id, settings_path, value) in self.local_values.iter().rev() {
-                dbg!("loop");
                 if worktree_id == *settings_root_id && path.starts_with(settings_path) {
                     return value;
-                } else {
-                    dbg!("HERE");
                 }
             }
-        } else {
-            dbg!("no");
         }
-        dbg!("Failed to find global settings value");
-        // dbg!(&Backtrace::force_capture());
         self.global_value
             .as_ref()
             .unwrap_or_else(|| panic!("no default value for setting {}", self.setting_type_name()))
