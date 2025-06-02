@@ -9,13 +9,13 @@ use crate::{
     KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -25,7 +25,7 @@ use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
 use parking_lot::RwLock;
-use raw_window_handle::{HandleError, HasWindowHandle};
+use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -52,6 +52,7 @@ use uuid::Uuid;
 
 mod prompts;
 
+use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
 pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
@@ -263,15 +264,13 @@ impl FocusHandle {
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
         let ref_count = lock.get(id)?;
-        if ref_count.load(SeqCst) == 0 {
-            None
-        } else {
-            ref_count.fetch_add(1, SeqCst);
-            Some(Self {
-                id,
-                handles: handles.clone(),
-            })
+        if atomic_incr_if_not_zero(ref_count) == 0 {
+            return None;
         }
+        Some(Self {
+            id,
+            handles: handles.clone(),
+        })
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
@@ -3822,28 +3821,36 @@ impl Window {
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
-    pub fn prompt(
+    pub fn prompt<T>(
         &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[T],
         cx: &mut App,
-    ) -> oneshot::Receiver<usize> {
+    ) -> oneshot::Receiver<usize>
+    where
+        T: Clone + Into<PromptButton>,
+    {
         let prompt_builder = cx.prompt_builder.take();
         let Some(prompt_builder) = prompt_builder else {
             unreachable!("Re-entrant window prompting is not supported by GPUI");
         };
 
+        let answers = answers
+            .iter()
+            .map(|answer| answer.clone().into())
+            .collect::<Vec<_>>();
+
         let receiver = match &prompt_builder {
             PromptBuilder::Default => self
                 .platform_window
-                .prompt(level, message, detail, answers)
+                .prompt(level, message, detail, &answers)
                 .unwrap_or_else(|| {
-                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
                 }),
             PromptBuilder::Custom(_) => {
-                self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
+                self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
             }
         };
 
@@ -3858,7 +3865,7 @@ impl Window {
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
         cx: &mut App,
     ) -> oneshot::Receiver<usize> {
         let (sender, receiver) = oneshot::channel();
@@ -4002,6 +4009,12 @@ impl Window {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
+    }
+
+    /// Perform titlebar double-click action.
+    /// This is MacOS specific.
+    pub fn titlebar_double_click(&self) {
+        self.platform_window.titlebar_double_click();
     }
 
     /// Toggles the inspector mode on this window.
@@ -4412,6 +4425,14 @@ impl AnyWindowHandle {
 impl HasWindowHandle for Window {
     fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
         self.platform_window.window_handle()
+    }
+}
+
+impl HasDisplayHandle for Window {
+    fn display_handle(
+        &self,
+    ) -> std::result::Result<raw_window_handle::DisplayHandle<'_>, HandleError> {
+        self.platform_window.display_handle()
     }
 }
 

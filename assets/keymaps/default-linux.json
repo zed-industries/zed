@@ -940,6 +940,13 @@
     }
   },
   {
+    "context": "FileFinder",
+    "bindings": {
+      "ctrl-shift-a": "file_finder::ToggleSplitMenu",
+      "ctrl-shift-i": "file_finder::ToggleFilterMenu"
+    }
+  },
+  {
     "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "bindings": {
       "ctrl-shift-p": "file_finder::SelectPrevious",

@@ -1001,6 +1001,14 @@
     }
   },
   {
+    "context": "FileFinder",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-a": "file_finder::ToggleSplitMenu",
+      "cmd-shift-i": "file_finder::ToggleFilterMenu"
+    }
+  },
+  {
     "context": "FileFinder || (FileFinder > Picker > Editor) || (FileFinder > Picker > menu)",
     "use_key_equivalents": true,
     "bindings": {

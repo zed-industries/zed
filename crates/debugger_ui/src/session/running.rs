@@ -8,7 +8,7 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    new_session_modal::resolve_path,
+    new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
 };
 
@@ -171,6 +171,10 @@ impl Item for SubView {
     /// A SharedString gets converted to a enum and back during serialization/deserialization.
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         self.kind.to_shared_string()
+    }
+
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+        Some(self.kind.tab_tooltip())
     }
 
     fn tab_content(
@@ -399,6 +403,9 @@ pub(crate) fn new_debugger_pane(
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
+                                    .when_some(item.tab_tooltip_text(cx), |this, tooltip| {
+                                        this.tooltip(Tooltip::text(tooltip))
+                                    })
                                     .map(|this| {
                                         let theme = cx.theme();
                                         if selected {
@@ -559,7 +566,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn relativlize_paths(
+    pub(crate) fn relativize_paths(
         key: Option<&str>,
         config: &mut serde_json::Value,
         context: &TaskContext,
@@ -567,12 +574,12 @@ impl RunningState {
         match config {
             serde_json::Value::Object(obj) => {
                 obj.iter_mut()
-                    .for_each(|(key, value)| Self::relativlize_paths(Some(key), value, context));
+                    .for_each(|(key, value)| Self::relativize_paths(Some(key), value, context));
             }
             serde_json::Value::Array(array) => {
                 array
                     .iter_mut()
-                    .for_each(|value| Self::relativlize_paths(None, value, context));
+                    .for_each(|value| Self::relativize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
                 // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
@@ -799,13 +806,13 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
-            Self::relativlize_paths(None, &mut config, &task_context);
+            Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             let request_type = dap_registry
                 .adapter(&adapter)
                 .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                .and_then(|adapter| adapter.validate_config(&config));
+                .and_then(|adapter| adapter.request_kind(&config));
 
             let config_is_valid = request_type.is_ok();
 
@@ -947,7 +954,10 @@ impl RunningState {
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
-                anyhow::bail!("No request or build provided");
+                let Err(e) = request_type else {
+                    unreachable!();
+                };
+                anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
             };
 
             Ok(DebugTaskDefinition {

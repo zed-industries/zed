@@ -172,6 +172,8 @@ async fn test_subscribe_to_price() {
         current_period_start: now.timestamp(),
         current_period_end: (now + Duration::days(30)).timestamp(),
         items: vec![],
+        cancel_at: None,
+        cancellation_details: None,
     };
     stripe_client
         .subscriptions
@@ -211,6 +213,8 @@ async fn test_subscribe_to_price() {
                 id: StripeSubscriptionItemId("si_test".into()),
                 price: Some(price.clone()),
             }],
+            cancel_at: None,
+            cancellation_details: None,
         };
         stripe_client
             .subscriptions
@@ -280,6 +284,8 @@ async fn test_subscribe_to_zed_free() {
                 id: StripeSubscriptionItemId("si_test".into()),
                 price: Some(zed_pro_price.clone()),
             }],
+            cancel_at: None,
+            cancellation_details: None,
         };
         stripe_client.subscriptions.lock().insert(
             existing_subscription.id.clone(),
@@ -309,6 +315,8 @@ async fn test_subscribe_to_zed_free() {
                 id: StripeSubscriptionItemId("si_test".into()),
                 price: Some(zed_pro_price.clone()),
             }],
+            cancel_at: None,
+            cancellation_details: None,
         };
         stripe_client.subscriptions.lock().insert(
             existing_subscription.id.clone(),

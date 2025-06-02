@@ -114,6 +114,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
+ "sqlez",
  "streaming_diff",
  "telemetry",
  "telemetry_events",
@@ -133,6 +134,7 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zed_llm_client",
+ "zstd",
 ]
 
 [[package]]
@@ -525,6 +527,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "indexed_docs",
+ "indoc",
  "language",
  "language_model",
  "languages",
@@ -2200,6 +2203,7 @@ dependencies = [
  "editor",
  "gpui",
  "itertools 0.14.0",
+ "settings",
  "theme",
  "ui",
  "workspace",
@@ -7069,6 +7073,7 @@ dependencies = [
  "image",
  "inventory",
  "itertools 0.14.0",
+ "libc",
  "log",
  "lyon",
  "media",

@@ -39,6 +39,8 @@ pub struct StripeSubscription {
     pub current_period_end: i64,
     pub current_period_start: i64,
     pub items: Vec<StripeSubscriptionItem>,
+    pub cancel_at: Option<i64>,
+    pub cancellation_details: Option<StripeCancellationDetails>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, derive_more::Display)]
@@ -48,6 +50,18 @@ pub struct StripeSubscriptionItemId(pub Arc<str>);
 pub struct StripeSubscriptionItem {
     pub id: StripeSubscriptionItemId,
     pub price: Option<StripePrice>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StripeCancellationDetails {
+    pub reason: Option<StripeCancellationDetailsReason>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StripeCancellationDetailsReason {
+    CancellationRequested,
+    PaymentDisputed,
+    PaymentFailed,
 }
 
 #[derive(Debug)]
@@ -175,6 +189,8 @@ pub struct StripeCheckoutSession {
 pub trait StripeClient: Send + Sync {
     async fn list_customers_by_email(&self, email: &str) -> Result<Vec<StripeCustomer>>;
 
+    async fn get_customer(&self, customer_id: &StripeCustomerId) -> Result<StripeCustomer>;
+
     async fn create_customer(&self, params: CreateCustomerParams<'_>) -> Result<StripeCustomer>;
 
     async fn list_subscriptions_for_customer(
@@ -197,6 +213,8 @@ pub trait StripeClient: Send + Sync {
         subscription_id: &StripeSubscriptionId,
         params: UpdateSubscriptionParams,
     ) -> Result<()>;
+
+    async fn cancel_subscription(&self, subscription_id: &StripeSubscriptionId) -> Result<()>;
 
     async fn list_prices(&self) -> Result<Vec<StripePrice>>;
 
