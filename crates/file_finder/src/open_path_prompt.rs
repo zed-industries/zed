@@ -20,9 +20,9 @@ use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
 
-#[cfg(not(target_os = "windows"))]
-const PROMPT_ROOT: &str = "C:\\";
 #[cfg(target_os = "windows")]
+const PROMPT_ROOT: &str = "C:\\";
+#[cfg(not(target_os = "windows"))]
 const PROMPT_ROOT: &str = "/";
 
 pub struct OpenPathDelegate {
@@ -337,29 +337,58 @@ impl PickerDelegate for OpenPathDelegate {
 
             this.update(cx, |this, cx| {
                 this.delegate.matches.clear();
+                this.delegate.selected_index = 0;
                 this.delegate.string_matches = matches.clone();
                 this.delegate
                     .matches
                     .extend(matches.into_iter().map(|m| m.candidate_id));
-                this.delegate.matches.sort_by_key(|m| {
-                    (
-                        match &this.delegate.directory_state {
-                            DirectoryState::List {
-                                match_candidates, ..
-                            } => match_candidates
+
+                match &mut this.delegate.directory_state {
+                    DirectoryState::List {
+                        match_candidates, ..
+                    } => this.delegate.matches.sort_by_key(|m| {
+                        (
+                            match_candidates
                                 .get(*m)
                                 .map(|c| !c.path.string.starts_with(&suffix)),
-                            DirectoryState::Create {
-                                match_candidates, ..
-                            } => match_candidates
-                                .get(*m)
-                                .map(|c| !c.path.string.starts_with(&suffix)),
-                            DirectoryState::None { .. } => None,
-                        },
-                        *m,
-                    )
-                });
-                this.delegate.selected_index = 0;
+                            *m,
+                        )
+                    }),
+                    DirectoryState::Create {
+                        match_candidates, ..
+                    } => {
+                        // TODO kb no conflict & other custom highlights
+                        // TODO kb when added a new file in query, then removed characters, odd result persists
+                        // TODO kb confirm(?) does not work
+                        if this.delegate.matches.is_empty() {
+                            let id = 0;
+                            *match_candidates = vec![CandidateInfo {
+                                path: StringMatchCandidate::new(id, &suffix),
+                                is_dir: false,
+                            }];
+                            this.delegate.matches = vec![id];
+                            this.delegate.string_matches = vec![StringMatch {
+                                candidate_id: id,
+                                score: 1.0,
+                                positions: (0..suffix.len()).collect(),
+                                string: suffix,
+                            }];
+                        } else {
+                            this.delegate.matches.sort_by_key(|m| {
+                                (
+                                    match_candidates
+                                        .get(*m)
+                                        .map(|c| !c.path.string.starts_with(&suffix)),
+                                    *m,
+                                )
+                            });
+                        }
+                    }
+                    DirectoryState::None { .. } => {
+                        this.delegate.matches.sort_by_key(|m| (None::<()>, *m))
+                    }
+                }
+
                 cx.notify();
             })
             .ok();
@@ -410,7 +439,7 @@ impl PickerDelegate for OpenPathDelegate {
             return;
         };
 
-        match &self.directory_state {
+        match dbg!(&self.directory_state) {
             DirectoryState::None { .. } => return,
             DirectoryState::List {
                 path,
@@ -432,6 +461,7 @@ impl PickerDelegate for OpenPathDelegate {
             }
             DirectoryState::Create {
                 path,
+                // TODO kb remove this, replace with "conflicts" or smth. when a single entry points to the real file FS entry
                 is_dir,
                 match_candidates,
             } => match is_dir {
