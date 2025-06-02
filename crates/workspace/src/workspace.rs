@@ -6203,6 +6203,10 @@ impl Render for Workspace {
                                         .inset_0()
                                         .shadow_lg();
 
+                                    if !WorkspaceSettings::get_global(cx).zoomed_padding {
+                                       return Some(div);
+                                    }
+
                                     Some(match self.zoomed_position {
                                         Some(DockPosition::Left) => div.right_2().border_r_1(),
                                         Some(DockPosition::Right) => div.left_2().border_l_1(),

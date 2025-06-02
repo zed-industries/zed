@@ -26,6 +26,7 @@ pub struct WorkspaceSettings {
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub on_last_window_closed: OnLastWindowClosed,
+    pub zoomed_padding: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -197,6 +198,12 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
     pub on_last_window_closed: Option<OnLastWindowClosed>,
+    /// Whether to show padding for zoomed panels.
+    /// When enabled, zoomed bottom panels will have some top padding,
+    /// while zoomed left/right panels will have padding to the right/left (respectively).
+    ///
+    /// Default: true
+    pub zoomed_padding: Option<bool>,
 }
 
 #[derive(Deserialize)]
