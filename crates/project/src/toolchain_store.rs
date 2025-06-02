@@ -318,19 +318,14 @@ impl LocalToolchainStore {
         cx: &App,
     ) -> Task<Option<ToolchainList>> {
         let registry = self.languages.clone();
-        let Some(abs_path) = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(path.worktree_id, cx)
-            .map(|worktree| worktree.read(cx).abs_path())
-        else {
+        let Some(abs_path) = self.worktree_store.read(cx).absolutize(&path, cx) else {
             return Task::ready(None);
         };
         let environment = self.project_environment.clone();
         cx.spawn(async move |cx| {
             let project_env = environment
                 .update(cx, |environment, cx| {
-                    environment.get_directory_environment(abs_path.clone(), cx)
+                    environment.get_directory_environment(abs_path.as_path().into(), cx)
                 })
                 .ok()?
                 .await;
