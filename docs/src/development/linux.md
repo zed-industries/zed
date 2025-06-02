@@ -165,15 +165,17 @@ Or Option B: By using the `ZED_DEVICE_ID={device_id}` environment variable to sp
 
 You can obtain the device ID of your GPU by running `lspci -nn | grep VGA` which will output each GPU on one line like:
 
- ```
- 08:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484] (rev a1)
- ````
- where the device ID here is `2484`. This value is in hexadecimal, so to force Zed to use this specific GPU you would set the environment variable like so:
- ```
- ZED_DEVICE_ID=0x2484
- ```
- Make sure to export the variable if you choose to define it globally in a `.bashrc` or similar
+```
+08:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484] (rev a1)
+```
 
+where the device ID here is `2484`. This value is in hexadecimal, so to force Zed to use this specific GPU you would set the environment variable like so:
+
+```
+ZED_DEVICE_ID=0x2484
+```
+
+Make sure to export the variable if you choose to define it globally in a `.bashrc` or similar
 
 #### Reporting Vulkan/GPU issues
 
@@ -187,7 +189,7 @@ zed --system-specs
 
 will print the system specs to the terminal like so. It is strongly recommended to copy the output verbatim into the issue on GitHub, as it uses markdown formatting to ensure the output is readable.
 
-Additionally, it is extremely benificial to provide the contents of your Zed log when reporting such issues. The log is usually stored at ``~/.local/share/zed/logs/Zed.log``. The recommended process for producing a helpful log file is as follows:
+Additionally, it is extremely benificial to provide the contents of your Zed log when reporting such issues. The log is usually stored at `~/.local/share/zed/logs/Zed.log`. The recommended process for producing a helpful log file is as follows:
 
 ```sh
 truncate -s 0 ~/.local/share/zed/logs/Zed.log # Clear the log file
@@ -216,6 +218,5 @@ It is also highly recommended when pasting the log into a github issue, to do so
 
 </details>
 ````
-
 
 This will cause the logs to be collapsed by default, making it easier to read the issue.
