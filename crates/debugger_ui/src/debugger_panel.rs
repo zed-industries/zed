@@ -326,9 +326,6 @@ impl DebugPanel {
         .detach_and_log_err(cx);
     }
 
-    // f5 if a session is stopped: continue
-    // else f5 if there is no session running: start a new session based on the last scheduled scenario
-    // (and drop dead sessions that derived from that scenario?)
     pub(crate) fn rerun_last_session(
         &mut self,
         workspace: &mut Workspace,
