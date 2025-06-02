@@ -601,7 +601,7 @@ impl CompletionsMenu {
         candidate_id: usize,
         source: Option<&SharedString>,
         is_render: bool,
-        completions: &Box<[Completion]>,
+        completions: &[Completion],
         cx: &mut Context<Editor>,
     ) -> Option<(bool, Entity<Markdown>)> {
         let mut markdown_cache = self.markdown_cache.borrow_mut();
