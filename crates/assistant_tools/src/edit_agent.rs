@@ -26,7 +26,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
-use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
+use streaming_fuzzy_matcher::{FuzzyMatchResult, StreamingFuzzyMatcher};
 use util::debug_panic;
 use zed_llm_client::CompletionIntent;
 
@@ -425,20 +425,34 @@ impl EditAgent {
                 }
             }
 
-            let old_range = matcher.finish();
-            old_range_tx.send(old_range.clone())?;
-            if let Some(old_range) = old_range {
-                let line_indent =
-                    LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
-                Ok((
-                    edit_events,
-                    Some(ResolvedOldText {
-                        range: old_range,
-                        indent: line_indent,
-                    }),
-                ))
-            } else {
-                Ok((edit_events, None))
+            let match_result = matcher.finish();
+            match match_result {
+                FuzzyMatchResult::SingleMatch(old_range) => {
+                    old_range_tx.send(Some(old_range.clone()))?;
+                    let line_indent =
+                        LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
+                    Ok((
+                        edit_events,
+                        Some(ResolvedOldText {
+                            range: old_range,
+                            indent: line_indent,
+                        }),
+                    ))
+                }
+                FuzzyMatchResult::MultipleMatches { match_count, match_lines, .. } => {
+                    // Multiple matches found - report as unresolved
+                    old_range_tx.send(None)?;
+                    log::warn!(
+                        "Multiple matches ({}) found for old text on lines: {:?}. Please provide more context.",
+                        match_count,
+                        match_lines
+                    );
+                    Ok((edit_events, None))
+                }
+                FuzzyMatchResult::NoMatch => {
+                    old_range_tx.send(None)?;
+                    Ok((edit_events, None))
+                }
             }
         });
 
@@ -1320,6 +1334,81 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         EditAgent::new(model, project, action_log, Templates::new())
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_non_unique_text_error(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! {"
+                    function foo() {
+                        return 42;
+                    }
+
+                    function bar() {
+                        return 42;
+                    }
+
+                    function baz() {
+                        return 42;
+                    }
+                "},
+                cx,
+            )
+        });
+        let (apply, mut events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        // Try to edit the non-unique text "return 42;"
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text>
+                return 42;
+                </old_text>
+                <new_text>
+                return 100;
+                </new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
+
+        // The text should remain unchanged when there are multiple matches
+        let result_text = buffer.read_with(cx, |buffer, _| buffer.snapshot().text());
+
+        // Expected behavior: text remains unchanged when there are multiple matches
+        assert_eq!(
+            result_text,
+            indoc! {"
+                function foo() {
+                    return 42;
+                }
+
+                function bar() {
+                    return 42;
+                }
+
+                function baz() {
+                    return 42;
+                }
+            "},
+            "Text should remain unchanged when there are multiple matches"
+        );
+
+        // The events should include UnresolvedEditRange when there are multiple matches
+        let events = drain_events(&mut events);
+        assert!(
+            events.contains(&EditAgentOutputEvent::UnresolvedEditRange),
+            "Should emit UnresolvedEditRange for non-unique text"
+        );
     }
 
     fn drain_events(
