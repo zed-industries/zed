@@ -61,20 +61,19 @@ impl OpenPathDelegate {
     #[cfg(any(test, feature = "test-support"))]
     pub fn collect_match_candidates(&self) -> Vec<String> {
         match &self.directory_state {
-            DirectoryState::List {
-                match_candidates, ..
-            }
-            | DirectoryState::Create {
-                match_candidates, ..
-            } => self
-                .matches
-                .iter()
-                .filter_map(|&index| {
-                    match_candidates
-                        .get(index)
-                        .map(|candidate| candidate.path.string.clone())
-                })
-                .collect(),
+            DirectoryState::List { current_match, .. }
+            | DirectoryState::Create { current_match, .. } => match current_match {
+                CurrentMatch::Directory { entries } => self
+                    .matches
+                    .iter()
+                    .filter_map(|&index| {
+                        entries
+                            .get(index)
+                            .map(|candidate| candidate.path.string.clone())
+                    })
+                    .collect(),
+                CurrentMatch::File { file, .. } => vec![file.string.clone()],
+            },
             DirectoryState::None { .. } => Vec::new(),
         }
     }
@@ -83,17 +82,27 @@ impl OpenPathDelegate {
 #[derive(Debug)]
 enum DirectoryState {
     List {
-        path: String,
-        match_candidates: Vec<CandidateInfo>,
+        parent_path: String,
+        current_match: CurrentMatch,
         error: Option<SharedString>,
     },
     Create {
-        path: String,
-        match_candidates: Vec<CandidateInfo>,
-        is_dir: Option<bool>,
+        parent_path: String,
+        current_match: CurrentMatch,
     },
     None {
         create: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum CurrentMatch {
+    Directory {
+        entries: Vec<CandidateInfo>,
+    },
+    File {
+        exists: bool,
+        file: StringMatchCandidate,
     },
 }
 
@@ -111,7 +120,19 @@ impl OpenPathPrompt {
     ) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
-            Self::prompt_for_open_path(workspace, lister, tx, window, cx);
+            Self::prompt_for_open_path(workspace, lister, false, tx, window, cx);
+            rx
+        }));
+    }
+
+    pub(crate) fn register_new_path(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut Context<Workspace>,
+    ) {
+        workspace.set_prompt_for_new_path(Box::new(|workspace, lister, window, cx| {
+            let (tx, rx) = futures::channel::oneshot::channel();
+            Self::prompt_for_open_path(workspace, lister, true, tx, window, cx);
             rx
         }));
     }
@@ -119,12 +140,13 @@ impl OpenPathPrompt {
     fn prompt_for_open_path(
         workspace: &mut Workspace,
         lister: DirectoryLister,
+        creating_path: bool,
         tx: oneshot::Sender<Option<Vec<PathBuf>>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
-            let delegate = OpenPathDelegate::new(tx, lister.clone(), false);
+            let delegate = OpenPathDelegate::new(tx, lister.clone(), creating_path);
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
             picker.set_query(query, window, cx);
@@ -170,18 +192,12 @@ impl PickerDelegate for OpenPathDelegate {
         }
 
         let query = match &self.directory_state {
-            DirectoryState::List { path, .. } => {
-                if path == &dir {
+            DirectoryState::List { parent_path, .. }
+            | DirectoryState::Create { parent_path, .. } => {
+                if parent_path == &dir {
                     None
                 } else {
                     Some(lister.list_directory(dir.clone(), cx))
-                }
-            }
-            DirectoryState::Create { path, is_dir, .. } => {
-                if is_dir.unwrap_or(false) && path != &dir {
-                    Some(lister.list_directory(dir.clone(), cx))
-                } else {
-                    None
                 }
             }
             DirectoryState::None { .. } => Some(lister.list_directory(dir.clone(), cx)),
@@ -224,14 +240,18 @@ impl PickerDelegate for OpenPathDelegate {
                                     .collect::<Vec<_>>();
 
                                 DirectoryState::List {
-                                    match_candidates,
-                                    path: dir,
+                                    current_match: CurrentMatch::Directory {
+                                        entries: match_candidates,
+                                    },
+                                    parent_path: dir,
                                     error: None,
                                 }
                             }
                             Err(err) => DirectoryState::List {
-                                match_candidates: Vec::new(),
-                                path: dir,
+                                current_match: CurrentMatch::Directory {
+                                    entries: Vec::new(),
+                                },
+                                parent_path: dir,
                                 error: Some(err.to_string().into()),
                             },
                         };
@@ -262,18 +282,18 @@ impl PickerDelegate for OpenPathDelegate {
                                     .collect::<Vec<_>>();
 
                                 DirectoryState::Create {
-                                    match_candidates,
-                                    path: dir,
-                                    is_dir: Some(true),
+                                    current_match: CurrentMatch::Directory {
+                                        entries: match_candidates,
+                                    },
+                                    parent_path: dir,
                                 }
                             }
                             Err(_) => DirectoryState::Create {
-                                match_candidates: vec![CandidateInfo {
-                                    path: StringMatchCandidate::new(0, &suffix),
-                                    is_dir: false,
-                                }],
-                                path: dir,
-                                is_dir: None,
+                                current_match: CurrentMatch::File {
+                                    exists: false,
+                                    file: StringMatchCandidate::new(0, &suffix),
+                                },
+                                parent_path: dir,
                             },
                         };
                     }
@@ -281,7 +301,7 @@ impl PickerDelegate for OpenPathDelegate {
                 .ok();
             }
 
-            let Some(mut match_candidates) = this
+            let Some(mut current_match) = this
                 .update(cx, |this, cx| match &this.delegate.directory_state {
                     DirectoryState::List { error: Some(_), .. } => {
                         this.delegate.matches.clear();
@@ -289,14 +309,12 @@ impl PickerDelegate for OpenPathDelegate {
                         cx.notify();
                         None
                     }
-                    DirectoryState::List {
-                        match_candidates,
+                    DirectoryState::Create { current_match, .. }
+                    | DirectoryState::List {
+                        current_match,
                         error: None,
                         ..
-                    } => Some(match_candidates.clone()),
-                    DirectoryState::Create {
-                        match_candidates, ..
-                    } => Some(match_candidates.clone()),
+                    } => Some(current_match.clone()),
                     DirectoryState::None { .. } => None,
                 })
                 .unwrap_or(None)
@@ -305,15 +323,19 @@ impl PickerDelegate for OpenPathDelegate {
             };
 
             if !suffix.starts_with('.') {
-                match_candidates.retain(|m| !m.path.string.starts_with('.'));
+                if let CurrentMatch::Directory { entries } = &mut current_match {
+                    entries.retain(|entry| !entry.path.string.starts_with('.'));
+                }
             }
             if suffix.is_empty() {
                 this.update(cx, |this, cx| {
                     this.delegate.matches.clear();
                     this.delegate.string_matches.clear();
-                    this.delegate
-                        .matches
-                        .extend(match_candidates.iter().map(|m| m.path.id));
+                    if let CurrentMatch::Directory { entries } = current_match {
+                        this.delegate
+                            .matches
+                            .extend(entries.iter().map(|m| m.path.id));
+                    }
 
                     cx.notify();
                 })
@@ -321,7 +343,12 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             }
 
-            let candidates = match_candidates.iter().map(|m| &m.path).collect::<Vec<_>>();
+            let candidates = match &current_match {
+                CurrentMatch::Directory { entries } => {
+                    entries.iter().map(|entry| &entry.path).collect::<Vec<_>>()
+                }
+                CurrentMatch::File { file, .. } => vec![file],
+            };
             let matches = fuzzy::match_strings(
                 candidates.as_slice(),
                 &suffix,
@@ -344,28 +371,30 @@ impl PickerDelegate for OpenPathDelegate {
                     .extend(matches.into_iter().map(|m| m.candidate_id));
 
                 match &mut this.delegate.directory_state {
-                    DirectoryState::List {
-                        match_candidates, ..
-                    } => this.delegate.matches.sort_by_key(|m| {
-                        (
-                            match_candidates
-                                .get(*m)
-                                .map(|c| !c.path.string.starts_with(&suffix)),
-                            *m,
-                        )
-                    }),
-                    DirectoryState::Create {
-                        match_candidates, ..
-                    } => {
+                    DirectoryState::List { current_match, .. } => {
+                        this.delegate.matches.sort_by_key(|m| {
+                            (
+                                match current_match {
+                                    CurrentMatch::Directory { entries } => {
+                                        entries.get_mut(*m).map(|entry| &mut entry.path)
+                                    }
+                                    CurrentMatch::File { file, .. } => Some(file),
+                                }
+                                .map(|candidate| !candidate.string.starts_with(&suffix)),
+                                *m,
+                            )
+                        })
+                    }
+                    DirectoryState::Create { current_match, .. } => {
                         // TODO kb no conflict & other custom highlights
                         // TODO kb when added a new file in query, then removed characters, odd result persists
                         // TODO kb confirm(?) does not work
                         if this.delegate.matches.is_empty() {
                             let id = 0;
-                            *match_candidates = vec![CandidateInfo {
-                                path: StringMatchCandidate::new(id, &suffix),
-                                is_dir: false,
-                            }];
+                            *current_match = CurrentMatch::File {
+                                exists: false,
+                                file: StringMatchCandidate::new(id, &suffix),
+                            };
                             this.delegate.matches = vec![id];
                             this.delegate.string_matches = vec![StringMatch {
                                 candidate_id: id,
@@ -376,9 +405,13 @@ impl PickerDelegate for OpenPathDelegate {
                         } else {
                             this.delegate.matches.sort_by_key(|m| {
                                 (
-                                    match_candidates
-                                        .get(*m)
-                                        .map(|c| !c.path.string.starts_with(&suffix)),
+                                    match current_match {
+                                        CurrentMatch::Directory { entries } => {
+                                            entries.get_mut(*m).map(|entry| &mut entry.path)
+                                        }
+                                        CurrentMatch::File { file, .. } => Some(file),
+                                    }
+                                    .map(|c| !c.string.starts_with(&suffix)),
                                     *m,
                                 )
                             });
@@ -405,20 +438,40 @@ impl PickerDelegate for OpenPathDelegate {
         Some(
             maybe!({
                 match &self.directory_state {
-                    DirectoryState::List {
-                        path,
-                        match_candidates,
-                        ..
-                    }
-                    | DirectoryState::Create {
-                        path,
-                        match_candidates,
-                        is_dir: Some(true),
+                    DirectoryState::Create {
+                        parent_path,
+                        current_match: CurrentMatch::Directory { entries },
                     } => {
-                        let candidate = match_candidates.get(*m)?;
+                        let candidate = entries.get(*m)?;
                         Some(format!(
                             "{}{}{}",
-                            path,
+                            parent_path,
+                            candidate.path.string,
+                            if candidate.is_dir {
+                                MAIN_SEPARATOR_STR
+                            } else {
+                                ""
+                            }
+                        ))
+                    }
+                    DirectoryState::List {
+                        parent_path,
+                        current_match,
+                        ..
+                    } => {
+                        let candidate = match current_match {
+                            CurrentMatch::Directory { entries } => match entries.get(*m) {
+                                Some(candidate) => candidate,
+                                None => return None,
+                            },
+                            CurrentMatch::File { file, .. } => &CandidateInfo {
+                                path: file.clone(),
+                                is_dir: false,
+                            },
+                        };
+                        Some(format!(
+                            "{}{}{}",
+                            parent_path,
                             candidate.path.string,
                             if candidate.is_dir {
                                 MAIN_SEPARATOR_STR
@@ -439,74 +492,75 @@ impl PickerDelegate for OpenPathDelegate {
             return;
         };
 
-        match dbg!(&self.directory_state) {
+        match &self.directory_state {
             DirectoryState::None { .. } => return,
             DirectoryState::List {
-                path,
-                match_candidates,
+                parent_path,
+                current_match,
                 ..
             } => {
-                let Some(candidate) = match_candidates.get(*m) else {
-                    return;
+                let candidate = match current_match {
+                    CurrentMatch::Directory { entries } => match entries.get(*m) {
+                        Some(candidate) => candidate,
+                        None => return,
+                    },
+                    CurrentMatch::File { file, .. } => &CandidateInfo {
+                        path: file.clone(),
+                        is_dir: false,
+                    },
                 };
-                let confirmed_path = if path == PROMPT_ROOT && candidate.path.string.is_empty() {
-                    PathBuf::from(PROMPT_ROOT)
-                } else {
-                    Path::new(self.lister.resolve_tilde(path, cx).as_ref())
-                        .join(&candidate.path.string)
-                };
+                let confirmed_path =
+                    if parent_path == PROMPT_ROOT && candidate.path.string.is_empty() {
+                        PathBuf::from(PROMPT_ROOT)
+                    } else {
+                        Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
+                            .join(&candidate.path.string)
+                    };
                 if let Some(tx) = self.tx.take() {
                     tx.send(Some(vec![confirmed_path])).ok();
                 }
             }
             DirectoryState::Create {
-                path,
-                // TODO kb remove this, replace with "conflicts" or smth. when a single entry points to the real file FS entry
-                is_dir,
-                match_candidates,
-            } => match is_dir {
-                Some(true) => {
-                    return;
-                }
-                Some(false) => {
-                    let Some(candidate) = match_candidates.get(*m) else {
-                        return;
-                    };
-                    self.should_dismiss = false;
-                    let prompted_path = if path == PROMPT_ROOT && candidate.path.string.is_empty() {
+                parent_path,
+                current_match,
+            } => match current_match {
+                CurrentMatch::Directory { .. } => return,
+                CurrentMatch::File { exists, file } => {
+                    let prompted_path = if parent_path == PROMPT_ROOT && file.string.is_empty() {
                         PathBuf::from(PROMPT_ROOT)
                     } else {
-                        Path::new(self.lister.resolve_tilde(path, cx).as_ref())
-                            .join(&candidate.path.string)
+                        Path::new(self.lister.resolve_tilde(parent_path, cx).as_ref())
+                            .join(&file.string)
                     };
-                    let answer = window.prompt(
+                    if *exists {
+                        self.should_dismiss = false;
+                        let answer = window.prompt(
                             gpui::PromptLevel::Critical,
                             &format!("{prompted_path:?} already exists. Do you want to replace it?"),
                             Some(
                                 "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
                             ),
                             &["Replace", "Cancel"],
-                        cx);
-                    self.replace_prompt = cx.spawn_in(window, async move |picker, cx| {
-                        let answer = answer.await.ok();
-                        picker
-                            .update(cx, |picker, cx| {
-                                picker.delegate.should_dismiss = true;
-                                if answer != Some(0) {
-                                    return;
-                                }
-                                if let Some(tx) = picker.delegate.tx.take() {
-                                    tx.send(Some(vec![prompted_path])).ok();
-                                }
-                                cx.emit(gpui::DismissEvent);
-                            })
-                            .ok();
-                    });
-                    return;
-                }
-                None => {
-                    if let Some(tx) = self.tx.take() {
-                        tx.send(Some(vec![PathBuf::from(path)])).ok();
+                            cx
+                        );
+                        self.replace_prompt = cx.spawn_in(window, async move |picker, cx| {
+                            let answer = answer.await.ok();
+                            picker
+                                .update(cx, |picker, cx| {
+                                    picker.delegate.should_dismiss = true;
+                                    if answer != Some(0) {
+                                        return;
+                                    }
+                                    if let Some(tx) = picker.delegate.tx.take() {
+                                        tx.send(Some(vec![prompted_path])).ok();
+                                    }
+                                    cx.emit(gpui::DismissEvent);
+                                })
+                                .ok();
+                        });
+                        return;
+                    } else if let Some(tx) = self.tx.take() {
+                        tx.send(Some(vec![PathBuf::from(prompted_path)])).ok();
                     }
                 }
             },
@@ -537,11 +591,17 @@ impl PickerDelegate for OpenPathDelegate {
         let m = self.matches.get(ix)?;
         match &self.directory_state {
             DirectoryState::List {
-                path,
-                match_candidates,
+                parent_path,
+                current_match,
                 ..
             } => {
-                let candidate = match_candidates.get(*m)?;
+                let candidate = match current_match {
+                    CurrentMatch::Directory { entries } => entries.get(*m)?,
+                    CurrentMatch::File { file, .. } => &CandidateInfo {
+                        path: file.clone(),
+                        is_dir: false,
+                    },
+                };
                 let highlight_positions = self
                     .string_matches
                     .iter()
@@ -569,7 +629,7 @@ impl PickerDelegate for OpenPathDelegate {
                         .inset(true)
                         .toggle_state(selected)
                         .child(HighlightedLabel::new(
-                            if path == PROMPT_ROOT {
+                            if parent_path == PROMPT_ROOT {
                                 format!("{}{}", PROMPT_ROOT, candidate.path.string)
                             } else {
                                 candidate.path.string.clone()
@@ -579,11 +639,16 @@ impl PickerDelegate for OpenPathDelegate {
                 )
             }
             DirectoryState::Create {
-                path,
-                is_dir,
-                match_candidates,
+                parent_path,
+                current_match,
             } => {
-                let candidate = match_candidates.get(*m)?;
+                let candidate = match current_match {
+                    CurrentMatch::Directory { entries } => entries.get(*m)?,
+                    CurrentMatch::File { file, .. } => &CandidateInfo {
+                        path: file.clone(),
+                        is_dir: false,
+                    },
+                };
 
                 let file_icon = maybe!({
                     if !settings.file_icons {
@@ -598,7 +663,7 @@ impl PickerDelegate for OpenPathDelegate {
                     Some(Icon::from_path(icon).color(Color::Muted))
                 });
 
-                let (label, delta) = if path == PROMPT_ROOT {
+                let (label, delta) = if parent_path == PROMPT_ROOT {
                     (
                         format!("{}{}", PROMPT_ROOT, candidate.path.string),
                         PROMPT_ROOT.len(),
@@ -608,8 +673,8 @@ impl PickerDelegate for OpenPathDelegate {
                 };
                 let label_len = label.len();
 
-                let label_with_highlights = match is_dir {
-                    Some(true) => {
+                let label_with_highlights = match current_match {
+                    CurrentMatch::Directory { .. } => {
                         let highlight_positions = self
                             .string_matches
                             .iter()
@@ -624,24 +689,19 @@ impl PickerDelegate for OpenPathDelegate {
                             .unwrap_or_default();
                         HighlightedLabel::new(label, highlight_positions).into_any_element()
                     }
-                    Some(false) => StyledText::new(label)
-                        .with_default_highlights(
-                            &window.text_style().clone(),
-                            vec![(
-                                delta..delta + label_len,
-                                HighlightStyle::color(Color::Conflict.color(cx)),
-                            )],
-                        )
-                        .into_any_element(),
-                    None => StyledText::new(label)
-                        .with_default_highlights(
-                            &window.text_style().clone(),
-                            vec![(
-                                delta..delta + label_len,
-                                HighlightStyle::color(Color::Created.color(cx)),
-                            )],
-                        )
-                        .into_any_element(),
+                    CurrentMatch::File { exists, .. } => {
+                        let color = if *exists {
+                            Color::Conflict.color(cx)
+                        } else {
+                            Color::Created.color(cx)
+                        };
+                        StyledText::new(label)
+                            .with_default_highlights(
+                                &window.text_style().clone(),
+                                vec![(delta..delta + label_len, HighlightStyle::color(color))],
+                            )
+                            .into_any_element()
+                    }
                 };
 
                 Some(
