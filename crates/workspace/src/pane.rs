@@ -2087,13 +2087,17 @@ impl Pane {
 
             let id = self.item_for_index(ix)?.item_id();
 
-            self.workspace
-                .update(cx, |_, cx| {
-                    cx.defer_in(window, move |_, window, cx| {
-                        move_item(&pane, &pane, id, destination_index, window, cx)
-                    });
-                })
-                .ok()?;
+            if ix == destination_index {
+                cx.notify()
+            } else {
+                self.workspace
+                    .update(cx, |_, cx| {
+                        cx.defer_in(window, move |_, window, cx| {
+                            move_item(&pane, &pane, id, destination_index, window, cx)
+                        });
+                    })
+                    .ok()?;
+            }
 
             Some(())
         });
@@ -4083,6 +4087,30 @@ mod tests {
 
         add_labeled_item(&pane, "G", true, cx);
         assert_item_labels(&pane, ["A^", "B^", "C^", "G*^"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_toggle_pin_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_pin_tab(&TogglePinTab, window, cx);
+        });
+        assert_item_labels(&pane, ["B*!", "A", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_pin_tab(&TogglePinTab, window, cx);
+        });
+        assert_item_labels(&pane, ["B*", "A", "C"], cx);
     }
 
     #[gpui::test]
