@@ -19586,9 +19586,7 @@ fn process_completion_for_edit(
                             let mut current_needle = text_to_replace.next();
                             for haystack_ch in completion.label.text.chars() {
                                 if let Some(needle_ch) = current_needle {
-                                    if haystack_ch.to_ascii_lowercase()
-                                        == needle_ch.to_ascii_lowercase()
-                                    {
+                                    if haystack_ch.eq_ignore_ascii_case(&needle_ch) {
                                         current_needle = text_to_replace.next();
                                     }
                                 }
