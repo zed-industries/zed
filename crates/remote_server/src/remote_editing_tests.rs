@@ -6,12 +6,11 @@ use assistant_tool::{Tool as _, ToolResultContent};
 use assistant_tools::{ReadFileTool, ReadFileToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use editor::Editor;
 use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
 
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
-use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext, VisualContext};
+use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
@@ -1440,6 +1439,8 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
+    use editor::Editor;
+    use gpui::VisualContext;
     let text_2 = "
         fn one() -> usize {
             1
