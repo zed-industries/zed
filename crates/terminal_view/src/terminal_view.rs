@@ -651,7 +651,12 @@ impl TerminalView {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
-                term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
+                let processed =
+                    term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
+                if processed && term.vi_mode_enabled() {
+                    cx.notify();
+                }
+                processed
             });
         }
     }
