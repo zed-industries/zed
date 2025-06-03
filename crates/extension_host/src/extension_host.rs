@@ -19,7 +19,7 @@ use extension::{
     ExtensionLanguageProxy, ExtensionLanguageServerProxy, ExtensionSlashCommandProxy,
     ExtensionSnippetProxy, ExtensionThemeProxy,
 };
-use fs::{Fs, RemoveOptions};
+use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::{
     AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
     channel::{
@@ -154,6 +154,7 @@ pub struct ExtensionIndex {
 pub struct ExtensionIndexEntry {
     pub manifest: Arc<ExtensionManifest>,
     pub dev: bool,
+    pub private: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
@@ -430,6 +431,13 @@ impl ExtensionStore {
             .extensions
             .values()
             .filter_map(|extension| extension.dev.then_some(&extension.manifest))
+    }
+
+    pub fn private_extensions(&self) -> impl Iterator<Item = &Arc<ExtensionManifest>> {
+        self.extension_index
+            .extensions
+            .values()
+            .filter_map(|extension| extension.private.then_some(&extension.manifest))
     }
 
     pub fn extension_manifest_for_id(&self, extension_id: &str) -> Option<&Arc<ExtensionManifest>> {
@@ -1008,6 +1016,164 @@ impl ExtensionStore {
         .detach_and_log_err(cx)
     }
 
+    pub fn install_private_extension(
+        &mut self,
+        cx: &mut Context<Self>,
+        url: Url,
+        header_type: String,
+        token: Option<Arc<str>>,
+    ) -> Task<Result<()>> {
+        let temp_dir = paths::extensions_dir().clone().join("temp");
+        let extension_dir = self.extensions_dir().clone();
+        let http_client = self.http_client.clone();
+        let fs = self.fs.clone();
+        let builder = self.builder.clone();
+        
+        cx.spawn(async move |this, cx| {
+            fs.remove_dir(
+                &temp_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+            fs.create_dir(&temp_dir).await?;
+
+            let mut response = http_client
+                .get_with_headers(
+                    url.as_ref(),
+                    header_type,
+                    token,
+                    Default::default(),
+                    true
+                )
+                .await
+                .context("downloading extension")?;
+
+            let content_length = response
+                .headers()
+                .get(http_client::http::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
+
+            let mut body = BufReader::new(response.body_mut());
+            let mut tar_gz_bytes = Vec::new();
+            body.read_to_end(&mut tar_gz_bytes).await?;
+
+            if let Some(content_length) = content_length {
+                let actual_len = tar_gz_bytes.len();
+                if content_length != actual_len {
+                    bail!("downloaded extension size {actual_len} does not match content length {content_length}");
+                }
+            }
+
+            let decompressed_bytes = GzipDecoder::new(BufReader::new(tar_gz_bytes.as_slice()));
+            let archive = Archive::new(decompressed_bytes);
+            archive.unpack(&temp_dir).await?;
+
+            let mut paths = fs.read_dir(&temp_dir).await?;
+            let extension_root: PathBuf = loop {
+                if let Some(entry_result) = paths.next().await {
+                    let path = entry_result?;
+                    if fs.is_dir(&path).await && fs.is_file(&path.join("extension.toml")).await {
+                        break path;
+                    }
+                } else {
+                    if fs.is_file(&temp_dir.join("extension.toml")).await {
+                        break temp_dir.clone();
+                    }
+                    return Err(anyhow!("No extension.toml found in downloaded package"));
+                }
+            };
+
+            // Add a file (to keep the url from where this private extension was downloaded)
+            let url_file_path = extension_root.join(".origin");
+            fs.create_file(
+                &url_file_path,
+                fs::CreateOptions { overwrite: true, ignore_if_exists: false, }
+            )
+            .await?;
+            fs.atomic_write(url_file_path.clone(), serde_json::to_string(&url).unwrap()).await?;
+
+            let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_root).await?;
+            let extension_id = extension_manifest.id.clone();
+
+            if !this.update(cx, |this, cx| {
+                match this.outstanding_operations.entry(extension_id.clone()) {
+                    btree_map::Entry::Occupied(_) => return false,
+                    btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Install),
+                };
+                cx.notify();
+                true
+            })? {
+                return Ok(());
+            }
+
+            let _finish = cx.on_drop(&this, {
+                let extension_id = extension_id.clone();
+                move |this, cx| {
+                    this.outstanding_operations.remove(extension_id.as_ref());
+                    cx.notify();
+                }
+            });
+
+            if extension_manifest.lib.kind.is_some() {
+                builder
+                    .compile_extension(
+                        &extension_root,
+                        &mut extension_manifest,
+                        CompileExtensionOptions { release: false },
+                    )
+                    .await
+                    .context("failed to compile extension")?;
+            }
+
+            let final_dir = extension_dir.join(extension_id.as_ref());
+
+            if let Some(metadata) = fs.metadata(&final_dir).await? {
+                if metadata.is_dir {
+                    let mut entries = fs.read_dir(&final_dir).await?;
+                    if entries.next().await.is_some() {
+                        fs.remove_dir(
+                            &temp_dir,
+                            RemoveOptions {
+                                recursive: true,
+                                ignore_if_not_exists: true,
+                            },
+                        )
+                        .await?;
+                        bail!("extension {extension_id} is already installed");
+                    }
+                }
+            }
+
+            fs.rename(&extension_root, &final_dir, RenameOptions::default()).await?;
+
+            fs.remove_dir(
+                &temp_dir,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await?;
+
+            this.update(cx, |this, cx| this.reload(None, cx))?.await;
+            this.update(cx, |this, cx| {
+                cx.emit(Event::ExtensionInstalled(extension_id.clone()));
+                if let Some(events) = ExtensionEvents::try_global(cx) {
+                    if let Some(manifest) = this.extension_manifest_for_id(&extension_id) {
+                        events.update(cx, |this, cx| {
+                            this.emit(extension::Event::ExtensionInstalled(manifest.clone()), cx)
+                        });
+                    }
+                }
+            })?;
+
+            Ok(())
+        })
+    }
+
     /// Updates the set of installed extensions.
     ///
     /// First, this unloads any themes, languages, or grammars that are
@@ -1418,6 +1584,10 @@ impl ExtensionStore {
             .context("directory does not exist")?
             .is_symlink;
 
+        // Only private extensions have the .origin file
+        let origin_file_path = extension_dir.join(".origin");
+        let is_private = fs.is_file(&origin_file_path).await;
+
         if let Ok(mut language_paths) = fs.read_dir(&extension_dir.join("languages")).await {
             while let Some(language_path) = language_paths.next().await {
                 let language_path = language_path?;
@@ -1528,6 +1698,7 @@ impl ExtensionStore {
             ExtensionIndexEntry {
                 dev: is_dev,
                 manifest: Arc::new(extension_manifest),
+                private: is_private,
             },
         );
 

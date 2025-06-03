@@ -4,7 +4,7 @@ pub mod github;
 pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
-pub use http::{self, Method, Request, Response, StatusCode, Uri};
+pub use http::{self, Method, Request, Response, StatusCode, Uri, HeaderMap, HeaderName, HeaderValue};
 
 use futures::future::BoxFuture;
 use http::request::Builder;
@@ -62,6 +62,40 @@ pub trait HttpClient: 'static + Send + Sync {
         match request {
             Ok(request) => Box::pin(async move { self.send(request).await }),
             Err(e) => Box::pin(async move { Err(e.into()) }),
+        }
+    }
+
+    fn get_with_headers<'a>(
+        &'a self,
+        uri: &str,
+        header_type: String,
+        token: Option<Arc<str>>,
+        body: AsyncBody,
+        follow_redirects: bool,
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+        if let Some(token) = token {
+            let header_name = header_type.parse::<HeaderName>().unwrap();
+            let header_value = format!("{}", token);
+
+            let request = Builder::new()
+                .uri(uri)
+                .follow_redirects(if follow_redirects {
+                    RedirectPolicy::FollowAll
+                } else {
+                    RedirectPolicy::NoFollow
+                })
+                .header(
+                    header_name,
+                    HeaderValue::from_bytes(header_value.as_bytes()).unwrap()
+                )
+                .body(body);
+
+            match request {
+                Ok(request) => Box::pin(async move { self.send(request).await }),
+                Err(e) => Box::pin(async move { Err(e.into()) }),
+            }
+        } else {    // If no token provided, it's just a default get request
+            self.get(uri, body, follow_redirects)
         }
     }
 
