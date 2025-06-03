@@ -3967,16 +3967,31 @@ impl Workspace {
                     height: workspace_bounds.size.height,
                 },
             }),
-            DockPosition::Bottom => Some(Bounds {
-                origin: Point {
-                    x: workspace_bounds.origin.x,
-                    y: workspace_bounds.origin.y + workspace_bounds.size.height - panel_size,
-                },
-                size: Size {
-                    width: workspace_bounds.size.width,
-                    height: panel_size,
-                },
-            }),
+            DockPosition::Bottom => {
+                // Calculate bottom dock position accounting for left and right docks
+                let left_dock_width = if self.left_dock.read(cx).is_open() {
+                    self.left_dock.read(cx).active_panel_size(_window, cx).unwrap_or(px(0.0))
+                } else {
+                    px(0.0)
+                };
+                
+                let right_dock_width = if self.right_dock.read(cx).is_open() {
+                    self.right_dock.read(cx).active_panel_size(_window, cx).unwrap_or(px(0.0))
+                } else {
+                    px(0.0)
+                };
+                
+                Some(Bounds {
+                    origin: Point {
+                        x: workspace_bounds.origin.x + left_dock_width,
+                        y: workspace_bounds.origin.y + workspace_bounds.size.height - panel_size,
+                    },
+                    size: Size {
+                        width: workspace_bounds.size.width - left_dock_width - right_dock_width,
+                        height: panel_size,
+                    },
+                })
+            },
         };
 
         log::debug!("bounds for dock {:?}: {:?}", position, bounds);
