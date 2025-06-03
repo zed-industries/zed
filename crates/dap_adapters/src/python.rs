@@ -1,7 +1,7 @@
 use crate::*;
 use anyhow::Context as _;
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
-use gpui::{AsyncApp, SharedString};
+use gpui::{AppContext, AsyncApp, SharedString};
 use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
 use serde_json::Value;
@@ -21,12 +21,12 @@ pub(crate) struct PythonDebugAdapter {
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "Debugpy";
+    const DEBUG_ADAPTER_NAME: DebugAdapterName = DebugAdapterName(SharedString::new_static(Self::ADAPTER_NAME))
     const ADAPTER_PACKAGE_NAME: &'static str = "debugpy";
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
     const LANGUAGE_NAME: &'static str = "Python";
 
     async fn generate_debugpy_arguments(
-        &self,
         host: &Ipv4Addr,
         port: u16,
         user_installed_path: Option<&Path>,
@@ -54,7 +54,7 @@ impl PythonDebugAdapter {
                 format!("--port={}", port),
             ])
         } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+            let adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
             let file_name_prefix = format!("{}_", Self::ADAPTER_NAME);
 
             let debugpy_dir =
@@ -111,18 +111,17 @@ impl PythonDebugAdapter {
     }
 
     async fn install_binary(
-        &self,
+        adapter_name: DebugAdapterName,
         version: AdapterVersion,
-        delegate: &Arc<dyn DapDelegate>,
+        delegate: Arc<dyn DapDelegate>,
     ) -> Result<()> {
         let version_path = adapters::download_adapter_from_github(
-            self.name(),
+            adapter_name,
             version,
             adapters::DownloadedFileType::Zip,
             delegate.as_ref(),
         )
         .await?;
-
         // only needed when you install the latest version for the first time
         if let Some(debugpy_dir) =
             util::fs::find_file_name_in_dir(version_path.as_path(), |file_name| {
@@ -171,8 +170,7 @@ impl PythonDebugAdapter {
         let python_command = python_path.context("failed to find binary path for Python")?;
         log::debug!("Using Python executable: {}", python_command);
 
-        let arguments = self
-            .generate_debugpy_arguments(
+        let arguments = Self::generate_debugpy_arguments(
                 &host,
                 port,
                 user_installed_path.as_deref(),
@@ -204,7 +202,7 @@ impl PythonDebugAdapter {
 #[async_trait(?Send)]
 impl DebugAdapter for PythonDebugAdapter {
     fn name(&self) -> DebugAdapterName {
-        DebugAdapterName(Self::ADAPTER_NAME.into())
+        Self::DEBUG_ADAPTER_NAME
     }
 
     fn adapter_language_name(&self) -> Option<LanguageName> {
@@ -635,7 +633,9 @@ impl DebugAdapter for PythonDebugAdapter {
         if self.checked.set(()).is_ok() {
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
             if let Some(version) = self.fetch_latest_adapter_version(delegate).await.log_err() {
-                self.install_binary(version, delegate).await?;
+                cx.background_spawn(Self::install_binary(self.name(), version, delegate.clone()))
+                    .await
+                    .context("Failed to install debugpy")?;
             }
         }
 
@@ -657,14 +657,12 @@ mod tests {
 
         // Case 1: User-defined debugpy path (highest precedence)
         let user_path = PathBuf::from("/custom/path/to/debugpy");
-        let user_args = adapter
-            .generate_debugpy_arguments(&host, port, Some(&user_path), false)
+        let user_args = PythonDebugAdapter::generate_debugpy_arguments(&host, port, Some(&user_path), false)
             .await
             .unwrap();
 
         // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
-        let venv_args = adapter
-            .generate_debugpy_arguments(&host, port, None, true)
+        let venv_args = PythonDebugAdapter::generate_debugpy_arguments(&host, port, None, true)
             .await
             .unwrap();
 
