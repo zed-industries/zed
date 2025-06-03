@@ -34,7 +34,7 @@ For more advanced use cases, you can create debug configurations by directly edi
 
 You can then use the `New Session Modal` to select a configuration and start debugging.
 
-### Configuration
+## Configuration
 
 While configuration fields are debug adapter-dependent, most adapters support the following fields:
 
@@ -58,22 +58,51 @@ While configuration fields are debug adapter-dependent, most adapters support th
 ]
 ```
 
-#### Tasks
-
 All configuration fields support task variables. See [Tasks Variables](./tasks.md#variables)
 
-Zed also allows embedding a task that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
+### Build tasks
 
-See an example [here](#build-binary-then-debug)
-
-#### Python Examples
-
-##### Python Active File
+Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
 ```json
 [
   {
-    "label": "Active File",
+    "label": "Build Binary",
+    "adapter": "CodeLLDB",
+    "program": "path_to_program",
+    "request": "launch",
+    "build": {
+      "command": "make",
+      "args": ["build", "-j8"]
+    }
+  }
+]
+```
+
+Build tasks can also refer to the existing tasks by unsubstituted label:
+
+```json
+[
+  {
+    "label": "Build Binary",
+    "adapter": "CodeLLDB",
+    "program": "path_to_program",
+    "request": "launch",
+    "build": "my build task" // Or "my build task for $ZED_FILE"
+  }
+]
+```
+
+### Example Configurations
+
+#### Python
+
+##### Debug Active File
+
+```json
+[
+  {
+    "label": "Python Active File",
     "adapter": "Debugpy",
     "program": "$ZED_FILE",
     "request": "launch"
@@ -85,16 +114,20 @@ See an example [here](#build-binary-then-debug)
 
 For a common Flask Application with a file structure similar to the following:
 
-- .venv/
-- app/
-  - **init**.py
-  - **main**.py
-  - routes.py
-- templates/
-  - index.html
-- static/
-  - style.css
-- requirements.txt
+```
+.venv/
+app/
+  init.py
+  main.py
+  routes.py
+templates/
+  index.html
+static/
+  style.css
+requirements.txt
+```
+
+the following configuration can be used:
 
 ```json
 [
@@ -156,16 +189,19 @@ For a common Flask Application with a file structure similar to the following:
 
 ## Breakpoints
 
-Zed currently supports these types of breakpoints:
+To set a breakpoint, simply click next to the line number in the editor gutter.
+Breakpoints can be tweaked dependending on your needs; to access additional options of a given breakpoint, right-click on the breakpoint icon in the gutter and select the desired option.
+At present, you can:
 
-- Standard Breakpoints: Stop at the breakpoint when it's hit
-- Log Breakpoints: Output a log message instead of stopping at the breakpoint when it's hit
-- Conditional Breakpoints: Stop at the breakpoint when it's hit if the condition is met
-- Hit Breakpoints: Stop at the breakpoint when it's hit a certain number of times
+- Add a log to a breakpoint, which will output a log message whenever that breakpoint is hit.
+- Make the breakpoint conditional, which will only stop at the breakpoint when the condition is met. The syntax for conditions is adapter-specific.
+- Add a hit count to a breakpoint, which will only stop at the breakpoint after it's hit a certain number of times.
+- Disable a breakpoint, which will prevent it from being hit while leaving it visible in the gutter.
 
-Standard breakpoints can be toggled by left-clicking on the editor gutter or using the Toggle Breakpoint action. Right-clicking on a breakpoint or on a code runner symbol brings up the breakpoint context menu. This has options for toggling breakpoints and editing log breakpoints.
+Some debug adapters (e.g. CodeLLDB and JavaScript) will also _verify_ whether your breakpoints can be hit; breakpoints that cannot be hit are surfaced more prominently in the UI.
 
-Other kinds of breakpoints can be toggled/edited by right-clicking on the breakpoint icon in the gutter and selecting the desired option.
+All breakpoints enabled for a given project are also listed in "Breakpoints" item in your debugging session UI. From "Breakpoints" item in your UI you can also manage exception breakpoints.
+The debug adapter will then stop whenever an exception of a given kind occurs. Which exception types are supported depends on the debug adapter.
 
 ## Settings
 
