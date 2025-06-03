@@ -337,7 +337,7 @@ impl ToolUseState {
             )
             .into();
 
-        let may_perform_edits =self
+        let may_perform_edits = self
             .tools
             .read(cx)
             .tool(&tool_use.name, cx)
