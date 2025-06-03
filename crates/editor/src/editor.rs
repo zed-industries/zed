@@ -8961,7 +8961,9 @@ impl Editor {
                             })
                         })
                         .collect::<Vec<_>>();
-                    tabstop_ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
+                    // Sort in reverse order so that the first range is the newest created
+                    // selection. Completions will use it and autoscroll will prioritize it.
+                    tabstop_ranges.sort_unstable_by(|a, b| b.start.cmp(&a.start, snapshot));
 
                     Tabstop {
                         is_end_tabstop,
@@ -9089,7 +9091,7 @@ impl Editor {
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
                 self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_anchor_ranges(current_ranges.iter().cloned())
+                    s.select_ranges(current_ranges.iter().cloned())
                 });
 
                 if let Some(choices) = &snippet.choices[snippet.active_index] {
