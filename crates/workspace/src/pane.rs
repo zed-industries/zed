@@ -197,6 +197,7 @@ actions!(
         SwapItemRight,
         TogglePreviewTab,
         TogglePinTab,
+        UnpinAllTabs,
     ]
 );
 
@@ -2104,6 +2105,20 @@ impl Pane {
         }
     }
 
+    fn unpin_all_tabs(&mut self, _: &UnpinAllTabs, window: &mut Window, cx: &mut Context<Self>) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        let pinned_item_ids = self.pinned_item_ids().into_iter().rev();
+
+        for pinned_item_id in pinned_item_ids {
+            if let Some(ix) = self.index_for_item_id(pinned_item_id) {
+                self.unpin_tab_at(ix, window, cx);
+            }
+        }
+    }
+
     fn pin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.change_tab_pin_state(ix, PinOperation::Pin, window, cx);
     }
@@ -3132,7 +3147,7 @@ impl Pane {
         self.display_nav_history_buttons = display;
     }
 
-    fn pinned_item_ids(&self) -> HashSet<EntityId> {
+    fn pinned_item_ids(&self) -> Vec<EntityId> {
         self.items
             .iter()
             .enumerate()
@@ -3146,7 +3161,7 @@ impl Pane {
             .collect()
     }
 
-    fn clean_item_ids(&self, cx: &mut Context<Pane>) -> HashSet<EntityId> {
+    fn clean_item_ids(&self, cx: &mut Context<Pane>) -> Vec<EntityId> {
         self.items()
             .filter_map(|item| {
                 if !item.is_dirty(cx) {
@@ -3158,7 +3173,7 @@ impl Pane {
             .collect()
     }
 
-    fn to_the_side_item_ids(&self, item_id: EntityId, side: Side) -> HashSet<EntityId> {
+    fn to_the_side_item_ids(&self, item_id: EntityId, side: Side) -> Vec<EntityId> {
         match side {
             Side::Left => self
                 .items()
@@ -3358,6 +3373,9 @@ impl Render for Pane {
             )
             .on_action(cx.listener(|pane, action, window, cx| {
                 pane.toggle_pin_tab(action, window, cx);
+            }))
+            .on_action(cx.listener(|pane, action, window, cx| {
+                pane.unpin_all_tabs(action, window, cx);
             }))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
                 this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, _, cx| {
@@ -4170,6 +4188,78 @@ mod tests {
             pane.toggle_pin_tab(&TogglePinTab, window, cx);
         });
         assert_item_labels(&pane, ["B*", "A", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_unpin_all_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Unpin all, in an empty pane
+        pane.update_in(cx, |pane, window, cx| {
+            pane.unpin_all_tabs(&UnpinAllTabs, window, cx);
+        });
+
+        assert_item_labels(&pane, [], cx);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Unpin all, when no tabs are pinned
+        pane.update_in(cx, |pane, window, cx| {
+            pane.unpin_all_tabs(&UnpinAllTabs, window, cx);
+        });
+
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Pin inactive tabs only
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.unpin_all_tabs(&UnpinAllTabs, window, cx);
+        });
+
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Pin all tabs
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C*!"], cx);
+
+        // Activate middle tab
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, false, false, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*!", "C!"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.unpin_all_tabs(&UnpinAllTabs, window, cx);
+        });
+
+        // Order has not changed
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
     }
 
     #[gpui::test]
