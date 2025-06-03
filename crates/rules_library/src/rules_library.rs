@@ -1076,6 +1076,7 @@ impl RulesLibrary {
                                 .child(
                                     h_flex()
                                         .h_full()
+                                        .flex_shrink_0()
                                         .gap(DynamicSpacing::Base04.rems(cx))
                                         .children(rule_editor.token_count.map(|token_count| {
                                             let token_count: SharedString =
@@ -1086,6 +1087,7 @@ impl RulesLibrary {
                                             div()
                                                 .id("token_count")
                                                 .mr_1()
+                                                .flex_shrink_0()
                                                 .tooltip(move |window, cx| {
                                                     Tooltip::with_meta(
                                                         "Token Estimation",
@@ -1128,7 +1130,7 @@ impl RulesLibrary {
                                                 .into_any()
                                         } else {
                                             IconButton::new("delete-rule", IconName::TrashAlt)
-                                                .shape(IconButtonShape::Square)
+                                                .icon_size(IconSize::Small)
                                                 .tooltip(move |window, cx| {
                                                     Tooltip::for_action(
                                                         "Delete Rule",
@@ -1144,8 +1146,8 @@ impl RulesLibrary {
                                                 .into_any_element()
                                         })
                                         .child(
-                                            IconButton::new("duplicate-rule", IconName::Copy)
-                                                .shape(IconButtonShape::Square)
+                                            IconButton::new("duplicate-rule", IconName::BookCopy)
+                                                .icon_size(IconSize::Small)
                                                 .tooltip(move |window, cx| {
                                                     Tooltip::for_action(
                                                         "Duplicate Rule",
@@ -1163,7 +1165,7 @@ impl RulesLibrary {
                                         )
                                         .child(
                                             IconButton::new("toggle-default-rule", IconName::Star)
-                                                .shape(IconButtonShape::Square)
+                                                .icon_size(IconSize::Small)
                                                 .toggle_state(rule_metadata.default)
                                                 .selected_icon(IconName::StarFilled)
                                                 .icon_color(if rule_metadata.default {
