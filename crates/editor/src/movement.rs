@@ -264,7 +264,14 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
+    let mut no_longer_punctuation = false;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+        // Make alt-left skip punctuation on Mac OS to respect the Mac behaviour. For example: hello.| goes to |hello.
+        if cfg!(target_os = "macos") && !no_longer_punctuation && classifier.is_punctuation(right) {
+            return false;
+        }
+        no_longer_punctuation = true;
+
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
     })
@@ -305,8 +312,13 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
-
+    let mut no_longer_punctuation = false;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        // Make alt-right skip punctuation on Mac OS to respect the Mac behaviour. For example: |.hello goes to .hello|
+        if cfg!(target_os = "macos") && !no_longer_punctuation && classifier.is_punctuation(left) {
+            return false;
+        }
+        no_longer_punctuation = true;
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
             || right == '\n'
     })
