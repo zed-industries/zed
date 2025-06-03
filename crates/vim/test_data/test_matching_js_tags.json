@@ -1,0 +1,6 @@
+{"Exec":{"command":"set filetype=js"}}
+{"Put":{"state":"function f() {\n    return (\n        <div rules={[ˇ{ a: 1 }]}>\n            <h1>test</h1>\n        </div>\n    );\n}"}}
+{"Key":"%"}
+{"Put":{"state":"function f() {\n    return (\n        <div rules={[{ a: 1 }]}>\n            <h1>test</h1>\n        </diˇv>\n    );\n}"}}
+{"Key":"%"}
+{"Get":{"state":"function f() {\n    return (\n        <div rules={[{ a: 1 }]}>\n            <h1>test</h1>\n        </diˇv>\n    );\n}","mode":"Normal"}}

@@ -2290,6 +2290,8 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
             ..line_range.end.to_offset(&map.buffer_snapshot);
         let mut closest_pair_destination = None;
         let mut closest_distance = usize::MAX;
+        // let ranges: Vec<(_, _)> = ranges.collect();
+        // dbg!(&ranges);
 
         for (open_range, close_range) in ranges {
             if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
@@ -3240,6 +3242,48 @@ mod test {
                 test = "test"
             />
         </a>"#});
+    }
+
+    #[gpui::test]
+    async fn test_matching_js_tags(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_html(cx).await;
+        cx.neovim.exec("set filetype=js").await;
+
+        // test brackets within tags
+        cx.set_shared_state(indoc! {r"function f() {
+            return (
+                <div rules={[ˇ{ a: 1 }]}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"function f() {
+            return (
+                <div rules={[{ a: 1 }]ˇ}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"});
+
+        // test jumping back
+        cx.set_shared_state(indoc! {r"function f() {
+            return (
+                <div rules={[{ a: 1 }]}>
+                    <h1>test</h1>
+                </diˇv>
+            );
+        }"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"function f() {
+            return (
+                <ˇdiv rules={[{ a: 1 }]}>
+                    <h1>test</h1>
+                </div>
+            );
+        }"});
     }
 
     #[gpui::test]
