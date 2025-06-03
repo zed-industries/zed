@@ -532,7 +532,9 @@ impl EditorTestContext {
     #[track_caller]
     pub fn assert_editor_selections(&mut self, expected_selections: Vec<Range<usize>>) {
         let expected_marked_text =
-            generate_marked_text(&self.buffer_text(), &expected_selections, true);
+            generate_marked_text(&self.buffer_text(), &expected_selections, true)
+                .replace(" \n", "•\n");
+
         self.assert_selections(expected_selections, expected_marked_text)
     }
 
@@ -561,7 +563,8 @@ impl EditorTestContext {
     ) {
         let actual_selections = self.editor_selections();
         let actual_marked_text =
-            generate_marked_text(&self.buffer_text(), &actual_selections, true);
+            generate_marked_text(&self.buffer_text(), &actual_selections, true)
+                .replace(" \n", "•\n");
         if expected_selections != actual_selections {
             pretty_assertions::assert_eq!(
                 actual_marked_text,

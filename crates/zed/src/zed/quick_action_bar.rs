@@ -147,7 +147,7 @@ impl Render for QuickActionBar {
         let run_button = if last_run_debug {
             QuickActionBarButton::new(
                 "debug",
-                IconName::Debug, // TODO: use debug + play icon
+                IconName::PlayBug,
                 false,
                 Box::new(debugger_ui::Start),
                 focus_handle.clone(),
@@ -162,7 +162,7 @@ impl Render for QuickActionBar {
             });
             QuickActionBarButton::new(
                 "run",
-                IconName::Play,
+                IconName::PlayAlt,
                 false,
                 action.boxed_clone(),
                 focus_handle.clone(),

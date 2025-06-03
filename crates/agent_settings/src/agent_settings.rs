@@ -372,6 +372,8 @@ impl AgentSettingsContent {
                                 None,
                                 None,
                                 Some(language_model.supports_tools()),
+                                Some(language_model.supports_images()),
+                                None,
                             )),
                             api_url,
                         });

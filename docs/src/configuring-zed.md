@@ -389,6 +389,20 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 `"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
 
+## Close on File Delete
+
+- Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
+- Setting: `close_on_file_delete`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
+
+Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
+
 ## Confirm Quit
 
 - Description: Whether or not to prompt the user to confirm before closing the application.
@@ -3286,10 +3300,6 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "default_height": 320,
   "default_view": "thread",
   "default_model": {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4"
-  },
-  "editor_model": {
     "provider": "zed.dev",
     "model": "claude-sonnet-4"
   },

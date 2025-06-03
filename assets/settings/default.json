@@ -128,6 +128,8 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to automatically close files that have been deleted on disk.
+  "close_on_file_delete": false,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -726,13 +728,6 @@
     "default_height": 320,
     // The default model to use when creating new threads.
     "default_model": {
-      // The provider to use.
-      "provider": "zed.dev",
-      // The model to use.
-      "model": "claude-sonnet-4"
-    },
-    // The model to use when applying edits from the agent.
-    "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
