@@ -49,6 +49,7 @@ actions!(
         ToggleThreadPicker,
         ToggleSessionPicker,
         RerunLastSession,
+        ToggleExpandItem,
     ]
 );
 
