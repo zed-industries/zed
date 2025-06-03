@@ -1,10 +1,10 @@
 mod signature_help;
 
 use crate::{
-    CodeAction, CompletionSource, CoreCompletion, DocumentHighlight, DocumentSymbol, Hover,
-    HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel, InlayHintLabelPart,
-    InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink, LspAction, MarkupContent,
-    PrepareRenameResponse, ProjectTransaction, ResolveState,
+    CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentHighlight,
+    DocumentSymbol, Hover, HoverBlock, HoverBlockKind, InlayHint, InlayHintLabel,
+    InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location, LocationLink,
+    LspAction, MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
     lsp_store::{LocalLspStore, LspStore},
 };
 use anyhow::{Context as _, Result};
@@ -2095,7 +2095,7 @@ impl LspCommand for GetHover {
 
 #[async_trait(?Send)]
 impl LspCommand for GetCompletions {
-    type Response = Vec<CoreCompletion>;
+    type Response = CoreCompletionResponse;
     type LspRequest = lsp::request::Completion;
     type ProtoRequest = proto::GetCompletions;
 
@@ -2127,18 +2127,21 @@ impl LspCommand for GetCompletions {
         mut cx: AsyncApp,
     ) -> Result<Self::Response> {
         let mut response_list = None;
-        let mut completions = if let Some(completions) = completions {
+        let (mut completions, mut is_incomplete) = if let Some(completions) = completions {
             match completions {
-                lsp::CompletionResponse::Array(completions) => completions,
+                lsp::CompletionResponse::Array(completions) => (completions, false),
                 lsp::CompletionResponse::List(mut list) => {
+                    let is_incomplete = list.is_incomplete;
                     let items = std::mem::take(&mut list.items);
                     response_list = Some(list);
-                    items
+                    (items, is_incomplete)
                 }
             }
         } else {
-            Vec::new()
+            (Vec::new(), false)
         };
+
+        let unfiltered_completions_count = completions.len();
 
         let language_server_adapter = lsp_store
             .read_with(&mut cx, |lsp_store, _| {
@@ -2259,11 +2262,17 @@ impl LspCommand for GetCompletions {
             });
         })?;
 
+        // If completions were filtered out due to errors that may be transient, mark the result
+        // incomplete so that it is re-queried.
+        if unfiltered_completions_count != completions.len() {
+            is_incomplete = true;
+        }
+
         language_server_adapter
             .process_completions(&mut completions)
             .await;
 
-        Ok(completions
+        let completions = completions
             .into_iter()
             .zip(completion_edits)
             .map(|(mut lsp_completion, mut edit)| {
@@ -2290,7 +2299,12 @@ impl LspCommand for GetCompletions {
                     },
                 }
             })
-            .collect())
+            .collect();
+
+        Ok(CoreCompletionResponse {
+            completions,
+            is_incomplete,
+        })
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetCompletions {
@@ -2332,18 +2346,20 @@ impl LspCommand for GetCompletions {
     }
 
     fn response_to_proto(
-        completions: Vec<CoreCompletion>,
+        response: CoreCompletionResponse,
         _: &mut LspStore,
         _: PeerId,
         buffer_version: &clock::Global,
         _: &mut App,
     ) -> proto::GetCompletionsResponse {
         proto::GetCompletionsResponse {
-            completions: completions
+            completions: response
+                .completions
                 .iter()
                 .map(LspStore::serialize_completion)
                 .collect(),
             version: serialize_version(buffer_version),
+            can_reuse: !response.is_incomplete,
         }
     }
 
@@ -2360,11 +2376,16 @@ impl LspCommand for GetCompletions {
             })?
             .await?;
 
-        message
+        let completions = message
             .completions
             .into_iter()
             .map(LspStore::deserialize_completion)
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(CoreCompletionResponse {
+            completions,
+            is_incomplete: !message.can_reuse,
+        })
     }
 
     fn buffer_id_from_proto(message: &proto::GetCompletions) -> Result<BufferId> {

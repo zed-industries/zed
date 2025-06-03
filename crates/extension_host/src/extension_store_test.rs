@@ -759,8 +759,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         })
         .await
         .unwrap()
-        .unwrap()
         .into_iter()
+        .flat_map(|response| response.completions)
         .map(|c| c.label.text)
         .collect::<Vec<_>>();
     assert_eq!(
