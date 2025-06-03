@@ -1319,6 +1319,7 @@ pub mod test {
         pub is_dirty: bool,
         pub is_singleton: bool,
         pub has_conflict: bool,
+        pub has_deleted_file: bool,
         pub project_items: Vec<Entity<TestProjectItem>>,
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
@@ -1398,6 +1399,7 @@ pub mod test {
                 reload_count: 0,
                 is_dirty: false,
                 has_conflict: false,
+                has_deleted_file: false,
                 project_items: Vec::new(),
                 is_singleton: true,
                 nav_history: None,
@@ -1423,6 +1425,10 @@ pub mod test {
         pub fn with_singleton(mut self, singleton: bool) -> Self {
             self.is_singleton = singleton;
             self
+        }
+
+        pub fn set_has_deleted_file(&mut self, deleted: bool) {
+            self.has_deleted_file = deleted;
         }
 
         pub fn with_dirty(mut self, dirty: bool) -> Self {
@@ -1562,6 +1568,7 @@ pub mod test {
                 is_dirty: self.is_dirty,
                 is_singleton: self.is_singleton,
                 has_conflict: self.has_conflict,
+                has_deleted_file: self.has_deleted_file,
                 project_items: self.project_items.clone(),
                 nav_history: None,
                 tab_descriptions: None,
@@ -1578,6 +1585,10 @@ pub mod test {
 
         fn has_conflict(&self, _: &App) -> bool {
             self.has_conflict
+        }
+
+        fn has_deleted_file(&self, _: &App) -> bool {
+            self.has_deleted_file
         }
 
         fn can_save(&self, cx: &App) -> bool {
