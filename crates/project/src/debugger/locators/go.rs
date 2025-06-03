@@ -132,7 +132,7 @@ impl DapLocator for GoLocator {
                 let program = PathBuf::from(&cwd)
                     .join(format!("__debug_{}", std::process::id()))
                     .to_string_lossy()
-                    .to_string();
+                    .into_owned();
 
                 Ok(DebugRequest::Launch(task::LaunchRequest {
                     program,
