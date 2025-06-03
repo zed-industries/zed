@@ -31,7 +31,6 @@ pub struct OpenPathDelegate {
     lister: DirectoryLister,
     selected_index: usize,
     directory_state: DirectoryState,
-    matches: Vec<usize>,
     string_matches: Vec<StringMatch>,
     cancel_flag: Arc<AtomicBool>,
     should_dismiss: bool,
@@ -51,7 +50,6 @@ impl OpenPathDelegate {
             directory_state: DirectoryState::None {
                 create: creating_path,
             },
-            matches: Vec::new(),
             string_matches: Vec::new(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             should_dismiss: true,
@@ -65,11 +63,12 @@ impl OpenPathDelegate {
             DirectoryState::List { current_match, .. }
             | DirectoryState::Create { current_match, .. } => match current_match {
                 CurrentMatch::Directory { entries, .. } => self
-                    .matches
+                    .string_matches
                     .iter()
-                    .filter_map(|&index| {
+                    .filter_map(|string_match| {
                         entries
-                            .get(index)
+                            .iter()
+                            .find(|entry| entry.path.id == string_match.candidate_id)
                             .map(|candidate| candidate.path.string.clone())
                     })
                     .collect(),
@@ -161,7 +160,7 @@ impl PickerDelegate for OpenPathDelegate {
     type ListItem = ui::ListItem;
 
     fn match_count(&self) -> usize {
-        self.matches.len()
+        self.string_matches.len()
     }
 
     fn selected_index(&self) -> usize {
@@ -283,7 +282,7 @@ impl PickerDelegate for OpenPathDelegate {
             let Some(mut new_current_match) = this
                 .update(cx, |this, cx| match &this.delegate.directory_state {
                     DirectoryState::List { error: Some(_), .. } => {
-                        this.delegate.matches.clear();
+                        this.delegate.string_matches.clear();
                         this.delegate.selected_index = 0;
                         cx.notify();
                         None
@@ -308,15 +307,25 @@ impl PickerDelegate for OpenPathDelegate {
             }
             if suffix.is_empty() {
                 this.update(cx, |this, cx| {
-                    this.delegate.matches.clear();
-                    this.delegate.string_matches.clear();
-                    if let CurrentMatch::Directory { entries, .. } = new_current_match {
-                        this.delegate
-                            .matches
-                            .extend(entries.iter().map(|m| m.path.id));
-                        // TODO kb is it enough? fill more fields?
-                    }
-
+                    this.delegate.selected_index = 0;
+                    // TODO kb is it enough? fill more fields?
+                    this.delegate.string_matches = match new_current_match {
+                        CurrentMatch::Directory { entries, .. } => entries
+                            .iter()
+                            .map(|m| StringMatch {
+                                candidate_id: m.path.id,
+                                score: 0.0,
+                                positions: Vec::new(),
+                                string: m.path.string.clone(),
+                            })
+                            .collect(),
+                        CurrentMatch::File { file, .. } => vec![StringMatch {
+                            candidate_id: file.id,
+                            score: 0.0,
+                            positions: Vec::new(),
+                            string: file.string.clone(),
+                        }],
+                    };
                     cx.notify();
                 })
                 .ok();
@@ -386,7 +395,7 @@ impl PickerDelegate for OpenPathDelegate {
                                 .map(|id| id + 1)
                                 .unwrap_or(0);
                             entries.insert(
-                                next_id,
+                                0,
                                 CandidateInfo {
                                     path: StringMatchCandidate {
                                         id: next_id,
@@ -419,17 +428,17 @@ impl PickerDelegate for OpenPathDelegate {
 
                 this.delegate.selected_index = 0;
                 this.delegate.string_matches = matches.clone();
-                this.delegate.matches = matches.into_iter().map(|m| m.candidate_id).collect();
-                this.delegate.matches.sort_by_key(|m| {
+                this.delegate.string_matches.sort_by_key(|m| {
                     (
                         match &new_current_match {
-                            CurrentMatch::Directory { entries, .. } => {
-                                entries.get(*m).map(|entry| &entry.path)
-                            }
+                            CurrentMatch::Directory { entries, .. } => entries
+                                .iter()
+                                .find(|entry| entry.path.id == m.candidate_id)
+                                .map(|entry| &entry.path),
                             CurrentMatch::File { file, .. } => Some(file),
                         }
                         .map(|candidate| !candidate.string.starts_with(&suffix)),
-                        *m,
+                        m.candidate_id,
                     )
                 });
                 match &mut this.delegate.directory_state {
@@ -467,7 +476,7 @@ impl PickerDelegate for OpenPathDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<String> {
-        let m = self.matches.get(self.selected_index)?;
+        let m = self.string_matches.get(self.selected_index)?;
         Some(
             maybe!({
                 match &self.directory_state {
@@ -475,7 +484,9 @@ impl PickerDelegate for OpenPathDelegate {
                         parent_path,
                         current_match: CurrentMatch::Directory { entries, .. },
                     } => {
-                        let candidate = entries.get(*m)?;
+                        let candidate = entries
+                            .iter()
+                            .find(|entry| entry.path.id == m.candidate_id)?;
                         Some(format!(
                             "{}{}{}",
                             parent_path,
@@ -493,10 +504,12 @@ impl PickerDelegate for OpenPathDelegate {
                         ..
                     } => {
                         let candidate = match current_match {
-                            CurrentMatch::Directory { entries, .. } => match entries.get(*m) {
-                                Some(candidate) => candidate,
-                                None => return None,
-                            },
+                            CurrentMatch::Directory { entries, .. } => {
+                                match entries.iter().find(|entry| entry.path.id == m.candidate_id) {
+                                    Some(candidate) => candidate,
+                                    None => return None,
+                                }
+                            }
                             CurrentMatch::File { file, .. } => &CandidateInfo {
                                 path: file.clone(),
                                 is_dir: false,
@@ -521,7 +534,7 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        let Some(m) = self.matches.get(self.selected_index) else {
+        let Some(m) = self.string_matches.get(self.selected_index) else {
             return;
         };
 
@@ -533,10 +546,12 @@ impl PickerDelegate for OpenPathDelegate {
                 ..
             } => {
                 let candidate = match current_match {
-                    CurrentMatch::Directory { entries, .. } => match entries.get(*m) {
-                        Some(candidate) => candidate,
-                        None => return,
-                    },
+                    CurrentMatch::Directory { entries, .. } => {
+                        match entries.iter().find(|entry| entry.path.id == m.candidate_id) {
+                            Some(candidate) => candidate,
+                            None => return,
+                        }
+                    }
                     CurrentMatch::File { file, .. } => &CandidateInfo {
                         path: file.clone(),
                         is_dir: false,
@@ -593,7 +608,7 @@ impl PickerDelegate for OpenPathDelegate {
                         });
                         return;
                     } else if let Some(tx) = self.tx.take() {
-                        tx.send(Some(vec![PathBuf::from(prompted_path)])).ok();
+                        tx.send(Some(vec![prompted_path])).ok();
                     }
                 }
             },
@@ -621,7 +636,7 @@ impl PickerDelegate for OpenPathDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
-        let m = self.matches.get(ix)?;
+        let m = self.string_matches.get(ix)?;
         match &self.directory_state {
             DirectoryState::List {
                 parent_path,
@@ -629,18 +644,15 @@ impl PickerDelegate for OpenPathDelegate {
                 ..
             } => {
                 let candidate = match current_match {
-                    CurrentMatch::Directory { entries, .. } => entries.get(*m)?,
+                    CurrentMatch::Directory { entries, .. } => entries
+                        .iter()
+                        .find(|entry| entry.path.id == m.candidate_id)?,
                     CurrentMatch::File { file, .. } => &CandidateInfo {
                         path: file.clone(),
                         is_dir: false,
                     },
                 };
-                let highlight_positions = self
-                    .string_matches
-                    .iter()
-                    .find(|string_match| string_match.candidate_id == *m)
-                    .map(|string_match| string_match.positions.clone())
-                    .unwrap_or_default();
+                let highlight_positions = m.positions.clone();
 
                 let file_icon = maybe!({
                     if !settings.file_icons {
@@ -681,7 +693,9 @@ impl PickerDelegate for OpenPathDelegate {
                         entries,
                         entries_query,
                     } => {
-                        let entry = entries.get(*m)?;
+                        let entry = entries
+                            .iter()
+                            .find(|entry| entry.path.id == m.candidate_id)?;
                         if Some(&entry.path.string) == entries_query.as_ref() {
                             conflicts = true;
                         }
@@ -729,23 +743,11 @@ impl PickerDelegate for OpenPathDelegate {
                                 )
                                 .into_any_element()
                         } else {
-                            let string_match = self
-                                .string_matches
-                                .iter()
-                                .find(|string_match| string_match.candidate_id == *m);
-                            let highlight_positions = string_match
-                                .as_ref()
-                                .map(|string_match| string_match.positions.clone())
-                                .map(|mut positions| {
-                                    positions.iter_mut().for_each(|position| {
-                                        *position += delta;
-                                    });
-                                    positions
-                                })
-                                .unwrap_or_default();
-                            let highlighted_label = string_match
-                                .map(|string_match| string_match.string.clone())
-                                .unwrap_or(label);
+                            let mut highlight_positions = m.positions.clone();
+                            highlight_positions.iter_mut().for_each(|position| {
+                                *position += delta;
+                            });
+                            let highlighted_label = m.string.clone();
                             HighlightedLabel::new(highlighted_label, highlight_positions)
                                 .into_any_element()
                         }
