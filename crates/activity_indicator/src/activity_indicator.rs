@@ -1,4 +1,4 @@
-use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage};
+use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
@@ -311,6 +311,31 @@ impl ActivityIndicator {
             });
         }
 
+        if let Some(session) = self
+            .project
+            .read(cx)
+            .dap_store()
+            .read(cx)
+            .sessions()
+            .find(|s| !s.read(cx).is_started())
+        {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::Small)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        )
+                        .into_any_element(),
+                ),
+                message: format!("Debug: {}", session.read(cx).adapter()),
+                tooltip_message: Some(session.read(cx).label().to_string()),
+                on_click: None,
+            });
+        }
+
         let current_job = self
             .project
             .read(cx)
@@ -472,7 +497,7 @@ impl ActivityIndicator {
                     })),
                     tooltip_message: None,
                 }),
-                AutoUpdateStatus::Downloading => Some(Content {
+                AutoUpdateStatus::Downloading { version } => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -482,9 +507,9 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
-                    tooltip_message: None,
+                    tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
-                AutoUpdateStatus::Installing => Some(Content {
+                AutoUpdateStatus::Installing { version } => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)
@@ -494,7 +519,7 @@ impl ActivityIndicator {
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
-                    tooltip_message: None,
+                    tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
                 AutoUpdateStatus::Updated {
                     binary_path,
@@ -508,14 +533,7 @@ impl ActivityIndicator {
                         };
                         move |_, _, cx| workspace::reload(&reload, cx)
                     })),
-                    tooltip_message: Some(format!("Install version: {}", {
-                        match version {
-                            auto_update::VersionCheckType::Sha(sha) => sha.to_string(),
-                            auto_update::VersionCheckType::Semantic(semantic_version) => {
-                                semantic_version.to_string()
-                            }
-                        }
-                    })),
+                    tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
                 AutoUpdateStatus::Errored => Some(Content {
                     icon: Some(
@@ -553,6 +571,17 @@ impl ActivityIndicator {
         }
 
         None
+    }
+
+    fn version_tooltip_message(version: &VersionCheckType) -> String {
+        format!("Version: {}", {
+            match version {
+                auto_update::VersionCheckType::Sha(sha) => format!("{}…", sha.short()),
+                auto_update::VersionCheckType::Semantic(semantic_version) => {
+                    semantic_version.to_string()
+                }
+            }
+        })
     }
 
     fn toggle_language_server_work_context_menu(
@@ -684,5 +713,28 @@ impl StatusItemView for ActivityIndicator {
         _window: &mut Window,
         _: &mut Context<Self>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::SemanticVersion;
+    use release_channel::AppCommitSha;
+
+    use super::*;
+
+    #[test]
+    fn test_version_tooltip_message() {
+        let message = ActivityIndicator::version_tooltip_message(&VersionCheckType::Semantic(
+            SemanticVersion::new(1, 0, 0),
+        ));
+
+        assert_eq!(message, "Version: 1.0.0");
+
+        let message = ActivityIndicator::version_tooltip_message(&VersionCheckType::Sha(
+            AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
+        ));
+
+        assert_eq!(message, "Version: 14d9a41…");
     }
 }

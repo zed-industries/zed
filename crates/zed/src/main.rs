@@ -164,6 +164,24 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    #[cfg(unix)]
+    {
+        let is_root = nix::unistd::geteuid().is_root();
+        let allow_root = env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
+
+        // Prevent running Zed with root privileges on Unix systems unless explicitly allowed
+        if is_root && !allow_root {
+            eprintln!(
+                "\
+Error: Running Zed as root or via sudo is unsupported.
+       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
+       It is untested and not recommended, don't complain when things break.
+       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
+            );
+            process::exit(1);
+        }
+    }
+
     // Check if there is a pending installer
     // If there is, run the installer and exit
     // And we don't want to run the installer if we are not the first instance
@@ -217,7 +235,7 @@ fn main() {
 
     let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
-        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
+        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
 
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
@@ -519,6 +537,7 @@ fn main() {
             app_state.client.clone(),
             prompt_builder.clone(),
             app_state.languages.clone(),
+            false,
             cx,
         );
         assistant_tools::init(app_state.client.http_client(), cx);
@@ -573,6 +592,7 @@ fn main() {
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
+        inspector_ui::init(app_state.clone(), cx);
 
         cx.observe_global::<SettingsStore>({
             let fs = fs.clone();

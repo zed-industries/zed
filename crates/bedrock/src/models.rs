@@ -16,6 +16,20 @@ pub enum BedrockModelMode {
 pub enum Model {
     // Anthropic models (already included)
     #[default]
+    #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
+    ClaudeSonnet4,
+    #[serde(
+        rename = "claude-sonnet-4-thinking",
+        alias = "claude-sonnet-4-thinking-latest"
+    )]
+    ClaudeSonnet4Thinking,
+    #[serde(rename = "claude-opus-4", alias = "claude-opus-4-latest")]
+    ClaudeOpus4,
+    #[serde(
+        rename = "claude-opus-4-thinking",
+        alias = "claude-opus-4-thinking-latest"
+    )]
+    ClaudeOpus4Thinking,
     #[serde(rename = "claude-3-5-sonnet-v2", alias = "claude-3-5-sonnet-latest")]
     Claude3_5SonnetV2,
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
@@ -57,16 +71,20 @@ pub enum Model {
     // DeepSeek
     DeepSeekR1,
     // Meta models
-    MetaLlama38BInstructV1,
-    MetaLlama370BInstructV1,
-    MetaLlama318BInstructV1_128k,
-    MetaLlama318BInstructV1,
-    MetaLlama3170BInstructV1_128k,
-    MetaLlama3170BInstructV1,
-    MetaLlama3211BInstructV1,
-    MetaLlama3290BInstructV1,
-    MetaLlama321BInstructV1,
-    MetaLlama323BInstructV1,
+    MetaLlama3_8BInstruct,
+    MetaLlama3_70BInstruct,
+    MetaLlama31_8BInstruct,
+    MetaLlama31_70BInstruct,
+    MetaLlama31_405BInstruct,
+    MetaLlama32_1BInstruct,
+    MetaLlama32_3BInstruct,
+    MetaLlama32_11BMultiModal,
+    MetaLlama32_90BMultiModal,
+    MetaLlama33_70BInstruct,
+    #[allow(non_camel_case_types)]
+    MetaLlama4Scout_17BInstruct,
+    #[allow(non_camel_case_types)]
+    MetaLlama4Maverick_17BInstruct,
     // Mistral models
     MistralMistral7BInstructV0,
     MistralMixtral8x7BInstructV0,
@@ -112,6 +130,12 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
+            Model::ClaudeSonnet4 | Model::ClaudeSonnet4Thinking => {
+                "anthropic.claude-sonnet-4-20250514-v1:0"
+            }
+            Model::ClaudeOpus4 | Model::ClaudeOpus4Thinking => {
+                "anthropic.claude-opus-4-20250514-v1:0"
+            }
             Model::Claude3_5SonnetV2 => "anthropic.claude-3-5-sonnet-20241022-v2:0",
             Model::Claude3_5Sonnet => "anthropic.claude-3-5-sonnet-20240620-v1:0",
             Model::Claude3Opus => "anthropic.claude-3-opus-20240229-v1:0",
@@ -125,7 +149,7 @@ impl Model {
             Model::AmazonNovaMicro => "amazon.nova-micro-v1:0",
             Model::AmazonNovaPro => "amazon.nova-pro-v1:0",
             Model::AmazonNovaPremier => "amazon.nova-premier-v1:0",
-            Model::DeepSeekR1 => "us.deepseek.r1-v1:0",
+            Model::DeepSeekR1 => "deepseek.r1-v1:0",
             Model::AI21J2GrandeInstruct => "ai21.j2-grande-instruct",
             Model::AI21J2JumboInstruct => "ai21.j2-jumbo-instruct",
             Model::AI21J2Mid => "ai21.j2-mid",
@@ -140,16 +164,18 @@ impl Model {
             Model::CohereCommandRV1 => "cohere.command-r-v1:0",
             Model::CohereCommandRPlusV1 => "cohere.command-r-plus-v1:0",
             Model::CohereCommandLightTextV14_4k => "cohere.command-light-text-v14:7:4k",
-            Model::MetaLlama38BInstructV1 => "meta.llama3-8b-instruct-v1:0",
-            Model::MetaLlama370BInstructV1 => "meta.llama3-70b-instruct-v1:0",
-            Model::MetaLlama318BInstructV1_128k => "meta.llama3-1-8b-instruct-v1:0:128k",
-            Model::MetaLlama318BInstructV1 => "meta.llama3-1-8b-instruct-v1:0",
-            Model::MetaLlama3170BInstructV1_128k => "meta.llama3-1-70b-instruct-v1:0:128k",
-            Model::MetaLlama3170BInstructV1 => "meta.llama3-1-70b-instruct-v1:0",
-            Model::MetaLlama3211BInstructV1 => "meta.llama3-2-11b-instruct-v1:0",
-            Model::MetaLlama3290BInstructV1 => "meta.llama3-2-90b-instruct-v1:0",
-            Model::MetaLlama321BInstructV1 => "meta.llama3-2-1b-instruct-v1:0",
-            Model::MetaLlama323BInstructV1 => "meta.llama3-2-3b-instruct-v1:0",
+            Model::MetaLlama3_8BInstruct => "meta.llama3-8b-instruct-v1:0",
+            Model::MetaLlama3_70BInstruct => "meta.llama3-70b-instruct-v1:0",
+            Model::MetaLlama31_8BInstruct => "meta.llama3-1-8b-instruct-v1:0",
+            Model::MetaLlama31_70BInstruct => "meta.llama3-1-70b-instruct-v1:0",
+            Model::MetaLlama31_405BInstruct => "meta.llama3-1-405b-instruct-v1:0",
+            Model::MetaLlama32_11BMultiModal => "meta.llama3-2-11b-instruct-v1:0",
+            Model::MetaLlama32_90BMultiModal => "meta.llama3-2-90b-instruct-v1:0",
+            Model::MetaLlama32_1BInstruct => "meta.llama3-2-1b-instruct-v1:0",
+            Model::MetaLlama32_3BInstruct => "meta.llama3-2-3b-instruct-v1:0",
+            Model::MetaLlama33_70BInstruct => "meta.llama3-3-70b-instruct-v1:0",
+            Model::MetaLlama4Scout_17BInstruct => "meta.llama4-scout-17b-instruct-v1:0",
+            Model::MetaLlama4Maverick_17BInstruct => "meta.llama4-maverick-17b-instruct-v1:0",
             Model::MistralMistral7BInstructV0 => "mistral.mistral-7b-instruct-v0:2",
             Model::MistralMixtral8x7BInstructV0 => "mistral.mixtral-8x7b-instruct-v0:1",
             Model::MistralMistralLarge2402V1 => "mistral.mistral-large-2402-v1:0",
@@ -163,6 +189,10 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Self::ClaudeSonnet4 => "Claude Sonnet 4",
+            Self::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
+            Self::ClaudeOpus4 => "Claude Opus 4",
+            Self::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
             Self::Claude3_5SonnetV2 => "Claude 3.5 Sonnet v2",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3Opus => "Claude 3 Opus",
@@ -190,16 +220,18 @@ impl Model {
             Self::CohereCommandRV1 => "Cohere Command R V1",
             Self::CohereCommandRPlusV1 => "Cohere Command R Plus V1",
             Self::CohereCommandLightTextV14_4k => "Cohere Command Light Text V14 4K",
-            Self::MetaLlama38BInstructV1 => "Meta Llama 3 8B Instruct V1",
-            Self::MetaLlama370BInstructV1 => "Meta Llama 3 70B Instruct V1",
-            Self::MetaLlama318BInstructV1_128k => "Meta Llama 3 1.8B Instruct V1 128K",
-            Self::MetaLlama318BInstructV1 => "Meta Llama 3 1.8B Instruct V1",
-            Self::MetaLlama3170BInstructV1_128k => "Meta Llama 3 1 70B Instruct V1 128K",
-            Self::MetaLlama3170BInstructV1 => "Meta Llama 3 1 70B Instruct V1",
-            Self::MetaLlama3211BInstructV1 => "Meta Llama 3 2 11B Instruct V1",
-            Self::MetaLlama3290BInstructV1 => "Meta Llama 3 2 90B Instruct V1",
-            Self::MetaLlama321BInstructV1 => "Meta Llama 3 2 1B Instruct V1",
-            Self::MetaLlama323BInstructV1 => "Meta Llama 3 2 3B Instruct V1",
+            Self::MetaLlama3_8BInstruct => "Meta Llama 3 8B Instruct",
+            Self::MetaLlama3_70BInstruct => "Meta Llama 3 70B Instruct",
+            Self::MetaLlama31_8BInstruct => "Meta Llama 3.1 8B Instruct",
+            Self::MetaLlama31_70BInstruct => "Meta Llama 3.1 70B Instruct",
+            Self::MetaLlama31_405BInstruct => "Meta Llama 3.1 405B Instruct",
+            Self::MetaLlama32_11BMultiModal => "Meta Llama 3.2 11B Vision Instruct",
+            Self::MetaLlama32_90BMultiModal => "Meta Llama 3.2 90B Vision Instruct",
+            Self::MetaLlama32_1BInstruct => "Meta Llama 3.2 1B Instruct",
+            Self::MetaLlama32_3BInstruct => "Meta Llama 3.2 3B Instruct",
+            Self::MetaLlama33_70BInstruct => "Meta Llama 3.3 70B Instruct",
+            Self::MetaLlama4Scout_17BInstruct => "Meta Llama 4 Scout 17B Instruct",
+            Self::MetaLlama4Maverick_17BInstruct => "Meta Llama 4 Maverick 17B Instruct",
             Self::MistralMistral7BInstructV0 => "Mistral 7B Instruct V0",
             Self::MistralMixtral8x7BInstructV0 => "Mistral Mixtral 8x7B Instruct V0",
             Self::MistralMistralLarge2402V1 => "Mistral Large 2402 V1",
@@ -219,7 +251,9 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
-            | Self::Claude3_7Sonnet => 200_000,
+            | Self::Claude3_7Sonnet
+            | Self::ClaudeSonnet4
+            | Self::ClaudeOpus4 => 200_000,
             Self::AmazonNovaPremier => 1_000_000,
             Self::PalmyraWriterX5 => 1_000_000,
             Self::PalmyraWriterX4 => 128_000,
@@ -231,7 +265,12 @@ impl Model {
     pub fn max_output_tokens(&self) -> u32 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
-            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => 128_000,
+            Self::Claude3_7Sonnet
+            | Self::Claude3_7SonnetThinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeOpus4
+            | Model::ClaudeOpus4Thinking => 128_000,
             Self::Claude3_5SonnetV2 | Self::PalmyraWriterX4 | Self::PalmyraWriterX5 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
@@ -246,7 +285,11 @@ impl Model {
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku
-            | Self::Claude3_7Sonnet => 1.0,
+            | Self::Claude3_7Sonnet
+            | Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking => 1.0,
             Self::Custom {
                 default_temperature,
                 ..
@@ -264,6 +307,10 @@ impl Model {
             | Self::Claude3_5SonnetV2
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
+            | Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
             | Self::Claude3_5Haiku => true,
 
             // Amazon Nova models (all support tool use)
@@ -287,6 +334,12 @@ impl Model {
     pub fn mode(&self) -> BedrockModelMode {
         match self {
             Model::Claude3_7SonnetThinking => BedrockModelMode::Thinking {
+                budget_tokens: Some(4096),
+            },
+            Model::ClaudeSonnet4Thinking => BedrockModelMode::Thinking {
+                budget_tokens: Some(4096),
+            },
+            Model::ClaudeOpus4Thinking => BedrockModelMode::Thinking {
                 budget_tokens: Some(4096),
             },
             _ => BedrockModelMode::Default,
@@ -320,51 +373,60 @@ impl Model {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
-            // Models available only in US
-            (Model::Claude3Opus, "us")
-            | (Model::Claude3_5Haiku, "us")
-            | (Model::Claude3_7Sonnet, "us")
-            | (Model::Claude3_7SonnetThinking, "us")
-            | (Model::AmazonNovaPremier, "us")
-            | (Model::MistralPixtralLarge2502V1, "us") => {
+            // Available everywhere
+            (Model::AmazonNovaLite | Model::AmazonNovaMicro | Model::AmazonNovaPro, _) => {
                 Ok(format!("{}.{}", region_group, model_id))
             }
 
-            // Models available in US, EU, and APAC
-            (Model::Claude3_5SonnetV2, "us")
-            | (Model::Claude3_5SonnetV2, "apac")
-            | (Model::Claude3_5Sonnet, _)
-            | (Model::Claude3Haiku, _)
-            | (Model::Claude3Sonnet, _)
-            | (Model::AmazonNovaLite, _)
-            | (Model::AmazonNovaMicro, _)
-            | (Model::AmazonNovaPro, _) => Ok(format!("{}.{}", region_group, model_id)),
+            // Models in US
+            (
+                Model::AmazonNovaPremier
+                | Model::Claude3_5Haiku
+                | Model::Claude3_5Sonnet
+                | Model::Claude3_5SonnetV2
+                | Model::Claude3_7Sonnet
+                | Model::Claude3_7SonnetThinking
+                | Model::Claude3Haiku
+                | Model::Claude3Opus
+                | Model::Claude3Sonnet
+                | Model::DeepSeekR1
+                | Model::MetaLlama31_405BInstruct
+                | Model::MetaLlama31_70BInstruct
+                | Model::MetaLlama31_8BInstruct
+                | Model::MetaLlama32_11BMultiModal
+                | Model::MetaLlama32_1BInstruct
+                | Model::MetaLlama32_3BInstruct
+                | Model::MetaLlama32_90BMultiModal
+                | Model::MetaLlama33_70BInstruct
+                | Model::MetaLlama4Maverick_17BInstruct
+                | Model::MetaLlama4Scout_17BInstruct
+                | Model::MistralPixtralLarge2502V1
+                | Model::PalmyraWriterX4
+                | Model::PalmyraWriterX5,
+                "us",
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Models with limited EU availability
-            (Model::MetaLlama321BInstructV1, "us")
-            | (Model::MetaLlama321BInstructV1, "eu")
-            | (Model::MetaLlama323BInstructV1, "us")
-            | (Model::MetaLlama323BInstructV1, "eu") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
+            // Models available in EU
+            (
+                Model::Claude3_5Sonnet
+                | Model::Claude3_7Sonnet
+                | Model::Claude3_7SonnetThinking
+                | Model::Claude3Haiku
+                | Model::Claude3Sonnet
+                | Model::MetaLlama32_1BInstruct
+                | Model::MetaLlama32_3BInstruct
+                | Model::MistralPixtralLarge2502V1,
+                "eu",
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // US-only models (all remaining Meta models)
-            (Model::MetaLlama38BInstructV1, "us")
-            | (Model::MetaLlama370BInstructV1, "us")
-            | (Model::MetaLlama318BInstructV1, "us")
-            | (Model::MetaLlama318BInstructV1_128k, "us")
-            | (Model::MetaLlama3170BInstructV1, "us")
-            | (Model::MetaLlama3170BInstructV1_128k, "us")
-            | (Model::MetaLlama3211BInstructV1, "us")
-            | (Model::MetaLlama3290BInstructV1, "us") => {
-                Ok(format!("{}.{}", region_group, model_id))
-            }
-
-            // Writer models only available in the US
-            (Model::PalmyraWriterX4, "us") | (Model::PalmyraWriterX5, "us") => {
-                // They have some goofiness
-                Ok(format!("{}.{}", region_group, model_id))
-            }
+            // Models available in APAC
+            (
+                Model::Claude3_5Sonnet
+                | Model::Claude3_5SonnetV2
+                | Model::Claude3Haiku
+                | Model::Claude3Sonnet,
+                "apac",
+            ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // Any other combination is not supported
             _ => Ok(self.id().into()),
@@ -416,6 +478,10 @@ mod tests {
             "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
         );
         assert_eq!(
+            Model::Claude3_5SonnetV2.cross_region_inference_id("ap-southeast-2")?,
+            "apac.anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
+        assert_eq!(
             Model::AmazonNovaLite.cross_region_inference_id("ap-south-1")?,
             "apac.amazon.nova-lite-v1:0"
         );
@@ -440,11 +506,15 @@ mod tests {
     fn test_meta_models_inference_ids() -> anyhow::Result<()> {
         // Test Meta models
         assert_eq!(
-            Model::MetaLlama370BInstructV1.cross_region_inference_id("us-east-1")?,
-            "us.meta.llama3-70b-instruct-v1:0"
+            Model::MetaLlama3_70BInstruct.cross_region_inference_id("us-east-1")?,
+            "meta.llama3-70b-instruct-v1:0"
         );
         assert_eq!(
-            Model::MetaLlama321BInstructV1.cross_region_inference_id("eu-west-1")?,
+            Model::MetaLlama31_70BInstruct.cross_region_inference_id("us-east-1")?,
+            "us.meta.llama3-1-70b-instruct-v1:0"
+        );
+        assert_eq!(
+            Model::MetaLlama32_1BInstruct.cross_region_inference_id("eu-west-1")?,
             "eu.meta.llama3-2-1b-instruct-v1:0"
         );
         Ok(())

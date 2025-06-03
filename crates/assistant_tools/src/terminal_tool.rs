@@ -182,9 +182,8 @@ impl Tool for TerminalTool {
                 let mut child = pair.slave.spawn_command(cmd)?;
                 let mut reader = pair.master.try_clone_reader()?;
                 drop(pair);
-                let mut content = Vec::new();
-                reader.read_to_end(&mut content)?;
-                let mut content = String::from_utf8(content)?;
+                let mut content = String::new();
+                reader.read_to_string(&mut content)?;
                 // Massage the pty output a bit to try to match what the terminal codepath gives us
                 LineEnding::normalize(&mut content);
                 content = content
@@ -275,7 +274,7 @@ impl Tool for TerminalTool {
                 let exit_status = terminal
                     .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
                     .await;
-                let (content, content_line_count) = terminal.update(cx, |terminal, _| {
+                let (content, content_line_count) = terminal.read_with(cx, |terminal, _| {
                     (terminal.get_content(), terminal.total_lines())
                 })?;
 
@@ -673,8 +672,7 @@ mod tests {
     use super::*;
 
     fn init_test(executor: &BackgroundExecutor, cx: &mut TestAppContext) {
-        zlog::init();
-        zlog::init_output_stdout();
+        zlog::init_test();
 
         executor.allow_parking();
         cx.update(|cx| {

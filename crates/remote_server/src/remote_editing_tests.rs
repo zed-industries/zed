@@ -513,8 +513,8 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     assert_eq!(
         result
-            .unwrap()
             .into_iter()
+            .flat_map(|response| response.completions)
             .map(|c| c.label.text)
             .collect::<Vec<_>>(),
         vec!["boop".to_string()]
@@ -1663,9 +1663,7 @@ pub async fn init_test(
 }
 
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    zlog::init_test();
 }
 
 fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {

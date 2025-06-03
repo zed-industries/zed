@@ -35,6 +35,7 @@ pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
+pub use manifest_tree::ManifestTree;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -66,8 +67,8 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
-    AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
-    SharedString, Task, WeakEntity, Window,
+    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
+    Task, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -554,6 +555,23 @@ impl std::fmt::Debug for Completion {
     }
 }
 
+/// Response from a source of completions.
+pub struct CompletionResponse {
+    pub completions: Vec<Completion>,
+    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// can be filtered instead.
+    pub is_incomplete: bool,
+}
+
+/// Response from language server completion request.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CoreCompletionResponse {
+    pub completions: Vec<CoreCompletion>,
+    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// can be filtered instead.
+    pub is_incomplete: bool,
+}
+
 /// A generic completion that can come from different sources.
 #[derive(Clone, Debug)]
 pub(crate) struct CoreCompletion {
@@ -874,11 +892,13 @@ impl Project {
                 cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let environment = cx.new(|_| ProjectEnvironment::new(env));
+            let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::local(
                     languages.clone(),
                     worktree_store.clone(),
                     environment.clone(),
+                    manifest_tree.clone(),
                     cx,
                 )
             });
@@ -946,6 +966,7 @@ impl Project {
                     prettier_store.clone(),
                     toolchain_store.clone(),
                     environment.clone(),
+                    manifest_tree,
                     languages.clone(),
                     client.http_client(),
                     fs.clone(),
@@ -1023,7 +1044,7 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
-            let global_snippets_dir = paths::config_dir().join("snippets");
+            let global_snippets_dir = paths::snippets_dir().to_owned();
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
@@ -1540,7 +1561,7 @@ impl Project {
                 .unwrap()
                 .await
                 .unwrap();
-            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .unwrap()
                 .await;
         }
@@ -1579,7 +1600,7 @@ impl Project {
                 .await
                 .unwrap();
 
-            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .await;
         }
         project
@@ -1945,7 +1966,7 @@ impl Project {
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(async move |_, cx| {
             let (old_abs_path, new_abs_path) = {
-                let root_path = worktree.update(cx, |this, _| this.abs_path())?;
+                let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
                 let new_abs_path = if is_root_entry {
                     root_path.parent().unwrap().join(&new_path)
                 } else {
@@ -1970,7 +1991,7 @@ impl Project {
                 .await?;
 
             lsp_store
-                .update(cx, |this, _| {
+                .read_with(cx, |this, _| {
                     this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
                 })
                 .ok();
@@ -2322,7 +2343,7 @@ impl Project {
         &mut self,
         path: ProjectPath,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Option<ProjectEntryId>, AnyEntity)>> {
+    ) -> Task<Result<(Option<ProjectEntryId>, Entity<Buffer>)>> {
         let task = self.open_buffer(path.clone(), cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
@@ -2330,8 +2351,7 @@ impl Project {
                 File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
             })?;
 
-            let buffer: &AnyEntity = &buffer;
-            Ok((project_entry_id, buffer.clone()))
+            Ok((project_entry_id, buffer))
         })
     }
 
@@ -2551,7 +2571,7 @@ impl Project {
             cx: &mut AsyncApp,
         ) -> Result<()> {
             for (buffer_id, operations) in operations_by_buffer_id.drain() {
-                let request = this.update(cx, |this, _| {
+                let request = this.read_with(cx, |this, _| {
                     let project_id = this.remote_id()?;
                     Some(this.client.request(proto::UpdateBuffer {
                         buffer_id: buffer_id.into(),
@@ -2573,7 +2593,7 @@ impl Project {
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
 
         while let Some(changes) = changes.next().await {
-            let is_local = this.update(cx, |this, _| this.is_local())?;
+            let is_local = this.read_with(cx, |this, _| this.is_local())?;
 
             for change in changes {
                 match change {
@@ -2615,7 +2635,7 @@ impl Project {
                         )
                         .await?;
 
-                        this.update(cx, |this, _| {
+                        this.read_with(cx, |this, _| {
                             if let Some(project_id) = this.remote_id() {
                                 this.client
                                     .send(proto::UpdateLanguageServer {
@@ -3085,16 +3105,13 @@ impl Project {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
-    ) -> Task<Option<ToolchainList>> {
-        if let Some(toolchain_store) = self.toolchain_store.clone() {
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
+        if let Some(toolchain_store) = self.toolchain_store.as_ref().map(Entity::downgrade) {
             cx.spawn(async move |cx| {
-                cx.update(|cx| {
-                    toolchain_store
-                        .read(cx)
-                        .list_toolchains(path, language_name, cx)
-                })
-                .ok()?
-                .await
+                toolchain_store
+                    .update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
+                    .ok()?
+                    .await
             })
         } else {
             Task::ready(None)
@@ -3430,7 +3447,7 @@ impl Project {
         position: T,
         context: CompletionContext,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.completions(buffer, position, context, cx)
@@ -3871,9 +3888,7 @@ impl Project {
     }
 
     pub fn find_worktree(&self, abs_path: &Path, cx: &App) -> Option<(Entity<Worktree>, PathBuf)> {
-        self.worktree_store.read_with(cx, |worktree_store, cx| {
-            worktree_store.find_worktree(abs_path, cx)
-        })
+        self.worktree_store.read(cx).find_worktree(abs_path, cx)
     }
 
     pub fn is_shared(&self) -> bool {
@@ -4010,7 +4025,7 @@ impl Project {
         cx: &mut AsyncApp,
     ) -> Option<ResolvedPath> {
         worktree
-            .update(cx, |worktree, _| {
+            .read_with(cx, |worktree, _| {
                 let root_entry_path = &worktree.root_entry()?.path;
                 let resolved = resolve_path(root_entry_path, path);
                 let stripped = resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);

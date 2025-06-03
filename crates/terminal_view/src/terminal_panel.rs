@@ -325,7 +325,6 @@ impl TerminalPanel {
                     .ok();
             }
         }
-
         Ok(terminal_panel)
     }
 
@@ -392,6 +391,9 @@ impl TerminalPanel {
             }
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
+            }
+            pane::Event::ItemPinned | pane::Event::ItemUnpinned => {
+                self.serialize(cx);
             }
 
             _ => {}
@@ -702,7 +704,7 @@ impl TerminalPanel {
                 terminal_panel.pending_terminals_to_add += 1;
                 terminal_panel.active_pane.clone()
             })?;
-            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
+            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let window_handle = cx.window_handle();
             let terminal = project
                 .update(cx, |project, cx| {
@@ -754,7 +756,7 @@ impl TerminalPanel {
         let width = self.width;
         let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| {
+            .read_with(cx, |workspace, _| {
                 TerminalPanel::serialization_key(workspace)
             })
             .ok()
@@ -972,7 +974,7 @@ pub fn new_terminal_pane(
             if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
                 let is_current_pane = tab.pane == cx.entity();
                 let Some(can_drag_away) = split_closure_terminal_panel
-                    .update(cx, |terminal_panel, _| {
+                    .read_with(cx, |terminal_panel, _| {
                         let current_panes = terminal_panel.center.panes();
                         !current_panes.contains(&&tab.pane)
                             || current_panes.len() > 1

@@ -202,6 +202,7 @@ pub enum Part {
     InlineDataPart(InlineDataPart),
     FunctionCallPart(FunctionCallPart),
     FunctionResponsePart(FunctionResponsePart),
+    ThoughtPart(ThoughtPart),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -233,6 +234,13 @@ pub struct FunctionCallPart {
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponsePart {
     pub function_response: FunctionResponse,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThoughtPart {
+    pub thought: bool,
+    pub thought_signature: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -281,6 +289,22 @@ pub struct UsageMetadata {
     pub total_token_count: Option<usize>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThinkingConfig {
+    pub thinking_budget: u32,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GoogleModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
@@ -296,6 +320,8 @@ pub struct GenerationConfig {
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_config: Option<ThinkingConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -488,12 +514,14 @@ pub enum Model {
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: usize,
+        #[serde(default)]
+        mode: GoogleModelMode,
     },
 }
 
 impl Model {
     pub fn default_fast() -> Model {
-        Model::Gemini15Flash
+        Model::Gemini20Flash
     }
 
     pub fn id(&self) -> &str {
@@ -542,6 +570,21 @@ impl Model {
             Model::Gemini25ProPreview0325 => ONE_MILLION,
             Model::Gemini25FlashPreview0417 => ONE_MILLION,
             Model::Custom { max_tokens, .. } => *max_tokens,
+        }
+    }
+
+    pub fn mode(&self) -> GoogleModelMode {
+        match self {
+            Self::Gemini15Pro
+            | Self::Gemini15Flash
+            | Self::Gemini20Pro
+            | Self::Gemini20Flash
+            | Self::Gemini20FlashThinking
+            | Self::Gemini20FlashLite
+            | Self::Gemini25ProExp0325
+            | Self::Gemini25ProPreview0325
+            | Self::Gemini25FlashPreview0417 => GoogleModelMode::Default,
+            Self::Custom { mode, .. } => *mode,
         }
     }
 }

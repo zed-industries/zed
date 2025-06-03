@@ -96,7 +96,7 @@ fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut A
 #[cfg(test)]
 mod tests {
     use super::*;
-    use assistant_settings::AssistantSettings;
+    use agent_settings::AgentSettings;
     use client::Client;
     use clock::FakeSystemClock;
     use http_client::FakeHttpClient;
@@ -133,7 +133,7 @@ mod tests {
     #[gpui::test]
     fn test_builtin_tool_schema_compatibility(cx: &mut App) {
         settings::init(cx);
-        AssistantSettings::register(cx);
+        AgentSettings::register(cx);
 
         let client = Client::new(
             Arc::new(FakeSystemClock::new()),

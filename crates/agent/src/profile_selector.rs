@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use assistant_settings::{
-    AgentProfile, AgentProfileId, AssistantDockPosition, AssistantSettings, GroupedAgentProfiles,
+use agent_settings::{
+    AgentDockPosition, AgentProfile, AgentProfileId, AgentSettings, GroupedAgentProfiles,
     builtin_profiles,
 };
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
+use gpui::{Action, Empty, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
@@ -39,7 +39,7 @@ impl ProfileSelector {
         });
 
         Self {
-            profiles: GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx)),
+            profiles: GroupedAgentProfiles::from_settings(AgentSettings::get_global(cx)),
             fs,
             thread,
             thread_store,
@@ -54,7 +54,7 @@ impl ProfileSelector {
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
-        self.profiles = GroupedAgentProfiles::from_settings(AssistantSettings::get_global(cx));
+        self.profiles = GroupedAgentProfiles::from_settings(AgentSettings::get_global(cx));
     }
 
     fn build_context_menu(
@@ -63,7 +63,7 @@ impl ProfileSelector {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
-            let settings = AssistantSettings::get_global(cx);
+            let settings = AgentSettings::get_global(cx);
             for (profile_id, profile) in self.profiles.builtin.iter() {
                 menu = menu.item(self.menu_entry_for_profile(
                     profile_id.clone(),
@@ -100,7 +100,7 @@ impl ProfileSelector {
         &self,
         profile_id: AgentProfileId,
         profile: &AgentProfile,
-        settings: &AssistantSettings,
+        settings: &AgentSettings,
         _cx: &App,
     ) -> ContextMenuEntry {
         let documentation = match profile.name.to_lowercase().as_str() {
@@ -126,7 +126,7 @@ impl ProfileSelector {
             let thread_store = self.thread_store.clone();
             let profile_id = profile_id.clone();
             move |_window, cx| {
-                update_settings_file::<AssistantSettings>(fs.clone(), cx, {
+                update_settings_file::<AgentSettings>(fs.clone(), cx, {
                     let profile_id = profile_id.clone();
                     move |settings, _cx| {
                         settings.set_profile(profile_id.clone());
@@ -145,7 +145,7 @@ impl ProfileSelector {
 
 impl Render for ProfileSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         let profile_id = &settings.default_profile;
         let profile = settings.profiles.get(profile_id);
 
@@ -153,17 +153,15 @@ impl Render for ProfileSelector {
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let configured_model = self
-            .thread
-            .read_with(cx, |thread, _cx| thread.configured_model())
-            .or_else(|| {
-                let model_registry = LanguageModelRegistry::read_global(cx);
-                model_registry.default_model()
-            });
-        let supports_tools =
-            configured_model.map_or(false, |default| default.model.supports_tools());
+        let configured_model = self.thread.read(cx).configured_model().or_else(|| {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            model_registry.default_model()
+        });
+        let Some(configured_model) = configured_model else {
+            return Empty.into_any_element();
+        };
 
-        if supports_tools {
+        if configured_model.model.supports_tools() {
             let this = cx.entity().clone();
             let focus_handle = self.focus_handle.clone();
             let trigger_button = Button::new("profile-selector-model", selected_profile)
@@ -210,10 +208,10 @@ impl Render for ProfileSelector {
     }
 }
 
-fn documentation_side(position: AssistantDockPosition) -> DocumentationSide {
+fn documentation_side(position: AgentDockPosition) -> DocumentationSide {
     match position {
-        AssistantDockPosition::Left => DocumentationSide::Right,
-        AssistantDockPosition::Bottom => DocumentationSide::Left,
-        AssistantDockPosition::Right => DocumentationSide::Left,
+        AgentDockPosition::Left => DocumentationSide::Right,
+        AgentDockPosition::Bottom => DocumentationSide::Left,
+        AgentDockPosition::Right => DocumentationSide::Left,
     }
 }

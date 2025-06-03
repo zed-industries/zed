@@ -266,7 +266,7 @@ impl TerminalView {
     pub(crate) fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
         if !text.is_empty() {
             self.terminal.update(cx, |term, _| {
-                term.input(text.to_string());
+                term.input(text.to_string().into_bytes());
             });
         }
     }
@@ -389,11 +389,9 @@ impl TerminalView {
     fn rerun_task(&mut self, _: &RerunTask, window: &mut Window, cx: &mut Context<Self>) {
         let task = self
             .terminal
-            .update(cx, |terminal, _| {
-                terminal
-                    .task()
-                    .map(|task| terminal_rerun_override(&task.id))
-            })
+            .read(cx)
+            .task()
+            .map(|task| terminal_rerun_override(&task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
     }
@@ -645,7 +643,7 @@ impl TerminalView {
     fn send_text(&mut self, text: &SendText, _: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
         self.terminal.update(cx, |term, _| {
-            term.input(text.0.to_string());
+            term.input(text.0.to_string().into_bytes());
         });
     }
 
@@ -653,7 +651,12 @@ impl TerminalView {
         if let Some(keystroke) = Keystroke::parse(&text.0).log_err() {
             self.clear_bell(cx);
             self.terminal.update(cx, |term, cx| {
-                term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
+                let processed =
+                    term.try_keystroke(&keystroke, TerminalSettings::get_global(cx).option_as_meta);
+                if processed && term.vi_mode_enabled() {
+                    cx.notify();
+                }
+                processed
             });
         }
     }

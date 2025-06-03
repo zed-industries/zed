@@ -14,7 +14,7 @@ use http_client::HttpClientWithUrl;
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
+use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, Symbol, WorktreeId};
 use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
@@ -322,7 +322,10 @@ impl ContextPickerCompletionProvider {
                             })
                             .collect::<Vec<_>>();
 
-                        let new_text = selection_infos.iter().map(|(_, link, _)| link).join(" ");
+                        let new_text = format!(
+                            "{} ",
+                            selection_infos.iter().map(|(_, link, _)| link).join(" ")
+                        );
 
                         let callback = Arc::new({
                             let context_store = context_store.clone();
@@ -420,7 +423,7 @@ impl ContextPickerCompletionProvider {
         } else {
             IconName::MessageBubbles
         };
-        let new_text = MentionLink::for_thread(&thread_entry);
+        let new_text = format!("{} ", MentionLink::for_thread(&thread_entry));
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
@@ -435,7 +438,7 @@ impl ContextPickerCompletionProvider {
                 thread_entry.title().clone(),
                 excerpt_id,
                 source_range.start,
-                new_text_len,
+                new_text_len - 1,
                 editor.clone(),
                 context_store.clone(),
                 move |window, cx| match &thread_entry {
@@ -489,7 +492,7 @@ impl ContextPickerCompletionProvider {
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
     ) -> Completion {
-        let new_text = MentionLink::for_rule(&rules);
+        let new_text = format!("{} ", MentionLink::for_rule(&rules));
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
@@ -504,7 +507,7 @@ impl ContextPickerCompletionProvider {
                 rules.title.clone(),
                 excerpt_id,
                 source_range.start,
-                new_text_len,
+                new_text_len - 1,
                 editor.clone(),
                 context_store.clone(),
                 move |_, cx| {
@@ -526,7 +529,7 @@ impl ContextPickerCompletionProvider {
         context_store: Entity<ContextStore>,
         http_client: Arc<HttpClientWithUrl>,
     ) -> Completion {
-        let new_text = MentionLink::for_fetch(&url_to_fetch);
+        let new_text = format!("{} ", MentionLink::for_fetch(&url_to_fetch));
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
@@ -541,7 +544,7 @@ impl ContextPickerCompletionProvider {
                 url_to_fetch.clone(),
                 excerpt_id,
                 source_range.start,
-                new_text_len,
+                new_text_len - 1,
                 editor.clone(),
                 context_store.clone(),
                 move |_, cx| {
@@ -550,7 +553,7 @@ impl ContextPickerCompletionProvider {
                     let url_to_fetch = url_to_fetch.clone();
                     cx.spawn(async move |cx| {
                         if let Some(context) = context_store
-                            .update(cx, |context_store, _| {
+                            .read_with(cx, |context_store, _| {
                                 context_store.get_url_context(url_to_fetch.clone())
                             })
                             .ok()?
@@ -611,7 +614,7 @@ impl ContextPickerCompletionProvider {
             crease_icon_path.clone()
         };
 
-        let new_text = MentionLink::for_file(&file_name, &full_path);
+        let new_text = format!("{} ", MentionLink::for_file(&file_name, &full_path));
         let new_text_len = new_text.len();
         Completion {
             replace_range: source_range.clone(),
@@ -626,7 +629,7 @@ impl ContextPickerCompletionProvider {
                 file_name,
                 excerpt_id,
                 source_range.start,
-                new_text_len,
+                new_text_len - 1,
                 editor,
                 context_store.clone(),
                 move |_, cx| {
@@ -682,7 +685,7 @@ impl ContextPickerCompletionProvider {
         label.push_str(" ", None);
         label.push_str(&file_name, comment_id);
 
-        let new_text = MentionLink::for_symbol(&symbol.name, &full_path);
+        let new_text = format!("{} ", MentionLink::for_symbol(&symbol.name, &full_path));
         let new_text_len = new_text.len();
         Some(Completion {
             replace_range: source_range.clone(),
@@ -697,7 +700,7 @@ impl ContextPickerCompletionProvider {
                 symbol.name.clone().into(),
                 excerpt_id,
                 source_range.start,
-                new_text_len,
+                new_text_len - 1,
                 editor.clone(),
                 context_store.clone(),
                 move |_, cx| {
@@ -743,7 +746,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         _trigger: CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Option<Vec<Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let state = buffer.update(cx, |buffer, _cx| {
             let position = buffer_position.to_point(buffer);
             let line_start = Point::new(position.row, 0);
@@ -753,13 +756,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             MentionCompletion::try_parse(line, offset_to_line)
         });
         let Some(state) = state else {
-            return Task::ready(Ok(None));
+            return Task::ready(Ok(Vec::new()));
         };
 
         let Some((workspace, context_store)) =
             self.workspace.upgrade().zip(self.context_store.upgrade())
         else {
-            return Task::ready(Ok(None));
+            return Task::ready(Ok(Vec::new()));
         };
 
         let snapshot = buffer.read(cx).snapshot();
@@ -812,10 +815,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         cx.spawn(async move |_, cx| {
             let matches = search_task.await;
             let Some(editor) = editor.upgrade() else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
 
-            Ok(Some(cx.update(|cx| {
+            let completions = cx.update(|cx| {
                 matches
                     .into_iter()
                     .filter_map(|mat| match mat {
@@ -898,7 +901,14 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         ),
                     })
                     .collect()
-            })?))
+            })?;
+
+            Ok(vec![CompletionResponse {
+                completions,
+                // Since this does its own filtering (see `filter_completions()` returns false),
+                // there is no benefit to computing whether this set of completions is incomplete.
+                is_incomplete: true,
+            }])
         })
     }
 
@@ -1213,7 +1223,7 @@ mod tests {
             assert_eq!(worktrees.len(), 1);
             worktrees.pop().unwrap()
         });
-        let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+        let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
 
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
@@ -1286,7 +1296,7 @@ mod tests {
                     .map(Entity::downgrade)
             });
             window.focus(&editor.focus_handle(cx));
-            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 workspace.downgrade(),
                 context_store.downgrade(),
                 None,
@@ -1353,7 +1363,7 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)",);
+            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ");
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1364,7 +1374,7 @@ mod tests {
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ",);
+            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)  ");
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1377,7 +1387,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum ",
+                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum ",
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -1391,7 +1401,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum @file ",
+                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum @file ",
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -1409,14 +1419,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@seven.txt](@file:dir/b/seven.txt)"
+                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) "
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 44)..Point::new(0, 79)
+                    Point::new(0, 45)..Point::new(0, 80)
                 ]
             );
         });
@@ -1426,14 +1436,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@seven.txt](@file:dir/b/seven.txt)\n@"
+                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n@"
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 44)..Point::new(0, 79)
+                    Point::new(0, 45)..Point::new(0, 80)
                 ]
             );
         });
@@ -1447,14 +1457,14 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt) Ipsum [@seven.txt](@file:dir/b/seven.txt)\n[@six.txt](@file:dir/b/six.txt)"
+                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n[@six.txt](@file:dir/b/six.txt) "
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
                 vec![
                     Point::new(0, 6)..Point::new(0, 37),
-                    Point::new(0, 44)..Point::new(0, 79),
+                    Point::new(0, 45)..Point::new(0, 80),
                     Point::new(1, 0)..Point::new(1, 31)
                 ]
             );
