@@ -213,6 +213,8 @@ the following configuration can be used:
 
 #### Rust/C++/C Examples
 
+Either CodeLLDB or GDB can be used for these languages. GDB is not supported on ARM Macs.
+
 ##### Debug a Pre-Built Binary
 
 ```json
@@ -221,7 +223,7 @@ the following configuration can be used:
     "label": "Debug native binary",
     "program": "$ZED_WORKTREE_ROOT/build/binary",
     "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+    "adapter": "CodeLLDB"
   }
 ]
 ```
@@ -238,14 +240,16 @@ the following configuration can be used:
     },
     "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
     "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+    "adapter": "CodeLLDB"
   },
   {
     "label": "Build & Debug C++ binary",
     "build": {
       "command": "make"
     },
-    "program": "$ZED_WORKTREE_ROOT/build/binary"
+    "program": "$ZED_WORKTREE_ROOT/build/binary",
+    "request": "launch",
+    "adapter": "GDB"
   }
 ]
 ```
