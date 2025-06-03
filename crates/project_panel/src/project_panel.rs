@@ -3841,7 +3841,7 @@ impl ProjectPanel {
                          .map(|entry| entry.entry_id) == Some(entry_id);
 
                     if !event.bounds.contains(&event.event.position) {
-                        // Entry responsible for setting drag target is also reponsible to
+                        // Entry responsible for setting drag target is also responsible to
                         // clear it up after drag is out of bounds
                         if is_current_target {
                             this.drag_target_entry = None;
@@ -3892,7 +3892,7 @@ impl ProjectPanel {
                          .map(|entry| entry.entry_id) == Some(entry_id);
 
                     if !event.bounds.contains(&event.event.position) {
-                        // Entry responsible for setting drag target is also reponsible to
+                        // Entry responsible for setting drag target is also responsible to
                         // clear it up after drag is out of bounds
                         if is_current_target {
                             this.drag_target_entry = None;
