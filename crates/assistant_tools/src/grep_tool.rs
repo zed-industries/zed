@@ -129,12 +129,12 @@ impl Tool for GrepTool {
 
         // Exclude file_scan_exclusions and private_files
         let exclude_matcher = {
-            let settings = WorktreeSettings::get_global(cx);
-            let exclude_patterns = settings
+            let global_settings = WorktreeSettings::get_global(cx);
+            let exclude_patterns = global_settings
                 .file_scan_exclusions
                 .sources()
                 .iter()
-                .chain(settings.private_files.sources().iter());
+                .chain(global_settings.private_files.sources().iter());
 
             match PathMatcher::new(exclude_patterns) {
                 Ok(matcher) => matcher,

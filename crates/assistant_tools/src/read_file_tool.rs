@@ -104,6 +104,14 @@ impl Tool for ReadFileTool {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
 
+        if WorktreeSettings::get_global(cx).is_path_excluded(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot read file because its path matches the `file_scan_exclusions` user setting: {}",
+                &input.path
+            )))
+            .into();
+        }
+
         // This tool may not read private files or excluded files, as that could send sensitive info to third-party servers.
         if let Some(worktree) = project
             .read(cx)
@@ -113,12 +121,7 @@ impl Tool for ReadFileTool {
         {
             if let Worktree::Local(local_worktree) = worktree.read(cx) {
                 if local_worktree.is_path_private(&project_path.path) {
-                    return Task::ready(Err(anyhow!("Cannot read private file: {}", &input.path)))
-                        .into();
-                }
-
-                if WorktreeSettings::get_global(cx).is_path_excluded(&project_path.path) {
-                    return Task::ready(Err(anyhow!("Cannot read file because its path matches the `file_scan_inclusions` setting: {}", &input.path)))
+                    return Task::ready(Err(anyhow!("Cannot read file because its path matches the `private_files` user setting: {}", &input.path)))
                         .into();
                 }
             }
@@ -129,7 +132,7 @@ impl Tool for ReadFileTool {
         if image_store::is_image_file(&project, &project_path, cx) {
             if !model.supports_images() {
                 return Task::ready(Err(anyhow!(
-                    "Attempted to read an image, but Zed doesn't currently sending images to {}.",
+                    "Attempted to read an image, but Zed doesn't currently support sending images to {}.",
                     model.name().0
                 )))
                 .into();
