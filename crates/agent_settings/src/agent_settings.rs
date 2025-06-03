@@ -730,6 +730,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "zed.dev".into(),
                 "copilot_chat".into(),
                 "deepseek".into(),
+                "openrouter".into(),
                 "mistral".into(),
             ]),
             ..Default::default()

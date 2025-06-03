@@ -18,6 +18,7 @@ pub enum IconName {
     AiMistral,
     AiOllama,
     AiOpenAi,
+    AiOpenRouter,
     AiZed,
     ArrowCircle,
     ArrowDown,
