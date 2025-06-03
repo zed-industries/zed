@@ -152,6 +152,8 @@ impl NewProcessModal {
                                         window,
                                         cx,
                                     );
+                                    picker.refresh(window, cx);
+                                    cx.notify();
                                 })
                                 .ok();
 
