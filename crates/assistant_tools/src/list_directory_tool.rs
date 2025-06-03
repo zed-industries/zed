@@ -48,6 +48,10 @@ impl Tool for ListDirectoryTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./list_directory_tool/description.md").into()
     }

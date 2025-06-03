@@ -933,7 +933,7 @@ impl<'a> Iterator for WrapChunks<'a> {
             self.transforms.next(&());
             return Some(Chunk {
                 text: &display_text[start_ix..end_ix],
-                ..self.input_chunk.clone()
+                ..Default::default()
             });
         }
 
