@@ -35,11 +35,11 @@ Zed supports zero-configuration debugging of tests and main functions in several
 - JavaScript and TypeScript
 If you use one of these languages, the easiest way to get started with debugging in Zed is by opening the definition of the test or function you want to debug, clicking on the triangular "play" icon in the gutter, and selecting the debug task from the list that appears.
 
-You can also see a contextual list of debug tasks for the current project by opening the new process modal with the `debugger: start` action (bound by default to <kbd>f4</kbd>).
+You can also see a contextual list of debug tasks for the current location by opening the new process modal with the `debugger: start` action (bound by default to <kbd>f4</kbd>).
 
-The new process modal can also be used to manually start a debugging session. This is especially useful for languages like C, C++, and Swift that don't have zero-configuration debugging support in Zed. To start a basic debugging session manually from the modal, click on "Launch", then select a debug adapter from the dropdown menu and fill in the command line and working directory for the process you want to debug. You can pass environment variables to the debuggee process by using syntax like `ENV=var command arg1 arg2` in the command line field.
+The new process modal can also be used to manually start a debugging session. This is especially useful for languages like C, C++, and Swift that don't have zero-configuration debugging support in Zed. To start a basic debugging session manually from the modal, go to the "Launch" tab, then select a debug adapter from the dropdown menu and fill in the command line and working directory for the process you want to debug. You can pass environment variables to the debuggee process by using syntax like `ENV=var prog arg1 arg2` in the command line field.
 
-For more advanced use-cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory. These handwritten debugging configurations also appear in the list shown by the new process modal.
+For more advanced use-cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory. These handwritten debug configurations also appear in the new process modal.
 
 ### Launching & Attaching
 
