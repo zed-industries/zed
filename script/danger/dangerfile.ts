@@ -38,7 +38,7 @@ if (!hasReleaseNotes) {
 }
 
 const ISSUE_LINK_PATTERN =
-  /(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed]|Follow-up of|Part of)\s+)https:\/\/github\.com\/[\w-]+\/[\w-]+\/issues\/\d+/gi;
+  /(?:- )?(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed]|Follow-up of|Part of):?\s+)https:\/\/github\.com\/[\w-]+\/[\w-]+\/issues\/\d+/gi;
 
 const bodyWithoutReleaseNotes = hasReleaseNotes ? body.split(/Release Notes:/)[0] : body;
 const includesIssueUrl = ISSUE_LINK_PATTERN.test(bodyWithoutReleaseNotes);
