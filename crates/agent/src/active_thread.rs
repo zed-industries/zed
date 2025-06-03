@@ -3,7 +3,7 @@ use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::message_editor::insert_message_creases;
+use crate::message_editor::{extract_message_creases, insert_message_creases};
 use crate::thread::{
     LastRestoreCheckpoint, MessageCrease, MessageId, MessageSegment, Thread, ThreadError,
     ThreadEvent, ThreadFeedback, ThreadSummary,
@@ -1586,6 +1586,10 @@ impl ActiveThread {
 
         let edited_text = state.editor.read(cx).text(cx);
 
+        let creases = state
+            .editor
+            .update(cx, |editor, cx| extract_message_creases(editor, cx));
+
         let new_context = self
             .context_store
             .read(cx)
@@ -1610,6 +1614,7 @@ impl ActiveThread {
                                 message_id,
                                 Role::User,
                                 vec![MessageSegment::Text(edited_text)],
+                                creases,
                                 Some(context.loaded_context),
                                 checkpoint.ok(),
                                 cx,
@@ -3677,10 +3682,13 @@ fn open_editor_at_position(
 #[cfg(test)]
 mod tests {
     use assistant_tool::{ToolRegistry, ToolWorkingSet};
-    use editor::EditorSettings;
+    use editor::{EditorSettings, display_map::CreaseMetadata};
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, VisualTestContext};
-    use language_model::{LanguageModel, fake_provider::FakeLanguageModel};
+    use language_model::{
+        ConfiguredModel, LanguageModel, LanguageModelRegistry,
+        fake_provider::{FakeLanguageModel, FakeLanguageModelProvider},
+    };
     use project::Project;
     use prompt_store::PromptBuilder;
     use serde_json::json;
@@ -3739,6 +3747,87 @@ mod tests {
 
         // No longer following the agent
         assert!(!cx.read(|cx| workspace.read(cx).is_being_followed(CollaboratorId::Agent)));
+    }
+
+    #[gpui::test]
+    async fn test_reinserting_creases_for_edited_message(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let project = create_test_project(cx, json!({})).await;
+
+        let (cx, active_thread, _, thread, model) =
+            setup_test_environment(cx, project.clone()).await;
+        cx.update(|_, cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.set_default_model(
+                    Some(ConfiguredModel {
+                        provider: Arc::new(FakeLanguageModelProvider),
+                        model,
+                    }),
+                    cx,
+                );
+            });
+        });
+
+        let creases = vec![MessageCrease {
+            range: 14..22,
+            metadata: CreaseMetadata {
+                icon_path: "icon".into(),
+                label: "foo.txt".into(),
+            },
+            context: None,
+        }];
+
+        let message = thread.update(cx, |thread, cx| {
+            let message_id = thread.insert_user_message(
+                "Tell me about @foo.txt",
+                ContextLoadResult::default(),
+                None,
+                creases,
+                cx,
+            );
+            thread.message(message_id).cloned().unwrap()
+        });
+
+        active_thread.update_in(cx, |active_thread, window, cx| {
+            active_thread.start_editing_message(
+                message.id,
+                message.segments.as_slice(),
+                message.creases.as_slice(),
+                window,
+                cx,
+            );
+            let editor = active_thread
+                .editing_message
+                .as_ref()
+                .unwrap()
+                .1
+                .editor
+                .clone();
+            editor.update(cx, |editor, cx| editor.edit([(0..13, "modified")], cx));
+            active_thread.confirm_editing_message(&Default::default(), window, cx);
+        });
+        cx.run_until_parked();
+
+        let message = thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
+        active_thread.update_in(cx, |active_thread, window, cx| {
+            active_thread.start_editing_message(
+                message.id,
+                message.segments.as_slice(),
+                message.creases.as_slice(),
+                window,
+                cx,
+            );
+            let editor = active_thread
+                .editing_message
+                .as_ref()
+                .unwrap()
+                .1
+                .editor
+                .clone();
+            let text = editor.update(cx, |editor, cx| editor.text(cx));
+            assert_eq!(text, "modified @foo.txt");
+        });
     }
 
     fn init_test_settings(cx: &mut TestAppContext) {
