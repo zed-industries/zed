@@ -9,7 +9,7 @@ jobs:
   deploy-docs:
     name: Deploy Docs
     if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
+    runs-on: buildjet-8vcpu-ubuntu-2204
 
     steps:
       - name: Checkout repo
@@ -20,10 +20,8 @@ jobs:
       - name: Set up default .cargo/config.toml
         run: cp ./.cargo/collab-config.toml ./.cargo/config.toml
 
-      - name: Build Docs
+      - name: Build docs
         uses: ./.github/actions/build_docs
-        with:
-          working-directory: ${{ env.ZED_WORKSPACE }}
 
       - name: Deploy Docs
         uses: cloudflare/wrangler-action@da0e0dfe58b7a431659754fdf3f186c529afbe65 # v3

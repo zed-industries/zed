@@ -211,8 +211,6 @@ jobs:
 
       - name: Build docs
         uses: ./.github/actions/build_docs
-        with:
-          working-directory: ${{ env.ZED_WORKSPACE }}
 
   macos_tests:
     timeout-minutes: 60

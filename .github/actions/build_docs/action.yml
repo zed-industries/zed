@@ -19,16 +19,6 @@ runs:
       shell: bash -euxo pipefail {0}
       run: ./script/linux
 
-    - name: Install system dependencies
-      shell: bash -euxo pipefail {0}
-      run: |
-        sudo apt-get update
-        sudo apt-get install libxkbcommon-dev libxkbcommon-x11-dev
-
-    - name: Limit target directory size
-      shell: bash -euxo pipefail {0}
-      run: script/clear-target-dir-if-larger-than 100
-
     - name: Build book
       shell: bash -euxo pipefail {0}
       run: |
