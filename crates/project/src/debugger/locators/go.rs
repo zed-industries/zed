@@ -31,11 +31,7 @@ impl DapLocator for GoLocator {
 
         match go_action.as_str() {
             "test" => {
-                let binary_path = if build_config.env.contains_key("OUT_DIR") {
-                    "${OUT_DIR}/__debug".to_string()
-                } else {
-                    "__debug".to_string()
-                };
+                let binary_path = format!("__debug_{}", std::process::id());
 
                 let build_task = TaskTemplate {
                     label: "go test debug".into(),
@@ -133,14 +129,10 @@ impl DapLocator for GoLocator {
 
         match go_action.as_str() {
             "test" => {
-                let program = if let Some(out_dir) = build_config.env.get("OUT_DIR") {
-                    format!("{}/__debug", out_dir)
-                } else {
-                    PathBuf::from(&cwd)
-                        .join("__debug")
-                        .to_string_lossy()
-                        .to_string()
-                };
+                let program = PathBuf::from(&cwd)
+                    .join(format!("__debug_{}", std::process::id()))
+                    .to_string_lossy()
+                    .to_string();
 
                 Ok(DebugRequest::Launch(task::LaunchRequest {
                     program,
@@ -318,7 +310,12 @@ mod tests {
                     .contains(&"-gcflags \"all=-N -l\"".into())
             );
             assert!(task_template.args.contains(&"-o".into()));
-            assert!(task_template.args.contains(&"__debug".into()));
+            assert!(
+                task_template
+                    .args
+                    .iter()
+                    .any(|arg| arg.starts_with("__debug_"))
+            );
         } else {
             panic!("Expected BuildTaskDefinition::Template");
         }
@@ -330,16 +327,14 @@ mod tests {
     }
 
     #[test]
-    fn test_create_scenario_for_go_test_with_out_dir() {
+    fn test_create_scenario_for_go_test_with_cwd_binary() {
         let locator = GoLocator;
-        let mut env = FxHashMap::default();
-        env.insert("OUT_DIR".to_string(), "/tmp/build".to_string());
 
         let task = TaskTemplate {
             label: "go test".into(),
             command: "go".into(),
             args: vec!["test".into(), ".".into()],
-            env,
+            env: Default::default(),
             cwd: Some("${ZED_WORKTREE_ROOT}".into()),
             use_new_terminal: false,
             allow_concurrent_runs: false,
@@ -359,7 +354,12 @@ mod tests {
         let scenario = scenario.unwrap();
 
         if let Some(BuildTaskDefinition::Template { task_template, .. }) = &scenario.build {
-            assert!(task_template.args.contains(&"${OUT_DIR}/__debug".into()));
+            assert!(
+                task_template
+                    .args
+                    .iter()
+                    .any(|arg| arg.starts_with("__debug_"))
+            );
         } else {
             panic!("Expected BuildTaskDefinition::Template");
         }
