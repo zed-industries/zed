@@ -70,13 +70,15 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&'static str; 6] = [
+const RULES_FILE_NAMES: [&'static str; 8] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
     ".clinerules",
     ".github/copilot-instructions.md",
     "CLAUDE.md",
+    "AGENT.md",
+    "AGENTS.md",
 ];
 
 pub fn init(cx: &mut App) {

@@ -5109,14 +5109,15 @@ impl Editor {
             trigger_kind,
         };
 
-        let (replace_range, word_kind) = buffer_snapshot.surrounding_word(buffer_position);
-        let (replace_range, word_to_exclude) = if word_kind == Some(CharKind::Word) {
+        let (word_replace_range, word_to_exclude) = if let (word_range, Some(CharKind::Word)) =
+            buffer_snapshot.surrounding_word(buffer_position)
+        {
             let word_to_exclude = buffer_snapshot
-                .text_for_range(replace_range.clone())
+                .text_for_range(word_range.clone())
                 .collect::<String>();
             (
-                buffer_snapshot.anchor_before(replace_range.start)
-                    ..buffer_snapshot.anchor_after(replace_range.end),
+                buffer_snapshot.anchor_before(word_range.start)
+                    ..buffer_snapshot.anchor_after(buffer_position),
                 Some(word_to_exclude),
             )
         } else {
@@ -5224,7 +5225,7 @@ impl Editor {
                 words.remove(&lsp_completion.new_text);
             }
             completions.extend(words.into_iter().map(|(word, word_range)| Completion {
-                replace_range: replace_range.clone(),
+                replace_range: word_replace_range.clone(),
                 new_text: word.clone(),
                 label: CodeLabel::plain(word, None),
                 icon_path: None,
