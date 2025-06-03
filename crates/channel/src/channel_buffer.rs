@@ -35,6 +35,7 @@ pub struct ChannelBuffer {
 pub enum ChannelBufferEvent {
     CollaboratorsChanged,
     Disconnected,
+    Connected,
     BufferEdited,
     ChannelChanged,
 }
@@ -110,6 +111,7 @@ impl ChannelBuffer {
                 return;
             };
             self.subscription = Some(subscription.set_entity(&cx.entity(), &mut cx.to_async()));
+            cx.emit(ChannelBufferEvent::Connected);
         }
     }
 

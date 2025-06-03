@@ -19,7 +19,7 @@ use settings::Settings;
 use std::{mem, sync::Arc, time::Duration};
 use util::{ResultExt, maybe};
 
-pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn init(client: &Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let channel_store = cx.new(|cx| ChannelStore::new(client.clone(), user_store.clone(), cx));
