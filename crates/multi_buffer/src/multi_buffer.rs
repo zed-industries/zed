@@ -17,7 +17,7 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
+    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, FoldType, IndentSize, Language,
     LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
     TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
     Unclipped,
@@ -5455,6 +5455,45 @@ impl MultiBufferSnapshot {
             })
             .into_iter()
             .flatten()
+    }
+
+    pub fn get_fold_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+        options: TreeSitterOptions,
+    ) -> impl Iterator<Item = (Range<usize>, FoldType)> + '_ {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        self.excerpt_containing(range.clone())
+            .map(|mut excerpt| {
+                excerpt
+                    .buffer()
+                    .get_fold_ranges(excerpt.map_range_to_buffer(range), options)
+                    .filter_map(move |(range, text_object)| {
+                        if excerpt.contains_buffer_range(range.clone()) {
+                            Some((excerpt.map_range_from_buffer(range), text_object))
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .into_iter()
+            .flatten()
+    }
+
+    pub fn create_syntactic_folds_map(&self) -> HashMap<u32, Range<Point>> {
+        let start_offset = 0;
+        let end_offset = self.point_to_offset(self.max_point());
+        self.get_fold_ranges(start_offset..end_offset, TreeSitterOptions::default())
+            .filter_map(|(range, _fold_type)| {
+                let fold_start_point = self::ToPoint::to_point(&range.start, self);
+                let fold_end_point = self::ToPoint::to_point(&range.end, self);
+                if fold_start_point.row != fold_end_point.row {
+                    Some((fold_start_point.row, fold_start_point..fold_end_point))
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Returns bracket range pairs overlapping the given `range` or returns None if the `range` is

@@ -1234,7 +1234,11 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
-    pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
+    pub fn crease_for_buffer_row(
+        &self,
+        buffer_row: MultiBufferRow,
+        syntactic_folds_map: &HashMap<u32, Range<Point>>,
+    ) -> Option<Crease<Point>> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
         if let Some(crease) = self
             .crease_snapshot
@@ -1270,9 +1274,17 @@ impl DisplaySnapshot {
                     render_toggle: render_toggle.clone(),
                 }),
             }
-        } else if self.starts_indent(MultiBufferRow(start.row))
-            && !self.is_line_folded(MultiBufferRow(start.row))
-        {
+        } else if self.is_line_folded(buffer_row) {
+            None
+        } else if let Some(fold_range) = syntactic_folds_map.get(&buffer_row.0) {
+            Some(Crease::Inline {
+                range: fold_range.clone(),
+                placeholder: self.fold_placeholder.clone(),
+                render_toggle: None,
+                render_trailer: None,
+                metadata: None,
+            })
+        } else if self.starts_indent(MultiBufferRow(start.row)) {
             let start_line_indent = self.line_indent_for_buffer_row(buffer_row);
             let max_point = self.buffer_snapshot.max_point();
             let mut end = None;

@@ -371,9 +371,10 @@ impl InlineAssistant {
                 selection.end.column = snapshot
                     .buffer_snapshot
                     .line_len(MultiBufferRow(selection.end.row));
-            } else if let Some(fold) =
-                snapshot.crease_for_buffer_row(MultiBufferRow(selection.end.row))
-            {
+            } else if let Some(fold) = snapshot.crease_for_buffer_row(
+                MultiBufferRow(selection.end.row),
+                &snapshot.buffer_snapshot.create_syntactic_folds_map(),
+            ) {
                 selection.start = fold.range().start;
                 selection.end = fold.range().end;
                 if MultiBufferRow(selection.end.row) < snapshot.buffer_snapshot.max_row() {

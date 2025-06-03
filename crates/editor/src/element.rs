@@ -2917,6 +2917,10 @@ impl EditorElement {
             && snapshot.mode.is_full()
             && self.editor.read(cx).is_singleton(cx);
         if include_fold_statuses {
+            let syntactic_folds_map = snapshot
+                .display_snapshot
+                .buffer_snapshot
+                .create_syntactic_folds_map();
             row_infos
                 .into_iter()
                 .enumerate()
@@ -2928,7 +2932,14 @@ impl EditorElement {
                     let display_row = DisplayRow(rows.start.0 + ix as u32);
                     let active = active_rows.contains_key(&display_row);
 
-                    snapshot.render_crease_toggle(row, active, self.editor.clone(), window, cx)
+                    snapshot.render_crease_toggle(
+                        row,
+                        active,
+                        self.editor.clone(),
+                        window,
+                        cx,
+                        &syntactic_folds_map,
+                    )
                 })
                 .collect()
         } else {

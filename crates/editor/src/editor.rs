@@ -15938,6 +15938,7 @@ impl Editor {
             let mut to_fold = Vec::new();
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             let selections = self.selections.all_adjusted(cx);
+            let syntactic_folds_map = &display_map.buffer_snapshot.create_syntactic_folds_map();
 
             for selection in selections {
                 let range = selection.range().sorted();
@@ -15947,7 +15948,8 @@ impl Editor {
                     let mut found = false;
                     let mut row = range.start.row;
                     while row <= range.end.row {
-                        if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row))
+                        if let Some(crease) = display_map
+                            .crease_for_buffer_row(MultiBufferRow(row), &syntactic_folds_map)
                         {
                             found = true;
                             row = crease.range().end.row + 1;
@@ -15962,7 +15964,9 @@ impl Editor {
                 }
 
                 for row in (0..=range.start.row).rev() {
-                    if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                    if let Some(crease) =
+                        display_map.crease_for_buffer_row(MultiBufferRow(row), &syntactic_folds_map)
+                    {
                         if crease.range().end.row >= buffer_start_row {
                             to_fold.push(crease);
                             if row <= range.start.row {
@@ -16001,12 +16005,13 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut to_fold = Vec::new();
         let mut stack = vec![(0, snapshot.max_row().0, 1)];
+        let syntactic_folds_map = snapshot.create_syntactic_folds_map();
 
         while let Some((mut start_row, end_row, current_level)) = stack.pop() {
             while start_row < end_row {
                 match self
                     .snapshot(window, cx)
-                    .crease_for_buffer_row(MultiBufferRow(start_row))
+                    .crease_for_buffer_row(MultiBufferRow(start_row), &syntactic_folds_map)
                 {
                     Some(crease) => {
                         let nested_start_row = crease.range().start.row + 1;
@@ -16032,11 +16037,12 @@ impl Editor {
         if self.buffer.read(cx).is_singleton() {
             let mut fold_ranges = Vec::new();
             let snapshot = self.buffer.read(cx).snapshot(cx);
+            let syntactic_folds_map = snapshot.create_syntactic_folds_map();
 
             for row in 0..snapshot.max_row().0 {
                 if let Some(foldable_range) = self
                     .snapshot(window, cx)
-                    .crease_for_buffer_row(MultiBufferRow(row))
+                    .crease_for_buffer_row(MultiBufferRow(row), &syntactic_folds_map)
                 {
                     fold_ranges.push(foldable_range);
                 }
@@ -16086,6 +16092,7 @@ impl Editor {
         let mut to_fold = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all_adjusted(cx);
+        let syntactic_folds_map = display_map.buffer_snapshot.create_syntactic_folds_map();
 
         for selection in selections {
             let range = selection.range().sorted();
@@ -16094,7 +16101,9 @@ impl Editor {
             if range.start.row != range.end.row {
                 let mut found = false;
                 for row in range.start.row..=range.end.row {
-                    if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                    if let Some(crease) =
+                        display_map.crease_for_buffer_row(MultiBufferRow(row), &syntactic_folds_map)
+                    {
                         found = true;
                         to_fold.push(crease);
                     }
@@ -16105,7 +16114,9 @@ impl Editor {
             }
 
             for row in (0..=range.start.row).rev() {
-                if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                if let Some(crease) =
+                    display_map.crease_for_buffer_row(MultiBufferRow(row), &syntactic_folds_map)
+                {
                     if crease.range().end.row >= buffer_start_row {
                         to_fold.push(crease);
                     } else {
@@ -16125,8 +16136,9 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let syntactic_folds_map = display_map.buffer_snapshot.create_syntactic_folds_map();
 
-        if let Some(crease) = display_map.crease_for_buffer_row(buffer_row) {
+        if let Some(crease) = display_map.crease_for_buffer_row(buffer_row, &syntactic_folds_map) {
             let autoscroll = self
                 .selections
                 .all::<Point>(cx)
@@ -20911,6 +20923,7 @@ impl EditorSnapshot {
         editor: Entity<Editor>,
         window: &mut Window,
         cx: &mut App,
+        syntactic_folds_map: &HashMap<u32, Range<Point>>,
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
         let mut is_foldable = false;
@@ -20947,7 +20960,8 @@ impl EditorSnapshot {
             }
         }
 
-        is_foldable |= self.starts_indent(buffer_row);
+        is_foldable |=
+            syntactic_folds_map.contains_key(&buffer_row.0) || self.starts_indent(buffer_row);
 
         if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
             Some(
