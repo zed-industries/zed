@@ -6637,7 +6637,65 @@ impl Render for Workspace {
                                         }
                                     })
                                 }))
-                                .children(self.render_notifications(window, cx)),
+                                .children(self.render_notifications(window, cx))
+                                .child({
+                                    #[cfg(debug_assertions)]
+                                    {
+                                        use gpui::{PathBuilder, px, point};
+                                        
+                                        // Debug grid overlay to visualize position coordinates
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .left_0()
+                                            .size_full()
+                                            .stop_mouse_events_except_scroll()
+                                            .child({
+                                                canvas(
+                                                    move |_bounds, _window, _cx| {
+                                                        // No prepaint state needed
+                                                    },
+                                                    move |bounds, _state, window, _cx| {
+                                                        // Draw debug grid
+                                                        let grid_size = px(50.0); // 50px grid
+                                                        let line_color = gpui::rgba(0x00FF0080); // Semi-transparent green
+                                                        
+                                                        // Draw vertical lines
+                                                        let mut x = px(0.0);
+                                                        while x <= bounds.size.width {
+                                                            let mut builder = PathBuilder::stroke(px(1.0));
+                                                            builder.move_to(point(bounds.origin.x + x, bounds.origin.y));
+                                                            builder.line_to(point(bounds.origin.x + x, bounds.origin.y + bounds.size.height));
+                                                            if let Ok(path) = builder.build() {
+                                                                window.paint_path(path, line_color);
+                                                            }
+                                                            x += grid_size;
+                                                        }
+                                                        
+                                                        // Draw horizontal lines
+                                                        let mut y = px(0.0);
+                                                        while y <= bounds.size.height {
+                                                            let mut builder = PathBuilder::stroke(px(1.0));
+                                                            builder.move_to(point(bounds.origin.x, bounds.origin.y + y));
+                                                            builder.line_to(point(bounds.origin.x + bounds.size.width, bounds.origin.y + y));
+                                                            if let Ok(path) = builder.build() {
+                                                                window.paint_path(path, line_color);
+                                                            }
+                                                            y += grid_size;
+                                                        }
+                                                        
+                                                        // TODO: Add coordinate labels - needs text rendering API
+                                                        // For now just the grid lines provide spatial reference
+                                                    },
+                                                )
+                                                .size_full()
+                                            })
+                                    }
+                                    #[cfg(not(debug_assertions))]
+                                    {
+                                        div() // Empty div when not in debug mode
+                                    }
+                                }),
                         )
                         .child(self.status_bar.clone())
                         .child(self.modal_layer.clone())
