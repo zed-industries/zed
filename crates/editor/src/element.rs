@@ -2917,10 +2917,24 @@ impl EditorElement {
             && snapshot.mode.is_full()
             && self.editor.read(cx).is_singleton(cx);
         if include_fold_statuses {
+            let range_override = if rows.is_empty() {
+                None
+            } else {
+                let start_multibuffer_point =
+                    DisplayPoint::new(rows.start, 0).to_point(&snapshot.display_snapshot);
+
+                let end_display_row = DisplayRow(rows.end.0.saturating_sub(1));
+                let end_display_point = DisplayPoint::new(
+                    end_display_row,
+                    snapshot.display_snapshot.line_len(end_display_row),
+                );
+                let end_multibuffer_point = end_display_point.to_point(&snapshot.display_snapshot);
+                Some(start_multibuffer_point..end_multibuffer_point)
+            };
             let syntactic_folds_map = snapshot
                 .display_snapshot
                 .buffer_snapshot
-                .create_syntactic_folds_map();
+                .create_syntactic_folds_map(range_override);
             row_infos
                 .into_iter()
                 .enumerate()

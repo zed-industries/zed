@@ -5482,9 +5482,18 @@ impl MultiBufferSnapshot {
             .flatten()
     }
 
-    pub fn create_syntactic_folds_map(&self) -> HashMap<u32, Range<Point>> {
-        let start_offset = 0;
-        let end_offset = self.point_to_offset(self.max_point());
+    pub fn create_syntactic_folds_map(
+        &self,
+        range_override: Option<Range<Point>>,
+    ) -> HashMap<u32, Range<Point>> {
+        let (start_offset, end_offset) = if let Some(range) = range_override {
+            (
+                self.point_to_offset(range.start),
+                self.point_to_offset(range.end),
+            )
+        } else {
+            (0, self.point_to_offset(self.max_point()))
+        };
         self.get_fold_ranges(start_offset..end_offset, TreeSitterOptions::default())
             .filter_map(|(range, _fold_type)| {
                 let fold_start_point = self::ToPoint::to_point(&range.start, self);

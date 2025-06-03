@@ -16007,7 +16007,7 @@ impl Editor {
             let mut to_fold = Vec::new();
             let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             let selections = self.selections.all_adjusted(cx);
-            let syntactic_folds_map = &display_map.buffer_snapshot.create_syntactic_folds_map();
+            let syntactic_folds_map = &display_map.buffer_snapshot.create_syntactic_folds_map(None);
 
             for selection in selections {
                 let range = selection.range().sorted();
@@ -16074,7 +16074,7 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut to_fold = Vec::new();
         let mut stack = vec![(0, snapshot.max_row().0, 1)];
-        let syntactic_folds_map = snapshot.create_syntactic_folds_map();
+        let syntactic_folds_map = snapshot.create_syntactic_folds_map(None);
 
         while let Some((mut start_row, end_row, current_level)) = stack.pop() {
             while start_row < end_row {
@@ -16106,7 +16106,7 @@ impl Editor {
         if self.buffer.read(cx).is_singleton() {
             let mut fold_ranges = Vec::new();
             let snapshot = self.buffer.read(cx).snapshot(cx);
-            let syntactic_folds_map = snapshot.create_syntactic_folds_map();
+            let syntactic_folds_map = snapshot.create_syntactic_folds_map(None);
 
             for row in 0..snapshot.max_row().0 {
                 if let Some(foldable_range) = self
@@ -16161,7 +16161,7 @@ impl Editor {
         let mut to_fold = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all_adjusted(cx);
-        let syntactic_folds_map = display_map.buffer_snapshot.create_syntactic_folds_map();
+        let syntactic_folds_map = display_map.buffer_snapshot.create_syntactic_folds_map(None);
 
         for selection in selections {
             let range = selection.range().sorted();
@@ -16205,7 +16205,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let syntactic_folds_map = display_map.buffer_snapshot.create_syntactic_folds_map();
+        let syntactic_folds_map = display_map.buffer_snapshot.create_syntactic_folds_map(None);
 
         if let Some(crease) = display_map.crease_for_buffer_row(buffer_row, &syntactic_folds_map) {
             let autoscroll = self

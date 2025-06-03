@@ -361,7 +361,7 @@ impl InlineAssistant {
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
-        let syntactic_folds_map = snapshot.buffer_snapshot.create_syntactic_folds_map();
+        let syntactic_folds_map = snapshot.buffer_snapshot.create_syntactic_folds_map(None);
         for mut selection in initial_selections {
             if selection.end > selection.start {
                 selection.start.column = 0;

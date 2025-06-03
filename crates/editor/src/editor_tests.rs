@@ -18272,7 +18272,7 @@ async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
     cx.set_state(indoc::indoc! {"
         const a = 1;ˇ
         /* Start of block comment.
-           Inside block comment.
+        Inside block comment.
         */
         const b = 2;
         // Sequences of line comments are
@@ -18302,7 +18302,7 @@ async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
                 .collect();
             let syntactic_folds_map = initial_snapshot
                 .buffer_snapshot
-                .create_syntactic_folds_map();
+                .create_syntactic_folds_map(None);
 
             let toggle_element = initial_snapshot.render_crease_toggle(
                 row,
