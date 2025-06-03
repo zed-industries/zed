@@ -1528,7 +1528,7 @@
       "allow_rewrap": "anywhere"
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
     },
     "SCSS": {
       "prettier": {
