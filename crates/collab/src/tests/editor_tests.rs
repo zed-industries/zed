@@ -679,7 +679,7 @@ async fn test_collaborating_with_code_actions(
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.toggle_code_actions(
             &ToggleCodeActions {
-                deployed_from_indicator: None,
+                deployed_from: None,
                 quick_launch: false,
             },
             window,
@@ -2517,7 +2517,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2526,7 +2526,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2550,7 +2550,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2559,7 +2559,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2583,7 +2583,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2592,7 +2592,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2616,7 +2616,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2625,7 +2625,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 

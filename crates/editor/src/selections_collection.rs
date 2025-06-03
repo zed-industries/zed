@@ -173,10 +173,9 @@ impl SelectionsCollection {
 
     pub fn all_adjusted_display(
         &self,
-        cx: &mut App,
-    ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
+        display_map: &DisplaySnapshot,
+    ) -> Vec<Selection<DisplayPoint>> {
         if self.line_mode {
-            let display_map = self.display_map(cx);
             let selections = self.all::<Point>(&display_map);
             let result = selections
                 .into_iter()
@@ -187,9 +186,9 @@ impl SelectionsCollection {
                     selection.map(|point| point.to_display_point(&display_map))
                 })
                 .collect();
-            (display_map, result)
+            result
         } else {
-            self.all_display(cx)
+            self.all_display(display_map)
         }
     }
 
@@ -214,13 +213,13 @@ impl SelectionsCollection {
         resolve_selections(&self.disjoint[start_ix..end_ix], &map).collect()
     }
 
-    pub fn all_display(&self, cx: &mut App) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
-        let map = self.display_map(cx);
+    pub fn all_display(&self, snapshot: &DisplaySnapshot) -> Vec<Selection<DisplayPoint>> {
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint = resolve_selections_display(disjoint_anchors.iter(), &map).peekable();
+        let mut disjoint =
+            resolve_selections_display(disjoint_anchors.iter(), &snapshot).peekable();
         let mut pending_opt =
-            resolve_selections_display(self.pending_anchor().as_ref(), &map).next();
-        let selections = iter::from_fn(move || {
+            resolve_selections_display(self.pending_anchor().as_ref(), &snapshot).next();
+        iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
                     if pending.start <= next_selection.end && pending.end >= next_selection.start {
@@ -243,8 +242,7 @@ impl SelectionsCollection {
                 disjoint.next()
             }
         })
-        .collect();
-        (map, selections)
+        .collect()
     }
 
     pub fn newest_anchor(&self) -> &Selection<Anchor> {
@@ -344,28 +342,32 @@ impl SelectionsCollection {
     ) -> Option<Selection<Point>> {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
-
         let line = display_map.layout_row(row, text_layout_details);
-
         let start_col = line.closest_index_for_x(positions.start) as u32;
-        if start_col < line_len || (is_empty && positions.start == line.width) {
+
+        let (start, end) = if is_empty {
+            let point = DisplayPoint::new(row, std::cmp::min(start_col, line_len));
+            (point, point)
+        } else {
+            if start_col >= line_len {
+                return None;
+            }
             let start = DisplayPoint::new(row, start_col);
             let end_col = line.closest_index_for_x(positions.end) as u32;
             let end = DisplayPoint::new(row, end_col);
+            (start, end)
+        };
 
-            Some(Selection {
-                id: post_inc(&mut self.next_selection_id),
-                start: start.to_point(display_map),
-                end: end.to_point(display_map),
-                reversed,
-                goal: SelectionGoal::HorizontalRange {
-                    start: positions.start.into(),
-                    end: positions.end.into(),
-                },
-            })
-        } else {
-            None
-        }
+        Some(Selection {
+            id: post_inc(&mut self.next_selection_id),
+            start: start.to_point(display_map),
+            end: end.to_point(display_map),
+            reversed,
+            goal: SelectionGoal::HorizontalRange {
+                start: positions.start.into(),
+                end: positions.end.into(),
+            },
+        })
     }
 
     pub fn change_with<R>(
@@ -674,7 +676,7 @@ impl<'a> MutableSelectionsCollection<'a> {
     ) {
         let mut changed = false;
         let display_map = self.display_map();
-        let (_, selections) = self.collection.all_display(self.cx);
+        let selections = self.collection.all_display(&display_map);
         let selections = selections
             .into_iter()
             .map(|selection| {

@@ -552,6 +552,8 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.record_current_action(cx);
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, _, cx| {
                 let selections = editor
@@ -566,7 +568,7 @@ impl Vim {
                     .into_iter()
                     .map(|row| {
                         let start_of_line = Point::new(row, 0);
-                        (start_of_line..start_of_line, "\n".to_string())
+                        (start_of_line..start_of_line, "\n".repeat(count))
                     })
                     .collect::<Vec<_>>();
                 editor.edit(edits, cx);
@@ -581,12 +583,18 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.record_current_action(cx);
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.transact(window, cx, |editor, _, cx| {
-                let selections = editor
-                    .selections
-                    .all::<Point>(&editor.selections.display_map(cx));
+            editor.transact(window, cx, |editor, window, cx| {
+                let display_map = editor.selections.display_map(cx);
+                let selections = editor.selections.all::<Point>(&display_map);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let display_selections = editor.selections.all_display(&display_map);
+                let original_positions = display_selections
+                    .iter()
+                    .map(|s| (s.id, s.head()))
+                    .collect::<HashMap<_, _>>();
 
                 let selection_end_rows: BTreeSet<u32> = selections
                     .into_iter()
@@ -596,10 +604,18 @@ impl Vim {
                     .into_iter()
                     .map(|row| {
                         let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
-                        (end_of_line..end_of_line, "\n".to_string())
+                        (end_of_line..end_of_line, "\n".repeat(count))
                     })
                     .collect::<Vec<_>>();
                 editor.edit(edits, cx);
+
+                editor.change_selections(None, window, cx, |s| {
+                    s.move_with(|_, selection| {
+                        if let Some(position) = original_positions.get(&selection.id) {
+                            selection.collapse_to(*position, SelectionGoal::None);
+                        }
+                    });
+                });
             });
         });
     }
@@ -712,13 +728,14 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let (map, display_selections) = editor.selections.all_display(cx);
+                let display_map = editor.selections.display_map(cx);
+                let display_selections = editor.selections.all_display(&display_map);
 
-                let mut edits = Vec::new();
+                let mut edits = Vec::with_capacity(display_selections.len());
                 for selection in &display_selections {
                     let mut range = selection.range();
                     for _ in 0..count {
-                        let new_point = movement::saturating_right(&map, range.end);
+                        let new_point = movement::saturating_right(&display_map, range.end);
                         if range.end == new_point {
                             return;
                         }
@@ -726,8 +743,8 @@ impl Vim {
                     }
 
                     edits.push((
-                        range.start.to_offset(&map, Bias::Left)
-                            ..range.end.to_offset(&map, Bias::Left),
+                        range.start.to_offset(&display_map, Bias::Left)
+                            ..range.end.to_offset(&display_map, Bias::Left),
                         text.repeat(if is_return_char { 0 } else { count }),
                     ));
                 }
@@ -751,16 +768,16 @@ impl Vim {
     pub fn save_selection_starts(
         &self,
         editor: &Editor,
-
         cx: &mut Context<Editor>,
     ) -> HashMap<usize, Anchor> {
-        let (map, selections) = editor.selections.all_display(cx);
+        let display_map = editor.selections.display_map(cx);
+        let selections = editor.selections.all_display(&display_map);
         selections
             .iter()
             .map(|selection| {
                 (
                     selection.id,
-                    map.display_point_to_anchor(selection.start, Bias::Right),
+                    display_map.display_point_to_anchor(selection.start, Bias::Right),
                 )
             })
             .collect::<HashMap<_, _>>()
@@ -1339,10 +1356,19 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_insert_empty_line_above(cx: &mut gpui::TestAppContext) {
+    async fn test_insert_empty_line(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.simulate("[ space", "ˇ").await.assert_matches();
         cx.simulate("[ space", "The ˇquick").await.assert_matches();
+        cx.simulate_at_each_offset(
+            "3 [ space",
+            indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"},
+        )
+        .await
+        .assert_matches();
         cx.simulate_at_each_offset(
             "[ space",
             indoc! {"
@@ -1354,6 +1380,36 @@ mod test {
         .assert_matches();
         cx.simulate(
             "[ space",
+            indoc! {"
+            The quick
+            ˇ
+            brown fox"},
+        )
+        .await
+        .assert_matches();
+
+        cx.simulate("] space", "ˇ").await.assert_matches();
+        cx.simulate("] space", "The ˇquick").await.assert_matches();
+        cx.simulate_at_each_offset(
+            "3 ] space",
+            indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate_at_each_offset(
+            "] space",
+            indoc! {"
+            The qˇuick
+            brown ˇfox
+            jumps ˇover"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "] space",
             indoc! {"
             The quick
             ˇ

@@ -658,7 +658,8 @@ impl Vim {
         self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                let display_map = editor.selections.display_map(cx);
+                let selections = editor.selections.all_adjusted_display(&display_map);
 
                 // Selections are biased right at the start. So we need to store
                 // anchors that are biased left so that we can restore the selections

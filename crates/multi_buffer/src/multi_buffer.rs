@@ -1121,10 +1121,10 @@ impl MultiBuffer {
 
     pub fn last_transaction_id(&self, cx: &App) -> Option<TransactionId> {
         if let Some(buffer) = self.as_singleton() {
-            return buffer.read_with(cx, |b, _| {
-                b.peek_undo_stack()
-                    .map(|history_entry| history_entry.transaction_id())
-            });
+            return buffer
+                .read(cx)
+                .peek_undo_stack()
+                .map(|history_entry| history_entry.transaction_id());
         } else {
             let last_transaction = self.history.undo_stack.last()?;
             return Some(last_transaction.id);
@@ -1575,7 +1575,7 @@ impl MultiBuffer {
         context_line_count: u32,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
-        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
@@ -5753,21 +5753,34 @@ impl MultiBufferSnapshot {
         let mut result = Vec::new();
         let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
 
+        let mut prev_settings = None;
         while let Some((first_row, mut line_indent, buffer)) = row_indents.next() {
             if first_row > end_row {
                 break;
             }
             let current_depth = indent_stack.len() as u32;
 
-            let settings =
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx);
-            let tab_size = settings.tab_size.get() as u32;
+            // Avoid retrieving the language settings repeatedly for every buffer row.
+            if let Some((prev_buffer_id, _)) = &prev_settings {
+                if prev_buffer_id != &buffer.remote_id() {
+                    prev_settings.take();
+                }
+            }
+            let settings = &prev_settings
+                .get_or_insert_with(|| {
+                    (
+                        buffer.remote_id(),
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx),
+                    )
+                })
+                .1;
+            let tab_size = settings.tab_size.get();
 
             // When encountering empty, continue until found useful line indent
             // then add to the indent stack with the depth found
             let mut found_indent = false;
             let mut last_row = first_row;
-            if line_indent.is_line_empty() {
+            if line_indent.is_line_blank() {
                 while !found_indent {
                     let Some((target_row, new_line_indent, _)) = row_indents.next() else {
                         break;
@@ -5777,7 +5790,7 @@ impl MultiBufferSnapshot {
                         break;
                     }
 
-                    if new_line_indent.is_line_empty() {
+                    if new_line_indent.is_line_blank() {
                         continue;
                     }
                     last_row = target_row.min(end_row);

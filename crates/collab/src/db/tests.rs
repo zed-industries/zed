@@ -30,7 +30,7 @@ pub struct TestDb {
 }
 
 impl TestDb {
-    pub fn sqlite(background: BackgroundExecutor) -> Self {
+    pub fn sqlite(executor: BackgroundExecutor) -> Self {
         let url = "sqlite::memory:";
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -41,7 +41,7 @@ impl TestDb {
         let mut db = runtime.block_on(async {
             let mut options = ConnectOptions::new(url);
             options.max_connections(5);
-            let mut db = Database::new(options, Executor::Deterministic(background))
+            let mut db = Database::new(options, Executor::Deterministic(executor.clone()))
                 .await
                 .unwrap();
             let sql = include_str!(concat!(
@@ -59,7 +59,10 @@ impl TestDb {
             db
         });
 
-        db.runtime = Some(runtime);
+        db.test_options = Some(DatabaseTestOptions {
+            runtime,
+            query_failure_probability: parking_lot::Mutex::new(0.0),
+        });
 
         Self {
             db: Some(Arc::new(db)),
@@ -67,7 +70,7 @@ impl TestDb {
         }
     }
 
-    pub fn postgres(background: BackgroundExecutor) -> Self {
+    pub fn postgres(executor: BackgroundExecutor) -> Self {
         static LOCK: Mutex<()> = Mutex::new(());
 
         let _guard = LOCK.lock();
@@ -90,7 +93,7 @@ impl TestDb {
             options
                 .max_connections(5)
                 .idle_timeout(Duration::from_secs(0));
-            let mut db = Database::new(options, Executor::Deterministic(background))
+            let mut db = Database::new(options, Executor::Deterministic(executor.clone()))
                 .await
                 .unwrap();
             let migrations_path = concat!(env!("CARGO_MANIFEST_DIR"), "/migrations");
@@ -101,7 +104,10 @@ impl TestDb {
             db
         });
 
-        db.runtime = Some(runtime);
+        db.test_options = Some(DatabaseTestOptions {
+            runtime,
+            query_failure_probability: parking_lot::Mutex::new(0.0),
+        });
 
         Self {
             db: Some(Arc::new(db)),
@@ -111,6 +117,12 @@ impl TestDb {
 
     pub fn db(&self) -> &Arc<Database> {
         self.db.as_ref().unwrap()
+    }
+
+    pub fn set_query_failure_probability(&self, probability: f64) {
+        let database = self.db.as_ref().unwrap();
+        let test_options = database.test_options.as_ref().unwrap();
+        *test_options.query_failure_probability.lock() = probability;
     }
 }
 
@@ -136,7 +148,7 @@ impl Drop for TestDb {
     fn drop(&mut self) {
         let db = self.db.take().unwrap();
         if let sea_orm::DatabaseBackend::Postgres = db.pool.get_database_backend() {
-            db.runtime.as_ref().unwrap().block_on(async {
+            db.test_options.as_ref().unwrap().runtime.block_on(async {
                 use util::ResultExt;
                 let query = "
                         SELECT pg_terminate_backend(pg_stat_activity.pid)

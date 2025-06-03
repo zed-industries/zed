@@ -445,7 +445,7 @@ async fn update_editor_from_message(
             }
 
             multibuffer.remove_excerpts(removed_excerpt_ids, cx);
-            Result::<(), anyhow::Error>::Ok(())
+            anyhow::Ok(())
         })
     })??;
 
@@ -843,7 +843,7 @@ impl Item for Editor {
                 // so that language servers or other downstream listeners of save events get notified.
                 let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
                     buffer
-                        .update(cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
+                        .read_with(cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
                         .unwrap_or(false)
                 });
 
@@ -1091,7 +1091,7 @@ impl SerializableItem for Editor {
                 let project = project.clone();
                 async move |cx| {
                     let language_registry =
-                        project.update(cx, |project, _| project.languages().clone())?;
+                        project.read_with(cx, |project, _| project.languages().clone())?;
 
                     let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
@@ -1137,7 +1137,7 @@ impl SerializableItem for Editor {
                 mtime,
                 ..
             } => {
-                let project_item = project.update(cx, |project, cx| {
+                let opened_buffer = project.update(cx, |project, cx| {
                     let (worktree, path) = project.find_worktree(&abs_path, cx)?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
@@ -1146,13 +1146,10 @@ impl SerializableItem for Editor {
                     Some(project.open_path(project_path, cx))
                 });
 
-                match project_item {
-                    Some(project_item) => {
+                match opened_buffer {
+                    Some(opened_buffer) => {
                         window.spawn(cx, async move |cx| {
-                            let (_, project_item) = project_item.await?;
-                            let buffer = project_item.downcast::<Buffer>().map_err(|_| {
-                                anyhow!("Project item at stored path was not a buffer")
-                            })?;
+                            let (_, buffer) = opened_buffer.await?;
 
                             // This is a bit wasteful: we're loading the whole buffer from
                             // disk and then overwrite the content.
@@ -2040,7 +2037,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
-            project.update(cx, |project, _| project.languages().add(rust_language()));
+            project.read_with(cx, |project, _| project.languages().add(rust_language()));
 
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));

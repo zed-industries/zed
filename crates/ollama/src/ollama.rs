@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
@@ -38,11 +38,12 @@ pub struct Model {
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
     pub supports_tools: Option<bool>,
+    pub supports_thinking: Option<bool>,
 }
 
 fn get_max_tokens(name: &str) -> usize {
     /// Default context length for unknown models.
-    const DEFAULT_TOKENS: usize = 2048;
+    const DEFAULT_TOKENS: usize = 4096;
     /// Magic number. Lets many Ollama models work with ~16GB of ram.
     const MAXIMUM_TOKENS: usize = 16384;
 
@@ -54,9 +55,8 @@ fn get_max_tokens(name: &str) -> usize {
         "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "qwen2.5-coder"
         | "dolphin-mixtral" => 32768,
         "llama3.1" | "llama3.2" | "llama3.3" | "phi3" | "phi3.5" | "phi4" | "command-r"
-        | "qwen3" | "gemma3" | "deepseek-coder-v2" | "deepseek-v3" | "deepseek-r1" | "yi-coder" => {
-            128000
-        }
+        | "qwen3" | "gemma3" | "deepseek-coder-v2" | "deepseek-v3" | "deepseek-r1" | "yi-coder"
+        | "devstral" => 128000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
@@ -68,6 +68,7 @@ impl Model {
         display_name: Option<&str>,
         max_tokens: Option<usize>,
         supports_tools: Option<bool>,
+        supports_thinking: Option<bool>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -77,6 +78,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
+            supports_thinking,
         }
     }
 
@@ -99,6 +101,7 @@ pub enum ChatMessage {
     Assistant {
         content: String,
         tool_calls: Option<Vec<OllamaToolCall>>,
+        thinking: Option<String>,
     },
     User {
         content: String,
@@ -141,6 +144,7 @@ pub struct ChatRequest {
     pub keep_alive: KeepAlive,
     pub options: Option<ChatOptions>,
     pub tools: Vec<OllamaTool>,
+    pub think: Option<bool>,
 }
 
 impl ChatRequest {
@@ -216,6 +220,10 @@ impl ModelShow {
         // .contains expects &String, which would require an additional allocation
         self.capabilities.iter().any(|v| v == "tools")
     }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.capabilities.iter().any(|v| v == "thinking")
+    }
 }
 
 pub async fn complete(
@@ -242,11 +250,11 @@ pub async fn complete(
         Ok(response_message)
     } else {
         let body_str = std::str::from_utf8(&body)?;
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to API: {} {}",
             response.status(),
             body_str
-        ))
+        );
     }
 }
 
@@ -276,12 +284,11 @@ pub async fn stream_chat_completion(
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to Ollama API: {} {}",
             response.status(),
             body,
-        ))
+        );
     }
 }
 
@@ -303,18 +310,15 @@ pub async fn get_models(
     let mut body = String::new();
     response.body_mut().read_to_string(&mut body).await?;
 
-    if response.status().is_success() {
-        let response: LocalModelsResponse =
-            serde_json::from_str(&body).context("Unable to parse Ollama tag listing")?;
-
-        Ok(response.models)
-    } else {
-        Err(anyhow!(
-            "Failed to connect to Ollama API: {} {}",
-            response.status(),
-            body,
-        ))
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to connect to Ollama API: {} {}",
+        response.status(),
+        body,
+    );
+    let response: LocalModelsResponse =
+        serde_json::from_str(&body).context("Unable to parse Ollama tag listing")?;
+    Ok(response.models)
 }
 
 /// Fetch details of a model, used to determine model capabilities
@@ -332,16 +336,14 @@ pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> 
     let mut body = String::new();
     response.body_mut().read_to_string(&mut body).await?;
 
-    if response.status().is_success() {
-        let details: ModelShow = serde_json::from_str(body.as_str())?;
-        Ok(details)
-    } else {
-        Err(anyhow!(
-            "Failed to connect to Ollama API: {} {}",
-            response.status(),
-            body,
-        ))
-    }
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to connect to Ollama API: {} {}",
+        response.status(),
+        body,
+    );
+    let details: ModelShow = serde_json::from_str(body.as_str())?;
+    Ok(details)
 }
 
 /// Sends an empty request to Ollama to trigger loading the model
@@ -366,12 +368,11 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
     } else {
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-
-        Err(anyhow!(
+        anyhow::bail!(
             "Failed to connect to Ollama API: {} {}",
             response.status(),
             body,
-        ))
+        );
     }
 }
 
@@ -467,9 +468,11 @@ mod tests {
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                thinking,
             } => {
                 assert!(content.is_empty());
                 assert!(tool_calls.is_some_and(|v| !v.is_empty()));
+                assert!(thinking.is_none());
             }
             _ => panic!("Deserialized wrong role"),
         }

@@ -240,8 +240,8 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
 
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         [
-            anthropic::Model::Claude3_7Sonnet,
-            anthropic::Model::Claude3_7SonnetThinking,
+            anthropic::Model::ClaudeSonnet4,
+            anthropic::Model::ClaudeSonnet4Thinking,
         ]
         .into_iter()
         .map(|model| self.create_language_model(model))
@@ -350,8 +350,8 @@ pub fn count_anthropic_tokens(
                         // TODO: Estimate token usage from tool uses.
                     }
                     MessageContent::ToolResult(tool_result) => match &tool_result.content {
-                        LanguageModelToolResultContent::Text(txt) => {
-                            string_contents.push_str(txt);
+                        LanguageModelToolResultContent::Text(text) => {
+                            string_contents.push_str(text);
                         }
                         LanguageModelToolResultContent::Image(image) => {
                             tokens_from_images += image.estimate_tokens();
@@ -399,7 +399,7 @@ impl AnthropicModel {
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Anthropic API Key"))?;
+            let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             request.await.context("failed to stream completion")
@@ -820,6 +820,7 @@ impl AnthropicEventMapper {
                         "end_turn" => StopReason::EndTurn,
                         "max_tokens" => StopReason::MaxTokens,
                         "tool_use" => StopReason::ToolUse,
+                        "refusal" => StopReason::Refusal,
                         _ => {
                             log::error!("Unexpected anthropic stop_reason: {stop_reason}");
                             StopReason::EndTurn

@@ -28,7 +28,7 @@ mod ui;
 
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfileId, AssistantSettings, LanguageModelSelection};
+use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use feature_flags::FeatureFlagAppExt as _;
@@ -69,6 +69,7 @@ actions!(
         AddContextServer,
         RemoveSelectedThread,
         Chat,
+        ChatWithFollow,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
         FocusUp,
@@ -85,6 +86,10 @@ actions!(
         KeepAll,
         Follow,
         ResetTrialUpsell,
+        ResetTrialEndUpsell,
+        ContinueThread,
+        ContinueWithBurnMode,
+        ToggleBurnMode,
     ]
 );
 
@@ -116,14 +121,19 @@ pub fn init(
     client: Arc<Client>,
     prompt_builder: Arc<PromptBuilder>,
     language_registry: Arc<LanguageRegistry>,
+    is_eval: bool,
     cx: &mut App,
 ) {
-    AssistantSettings::register(cx);
+    AgentSettings::register(cx);
     SlashCommandSettings::register(cx);
 
     assistant_context_editor::init(client.clone(), cx);
     rules_library::init(cx);
-    init_language_model_settings(cx);
+    if !is_eval {
+        // Initializing the language model from the user settings messes with the eval, so we only initialize them when
+        // we're not running inside of the eval.
+        init_language_model_settings(cx);
+    }
     assistant_slash_command::init(cx);
     thread_store::init(cx);
     agent_panel::init(cx);
@@ -167,7 +177,7 @@ fn init_language_model_settings(cx: &mut App) {
 }
 
 fn update_active_language_model_from_settings(cx: &mut App) {
-    let settings = AssistantSettings::get_global(cx);
+    let settings = AgentSettings::get_global(cx);
 
     fn to_selected_model(selection: &LanguageModelSelection) -> language_model::SelectedModel {
         language_model::SelectedModel {
@@ -216,7 +226,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
-    slash_command_registry.register_command(assistant_slash_commands::TerminalSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::NowSlashCommand, false);
     slash_command_registry
         .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);

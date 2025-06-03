@@ -45,7 +45,8 @@ impl Vim {
                     },
                 };
                 let surround = pair.end != surround_alias((*text).as_ref());
-                let (display_map, display_selections) = editor.selections.all_adjusted_display(cx);
+                let display_map = editor.selections.display_map(cx);
+                let display_selections = editor.selections.all_adjusted_display(&display_map);
                 let mut edits = Vec::new();
                 let mut anchors = Vec::new();
 
@@ -144,7 +145,8 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
-                let (display_map, display_selections) = editor.selections.all_display(cx);
+                let display_map = editor.selections.display_map(cx);
+                let display_selections = editor.selections.all_display(&display_map);
                 let mut edits = Vec::new();
                 let mut anchors = Vec::new();
 
@@ -241,7 +243,8 @@ impl Vim {
                         },
                     };
                     let surround = pair.end != surround_alias((*text).as_ref());
-                    let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                    let display_map = editor.selections.display_map(cx);
+                    let selections = editor.selections.all_adjusted_display(&display_map);
                     let mut edits = Vec::new();
                     let mut anchors = Vec::new();
 
@@ -343,7 +346,8 @@ impl Vim {
             self.update_editor(window, cx, |_, editor, window, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
-                    let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                    let display_map = editor.selections.display_map(cx);
+                    let selections = editor.selections.all_adjusted_display(&display_map);
                     let mut anchors = Vec::new();
 
                     for selection in &selections {

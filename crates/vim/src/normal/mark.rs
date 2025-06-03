@@ -51,16 +51,19 @@ impl Vim {
         let mut reversed = vec![];
 
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            let (map, selections) = editor.selections.all_display(cx);
+            let display_map = editor.selections.display_map(cx);
+            let selections = editor.selections.all_display(&display_map);
             for selection in selections {
-                let end = movement::saturating_left(&map, selection.end);
+                let end = movement::saturating_left(&display_map, selection.end);
                 ends.push(
-                    map.buffer_snapshot
-                        .anchor_before(end.to_offset(&map, Bias::Left)),
+                    display_map
+                        .buffer_snapshot
+                        .anchor_before(end.to_offset(&display_map, Bias::Left)),
                 );
                 starts.push(
-                    map.buffer_snapshot
-                        .anchor_before(selection.start.to_offset(&map, Bias::Left)),
+                    display_map
+                        .buffer_snapshot
+                        .anchor_before(selection.start.to_offset(&display_map, Bias::Left)),
                 );
                 reversed.push(selection.reversed)
             }
@@ -279,6 +282,10 @@ impl Vim {
         if name == "`" {
             name = "'".to_string();
         }
+        if matches!(&name[..], "-" | " ") {
+            // Not allowed marks
+            return;
+        }
         let entity_id = workspace.entity_id();
         Vim::update_globals(cx, |vim_globals, cx| {
             let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
@@ -301,19 +308,21 @@ impl Vim {
             name = "'";
         }
         if matches!(name, "{" | "}" | "(" | ")") {
-            let (map, selections) = editor.selections.all_display(cx);
+            let display_map = editor.selections.display_map(cx);
+            let selections = editor.selections.all_display(&display_map);
             let anchors = selections
                 .into_iter()
                 .map(|selection| {
                     let point = match name {
-                        "{" => movement::start_of_paragraph(&map, selection.head(), 1),
-                        "}" => movement::end_of_paragraph(&map, selection.head(), 1),
-                        "(" => motion::sentence_backwards(&map, selection.head(), 1),
-                        ")" => motion::sentence_forwards(&map, selection.head(), 1),
+                        "{" => movement::start_of_paragraph(&display_map, selection.head(), 1),
+                        "}" => movement::end_of_paragraph(&display_map, selection.head(), 1),
+                        "(" => motion::sentence_backwards(&display_map, selection.head(), 1),
+                        ")" => motion::sentence_forwards(&display_map, selection.head(), 1),
                         _ => unreachable!(),
                     };
-                    map.buffer_snapshot
-                        .anchor_before(point.to_offset(&map, Bias::Left))
+                    display_map
+                        .buffer_snapshot
+                        .anchor_before(point.to_offset(&display_map, Bias::Left))
                 })
                 .collect::<Vec<Anchor>>();
             return Some(Mark::Local(anchors));
@@ -325,6 +334,30 @@ impl Vim {
                 .get_mut(&workspace_id)?
                 .update(cx, |ms, cx| ms.get_mark(name, editor.buffer(), cx))
         })
+    }
+
+    pub fn delete_mark(
+        &self,
+        name: String,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace) = self.workspace(window) else {
+            return;
+        };
+        if name == "`" || name == "'" {
+            return;
+        }
+        let entity_id = workspace.entity_id();
+        Vim::update_globals(cx, |vim_globals, cx| {
+            let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
+                return;
+            };
+            marks_state.update(cx, |ms, cx| {
+                ms.delete_mark(name.clone(), editor.buffer(), cx);
+            });
+        });
     }
 }
 

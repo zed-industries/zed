@@ -1175,6 +1175,91 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "one.txt": "",
+            "two.txt": "",
+            "a": {},
+            "b": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    select_path_with_mark(&panel, "root/one.txt", cx);
+    select_path_with_mark(&panel, "root/two.txt", cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > a",
+            "    > b",
+            "      one.txt  <== marked",
+            "      two.txt  <== selected  <== marked",
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cut(&Default::default(), window, cx);
+    });
+
+    select_path(&panel, "root/a", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v a",
+            "          one.txt  <== marked",
+            "          two.txt  <== selected  <== marked",
+            "    > b",
+        ],
+        "Cut entries should be moved on first paste."
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel(&menu::Cancel {}, window, cx)
+    });
+    cx.executor().run_until_parked();
+
+    select_path(&panel, "root/b", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v a",
+            "          one.txt",
+            "          two.txt",
+            "    v b",
+            "          one.txt",
+            "          two.txt  <== selected",
+        ],
+        "Cut entries should only be copied for the second paste!"
+    );
+}
+
+#[gpui::test]
 async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -5272,7 +5357,7 @@ impl project::ProjectItem for TestProjectItem {
         _project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         Some(cx.spawn(async move |cx| cx.new(|_| Self { path })))
     }

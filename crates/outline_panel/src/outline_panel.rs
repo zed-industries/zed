@@ -865,7 +865,7 @@ impl OutlinePanel {
     fn serialize(&mut self, cx: &mut Context<Self>) {
         let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| {
+            .read_with(cx, |workspace, _| {
                 OutlinePanel::serialization_key(workspace)
             })
             .ok()
@@ -4338,19 +4338,7 @@ impl OutlinePanel {
         {
             return None;
         }
-
-        let scroll_handle = self.scroll_handle.0.borrow();
-        let longest_item_width = scroll_handle
-            .last_item_size
-            .filter(|size| size.contents.width > size.item.width)?
-            .contents
-            .width
-            .0 as f64;
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-            return None;
-        }
-
-        Some(
+        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
             div()
                 .occlude()
                 .id("project-panel-horizontal-scroll")
@@ -4387,12 +4375,8 @@ impl OutlinePanel {
                 .bottom_0()
                 .h(px(12.))
                 .cursor_default()
-                .when(self.width.is_some(), |this| {
-                    this.children(Scrollbar::horizontal(
-                        self.horizontal_scrollbar_state.clone(),
-                    ))
-                }),
-        )
+                .child(scrollbar)
+        })
     }
 
     fn should_show_scrollbar(cx: &App) -> bool {
@@ -5661,7 +5645,7 @@ mod tests {
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        let active_editor = outline_panel.update(cx, |outline_panel, _| {
+        let active_editor = outline_panel.read_with(cx, |outline_panel, _| {
             outline_panel
                 .active_editor()
                 .expect("should have an active editor open")
@@ -5756,7 +5740,7 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        let new_active_editor = outline_panel.update(cx, |outline_panel, _| {
+        let new_active_editor = outline_panel.read_with(cx, |outline_panel, _| {
             outline_panel
                 .active_editor()
                 .expect("should have an active editor open")

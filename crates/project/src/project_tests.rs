@@ -3014,7 +3014,12 @@ async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
 
-    let completions = completions.await.unwrap().unwrap();
+    let completions = completions
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     assert_eq!(completions.len(), 1);
@@ -3097,7 +3102,12 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
             .next()
             .await;
 
-        let completions = completions.await.unwrap().unwrap();
+        let completions = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>();
         let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         assert_eq!(completions.len(), 1);
@@ -3139,7 +3149,12 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
             .next()
             .await;
 
-        let completions = completions.await.unwrap().unwrap();
+        let completions = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>();
         let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         assert_eq!(completions.len(), 1);
@@ -3210,7 +3225,12 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap().unwrap();
+    let completions = completions
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
@@ -3237,7 +3257,12 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap().unwrap();
+    let completions = completions
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
@@ -3305,7 +3330,12 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap().unwrap();
+    let completions = completions
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
 }
@@ -8528,9 +8558,7 @@ async fn search(
 }
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    zlog::init_test();
 
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);

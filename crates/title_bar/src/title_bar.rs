@@ -38,7 +38,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zed_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
 
@@ -48,8 +48,6 @@ pub use stories::*;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
-
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
 
@@ -181,7 +179,14 @@ impl Render for TitleBar {
                     .justify_between()
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
-                    .when(self.platform_style != PlatformStyle::Windows, |this| {
+                    .when(self.platform_style == PlatformStyle::Mac, |this| {
+                        this.on_click(|event, window, _| {
+                            if event.up.click_count == 2 {
+                                window.titlebar_double_click();
+                            }
+                        })
+                    })
+                    .when(self.platform_style == PlatformStyle::Linux, |this| {
                         this.on_click(|event, window, _| {
                             if event.up.click_count == 2 {
                                 window.zoom_window();
@@ -432,14 +437,22 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Remote Project",
-                        Some(&OpenRemote),
+                        Some(&OpenRemote {
+                            from_existing_connection: false,
+                        }),
                         meta.clone(),
                         window,
                         cx,
                     )
                 })
                 .on_click(|_, window, cx| {
-                    window.dispatch_action(OpenRemote.boxed_clone(), cx);
+                    window.dispatch_action(
+                        OpenRemote {
+                            from_existing_connection: false,
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
                 })
                 .into_any_element(),
         )
@@ -641,8 +654,8 @@ impl TitleBar {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
                     Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
-                    Some(AutoUpdateStatus::Installing)
-                    | Some(AutoUpdateStatus::Downloading)
+                    Some(AutoUpdateStatus::Installing { .. })
+                    | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
                     Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
                         "Please update Zed to Collaborate"
@@ -726,13 +739,6 @@ impl TitleBar {
                             zed_actions::Extensions::default().boxed_clone(),
                         )
                         .separator()
-                        .link(
-                            "Book Onboarding",
-                            OpenBrowser {
-                                url: BOOK_ONBOARDING.to_string(),
-                            }
-                            .boxed_clone(),
-                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -775,14 +781,6 @@ impl TitleBar {
                             .action(
                                 "Extensions",
                                 zed_actions::Extensions::default().boxed_clone(),
-                            )
-                            .separator()
-                            .link(
-                                "Book Onboarding",
-                                OpenBrowser {
-                                    url: BOOK_ONBOARDING.to_string(),
-                                }
-                                .boxed_clone(),
                             )
                     })
                     .into()

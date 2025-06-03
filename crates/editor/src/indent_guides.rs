@@ -1,9 +1,9 @@
-use std::{ops::Range, time::Duration};
+use std::{cmp::Ordering, ops::Range, time::Duration};
 
 use collections::HashSet;
 use gpui::{App, AppContext as _, Context, Task, Window};
 use language::language_settings::language_settings;
-use multi_buffer::{IndentGuide, MultiBufferRow};
+use multi_buffer::{IndentGuide, MultiBufferRow, ToPoint};
 use text::{LineIndent, Point};
 use util::ResultExt;
 
@@ -156,12 +156,28 @@ pub fn indent_guides_in_range(
     snapshot: &DisplaySnapshot,
     cx: &App,
 ) -> Vec<IndentGuide> {
-    let start_anchor = snapshot
+    let start_offset = snapshot
         .buffer_snapshot
-        .anchor_before(Point::new(visible_buffer_range.start.0, 0));
-    let end_anchor = snapshot
+        .point_to_offset(Point::new(visible_buffer_range.start.0, 0));
+    let end_offset = snapshot
         .buffer_snapshot
-        .anchor_after(Point::new(visible_buffer_range.end.0, 0));
+        .point_to_offset(Point::new(visible_buffer_range.end.0, 0));
+    let start_anchor = snapshot.buffer_snapshot.anchor_before(start_offset);
+    let end_anchor = snapshot.buffer_snapshot.anchor_after(end_offset);
+
+    let mut fold_ranges = Vec::<Range<Point>>::new();
+    let mut folds = snapshot.folds_in_range(start_offset..end_offset).peekable();
+    while let Some(fold) = folds.next() {
+        let start = fold.range.start.to_point(&snapshot.buffer_snapshot);
+        let end = fold.range.end.to_point(&snapshot.buffer_snapshot);
+        if let Some(last_range) = fold_ranges.last_mut() {
+            if last_range.end >= start {
+                last_range.end = last_range.end.max(end);
+                continue;
+            }
+        }
+        fold_ranges.push(start..end);
+    }
 
     snapshot
         .buffer_snapshot
@@ -171,15 +187,19 @@ pub fn indent_guides_in_range(
                 return false;
             }
 
-            let start = MultiBufferRow(indent_guide.start_row.0.saturating_sub(1));
-            // Filter out indent guides that are inside a fold
-            // All indent guides that are starting "offscreen" have a start value of the first visible row minus one
-            // Therefore checking if a line is folded at first visible row minus one causes the other indent guides that are not related to the fold to disappear as well
-            let is_folded = snapshot.is_line_folded(start);
-            let line_indent = snapshot.line_indent_for_buffer_row(start);
-            let contained_in_fold =
-                line_indent.len(indent_guide.tab_size) <= indent_guide.indent_level();
-            !(is_folded && contained_in_fold)
+            let has_containing_fold = fold_ranges
+                .binary_search_by(|fold_range| {
+                    if fold_range.start >= Point::new(indent_guide.start_row.0, 0) {
+                        Ordering::Greater
+                    } else if fold_range.end < Point::new(indent_guide.end_row.0, 0) {
+                        Ordering::Less
+                    } else {
+                        Ordering::Equal
+                    }
+                })
+                .is_ok();
+
+            !has_containing_fold
         })
         .collect()
 }

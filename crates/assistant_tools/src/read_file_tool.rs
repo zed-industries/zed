@@ -1,5 +1,5 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use assistant_tool::{ToolResultContent, outline};
 use gpui::{AnyWindowHandle, App, Entity, Task};
@@ -129,7 +129,7 @@ impl Tool for ReadFileTool {
                 let language_model_image = cx
                     .update(|cx| LanguageModelImage::from_image(image, cx))?
                     .await
-                    .ok_or_else(|| anyhow!("Failed to process image"))?;
+                    .context("processing image")?;
 
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Image(language_model_image),
@@ -152,7 +152,7 @@ impl Tool for ReadFileTool {
                     .as_ref()
                     .map_or(true, |file| !file.disk_state().exists())
             })? {
-                return Err(anyhow!("{} not found", file_path));
+                anyhow::bail!("{file_path} not found");
             }
 
             project.update(cx, |project, cx| {

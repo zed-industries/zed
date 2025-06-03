@@ -3,15 +3,23 @@ use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
     Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, IsZero, LayoutId, ListState,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
-    Size, Style, UniformListScrollHandle, Window, quad,
+    ElementId, Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, IsZero, LayoutId,
+    ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
+    ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window, quad,
 };
 
 pub struct Scrollbar {
     thumb: Range<f32>,
     state: ScrollbarState,
     kind: ScrollbarAxis,
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+enum ThumbState {
+    #[default]
+    Inactive,
+    Hover,
+    Dragging(Pixels),
 }
 
 impl ScrollableHandle for UniformListScrollHandle {
@@ -88,8 +96,7 @@ pub trait ScrollableHandle: Any + Debug {
 /// A scrollbar state that should be persisted across frames.
 #[derive(Clone, Debug)]
 pub struct ScrollbarState {
-    // If Some(), there's an active drag, offset by percentage from the origin of a thumb.
-    drag: Rc<Cell<Option<Pixels>>>,
+    thumb_state: Rc<Cell<ThumbState>>,
     parent_id: Option<EntityId>,
     scroll_handle: Arc<dyn ScrollableHandle>,
 }
@@ -97,7 +104,7 @@ pub struct ScrollbarState {
 impl ScrollbarState {
     pub fn new(scroll: impl ScrollableHandle) -> Self {
         Self {
-            drag: Default::default(),
+            thumb_state: Default::default(),
             parent_id: None,
             scroll_handle: Arc::new(scroll),
         }
@@ -114,17 +121,38 @@ impl ScrollbarState {
     }
 
     pub fn is_dragging(&self) -> bool {
-        self.drag.get().is_some()
+        matches!(self.thumb_state.get(), ThumbState::Dragging(_))
+    }
+
+    fn set_dragging(&self, drag_offset: Pixels) {
+        self.set_thumb_state(ThumbState::Dragging(drag_offset));
+        self.scroll_handle.drag_started();
+    }
+
+    fn set_thumb_hovered(&self, hovered: bool) {
+        self.set_thumb_state(if hovered {
+            ThumbState::Hover
+        } else {
+            ThumbState::Inactive
+        });
+    }
+
+    fn set_thumb_state(&self, state: ThumbState) {
+        self.thumb_state.set(state);
     }
 
     fn thumb_range(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
         const MINIMUM_THUMB_SIZE: Pixels = px(25.);
         let content_size = self.scroll_handle.content_size().along(axis);
         let viewport_size = self.scroll_handle.viewport().size.along(axis);
-        if content_size.is_zero() || viewport_size.is_zero() || content_size < viewport_size {
+        if content_size.is_zero() || viewport_size.is_zero() || content_size <= viewport_size {
             return None;
         }
-
+        let visible_percentage = viewport_size / content_size;
+        let thumb_size = MINIMUM_THUMB_SIZE.max(viewport_size * visible_percentage);
+        if thumb_size > viewport_size {
+            return None;
+        }
         let max_offset = content_size - viewport_size;
         let current_offset = self
             .scroll_handle
@@ -132,12 +160,6 @@ impl ScrollbarState {
             .along(axis)
             .clamp(-max_offset, Pixels::ZERO)
             .abs();
-
-        let visible_percentage = viewport_size / content_size;
-        let thumb_size = MINIMUM_THUMB_SIZE.max(viewport_size * visible_percentage);
-        if thumb_size > viewport_size {
-            return None;
-        }
         let start_offset = (current_offset / max_offset) * (viewport_size - thumb_size);
         let thumb_percentage_start = start_offset / viewport_size;
         let thumb_percentage_end = (start_offset + thumb_size) / viewport_size;
@@ -162,16 +184,20 @@ impl Scrollbar {
 
 impl Element for Scrollbar {
     type RequestLayoutState = ();
-
     type PrepaintState = Hitbox;
 
     fn id(&self) -> Option<ElementId> {
         None
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -193,19 +219,21 @@ impl Element for Scrollbar {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         _: &mut App,
     ) -> Self::PrepaintState {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.insert_hitbox(bounds, false)
+            window.insert_hitbox(bounds, HitboxBehavior::Normal)
         })
     }
 
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
@@ -216,9 +244,13 @@ impl Element for Scrollbar {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             let axis = self.kind;
             let colors = cx.theme().colors();
-            let thumb_background = colors
-                .surface_background
-                .blend(colors.scrollbar_thumb_background);
+            let thumb_base_color = match self.state.thumb_state.get() {
+                ThumbState::Dragging(_) => colors.scrollbar_thumb_active_background,
+                ThumbState::Hover => colors.scrollbar_thumb_hover_background,
+                ThumbState::Inactive => colors.scrollbar_thumb_background,
+            };
+
+            let thumb_background = colors.surface_background.blend(thumb_base_color);
 
             let padded_bounds = Bounds::from_corners(
                 bounds
@@ -296,11 +328,9 @@ impl Element for Scrollbar {
                         return;
                     }
 
-                    scroll.drag_started();
-
                     if thumb_bounds.contains(&event.position) {
                         let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
-                        state.drag.set(Some(offset));
+                        state.set_dragging(offset);
                     } else {
                         let click_offset = compute_click_offset(
                             event.position,
@@ -326,26 +356,29 @@ impl Element for Scrollbar {
 
             let state = self.state.clone();
             window.on_mouse_event(move |event: &MouseMoveEvent, _, window, cx| {
-                if let Some(drag_state) = state.drag.get().filter(|_| event.dragging()) {
-                    let drag_offset = compute_click_offset(
-                        event.position,
-                        scroll.content_size(),
-                        ScrollbarMouseEvent::ThumbDrag(drag_state),
-                    );
-                    scroll.set_offset(scroll.offset().apply_along(axis, |_| drag_offset));
-                    window.refresh();
-                    if let Some(id) = state.parent_id {
-                        cx.notify(id);
+                match state.thumb_state.get() {
+                    ThumbState::Dragging(drag_state) if event.dragging() => {
+                        let drag_offset = compute_click_offset(
+                            event.position,
+                            scroll.content_size(),
+                            ScrollbarMouseEvent::ThumbDrag(drag_state),
+                        );
+                        scroll.set_offset(scroll.offset().apply_along(axis, |_| drag_offset));
+                        window.refresh();
+                        if let Some(id) = state.parent_id {
+                            cx.notify(id);
+                        }
                     }
-                } else {
-                    state.drag.set(None);
+                    _ => state.set_thumb_hovered(thumb_bounds.contains(&event.position)),
                 }
             });
             let state = self.state.clone();
             let scroll = self.state.scroll_handle.clone();
-            window.on_mouse_event(move |_event: &MouseUpEvent, phase, _, cx| {
+            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
                 if phase.bubble() {
-                    state.drag.take();
+                    if state.is_dragging() {
+                        state.set_thumb_hovered(thumb_bounds.contains(&event.position));
+                    }
                     scroll.drag_ended();
                     if let Some(id) = state.parent_id {
                         cx.notify(id);
