@@ -103,6 +103,16 @@ impl ChannelBuffer {
         }
     }
 
+    pub fn connected(&mut self, cx: &mut Context<Self>) {
+        self.connected = true;
+        if self.subscription.is_none() {
+            let Ok(subscription) = self.client.subscribe_to_entity(self.channel_id.0) else {
+                return;
+            };
+            self.subscription = Some(subscription.set_entity(&cx.entity(), &mut cx.to_async()));
+        }
+    }
+
     pub fn remote_id(&self, cx: &App) -> BufferId {
         self.buffer.read(cx).remote_id()
     }
