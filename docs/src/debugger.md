@@ -22,9 +22,9 @@ Zed supports a variety of debug adapters for different programming languages:
 
 - PHP (xdebug): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
 
-- Ruby (rdbg): Provides debugging capabilities for Ruby applications
-
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
+
+Additionally, Ruby support (via rdbg) is being actively worked on.
 
 ## Getting Started
 
