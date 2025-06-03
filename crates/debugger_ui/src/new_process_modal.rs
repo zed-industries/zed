@@ -29,8 +29,8 @@ use ui::{
     ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, InteractiveElement, IntoElement, Label, LabelCommon as _,
     ListItem, ListItemSpacing, ParentElement, RenderOnce, SharedString, Styled, StyledExt,
-    StyledTypography, ToggleButton, ToggleState, Toggleable, Window, div, h_flex, px, relative,
-    rems, v_flex,
+    StyledTypography, ToggleButton, ToggleState, Toggleable, Tooltip, Window, div, h_flex, px,
+    relative, rems, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
@@ -522,6 +522,17 @@ pub(crate) enum NewProcessMode {
     Debug,
 }
 
+impl NewProcessMode {
+    fn tooltip(&self) -> SharedString {
+        match self {
+            NewProcessMode::Task => "Run",
+            NewProcessMode::Debug => "Debug",
+            NewProcessMode::Attach => "Attach",
+            NewProcessMode::Launch => "Launch",
+        }
+        .into()
+    }
+}
 impl std::fmt::Display for NewProcessMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mode = match self {
@@ -643,6 +654,7 @@ impl Render for NewProcessModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
+                                .tooltip(Tooltip::text("Run predefined task"))
                                 .first(),
                             )
                             .child(
@@ -658,6 +670,7 @@ impl Render for NewProcessModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
+                                .tooltip(Tooltip::text("Start a predefined debug scenario"))
                                 .middle(),
                             )
                             .child(
@@ -682,6 +695,7 @@ impl Render for NewProcessModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
+                                .tooltip(Tooltip::text("Attach the debugger to a running process"))
                                 .middle(),
                             )
                             .child(
@@ -697,6 +711,7 @@ impl Render for NewProcessModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
+                                .tooltip(Tooltip::text("Launch a new process with a debugger"))
                                 .last(),
                             ),
                     )
