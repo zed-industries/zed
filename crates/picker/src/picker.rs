@@ -1,3 +1,7 @@
+mod head;
+pub mod highlighted_match_with_paths;
+pub mod popover_menu;
+
 use anyhow::Result;
 use editor::{
     Editor,
@@ -19,9 +23,6 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::ModalView;
-
-mod head;
-pub mod highlighted_match_with_paths;
 
 enum ElementContainer {
     List(ListState),

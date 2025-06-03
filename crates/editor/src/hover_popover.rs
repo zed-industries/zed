@@ -1050,7 +1050,9 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     match event {
-                        MarkdownEvent::SubstitutedText(parsed) => rendered_text.push_str(parsed),
+                        MarkdownEvent::SubstitutedText(parsed) => {
+                            rendered_text.push_str(parsed.as_str())
+                        }
                         MarkdownEvent::Text | MarkdownEvent::Code => {
                             rendered_text.push_str(&text[range.clone()])
                         }
@@ -1093,14 +1095,15 @@ mod tests {
         //prompt autocompletion menu
         cx.simulate_keystroke(".");
         handle_completion_request(
-            &mut cx,
             indoc! {"
                         one.|<>
                         two
                         three
                     "},
             vec!["first_completion", "second_completion"],
+            true,
             counter.clone(),
+            &mut cx,
         )
         .await;
         cx.condition(|editor, _| editor.context_menu_visible()) // wait until completion menu is visible

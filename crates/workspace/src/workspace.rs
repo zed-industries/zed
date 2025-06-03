@@ -37,10 +37,10 @@ use futures::{
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
     CursorStyle, Decorations, DragMoveEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, Global, Hsla, KeyContext, Keystroke, ManagedView, MouseButton, PathPromptOptions,
-    Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakEntity,
-    WindowBounds, WindowHandle, WindowId, WindowOptions, action_as, actions, canvas,
-    impl_action_as, impl_actions, point, relative, size, transparent_black,
+    Focusable, Global, HitboxBehavior, Hsla, KeyContext, Keystroke, ManagedView, MouseButton,
+    PathPromptOptions, Point, PromptLevel, Render, ResizeEdge, Size, Stateful, Subscription, Task,
+    Tiling, WeakEntity, WindowBounds, WindowHandle, WindowId, WindowOptions, action_as, actions,
+    canvas, impl_action_as, impl_actions, point, relative, size, transparent_black,
 };
 pub use history_manager::*;
 pub use item::{
@@ -68,7 +68,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-    debugger::breakpoint_store::BreakpointStoreEvent,
+    debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
 };
 use remote::{SshClientDelegate, SshConnectionOptions, ssh_session::ConnectionIdentifier};
 use schemars::JsonSchema;
@@ -100,13 +100,13 @@ use task::{DebugScenario, SpawnInTerminal, TaskContext};
 use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
-use ui::prelude::*;
+use ui::{Window, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
-use zed_actions::feedback::FileBugReport;
+use zed_actions::{Spawn, feedback::FileBugReport};
 
 use crate::notifications::NotificationId;
 use crate::persistence::{
@@ -149,6 +149,20 @@ pub trait DebuggerProvider {
         window: &mut Window,
         cx: &mut App,
     );
+
+    fn spawn_task_or_modal(
+        &self,
+        workspace: &mut Workspace,
+        action: &Spawn,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    );
+
+    fn task_scheduled(&self, cx: &mut App);
+    fn debug_scenario_scheduled(&self, cx: &mut App);
+    fn debug_scenario_scheduled_last(&self, cx: &App) -> bool;
+
+    fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus>;
 }
 
 actions!(
@@ -190,6 +204,7 @@ actions!(
         Unfollow,
         Welcome,
         RestoreBanner,
+        ToggleExpandItem,
     ]
 );
 
@@ -947,7 +962,7 @@ pub struct Workspace {
     on_prompt_for_new_path: Option<PromptForNewPath>,
     on_prompt_for_open_path: Option<PromptForOpenPath>,
     terminal_provider: Option<Box<dyn TerminalProvider>>,
-    debugger_provider: Option<Box<dyn DebuggerProvider>>,
+    debugger_provider: Option<Arc<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
@@ -1828,7 +1843,11 @@ impl Workspace {
     }
 
     pub fn set_debugger_provider(&mut self, provider: impl DebuggerProvider + 'static) {
-        self.debugger_provider = Some(Box::new(provider));
+        self.debugger_provider = Some(Arc::new(provider));
+    }
+
+    pub fn debugger_provider(&self) -> Option<Arc<dyn DebuggerProvider>> {
+        self.debugger_provider.clone()
     }
 
     pub fn serialized_ssh_project(&self) -> Option<SerializedSshProject> {
@@ -2642,7 +2661,7 @@ impl Workspace {
         let mut tasks = Vec::new();
 
         if retain_active_pane {
-            if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
+            let current_pane_close = current_pane.update(cx, |pane, cx| {
                 pane.close_inactive_items(
                     &CloseInactiveItems {
                         save_intent: None,
@@ -2651,9 +2670,9 @@ impl Workspace {
                     window,
                     cx,
                 )
-            }) {
-                tasks.push(current_pane_close);
-            };
+            });
+
+            tasks.push(current_pane_close);
         }
 
         for pane in self.panes() {
@@ -2661,7 +2680,7 @@ impl Workspace {
                 continue;
             }
 
-            if let Some(close_pane_items) = pane.update(cx, |pane: &mut Pane, cx| {
+            let close_pane_items = pane.update(cx, |pane: &mut Pane, cx| {
                 pane.close_all_items(
                     &CloseAllItems {
                         save_intent: Some(save_intent),
@@ -2670,9 +2689,9 @@ impl Workspace {
                     window,
                     cx,
                 )
-            }) {
-                tasks.push(close_pane_items)
-            }
+            });
+
+            tasks.push(close_pane_items)
         }
 
         if tasks.is_empty() {
@@ -3486,7 +3505,14 @@ impl Workspace {
 
         match target {
             Some(ActivateInDirectionTarget::Pane(pane)) => {
-                window.focus(&pane.focus_handle(cx));
+                let pane = pane.read(cx);
+                if let Some(item) = pane.active_item() {
+                    item.item_focus_handle(cx).focus(window);
+                } else {
+                    log::error!(
+                        "Could not find a focus target when in switching focus in {direction} direction for a pane",
+                    );
+                }
             }
             Some(ActivateInDirectionTarget::Dock(dock)) => {
                 // Defer this to avoid a panic when the dock's active panel is already on the stack.
@@ -3738,6 +3764,7 @@ impl Workspace {
                 }
                 cx.notify();
             }
+            pane::Event::ItemPinned | pane::Event::ItemUnpinned => {}
         }
 
         if serialize_workspace {
@@ -5778,6 +5805,20 @@ impl Render for Workspace {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
+        if let Some(status) = self
+            .debugger_provider
+            .as_ref()
+            .and_then(|provider| provider.active_thread_state(cx))
+        {
+            match status {
+                ThreadStatus::Running | ThreadStatus::Stepping => {
+                    context.add("debugger_running");
+                }
+                ThreadStatus::Stopped => context.add("debugger_stopped"),
+                ThreadStatus::Exited | ThreadStatus::Ended => {}
+            }
+        }
+
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
@@ -7344,7 +7385,7 @@ pub fn client_side_decorations(
                                 point(px(0.0), px(0.0)),
                                 window.window_bounds().get_bounds().size,
                             ),
-                            false,
+                            HitboxBehavior::Normal,
                         )
                     },
                     move |_bounds, hitbox, window, cx| {
@@ -7745,7 +7786,6 @@ mod tests {
         // Close the active item
         pane.update_in(cx, |pane, window, cx| {
             pane.close_active_item(&Default::default(), window, cx)
-                .unwrap()
         })
         .await
         .unwrap();
@@ -8066,7 +8106,7 @@ mod tests {
         assert!(!msg.contains("4.txt"));
 
         cx.simulate_prompt_answer("Cancel");
-        close.await.unwrap();
+        close.await;
 
         left_pane
             .update_in(cx, |left_pane, window, cx| {
@@ -8098,7 +8138,7 @@ mod tests {
         cx.simulate_prompt_answer("Save all");
 
         cx.executor().run_until_parked();
-        close.await.unwrap();
+        close.await;
         right_pane.read_with(cx, |pane, _| {
             assert_eq!(pane.items_len(), 0);
         });
@@ -9024,18 +9064,16 @@ mod tests {
                 "Should select the multi buffer in the pane"
             );
         });
-        let close_all_but_multi_buffer_task = pane
-            .update_in(cx, |pane, window, cx| {
-                pane.close_inactive_items(
-                    &CloseInactiveItems {
-                        save_intent: Some(SaveIntent::Save),
-                        close_pinned: true,
-                    },
-                    window,
-                    cx,
-                )
-            })
-            .expect("should have inactive files to close");
+        let close_all_but_multi_buffer_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_inactive_items(
+                &CloseInactiveItems {
+                    save_intent: Some(SaveIntent::Save),
+                    close_pinned: true,
+                },
+                window,
+                cx,
+            )
+        });
         cx.background_executor.run_until_parked();
         assert!(!cx.has_pending_prompt());
         close_all_but_multi_buffer_task
@@ -9061,18 +9099,16 @@ mod tests {
             buffer.project_items[0].update(cx, |pi, _| pi.is_dirty = true)
         });
 
-        let close_multi_buffer_task = pane
-            .update_in(cx, |pane, window, cx| {
-                pane.close_active_item(
-                    &CloseActiveItem {
-                        save_intent: Some(SaveIntent::Close),
-                        close_pinned: false,
-                    },
-                    window,
-                    cx,
-                )
-            })
-            .expect("should have the multi buffer to close");
+        let close_multi_buffer_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: Some(SaveIntent::Close),
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
         cx.background_executor.run_until_parked();
         assert!(
             cx.has_pending_prompt(),
@@ -9170,18 +9206,16 @@ mod tests {
                 "Should select the multi buffer in the pane"
             );
         });
-        let _close_multi_buffer_task = pane
-            .update_in(cx, |pane, window, cx| {
-                pane.close_active_item(
-                    &CloseActiveItem {
-                        save_intent: None,
-                        close_pinned: false,
-                    },
-                    window,
-                    cx,
-                )
-            })
-            .expect("should have active multi buffer to close");
+        let _close_multi_buffer_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
         cx.background_executor.run_until_parked();
         assert!(
             cx.has_pending_prompt(),
@@ -9268,18 +9302,16 @@ mod tests {
                 "Should select the multi buffer in the pane"
             );
         });
-        let close_multi_buffer_task = pane
-            .update_in(cx, |pane, window, cx| {
-                pane.close_active_item(
-                    &CloseActiveItem {
-                        save_intent: None,
-                        close_pinned: false,
-                    },
-                    window,
-                    cx,
-                )
-            })
-            .expect("should have active multi buffer to close");
+        let close_multi_buffer_task = pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        });
         cx.background_executor.run_until_parked();
         assert!(
             !cx.has_pending_prompt(),

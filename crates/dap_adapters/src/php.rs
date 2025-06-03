@@ -94,7 +94,7 @@ impl PhpDebugAdapter {
             envs: HashMap::default(),
             request_args: StartDebuggingRequestArguments {
                 configuration: task_definition.config.clone(),
-                request: <Self as DebugAdapter>::validate_config(self, &task_definition.config)?,
+                request: <Self as DebugAdapter>::request_kind(self, &task_definition.config)?,
             },
         })
     }
@@ -149,22 +149,8 @@ impl DebugAdapter for PhpDebugAdapter {
                     "default": false
                 },
                 "pathMappings": {
-                    "type": "array",
-                    "description": "A list of server paths mapping to the local source paths on your machine for remote host debugging",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "serverPath": {
-                                "type": "string",
-                                "description": "Path on the server"
-                            },
-                            "localPath": {
-                                "type": "string",
-                                "description": "Corresponding path on the local machine"
-                            }
-                        },
-                        "required": ["serverPath", "localPath"]
-                    }
+                    "type": "object",
+                    "description": "A mapping of server paths to local paths.",
                 },
                 "log": {
                     "type": "boolean",
@@ -296,10 +282,7 @@ impl DebugAdapter for PhpDebugAdapter {
         Some(SharedString::new_static("PHP").into())
     }
 
-    fn validate_config(
-        &self,
-        _: &serde_json::Value,
-    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+    fn request_kind(&self, _: &serde_json::Value) -> Result<StartDebuggingRequestArgumentsRequest> {
         Ok(StartDebuggingRequestArgumentsRequest::Launch)
     }
 

@@ -699,7 +699,7 @@ fn render_diff_hunk_controls(
         .rounded_b_md()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .stop_mouse_events_except_scroll()
+        .block_mouse_except_scroll()
         .shadow_md()
         .children(vec![
             Button::new(("reject", row as u64), "Reject")
@@ -1372,6 +1372,7 @@ impl AgentDiff {
             | ThreadEvent::ToolFinished { .. }
             | ThreadEvent::CheckpointChanged
             | ThreadEvent::ToolConfirmationNeeded
+            | ThreadEvent::ToolUseLimitReached
             | ThreadEvent::CancelEditing => {}
         }
     }
@@ -1464,7 +1465,10 @@ impl AgentDiff {
         if !AgentSettings::get_global(cx).single_file_review {
             for (editor, _) in self.reviewing_editors.drain() {
                 editor
-                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .update(cx, |editor, cx| {
+                        editor.end_temporary_diff_override(cx);
+                        editor.unregister_addon::<EditorAgentDiffAddon>();
+                    })
                     .ok();
             }
             return;
@@ -1560,7 +1564,10 @@ impl AgentDiff {
 
             if in_workspace {
                 editor
-                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .update(cx, |editor, cx| {
+                        editor.end_temporary_diff_override(cx);
+                        editor.unregister_addon::<EditorAgentDiffAddon>();
+                    })
                     .ok();
                 self.reviewing_editors.remove(&editor);
             }

@@ -11,7 +11,7 @@ use language::{
     DiagnosticSeverity, LanguageServerId, Point, ToOffset as _, ToPoint as _,
 };
 use project::lsp_store::CompletionDocumentation;
-use project::{Completion, CompletionSource, Project, ProjectPath};
+use project::{Completion, CompletionResponse, CompletionSource, Project, ProjectPath};
 use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -641,18 +641,18 @@ impl CompletionProvider for RustStyleCompletionProvider {
         _: editor::CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Option<Vec<project::Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let Some(replace_range) = completion_replace_range(&buffer.read(cx).snapshot(), &position)
         else {
-            return Task::ready(Ok(Some(Vec::new())));
+            return Task::ready(Ok(Vec::new()));
         };
 
         self.div_inspector.update(cx, |div_inspector, _cx| {
             div_inspector.rust_completion_replace_range = Some(replace_range.clone());
         });
 
-        Task::ready(Ok(Some(
-            STYLE_METHODS
+        Task::ready(Ok(vec![CompletionResponse {
+            completions: STYLE_METHODS
                 .iter()
                 .map(|(_, method)| Completion {
                     replace_range: replace_range.clone(),
@@ -667,7 +667,8 @@ impl CompletionProvider for RustStyleCompletionProvider {
                     confirm: None,
                 })
                 .collect(),
-        )))
+            is_incomplete: false,
+        }]))
     }
 
     fn resolve_completions(

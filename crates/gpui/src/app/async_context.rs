@@ -1,7 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptLevel, Render, Reservation,
-    Result, Subscription, Task, VisualContext, Window, WindowHandle,
+    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
+    Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
 };
 use anyhow::Context as _;
 use derive_more::{Deref, DerefMut};
@@ -314,13 +314,16 @@ impl AsyncWindowContext {
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
-    pub fn prompt(
+    pub fn prompt<T>(
         &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
+        answers: &[T],
+    ) -> oneshot::Receiver<usize>
+    where
+        T: Clone + Into<PromptButton>,
+    {
         self.window
             .update(self, |_, window, cx| {
                 window.prompt(level, message, detail, answers, cx)

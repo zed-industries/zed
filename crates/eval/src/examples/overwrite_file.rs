@@ -31,6 +31,7 @@ impl Example for FileOverwriteExample {
             max_assertions: Some(1),
             profile_id: AgentProfileId::default(),
             existing_thread_json: Some(thread_json.to_string()),
+            max_turns: None,
         }
     }
 
