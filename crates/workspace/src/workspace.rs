@@ -68,7 +68,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-    debugger::breakpoint_store::BreakpointStoreEvent,
+    debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
 };
 use remote::{SshClientDelegate, SshConnectionOptions, ssh_session::ConnectionIdentifier};
 use schemars::JsonSchema;
@@ -161,6 +161,8 @@ pub trait DebuggerProvider {
     fn task_scheduled(&self, cx: &mut App);
     fn debug_scenario_scheduled(&self, cx: &mut App);
     fn debug_scenario_scheduled_last(&self, cx: &App) -> bool;
+
+    fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus>;
 }
 
 actions!(
@@ -202,6 +204,7 @@ actions!(
         Unfollow,
         Welcome,
         RestoreBanner,
+        ToggleExpandItem,
     ]
 );
 
@@ -3502,7 +3505,14 @@ impl Workspace {
 
         match target {
             Some(ActivateInDirectionTarget::Pane(pane)) => {
-                window.focus(&pane.focus_handle(cx));
+                let pane = pane.read(cx);
+                if let Some(item) = pane.active_item() {
+                    item.item_focus_handle(cx).focus(window);
+                } else {
+                    log::error!(
+                        "Could not find a focus target when in switching focus in {direction} direction for a pane",
+                    );
+                }
             }
             Some(ActivateInDirectionTarget::Dock(dock)) => {
                 // Defer this to avoid a panic when the dock's active panel is already on the stack.
@@ -3754,6 +3764,7 @@ impl Workspace {
                 }
                 cx.notify();
             }
+            pane::Event::ItemPinned | pane::Event::ItemUnpinned => {}
         }
 
         if serialize_workspace {
@@ -5794,6 +5805,20 @@ impl Render for Workspace {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
         context.set("keyboard_layout", cx.keyboard_layout().name().to_string());
+        if let Some(status) = self
+            .debugger_provider
+            .as_ref()
+            .and_then(|provider| provider.active_thread_state(cx))
+        {
+            match status {
+                ThreadStatus::Running | ThreadStatus::Stepping => {
+                    context.add("debugger_running");
+                }
+                ThreadStatus::Stopped => context.add("debugger_stopped"),
+                ThreadStatus::Exited | ThreadStatus::Ended => {}
+            }
+        }
+
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();
@@ -9195,6 +9220,332 @@ mod tests {
         assert!(
             cx.has_pending_prompt(),
             "With one dirty item from the multi buffer not being in the pane, a save prompt should be shown"
+        );
+    }
+
+    /// Tests that when `close_on_file_delete` is enabled, files are automatically
+    /// closed when they are deleted from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_disk_deletion setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a test item that simulates a file
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Verify the item is in the pane
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 1);
+        });
+
+        // Simulate file deletion by setting the item's deleted state
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow the close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item was automatically closed
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                0,
+                "Item should be automatically closed when file is deleted"
+            );
+        });
+    }
+
+    /// Tests that when `close_on_file_delete` is disabled (default), files remain
+    /// open with a strikethrough when they are deleted from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Ensure close_on_disk_deletion is disabled (default)
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(false);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a test item that simulates a file
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Verify the item is in the pane
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 1);
+        });
+
+        // Simulate file deletion
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow any potential close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item remains open (with strikethrough)
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Item should remain open when close_on_disk_deletion is disabled"
+            );
+        });
+
+        // Verify the item shows as deleted
+        item.read_with(cx, |item, _| {
+            assert!(
+                item.has_deleted_file,
+                "Item should be marked as having deleted file"
+            );
+        });
+    }
+
+    /// Tests that dirty files are not automatically closed when deleted from disk,
+    /// even when `close_on_file_delete` is enabled. This ensures users don't lose
+    /// unsaved changes without being prompted.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_with_dirty_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_file_delete setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a dirty test item
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Simulate file deletion
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow any potential close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item remains open (dirty files are not auto-closed)
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Dirty items should not be automatically closed even when file is deleted"
+            );
+        });
+
+        // Verify the item is marked as deleted and still dirty
+        item.read_with(cx, |item, _| {
+            assert!(
+                item.has_deleted_file,
+                "Item should be marked as having deleted file"
+            );
+            assert!(item.is_dirty, "Item should still be dirty");
+        });
+    }
+
+    /// Tests that navigation history is cleaned up when files are auto-closed
+    /// due to deletion from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_cleans_navigation_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_file_delete setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create test items
+        let item1 = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test1.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test1.txt", cx)])
+        });
+        let item1_id = item1.item_id();
+
+        let item2 = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test2.txt")
+                .with_project_items(&[TestProjectItem::new(2, "test2.txt", cx)])
+        });
+
+        // Add items to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item1.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item2.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Activate item1 to ensure it gets navigation entries
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(0, true, true, window, cx);
+        });
+
+        // Switch to item2 and back to create navigation history
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(0, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Simulate file deletion for item1
+        item1.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        item1.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+        cx.run_until_parked();
+
+        // Verify item1 was closed
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Should have 1 item remaining after auto-close"
+            );
+        });
+
+        // Check navigation history after close
+        let has_item = pane.read_with(cx, |pane, cx| {
+            let mut has_item = false;
+            pane.nav_history().for_each_entry(cx, |entry, _| {
+                if entry.item.id() == item1_id {
+                    has_item = true;
+                }
+            });
+            has_item
+        });
+
+        assert!(
+            !has_item,
+            "Navigation history should not contain closed item entries"
         );
     }
 

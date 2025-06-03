@@ -114,6 +114,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
+ "sqlez",
  "streaming_diff",
  "telemetry",
  "telemetry_events",
@@ -133,6 +134,7 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zed_llm_client",
+ "zstd",
 ]
 
 [[package]]
@@ -8760,6 +8762,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shellexpand 2.1.2",
  "smallvec",
  "smol",
  "streaming-iterator",

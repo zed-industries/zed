@@ -3,7 +3,7 @@ use debugger_panel::{DebugPanel, ToggleFocus};
 use editor::Editor;
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use gpui::{App, EntityInputHandler, actions};
-use new_session_modal::{NewSessionModal, NewSessionMode};
+use new_process_modal::{NewProcessModal, NewProcessMode};
 use project::debugger::{self, breakpoint_store::SourceBreakpoint};
 use session::DebugSession;
 use settings::Settings;
@@ -15,7 +15,7 @@ use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 pub mod attach_modal;
 pub mod debugger_panel;
 mod dropdown_menus;
-mod new_session_modal;
+mod new_process_modal;
 mod persistence;
 pub(crate) mod session;
 mod stack_trace_view;
@@ -49,6 +49,7 @@ actions!(
         ToggleThreadPicker,
         ToggleSessionPicker,
         RerunLastSession,
+        ToggleExpandItem,
     ]
 );
 
@@ -210,7 +211,7 @@ pub fn init(cx: &mut App) {
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    NewSessionModal::show(workspace, window, NewSessionMode::Launch, None, cx);
+                    NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
                 })
                 .register_action(
                     |workspace: &mut Workspace, _: &RerunLastSession, window, cx| {
@@ -352,7 +353,7 @@ fn spawn_task_or_modal(
             .detach_and_log_err(cx)
         }
         Spawn::ViaModal { reveal_target } => {
-            NewSessionModal::show(workspace, window, NewSessionMode::Task, *reveal_target, cx);
+            NewProcessModal::show(workspace, window, NewProcessMode::Task, *reveal_target, cx);
         }
     }
 }

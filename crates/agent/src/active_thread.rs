@@ -1017,6 +1017,15 @@ impl ActiveThread {
                 self.play_notification_sound(cx);
                 self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }
+            ThreadEvent::ToolUseLimitReached => {
+                self.play_notification_sound(cx);
+                self.show_notification(
+                    "Consecutive tool use limit reached.",
+                    IconName::Warning,
+                    window,
+                    cx,
+                );
+            }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(rendered_message) = self.rendered_messages_by_id.get_mut(&message_id) {
                     rendered_message.append_text(text, cx);

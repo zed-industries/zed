@@ -379,17 +379,19 @@ impl ContextProvider for PythonContextProvider {
             };
 
         let module_target = self.build_module_target(variables);
-        let worktree_id = location
-            .file_location
-            .buffer
-            .read(cx)
-            .file()
-            .map(|f| f.worktree_id(cx));
+        let location_file = location.file_location.buffer.read(cx).file().cloned();
+        let worktree_id = location_file.as_ref().map(|f| f.worktree_id(cx));
 
         cx.spawn(async move |cx| {
             let raw_toolchain = if let Some(worktree_id) = worktree_id {
+                let file_path = location_file
+                    .as_ref()
+                    .and_then(|f| f.path().parent())
+                    .map(Arc::from)
+                    .unwrap_or_else(|| Arc::from("".as_ref()));
+
                 toolchains
-                    .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
+                    .active_toolchain(worktree_id, file_path, "Python".into(), cx)
                     .await
                     .map_or_else(
                         || String::from("python3"),
@@ -398,14 +400,16 @@ impl ContextProvider for PythonContextProvider {
             } else {
                 String::from("python3")
             };
+
             let active_toolchain = format!("\"{raw_toolchain}\"");
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
-            let raw_toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
+            let raw_toolchain_var = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
+
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
                     .chain(module_target.into_iter())
-                    .chain([toolchain, raw_toolchain]),
+                    .chain([toolchain, raw_toolchain_var]),
             ))
         })
     }
@@ -689,9 +693,13 @@ fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
 
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
+    fn manifest_name(&self) -> language::ManifestName {
+        ManifestName::from(SharedString::new_static("pyproject.toml"))
+    }
     async fn list(
         &self,
         worktree_root: PathBuf,
+        subroot_relative_path: Option<Arc<Path>>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -702,7 +710,14 @@ impl ToolchainLister for PythonToolchainProvider {
             &environment,
         );
         let mut config = Configuration::default();
-        config.workspace_directories = Some(vec![worktree_root.clone()]);
+
+        let mut directories = vec![worktree_root.clone()];
+        if let Some(subroot_relative_path) = subroot_relative_path {
+            debug_assert!(subroot_relative_path.is_relative());
+            directories.push(worktree_root.join(subroot_relative_path));
+        }
+
+        config.workspace_directories = Some(directories);
         for locator in locators.iter() {
             locator.configure(&config);
         }
