@@ -3837,10 +3837,19 @@ impl ProjectPanel {
             .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .on_drag_move::<ExternalPaths>(cx.listener(
                 move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
+                    let is_current_target = this.drag_target_entry.as_ref()
+                         .map(|entry| entry.entry_id) == Some(entry_id);
+
                     if !event.bounds.contains(&event.event.position) {
+                        // Entry responsible for setting drag target is also reponsible to
+                        // clear it up after drag is out of bounds
+                        if is_current_target {
+                            this.drag_target_entry = None;
+                        }
                         return;
                     }
-                    if this.drag_target_entry.as_ref().map(|entry| entry.entry_id) == Some(entry_id) {
+
+                    if is_current_target {
                         return;
                     }
 
@@ -3879,10 +3888,19 @@ impl ProjectPanel {
             ))
             .on_drag_move::<DraggedSelection>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
+                    let is_current_target = this.drag_target_entry.as_ref()
+                         .map(|entry| entry.entry_id) == Some(entry_id);
+
                     if !event.bounds.contains(&event.event.position) {
+                        // Entry responsible for setting drag target is also reponsible to
+                        // clear it up after drag is out of bounds
+                        if is_current_target {
+                            this.drag_target_entry = None;
+                        }
                         return;
                     }
-                    if this.drag_target_entry.as_ref().map(|entry| entry.entry_id) == Some(entry_id) {
+
+                    if is_current_target {
                         return;
                     }
 
