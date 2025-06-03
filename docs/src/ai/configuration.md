@@ -352,7 +352,9 @@ Depending on your hardware or use-case you may wish to limit or increase the con
           "name": "qwen2.5-coder",
           "display_name": "qwen 2.5 coder 32K",
           "max_tokens": 32768,
-          "supports_tools": true
+          "supports_tools": true,
+          "supports_thinking": true,
+          "supports_images": true
         }
       ]
     }
@@ -371,6 +373,12 @@ For example, `"keep_alive": "120s"` will allow the remote server to unload the m
 The `supports_tools` option controls whether or not the model will use additional tools.
 If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
 If the model is not tagged with `tools` in the Ollama catalog, this option can still be supplied with value `true`; however be aware that only the `Minimal` built in profile will work.
+
+The `supports_thinking` option controls whether or not the model will perform an explicit “thinking” (reasoning) pass before producing its final answer.  
+If the model is tagged with `thinking` in the Ollama catalog, set this option and you can use it in zed.
+
+The `supports_images` option enables the model’s vision capabilities, allowing it to process images included in the conversation context.  
+If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in zed.
 
 ### OpenAI {#openai}
 
