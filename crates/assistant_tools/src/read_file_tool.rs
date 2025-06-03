@@ -13,6 +13,7 @@ use language_model::{
     LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
 };
 use project::{AgentLocation, Project};
+use project::{AgentLocation, Project, Worktree};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -102,6 +103,21 @@ impl Tool for ReadFileTool {
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
+
+        // This tool may not read private files, as that could send sensitive info to third-party servers.
+        if let Some(worktree) = project
+            .read(cx)
+            .worktree_store()
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id, cx)
+        {
+            if let Worktree::Local(local_worktree) = worktree.read(cx) {
+                if local_worktree.is_path_private(&project_path.path) {
+                    return Task::ready(Err(anyhow!("Cannot read private file: {}", &input.path)))
+                        .into();
+                }
+            }
+        }
 
         let file_path = input.path.clone();
 
@@ -596,5 +612,170 @@ mod test {
             "#,
         )
         .unwrap()
+    }
+
+    #[gpui::test]
+    async fn test_read_file_security(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/",
+            json!({
+                "project_root": {
+                    "allowed_file.txt": "This file is in the project",
+                    ".env": "SECRET_KEY=abc123",
+                    "subdir": {
+                        "normal_file.txt": "Normal file content"
+                    }
+                },
+                "outside_project": {
+                    "sensitive_file.txt": "This file is outside the project"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // Reading a file outside the project worktree should fail
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "/outside_project/sensitive_file.txt"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read an absolute path outside a worktree"
+        );
+
+        // Reading a file within the project should succeed
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/allowed_file.txt"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_ok(),
+            "read_file_tool should be able to read files inside worktrees"
+        );
+
+        // Configure private_files setting to exclude .blah files
+        cx.update(|cx| {
+            use gpui::UpdateGlobal;
+            use project::WorktreeSettings;
+            use settings::SettingsStore;
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.private_files = Some(vec!["**/.blah*".to_string()]);
+                });
+            });
+        });
+
+        // Create a new project to pick up the settings
+        let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        // Rading private files should fail
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/example.blah"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read a file whose path matches the user's `private_files` setting"
+        );
+
+        // Reading a normal file should still work, even with private_files configured
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/subdir/normal_file.txt"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().content.as_str().unwrap(),
+            "Normal file content"
+        );
+
+        // Path traversal attempts with .. should fail
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/../outside_project/sensitive_file.txt"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read a relative path that resolves to outside a worktree"
+        );
     }
 }
