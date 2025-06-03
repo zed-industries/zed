@@ -56,6 +56,7 @@ impl DapLocator for GoLocator {
                     tags: vec![],
                     show_summary: true,
                     show_command: true,
+                    ..TaskTemplate::default()
                 };
 
                 Some(DebugScenario {
