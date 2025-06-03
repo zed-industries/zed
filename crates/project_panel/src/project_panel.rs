@@ -3866,6 +3866,7 @@ impl ProjectPanel {
                         entry_id,
                         highlight_entry_id,
                     });
+                    this.marked_entries.clear();
                 },
             ))
             .on_drop(cx.listener(
@@ -3920,6 +3921,7 @@ impl ProjectPanel {
                         entry_id,
                         highlight_entry_id,
                     });
+                    this.marked_entries.clear();
                     this.hover_expand_task.take();
 
                     if !kind.is_dir()
@@ -4624,10 +4626,7 @@ impl Render for ProjectPanel {
                 cx: &mut Context<ProjectPanel>,
             ) {
                 if !e.bounds.contains(&e.event.position) {
-                    if this.drag_target_entry.is_some() {
-                        this.drag_target_entry = None;
-                        cx.notify();
-                    }
+                    this.drag_target_entry = None;
                     return;
                 }
                 this.hover_scroll_task.take();
@@ -4939,7 +4938,6 @@ impl Render for ProjectPanel {
                     .on_drop(cx.listener(
                         move |this, external_paths: &ExternalPaths, window, cx| {
                             this.drag_target_entry = None;
-                            this.marked_entries.clear();
                             this.hover_scroll_task.take();
                             if let Some(task) = this
                                 .workspace
