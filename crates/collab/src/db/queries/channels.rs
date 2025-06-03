@@ -64,7 +64,11 @@ impl Database {
                 .map_or(String::new(), |parent| parent.path());
 
             // Find the maximum channel_order among siblings to set the new channel at the end
-            let max_order = max_order(&parent_path, &tx).await?;
+            let max_order = if parent_path.is_empty() {
+                0
+            } else {
+                max_order(&parent_path, &tx).await?
+            };
 
             log::info!(
                 "Creating channel '{}' with parent_path='{}', max_order={}, new_order={}",
@@ -1006,6 +1010,12 @@ impl Database {
     ) -> Result<Vec<Channel>> {
         self.transaction(|tx| async move {
             let mut channel = self.get_channel_internal(channel_id, &tx).await?;
+
+            if channel.is_root() {
+                log::info!("Skipping reorder of root channel {}", channel.id,);
+
+                return Ok(vec![]);
+            }
 
             log::info!(
                 "Reordering channel {} (parent_path: '{}', order: {})",
