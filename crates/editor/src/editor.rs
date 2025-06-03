@@ -2709,7 +2709,9 @@ impl Editor {
             .invalidate(&self.selections.disjoint_anchors(), buffer);
         self.take_rename(false, window, cx);
 
-        let new_cursor_position = self.selections.newest_anchor().head();
+        let newest_selection = self.selections.newest_anchor();
+        let new_cursor_position = newest_selection.head();
+        let selection_start = newest_selection.start;
 
         self.push_to_nav_history(
             *old_cursor_position,
@@ -2719,8 +2721,6 @@ impl Editor {
         );
 
         if local {
-            let new_cursor_position = self.selections.newest_anchor().head();
-
             if let Some(buffer_id) = new_cursor_position.buffer_id {
                 if !self.registered_buffers.contains_key(&buffer_id) {
                     if let Some(project) = self.project.as_ref() {
@@ -2751,15 +2751,15 @@ impl Editor {
 
             if should_update_completions {
                 if let Some(completion_position) = completion_position {
-                    let new_cursor_offset = new_cursor_position.to_offset(buffer);
-                    let position_matches =
-                        new_cursor_offset == completion_position.to_offset(buffer);
+                    let start_offset = selection_start.to_offset(buffer);
+                    let position_matches = start_offset == completion_position.to_offset(buffer);
                     let continue_showing = if position_matches {
-                        let (word_range, kind) = buffer.surrounding_word(new_cursor_offset, true);
-                        if let Some(CharKind::Word) = kind {
-                            word_range.start < new_cursor_offset
+                        if self.snippet_stack.is_empty() {
+                            buffer.char_kind_before(start_offset, true) == Some(CharKind::Word)
                         } else {
-                            false
+                            // Snippet choices can be shown even when the cursor is in whitespace.
+                            // Dismissing the menu when actions like backspace
+                            true
                         }
                     } else {
                         false
@@ -5031,7 +5031,10 @@ impl Editor {
             return;
         }
 
-        let position = self.selections.newest_anchor().head();
+        // Typically `start` == `end`, but with snippet tabstop choices the default choice is
+        // inserted and selected. To handle that case, the start of the selection is used so that
+        // the menu starts with all choices.
+        let position = self.selections.newest_anchor().start;
         if position.diff_base_anchor.is_some() {
             return;
         }
@@ -8897,26 +8900,30 @@ impl Editor {
         selection: Range<Anchor>,
         cx: &mut Context<Self>,
     ) {
-        if selection.start.buffer_id.is_none() {
+        let buffer_id = match (&selection.start.buffer_id, &selection.end.buffer_id) {
+            (Some(a), Some(b)) if a == b => a,
+            _ => {
+                log::error!("expected anchor range to have matching buffer IDs");
+                return;
+            }
+        };
+        let multi_buffer = self.buffer().read(cx);
+        let Some(buffer) = multi_buffer.buffer(*buffer_id) else {
             return;
-        }
-        let buffer_id = selection.start.buffer_id.unwrap();
-        let buffer = self.buffer().read(cx).buffer(buffer_id);
+        };
+
         let id = post_inc(&mut self.next_completion_id);
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
-
-        if let Some(buffer) = buffer {
-            *self.context_menu.borrow_mut() = Some(CodeContextMenu::Completions(
-                CompletionsMenu::new_snippet_choices(
-                    id,
-                    true,
-                    choices,
-                    selection,
-                    buffer,
-                    snippet_sort_order,
-                ),
-            ));
-        }
+        *self.context_menu.borrow_mut() = Some(CodeContextMenu::Completions(
+            CompletionsMenu::new_snippet_choices(
+                id,
+                true,
+                choices,
+                selection,
+                buffer,
+                snippet_sort_order,
+            ),
+        ));
     }
 
     pub fn insert_snippet(
@@ -8970,9 +8977,7 @@ impl Editor {
                             })
                         })
                         .collect::<Vec<_>>();
-                    // Sort in reverse order so that the first range is the newest created
-                    // selection. Completions will use it and autoscroll will prioritize it.
-                    tabstop_ranges.sort_unstable_by(|a, b| b.start.cmp(&a.start, snapshot));
+                    tabstop_ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
 
                     Tabstop {
                         is_end_tabstop,
@@ -8984,7 +8989,9 @@ impl Editor {
         });
         if let Some(tabstop) = tabstops.first() {
             self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select_ranges(tabstop.ranges.iter().cloned());
+                // Reverse order so that the first range is the newest created selection.
+                // Completions will use it and autoscroll will prioritize it.
+                s.select_ranges(tabstop.ranges.iter().rev().cloned());
             });
 
             if let Some(choices) = &tabstop.choices {
@@ -9100,7 +9107,9 @@ impl Editor {
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
                 self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_ranges(current_ranges.iter().cloned())
+                    // Reverse order so that the first range is the newest created selection.
+                    // Completions will use it and autoscroll will prioritize it.
+                    s.select_ranges(current_ranges.iter().rev().cloned())
                 });
 
                 if let Some(choices) = &snippet.choices[snippet.active_index] {

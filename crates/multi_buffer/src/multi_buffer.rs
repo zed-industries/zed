@@ -4180,6 +4180,20 @@ impl MultiBufferSnapshot {
         (start..end, word_kind)
     }
 
+    pub fn char_kind_before<T: ToOffset>(
+        &self,
+        start: T,
+        for_completion: bool,
+    ) -> Option<CharKind> {
+        let start = start.to_offset(self);
+        let classifier = self
+            .char_classifier_at(start)
+            .for_completion(for_completion);
+        self.reversed_chars_at(start)
+            .next()
+            .map(|ch| classifier.kind(ch))
+    }
+
     pub fn is_singleton(&self) -> bool {
         self.singleton
     }
