@@ -211,8 +211,11 @@ use workspace::{
     searchable::SearchEvent,
 };
 
-use crate::hover_links::{find_url, find_url_from_range};
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
+use crate::{
+    code_context_menus::CompletionsMenuSource,
+    hover_links::{find_url, find_url_from_range},
+};
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
@@ -4510,30 +4513,40 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ignore_completion_provider = self
+        let completions_source = self
             .context_menu
             .borrow()
             .as_ref()
-            .map(|menu| match menu {
-                CodeContextMenu::Completions(completions_menu) => {
-                    completions_menu.ignore_completion_provider
-                }
-                CodeContextMenu::CodeActions(_) => false,
-            })
-            .unwrap_or(false);
+            .and_then(|menu| match menu {
+                CodeContextMenu::Completions(completions_menu) => Some(completions_menu.source),
+                CodeContextMenu::CodeActions(_) => None,
+            });
 
-        if ignore_completion_provider {
-            self.show_word_completions(&ShowWordCompletions, window, cx);
-        } else if self.is_completion_trigger(text, trigger_in_words, cx) {
-            self.show_completions(
-                &ShowCompletions {
-                    trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
-                },
-                window,
-                cx,
-            );
-        } else {
-            self.hide_context_menu(window, cx);
+        match completions_source {
+            Some(CompletionsMenuSource::Words) => {
+                self.show_word_completions(&ShowWordCompletions, window, cx)
+            }
+            Some(CompletionsMenuSource::Normal)
+            | Some(CompletionsMenuSource::SnippetChoices)
+            | None
+                if self.is_completion_trigger(
+                    text,
+                    trigger_in_words,
+                    completions_source.is_some(),
+                    cx,
+                ) =>
+            {
+                self.show_completions(
+                    &ShowCompletions {
+                        trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
+                    },
+                    window,
+                    cx,
+                )
+            }
+            _ => {
+                self.hide_context_menu(window, cx);
+            }
         }
     }
 
@@ -4541,6 +4554,7 @@ impl Editor {
         &self,
         text: &str,
         trigger_in_words: bool,
+        menu_is_open: bool,
         cx: &mut Context<Self>,
     ) -> bool {
         let position = self.selections.newest_anchor().head();
@@ -4558,6 +4572,7 @@ impl Editor {
                 position.text_anchor,
                 text,
                 trigger_in_words,
+                menu_is_open,
                 cx,
             )
         } else {
@@ -5008,7 +5023,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_or_update_completions_menu(true, None, window, cx);
+        self.open_or_update_completions_menu(Some(CompletionsMenuSource::Words), None, window, cx);
     }
 
     pub fn show_completions(
@@ -5017,12 +5032,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_or_update_completions_menu(false, options.trigger.as_deref(), window, cx);
+        self.open_or_update_completions_menu(None, options.trigger.as_deref(), window, cx);
     }
 
     fn open_or_update_completions_menu(
         &mut self,
-        ignore_completion_provider: bool,
+        requested_source: Option<CompletionsMenuSource>,
         trigger: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -5047,10 +5062,13 @@ impl Editor {
             Self::completion_query(&self.buffer.read(cx).read(cx), position)
                 .map(|query| query.into());
 
-        let provider = if ignore_completion_provider {
-            None
-        } else {
-            self.completion_provider.clone()
+        let provider = match requested_source {
+            Some(CompletionsMenuSource::Normal) | None => self.completion_provider.clone(),
+            Some(CompletionsMenuSource::Words) => None,
+            Some(CompletionsMenuSource::SnippetChoices) => {
+                log::error!("bug: SnippetChoices requested_source is not handled");
+                None
+            }
         };
 
         let sort_completions = provider
@@ -5246,9 +5264,9 @@ impl Editor {
                         .map(|workspace| workspace.read(cx).app_state().languages.clone());
                     let menu = CompletionsMenu::new(
                         id,
+                        requested_source.unwrap_or(CompletionsMenuSource::Normal),
                         sort_completions,
                         show_completion_documentation,
-                        ignore_completion_provider,
                         position,
                         query.clone(),
                         is_incomplete,
@@ -20295,6 +20313,7 @@ pub trait CompletionProvider {
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
+        menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool;
 
@@ -20612,6 +20631,7 @@ impl CompletionProvider for Entity<Project> {
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
+        menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let mut chars = text.chars();
@@ -20626,7 +20646,7 @@ impl CompletionProvider for Entity<Project> {
 
         let buffer = buffer.read(cx);
         let snapshot = buffer.snapshot();
-        if !snapshot.settings_at(position, cx).show_completions_on_input {
+        if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
             return false;
         }
         let classifier = snapshot.char_classifier_at(position).for_completion(true);
