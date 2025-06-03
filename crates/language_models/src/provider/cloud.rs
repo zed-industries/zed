@@ -4,6 +4,7 @@ use client::{Client, UserStore, zed_urls};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
+use google_ai::GoogleModelMode;
 use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, SemanticVersion, Subscription, Task,
 };
@@ -750,7 +751,8 @@ impl LanguageModel for CloudLanguageModel {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let model_id = self.model.id.to_string();
-                let generate_content_request = into_google(request, model_id.clone());
+                let generate_content_request =
+                    into_google(request, model_id.clone(), GoogleModelMode::Default);
                 async move {
                     let http_client = &client.http_client();
                     let token = llm_api_token.acquire(&client).await?;
@@ -922,7 +924,8 @@ impl LanguageModel for CloudLanguageModel {
             }
             zed_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
-                let request = into_google(request, self.model.id.to_string());
+                let request =
+                    into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
                     let PerformLlmCompletionResponse {
