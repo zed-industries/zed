@@ -202,6 +202,7 @@ pub enum Part {
     InlineDataPart(InlineDataPart),
     FunctionCallPart(FunctionCallPart),
     FunctionResponsePart(FunctionResponsePart),
+    ThoughtPart(ThoughtPart),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -233,6 +234,13 @@ pub struct FunctionCallPart {
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponsePart {
     pub function_response: FunctionResponse,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThoughtPart {
+    pub thought: bool,
+    pub thought_signature: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
