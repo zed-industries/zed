@@ -29,10 +29,12 @@ Additionally, Ruby support (via rdbg) is being actively worked on.
 ## Getting Started
 
 Zed supports zero-configuration debugging of tests and main functions in several popular languages:
+
 - Rust
 - Go
 - Python
 - JavaScript and TypeScript
+
 If you use one of these languages, the easiest way to get started with debugging in Zed is by opening the definition of the test or function you want to debug, clicking on the triangular "play" icon in the gutter, and selecting the debug task from the list that appears.
 
 You can also see a contextual list of debug tasks for the current location by opening the new process modal with the `debugger: start` action (bound by default to <kbd>f4</kbd>).
