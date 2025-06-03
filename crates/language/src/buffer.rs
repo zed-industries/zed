@@ -1748,6 +1748,11 @@ impl Buffer {
         indent_sizes: BTreeMap<u32, IndentSize>,
         cx: &mut Context<Self>,
     ) {
+        self.autoindent_requests.clear();
+        for tx in self.wait_for_autoindent_txs.drain(..) {
+            tx.send(()).ok();
+        }
+
         let edits: Vec<_> = indent_sizes
             .into_iter()
             .filter_map(|(row, indent_size)| {
@@ -1760,11 +1765,6 @@ impl Buffer {
         self.edit(edits, None, cx);
         if preserve_preview {
             self.refresh_preview();
-        }
-
-        self.autoindent_requests.clear();
-        for tx in self.wait_for_autoindent_txs.drain(..) {
-            tx.send(()).ok();
         }
     }
 
