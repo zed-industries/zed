@@ -77,6 +77,10 @@ impl Tool for TerminalTool {
         true
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./terminal_tool/description.md").to_string()
     }

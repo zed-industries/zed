@@ -128,6 +128,10 @@ impl Tool for EditFileTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("edit_file_tool/description.md").to_string()
     }

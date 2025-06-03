@@ -459,7 +459,7 @@ impl MessageEditor {
     }
 
     fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.thread.read(cx).are_edits_ready(cx) {
+        if self.thread.read(cx).has_pending_edit_tool_uses() {
             return;
         }
 
@@ -504,7 +504,7 @@ impl MessageEditor {
     }
 
     fn handle_accept_all(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.thread.read(cx).are_edits_ready(cx) {
+        if self.thread.read(cx).has_pending_edit_tool_uses() {
             return;
         }
 
@@ -515,7 +515,7 @@ impl MessageEditor {
     }
 
     fn handle_reject_all(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.thread.read(cx).are_edits_ready(cx) {
+        if self.thread.read(cx).has_pending_edit_tool_uses() {
             return;
         }
 
@@ -920,7 +920,7 @@ impl MessageEditor {
 
         let is_edit_changes_expanded = self.edits_expanded;
         let thread = self.thread.read(cx);
-        let edits_ready = thread.are_edits_ready(cx);
+        let pending_edits = thread.has_pending_edit_tool_uses();
 
         const EDIT_NOT_READY_TOOLTIP_LABEL: &str = "Wait until file edits are complete.";
 
@@ -958,7 +958,7 @@ impl MessageEditor {
                                     })),
                             )
                             .map(|this| {
-                                if !edits_ready {
+                                if pending_edits {
                                     this.child(
                                         Label::new(format!(
                                             "Editing {} {}…",
@@ -1033,8 +1033,8 @@ impl MessageEditor {
                             .child(
                                 Button::new("reject-all-changes", "Reject All")
                                     .label_size(LabelSize::Small)
-                                    .disabled(!edits_ready)
-                                    .when(!edits_ready, |this| {
+                                    .disabled(pending_edits)
+                                    .when(pending_edits, |this| {
                                         this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
                                     })
                                     .key_binding(
@@ -1053,8 +1053,8 @@ impl MessageEditor {
                             .child(
                                 Button::new("accept-all-changes", "Accept All")
                                     .label_size(LabelSize::Small)
-                                    .disabled(!edits_ready)
-                                    .when(!edits_ready, |this| {
+                                    .disabled(pending_edits)
+                                    .when(pending_edits, |this| {
                                         this.tooltip(Tooltip::text(EDIT_NOT_READY_TOOLTIP_LABEL))
                                     })
                                     .key_binding(

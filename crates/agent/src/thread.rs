@@ -874,12 +874,13 @@ impl Thread {
             .all(|pending_tool_use| pending_tool_use.status.is_error())
     }
 
-    /// Returns whether agent edits are ready for review.
-    pub fn are_edits_ready(&self, cx: &App) -> bool {
-        let has_changes = !self.action_log.read(cx).changed_buffers(cx).is_empty();
-        let tools_finished = self.all_tools_finished();
-
-        has_changes && tools_finished
+    /// Returns whether any pending tool uses may perform edits
+    pub fn has_pending_edit_tool_uses(&self) -> bool {
+        self.tool_use
+            .pending_tool_uses()
+            .iter()
+            .filter(|pending_tool_use| !pending_tool_use.status.is_error())
+            .any(|pending_tool_use| pending_tool_use.may_perform_edits)
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
