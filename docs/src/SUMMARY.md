@@ -111,6 +111,7 @@
 - [Nim](./languages/nim.md)
 - [OCaml](./languages/ocaml.md)
 - [PHP](./languages/php.md)
+- [PowerShell](./languages/powershell.md)
 - [Prisma](./languages/prisma.md)
 - [Proto](./languages/proto.md)
 - [PureScript](./languages/purescript.md)

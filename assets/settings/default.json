@@ -128,6 +128,8 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to automatically close files that have been deleted on disk.
+  "close_on_file_delete": false,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -714,7 +716,7 @@
     "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
-    /// What completion mode to start new threads in, if available. Can be 'normal' or 'max'.
+    /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
     "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
@@ -726,13 +728,6 @@
     "default_height": 320,
     // The default model to use when creating new threads.
     "default_model": {
-      // The provider to use.
-      "provider": "zed.dev",
-      // The model to use.
-      "model": "claude-sonnet-4"
-    },
-    // The model to use when applying edits from the agent.
-    "editor_model": {
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
@@ -1314,7 +1309,17 @@
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
-    "enabled": true
+    "enabled": true,
+    // Use LSP tasks over Zed language extension ones.
+    // If no LSP tasks are returned due to error/timeout or regular execution,
+    // Zed language extension tasks will be used instead.
+    //
+    // Other Zed tasks will still be shown:
+    // * Zed task from either of the task config file
+    // * Zed task from history (e.g. one-off task was spawned before)
+    //
+    // Default: true
+    "prefer_lsp": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
