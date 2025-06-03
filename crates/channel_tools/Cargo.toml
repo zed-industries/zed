@@ -14,6 +14,7 @@ path = "src/channel_tools.rs"
 [dependencies]
 anyhow.workspace = true
 assistant_tool.workspace = true
+assistant_tools.workspace = true
 channel.workspace = true
 client.workspace = true
 collections.workspace = true

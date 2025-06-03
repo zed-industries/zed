@@ -4,6 +4,7 @@ mod list_channels_tool;
 mod move_channel_tool;
 mod reorder_channel_tool;
 mod schema;
+mod streaming_edit_channel_notes_tool;
 
 #[cfg(test)]
 mod channel_tools_tests;
@@ -13,6 +14,7 @@ pub use edit_channel_notes_tool::EditChannelNotesTool;
 pub use list_channels_tool::ListChannelsTool;
 pub use move_channel_tool::MoveChannelTool;
 pub use reorder_channel_tool::ReorderChannelTool;
+pub use streaming_edit_channel_notes_tool::StreamingEditChannelNotesTool;
 
 use assistant_tool::ToolRegistry;
 use channel::{Channel, ChannelStore};
@@ -28,7 +30,8 @@ pub fn init(channel_store: Entity<ChannelStore>, cx: &mut App) {
     registry.register_tool(CreateChannelTool::new(channel_store.clone()));
     registry.register_tool(MoveChannelTool::new(channel_store.clone()));
     registry.register_tool(ReorderChannelTool::new(channel_store.clone()));
-    registry.register_tool(EditChannelNotesTool::new(channel_store));
+    registry.register_tool(EditChannelNotesTool::new(channel_store.clone()));
+    registry.register_tool(StreamingEditChannelNotesTool::new(channel_store));
 }
 
 /// Helper function to find a channel by name

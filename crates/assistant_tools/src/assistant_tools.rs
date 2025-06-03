@@ -2,7 +2,7 @@ mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
-mod edit_agent;
+pub mod edit_agent;
 mod edit_file_tool;
 mod fetch_tool;
 mod find_path_tool;
@@ -29,7 +29,7 @@ use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
 use web_search_tool::WebSearchTool;
 
-pub(crate) use templates::*;
+pub use templates::*;
 
 use crate::create_directory_tool::CreateDirectoryTool;
 use crate::delete_path_tool::DeletePathTool;
@@ -42,6 +42,7 @@ use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::thinking_tool::ThinkingTool;
 
+pub use edit_agent::{EditAgent, EditAgentOutputEvent};
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
 pub use find_path_tool::FindPathToolInput;
 pub use open_tool::OpenTool;
