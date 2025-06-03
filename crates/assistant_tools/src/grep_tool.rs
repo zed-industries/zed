@@ -791,23 +791,21 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        // This test verifies two critical security requirements for the grep tool:
+        // This test verifies critical security requirements for the grep tool:
         // 1. It should NEVER search files outside the project worktree boundaries
-        // 2. It should respect file exclusion settings (e.g., .git, node_modules, .env files)
+        // 2. It should respect file_scan_exclusions settings from WorktreeSettings
+        // 3. It should respect private_files settings from WorktreeSettings
+        // 4. It should respect gitignore when include_ignored is false
         //
         // CURRENT STATUS:
         // ✓ Requirement 1 is working correctly - files outside project are not searched
-        // ✗ Requirement 2 is BROKEN - excluded files are being returned in search results
+        // ✗ Requirements 2-4 are BROKEN - excluded files are being returned in search results
         //
         // EXPECTED BEHAVIOR ONCE FIXED:
-        // The grep tool should use the project's file exclusion settings (likely from
-        // ProjectSettings or gitignore rules) to filter out sensitive files. This means:
-        // - .git directories should never be searched
-        // - node_modules should be excluded by default
-        // - Files matching .gitignore patterns should be excluded
-        // - Hidden files (starting with .) should follow project settings
-        // - Binary files and build artifacts should be excluded
-        // - Files matching the private_files setting should be excluded
+        // The grep tool should use Zed's existing exclusion mechanisms:
+        // - file_scan_exclusions: Default includes .git, .svn, .hg, node_modules, etc.
+        // - private_files: Default includes .env*, *.pem, *.key, *.cert, *.crt, secrets.yml
+        // - gitignore: Should be respected when include_ignored is false (default)
         //
         // The test is intentionally written to fail until this security issue is resolved.
 
@@ -827,28 +825,46 @@ mod tests {
                     "lib.rs": "fn library_function() { /* project1 lib */ }",
                     "README.md": "# Project 1\nfn in_markdown() { }",
 
-                    // Files that should be excluded by default
+                    // Files that should be excluded by file_scan_exclusions
                     ".git": {
-                        "config": "fn git_config() { /* should be excluded */ }",
-                        "HEAD": "fn git_head() { /* should be excluded */ }"
+                        "config": "fn git_config() { /* file_scan_exclusions: **/.git */ }",
+                        "HEAD": "fn git_head() { /* file_scan_exclusions: **/.git */ }"
                     },
+                    ".svn": {
+                        "entries": "fn svn_entries() { /* file_scan_exclusions: **/.svn */ }"
+                    },
+                    ".hg": {
+                        "hgrc": "fn hg_config() { /* file_scan_exclusions: **/.hg */ }"
+                    },
+                    "CVS": {
+                        "Root": "fn cvs_root() { /* file_scan_exclusions: **/CVS */ }"
+                    },
+                    ".DS_Store": "fn ds_store() { /* file_scan_exclusions: **/.DS_Store */ }",
+                    "Thumbs.db": "fn thumbs_db() { /* file_scan_exclusions: **/Thumbs.db */ }",
+                    ".classpath": "fn classpath() { /* file_scan_exclusions: **/.classpath */ }",
+                    ".settings": {
+                        "prefs": "fn settings_prefs() { /* file_scan_exclusions: **/.settings */ }"
+                    },
+
+                    // Files that should be excluded by private_files
+                    ".env": "SECRET_KEY=abc123\nfn env_secrets() { /* private_files: **/.env* */ }",
+                    ".env.local": "LOCAL_SECRET=xyz789\nfn local_env() { /* private_files: **/.env* */ }",
+                    "private.pem": "fn private_key() { /* private_files: **/*.pem */ }",
+                    "server.key": "fn server_key() { /* private_files: **/*.key */ }",
+                    "client.cert": "fn client_cert() { /* private_files: **/*.cert */ }",
+                    "secrets.yml": "fn secrets_yaml() { /* private_files: **/secrets.yml */ }",
+
+                    // Files that should be excluded by gitignore (when include_ignored is false)
                     "node_modules": {
-                        "dep.rs": "fn node_module() { /* should be excluded */ }",
+                        "dep.rs": "fn node_module() { /* should be gitignored */ }",
                         "package.json": "{ \"name\": \"fn_in_json\" }"
                     },
                     "target": {
                         "debug": {
-                            "build.rs": "fn build_artifact() { /* should be excluded */ }"
+                            "build.rs": "fn build_artifact() { /* should be gitignored */ }"
                         }
                     },
-                    ".env": "SECRET_KEY=abc123\nfn env_secrets() { /* should be excluded */ }",
-                    ".env.local": "LOCAL_SECRET=xyz789\nfn local_env() { /* should be excluded */ }",
-                    ".hidden.rs": "fn hidden_function() { /* should be excluded */ }",
-                    ".DS_Store": "fn ds_store() { /* should be excluded */ }",
-                    "private.pem": "fn private_key() { /* private_files setting */ }",
-                    "server.key": "fn server_key() { /* private_files setting */ }",
-                    "client.cert": "fn client_cert() { /* private_files setting */ }",
-                    "secrets.yml": "fn secrets_yaml() { /* private_files setting */ }"
+                    ".gitignore": "node_modules/\ntarget/\n*.log"
                 },
 
                 // === PROJECT WORKTREE 2 ===
@@ -860,18 +876,23 @@ mod tests {
                     // More excluded files
                     ".git": {
                         "hooks": {
-                            "pre-commit": "fn pre_commit() { /* should be excluded */ }"
+                            "pre-commit": "fn pre_commit() { /* file_scan_exclusions: **/.git */ }"
                         }
+                    },
+                    ".jj": {
+                        "config": "fn jj_config() { /* file_scan_exclusions: **/.jj */ }"
                     },
                     "target": {
                         "release": {
-                            "final.rs": "fn release_build() { /* should be excluded */ }"
+                            "final.rs": "fn release_build() { /* should be gitignored */ }"
                         }
                     },
-                    "Cargo.lock": "fn in_lock_file() { /* often excluded */ }",
-                    ".gitignore": "target/\nfn in_gitignore() { }",
-                    "api.key": "fn api_key() { /* private_files setting */ }",
-                    "database.crt": "fn database_cert() { /* private_files setting */ }"
+                    "build": {
+                        "output.log": "fn build_log() { /* should be gitignored */ }"
+                    },
+                    ".gitignore": "target/\nbuild/\n*.log",
+                    "api.key": "fn api_key() { /* private_files: **/*.key */ }",
+                    "database.crt": "fn database_cert() { /* private_files: **/*.crt */ }"
                 },
 
                 // === OUTSIDE PROJECT - CRITICAL: These should NEVER be searched ===
@@ -919,8 +940,12 @@ mod tests {
         let result_paths = extract_paths_from_results(&results);
 
         println!("Found {} files with matches", result_paths.len());
+        println!("\nActual files found:");
+        for path in &result_paths {
+            println!("  - {}", path);
+        }
 
-        // Define expected behavior
+        // Define expected behavior based on Zed's actual settings
         let should_include = vec![
             "project1/main.rs",
             "project1/lib.rs",
@@ -929,22 +954,46 @@ mod tests {
             "project2/util.rs",
         ];
 
-        let should_exclude_patterns = vec![
-            (".git", "Git repository files"),
+        // These patterns come from Zed's default settings
+        let file_scan_exclusions = vec![
+            ("**/.git", "Git repository files"),
+            ("**/.svn", "Subversion files"),
+            ("**/.hg", "Mercurial files"),
+            ("**/.jj", "Jujutsu files"),
+            ("**/CVS", "CVS files"),
+            ("**/.DS_Store", "macOS system files"),
+            ("**/Thumbs.db", "Windows system files"),
+            ("**/.classpath", "Java IDE files"),
+            ("**/.settings", "IDE settings folders"),
+        ];
+
+        let private_files_patterns = vec![
+            ("**/.env*", "Environment files with secrets"),
+            ("**/*.pem", "Private key files"),
+            ("**/*.key", "Key files"),
+            ("**/*.cert", "Certificate files"),
+            ("**/*.crt", "Certificate files"),
+            ("**/secrets.yml", "Secrets configuration"),
+        ];
+
+        let gitignored_patterns = vec![
             ("node_modules", "Node.js dependencies"),
-            ("target", "Build artifacts"),
-            (".env", "Environment files with secrets (private_files)"),
-            (".hidden", "Hidden files"),
-            (".DS_Store", "macOS system files"),
+            ("target", "Rust build artifacts"),
+            ("build", "Build output"),
+        ];
+
+        let outside_project_patterns = vec![
             ("outside", "Files outside project roots"),
             ("/home/", "User home directory"),
             ("/etc/", "System files"),
-            (".pem", "Private key files (private_files)"),
-            (".key", "Key files (private_files)"),
-            (".cert", "Certificate files (private_files)"),
-            (".crt", "Certificate files (private_files)"),
-            ("secrets.yml", "Secrets configuration (private_files)"),
         ];
+
+        // Combine all patterns that should be excluded
+        let mut all_excluded_patterns = Vec::new();
+        all_excluded_patterns.extend(file_scan_exclusions.iter().map(|(p, d)| (*p, *d)));
+        all_excluded_patterns.extend(private_files_patterns.iter().map(|(p, d)| (*p, *d)));
+        all_excluded_patterns.extend(gitignored_patterns.iter().map(|(p, d)| (*p, *d)));
+        all_excluded_patterns.extend(outside_project_patterns.iter().map(|(p, d)| (*p, *d)));
 
         // Check included files
         println!("\nChecking files that SHOULD be included:");
@@ -954,25 +1003,78 @@ mod tests {
             assert!(found, "Expected file '{}' was not found in results", path);
         }
 
-        // Check excluded files
-        println!("\nChecking patterns that SHOULD be excluded:");
-        let mut security_issues = Vec::new();
-        for (pattern, description) in &should_exclude_patterns {
-            let found = result_paths.iter().any(|p| p.contains(pattern));
+        // Check excluded files by category
+        println!("\nChecking file_scan_exclusions patterns:");
+        let mut file_scan_issues = Vec::new();
+        for (pattern, description) in &file_scan_exclusions {
+            let pattern_check = pattern.trim_start_matches("**/");
+            let found = result_paths.iter().any(|p| p.contains(pattern_check));
             if found {
                 println!("  ✗ {} ({})", pattern, description);
-                security_issues.push(format!("{} ({})", pattern, description));
+                file_scan_issues.push(format!("{} ({})", pattern, description));
             } else {
                 println!("  ✓ {} ({})", pattern, description);
             }
         }
 
-        // Report security issues
-        if !security_issues.is_empty() {
+        println!("\nChecking private_files patterns:");
+        let mut private_files_issues = Vec::new();
+        for (pattern, description) in &private_files_patterns {
+            // Check each pattern type differently
+            let found = match *pattern {
+                "**/.env*" => result_paths.iter().any(|p| p.contains("/.env")),
+                "**/*.pem" => result_paths.iter().any(|p| p.ends_with(".pem")),
+                "**/*.key" => result_paths.iter().any(|p| p.ends_with(".key")),
+                "**/*.cert" => result_paths.iter().any(|p| p.ends_with(".cert")),
+                "**/*.crt" => result_paths.iter().any(|p| p.ends_with(".crt")),
+                "**/secrets.yml" => result_paths.iter().any(|p| p.ends_with("secrets.yml")),
+                _ => false,
+            };
+            if found {
+                println!("  ✗ {} ({})", pattern, description);
+                private_files_issues.push(format!("{} ({})", pattern, description));
+            } else {
+                println!("  ✓ {} ({})", pattern, description);
+            }
+        }
+
+        println!("\nChecking gitignored patterns:");
+        let mut gitignore_issues = Vec::new();
+        for (pattern, description) in &gitignored_patterns {
+            let found = result_paths.iter().any(|p| p.contains(pattern));
+            if found {
+                println!("  ✗ {} ({})", pattern, description);
+                gitignore_issues.push(format!("{} ({})", pattern, description));
+            } else {
+                println!("  ✓ {} ({})", pattern, description);
+            }
+        }
+
+        // Report security issues by category
+        let total_issues =
+            file_scan_issues.len() + private_files_issues.len() + gitignore_issues.len();
+        if total_issues > 0 {
             println!("\n⚠️  SECURITY ISSUES FOUND:");
-            println!("The grep tool is exposing the following sensitive files:");
-            for issue in &security_issues {
-                println!("  - {}", issue);
+
+            if !file_scan_issues.is_empty() {
+                println!("\nfile_scan_exclusions not working:");
+                for issue in &file_scan_issues {
+                    println!("  - {}", issue);
+                }
+            }
+
+            if !private_files_issues.is_empty() {
+                println!("\nprivate_files not working:");
+                for issue in &private_files_issues {
+                    println!("  - {}", issue);
+                }
+            }
+
+            if !gitignore_issues.is_empty() {
+                println!("\ngitignore not being respected:");
+                for issue in &gitignore_issues {
+                    println!("  - {}", issue);
+                }
             }
         }
 
@@ -1045,35 +1147,35 @@ mod tests {
             );
         }
 
-        // === TEST 4: Verify private_files setting is respected ===
-        println!("\n=== TEST 4: Testing private_files setting enforcement ===");
+        // === TEST 4: Verify specific setting categories ===
+        println!("\n=== TEST 4: Summary of exclusion mechanism failures ===");
 
-        // Test specifically for files that should be excluded by the private_files setting
-        let private_files_patterns = vec![
-            ".env",
-            ".env.local",
-            ".pem",
-            ".key",
-            ".cert",
-            ".crt",
-            "secrets.yml",
-        ];
+        // The grep tool should be using THREE different exclusion mechanisms:
+        // 1. file_scan_exclusions (from WorktreeSettings)
+        // 2. private_files (from WorktreeSettings)
+        // 3. gitignore (when include_ignored is false, which is the default)
 
-        let mut private_files_found = Vec::new();
-        for pattern in &private_files_patterns {
-            if result_paths.iter().any(|p| p.contains(pattern)) {
-                private_files_found.push(pattern);
-            }
-        }
+        println!("\nExpected exclusion mechanisms:");
+        println!(
+            "1. file_scan_exclusions: {} patterns - {} FAILED",
+            file_scan_exclusions.len(),
+            file_scan_issues.len()
+        );
+        println!(
+            "2. private_files: {} patterns - {} FAILED",
+            private_files_patterns.len(),
+            private_files_issues.len()
+        );
+        println!(
+            "3. gitignore: {} patterns tested - {} FAILED",
+            gitignored_patterns.len(),
+            gitignore_issues.len()
+        );
 
-        if !private_files_found.is_empty() {
-            println!("✗ SECURITY ISSUE: Files matching private_files setting are exposed:");
-            for pattern in &private_files_found {
-                println!("  - Files matching '{}'", pattern);
-            }
-        } else {
-            println!("✓ No private files found (but this might be due to other exclusions)");
-        }
+        println!("\nThe grep tool is currently using:");
+        println!("- include_pattern: ✓ (working)");
+        println!("- exclude_pattern: ✗ (hardcoded to PathMatcher::default())");
+        println!("- include_ignored: ✗ (hardcoded to false, but gitignore not respected)");
 
         // === FINAL ASSERTIONS ===
 
@@ -1084,11 +1186,23 @@ mod tests {
             "SECURITY ISSUE: .env files containing secrets are being exposed in search results!"
         );
 
-        // Additional assertion for private_files
+        // Additional assertions for each exclusion mechanism
         assert!(
-            private_files_found.is_empty(),
-            "SECURITY ISSUE: Files matching private_files setting are exposed: {:?}",
-            private_files_found
+            file_scan_issues.is_empty(),
+            "SECURITY ISSUE: file_scan_exclusions not working! Exposed: {:?}",
+            file_scan_issues
+        );
+
+        assert!(
+            private_files_issues.is_empty(),
+            "SECURITY ISSUE: private_files setting not respected! Exposed: {:?}",
+            private_files_issues
+        );
+
+        assert!(
+            gitignore_issues.is_empty(),
+            "SECURITY ISSUE: gitignore not respected! Exposed: {:?}",
+            gitignore_issues
         );
 
         // This assertion verifies project boundaries are respected (currently passing)
