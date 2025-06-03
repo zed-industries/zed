@@ -3293,7 +3293,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "provider": "zed.dev",
     "model": "claude-sonnet-4"
   },
-  "single_file_review": true,
+  "single_file_review": false,
 }
 ```
 
