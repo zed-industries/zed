@@ -267,7 +267,7 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     let mut no_longer_punctuation = false;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         // Make alt-left skip punctuation on Mac OS to respect the Mac behaviour. For example: hello.| goes to |hello.
-        if cfg!(target_os = "macos") && !no_longer_punctuation && classifier.is_punctuation(right) {
+        if !no_longer_punctuation && classifier.is_punctuation(right) {
             no_longer_punctuation = classifier.is_punctuation(left);
             return false;
         }
@@ -316,7 +316,7 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     let mut no_longer_punctuation = false;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         // Make alt-right skip punctuation on Mac OS to respect the Mac behaviour. For example: |.hello goes to .hello|
-        if cfg!(target_os = "macos") && !no_longer_punctuation && classifier.is_punctuation(left) {
+        if !no_longer_punctuation && classifier.is_punctuation(left) {
             no_longer_punctuation = classifier.is_punctuation(right);
             return false;
         }
