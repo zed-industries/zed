@@ -89,33 +89,21 @@ impl NewProcessModal {
         let languages = workspace.app_state().languages.clone();
 
         cx.spawn_in(window, async move |workspace, cx| {
-            let task_contexts = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    tasks_ui::task_contexts(workspace, window, cx)
-                })?
-                .await;
-            let task_contexts = Arc::new(task_contexts);
+            let task_contexts = workspace.update_in(cx, |workspace, window, cx| {
+                tasks_ui::task_contexts(workspace, window, cx)
+            })?;
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = workspace.weak_handle();
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let attach_mode = AttachMode::new(None, workspace_handle.clone(), window, cx);
 
                     let launch_picker = cx.new(|cx| {
-                        let mut delegate =
+                        let delegate =
                             DebugDelegate::new(debug_panel.downgrade(), task_store.clone());
-                        delegate.task_contexts_loaded(task_contexts.clone(), languages, window, cx);
                         Picker::uniform_list(delegate, window, cx).modal(false)
                     });
 
                     let configure_mode = LaunchMode::new(window, cx);
-                    if let Some(active_cwd) = task_contexts
-                        .active_context()
-                        .and_then(|context| context.cwd.clone())
-                    {
-                        configure_mode.update(cx, |configure_mode, cx| {
-                            configure_mode.load(active_cwd, window, cx);
-                        });
-                    }
 
                     let task_overrides = Some(TaskOverrides { reveal_target });
 
@@ -123,7 +111,7 @@ impl NewProcessModal {
                         task_modal: cx.new(|cx| {
                             TasksModal::new(
                                 task_store.clone(),
-                                task_contexts,
+                                Arc::new(TaskContexts::default()),
                                 task_overrides,
                                 false,
                                 workspace_handle.clone(),
@@ -147,6 +135,52 @@ impl NewProcessModal {
                             cx.emit(DismissEvent)
                         }),
                     ];
+
+                    cx.spawn_in(window, {
+                        let launch_picker = launch_picker.downgrade();
+                        let configure_mode = configure_mode.downgrade();
+                        let task_modal = task_mode.task_modal.downgrade();
+
+                        async move |this, cx| {
+                            let task_contexts = task_contexts.await;
+                            let task_contexts = Arc::new(task_contexts);
+                            launch_picker
+                                .update_in(cx, |picker, window, cx| {
+                                    picker.delegate.task_contexts_loaded(
+                                        task_contexts.clone(),
+                                        languages,
+                                        window,
+                                        cx,
+                                    );
+                                    picker.refresh(window, cx);
+                                    cx.notify();
+                                })
+                                .ok();
+
+                            if let Some(active_cwd) = task_contexts
+                                .active_context()
+                                .and_then(|context| context.cwd.clone())
+                            {
+                                configure_mode
+                                    .update_in(cx, |configure_mode, window, cx| {
+                                        configure_mode.load(active_cwd, window, cx);
+                                    })
+                                    .ok();
+                            }
+
+                            task_modal
+                                .update_in(cx, |task_modal, window, cx| {
+                                    task_modal.task_contexts_loaded(task_contexts, window, cx);
+                                })
+                                .ok();
+
+                            this.update(cx, |_, cx| {
+                                cx.notify();
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach();
 
                     Self {
                         debug_picker: launch_picker,
