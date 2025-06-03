@@ -33,7 +33,6 @@ use std::any::TypeId;
 use std::sync::Arc;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
-use util::maybe;
 use workspace::SplitDirection;
 use workspace::{
     Pane, Workspace,
@@ -1422,10 +1421,8 @@ impl workspace::DebuggerProvider for DebuggerProvider {
     }
 
     fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus> {
-        maybe!({
-            let session = self.0.read(cx).active_session()?;
-            let thread = session.read(cx).running_state().read(cx).thread_id()?;
-            session.read(cx).session(cx).read(cx).thread_state(thread)
-        })
+        let session = self.0.read(cx).active_session()?;
+        let thread = session.read(cx).running_state().read(cx).thread_id()?;
+        session.read(cx).session(cx).read(cx).thread_state(thread)
     }
 }
