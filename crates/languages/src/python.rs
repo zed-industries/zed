@@ -362,7 +362,7 @@ impl LspAdapter for PythonLspAdapter {
 
                             if let Some(venv_name) = venv_dir.file_name() {
                                 object.insert(
-                                    "venv".to_string(),
+                                    "venv".to_owned(),
                                     Value::String(venv_name.to_string_lossy().into_owned()),
                                 );
                             }
