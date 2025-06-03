@@ -871,7 +871,16 @@ impl Thread {
         self.tool_use
             .pending_tool_uses()
             .iter()
-            .all(|tool_use| tool_use.status.is_error())
+            .all(|pending_tool_use| pending_tool_use.status.is_error())
+    }
+
+    /// Returns whether any pending tool uses may perform edits
+    pub fn has_pending_edit_tool_uses(&self) -> bool {
+        self.tool_use
+            .pending_tool_uses()
+            .iter()
+            .filter(|pending_tool_use| !pending_tool_use.status.is_error())
+            .any(|pending_tool_use| pending_tool_use.may_perform_edits)
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
