@@ -146,6 +146,12 @@
   //  2. Always quit the application
   //         "on_last_window_closed": "quit_app",
   "on_last_window_closed": "platform_default",
+  // Whether to show padding for zoomed panels.
+  // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
+  // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
+  //
+  // Default: true
+  "zoomed_padding": true,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
