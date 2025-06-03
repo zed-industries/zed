@@ -648,7 +648,6 @@ mod test {
         )
         .await;
 
-        // Configure settings explicitly for all tests
         cx.update(|cx| {
             use gpui::UpdateGlobal;
             use project::WorktreeSettings;
@@ -767,7 +766,7 @@ mod test {
             "read_file_tool should error when attempting to read .mymetadata files (file_scan_exclusions)"
         );
 
-        // Test 4: Reading private files should fail
+        // Reading private files should fail
         let result = cx
             .update(|cx| {
                 let input = json!({
