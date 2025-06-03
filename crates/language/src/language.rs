@@ -1681,7 +1681,6 @@ impl Language {
 
         let mut fold_types_by_capture_ix = Vec::new();
         for (ix, name) in query.capture_names().iter().enumerate() {
-            println!("{:#?} {:#?}", ix, name);
             if let Some(fold_type) = FoldType::from_capture_name(name) {
                 fold_types_by_capture_ix.push((ix as u32, fold_type));
             }
