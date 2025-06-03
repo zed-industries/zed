@@ -384,7 +384,7 @@ impl LspAdapter for PythonLspAdapter {
                     Value::String(interpreter_path.clone()),
                 );
                 python.insert(
-                    "defaultInterpreterPath".to_string(),
+                    "defaultInterpreterPath".to_owned(),
                     Value::String(interpreter_path),
                 );
             }
