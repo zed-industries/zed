@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use std::borrow::Cow;
 use std::ffi::OsStr;
@@ -7,41 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::NamedTempFile;
 
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error(
-        "SHELL environment variable is not assigned so we can't source login environment variables"
-    )]
-    CannotResolveShellPath(std::env::VarError),
-
-    #[error(transparent)]
-    CannotCreateTempfile(std::io::Error),
-
-    #[error(transparent)]
-    SpawnFailed(std::io::Error),
-
-    #[error(transparent)]
-    CannotReadTempfile(std::io::Error),
-
-    #[error(
-        "login shell exited with {}. stdout: {:?}, stderr: {:?}",
-        .0.status,
-        String::from_utf8_lossy(&.0.stdout),
-        String::from_utf8_lossy(&.0.stderr),
-    )]
-    ShellExitedWithError(std::process::Output),
-
-    #[error(transparent)]
-    ParseFailed(anyhow::Error),
-}
-
 /// Capture all environment variables from the login shell.
 pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, String>> {
-    let shell_path = std::env::var("SHELL")
-        .map(PathBuf::from)
-        .map_err(Error::CannotResolveShellPath)?;
+    let shell_path = std::env::var("SHELL").map(PathBuf::from)?;
     let shell_name = shell_path.file_name().and_then(OsStr::to_str);
 
     let mut command_string = String::new();
@@ -62,7 +30,7 @@ pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, S
         _ => "",
     });
 
-    let mut env_output_file = NamedTempFile::new().map_err(Error::CannotCreateTempfile)?;
+    let mut env_output_file = NamedTempFile::new()?;
     command_string.push_str(&format!(
         "sh -c 'export -p' > '{}';",
         env_output_file.path().to_string_lossy(),
@@ -81,18 +49,17 @@ pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, S
 
     command.args(["-i", "-c", &command_string]);
 
-    let process_output = super::set_pre_exec_to_start_new_session(&mut command)
-        .output()
-        .map_err(Error::SpawnFailed)?;
-
-    if !process_output.status.success() {
-        return Err(Error::ShellExitedWithError(process_output));
-    }
+    let process_output = super::set_pre_exec_to_start_new_session(&mut command).output()?;
+    anyhow::ensure!(
+        process_output.status.success(),
+        "login shell exited with {}. stdout: {:?}, stderr: {:?}",
+        process_output.status,
+        String::from_utf8_lossy(&process_output.stdout),
+        String::from_utf8_lossy(&process_output.stderr),
+    );
 
     let mut env_output = String::new();
-    env_output_file
-        .read_to_string(&mut env_output)
-        .map_err(Error::CannotReadTempfile)?;
+    env_output_file.read_to_string(&mut env_output)?;
 
     parse(&env_output)
         .filter_map(|entry| match entry {
@@ -123,18 +90,13 @@ fn parse(mut input: &str) -> impl Iterator<Item = Result<(Cow<'_, str>, Option<C
 fn parse_declaration(input: &str) -> Result<((Cow<'_, str>, Option<Cow<'_, str>>), &str)> {
     let rest = input
         .strip_prefix("export ")
-        .context("expected 'export ' prefix")
-        .map_err(Error::ParseFailed)?;
+        .context("expected 'export ' prefix")?;
 
     if let Some((name, rest)) = parse_name_and_terminator(rest, '\n') {
         Ok(((name, None), rest))
     } else {
-        let (name, rest) = parse_name_and_terminator(rest, '=')
-            .context("invalid name")
-            .map_err(Error::ParseFailed)?;
-        let (value, rest) = parse_literal_and_terminator(rest, '\n')
-            .context("invalid value")
-            .map_err(Error::ParseFailed)?;
+        let (name, rest) = parse_name_and_terminator(rest, '=').context("invalid name")?;
+        let (value, rest) = parse_literal_and_terminator(rest, '\n').context("invalid value")?;
         Ok(((name, Some(value)), rest))
     }
 }

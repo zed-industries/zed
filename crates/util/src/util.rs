@@ -315,7 +315,7 @@ pub fn load_login_shell_environment() -> Result<()> {
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(env::var_os("HOME"))? {
+    for (name, value) in shell_env::capture(Some(paths::home_dir()))? {
         unsafe { env::set_var(&name, &value) };
     }
 

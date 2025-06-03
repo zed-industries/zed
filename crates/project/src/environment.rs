@@ -175,32 +175,6 @@ impl EnvironmentErrorMessage {
     }
 }
 
-impl From<util::shell_env::Error> for EnvironmentErrorMessage {
-    fn from(err: util::shell_env::Error) -> Self {
-        use util::shell_env::Error;
-        Self::from_str(match err {
-            Error::CannotResolveShellPath(_) => {
-                "Failed to get login environment. SHELL environment variable is not set"
-            }
-            Error::CannotCreateTempfile(_) => {
-                "Failed to create temporary file for environment capture. See logs for details"
-            }
-            Error::SpawnFailed(_) => {
-                "Failed to spawn login shell to source login environment variables. See logs for details"
-            }
-            Error::CannotReadTempfile(_) => {
-                "Failed to read temporary file for environment capture. See logs for details"
-            }
-            Error::ShellExitedWithError(_) => {
-                "Login shell exited with nonzero exit code. See logs for details"
-            }
-            Error::ParseFailed(_) => {
-                "Failed to parse exported environment variables. See logs for the output"
-            }
-        })
-    }
-}
-
 async fn load_directory_shell_environment(
     abs_path: &Path,
     load_direnv: &DirenvSettings,
@@ -275,12 +249,17 @@ async fn load_shell_environment(
     use util::shell_env;
 
     let dir_ = dir.to_owned();
-    let mut envs = match smol::unblock(move || shell_env::capture(Some(dir_)))
-        .await
-        .inspect_err(util::log_err)
-    {
+    let mut envs = match smol::unblock(move || shell_env::capture(Some(dir_))).await {
         Ok(envs) => envs,
-        Err(err) => return (None, Some(err.into())),
+        Err(err) => {
+            util::log_err(&err);
+            return (
+                None,
+                Some(EnvironmentErrorMessage::from_str(
+                    "Failed to load environment variables. See log for details",
+                )),
+            );
+        }
     };
 
     // If the user selects `Direct` for direnv, it would set an environment
