@@ -818,6 +818,13 @@ mod tests {
         assert(" ˇdefγˇ", cx);
         assert(" ˇbcΔˇ", cx);
         assert(" abˇ——ˇcd", cx);
+         // Test punctuation skipping behavior
+         assert("ˇhello.ˇ", cx);
+         assert("helloˇ...ˇ", cx);
+         assert("helloˇ.---..ˇtest", cx);
+         assert("test  ˇ.--ˇtest", cx);
+         assert("oneˇ,;:!?ˇtwo", cx);
+       
     }
 
     #[gpui::test]
@@ -988,6 +995,14 @@ mod tests {
         assert("loremˇ_ipsumˇ", cx);
         assert(" ˇbcΔˇ", cx);
         assert(" abˇ——ˇcd", cx);
+        
+         // Test punctuation skipping behavior
+         assert("ˇ.helloˇ", cx);
+         assert("ˇ...ˇhello", cx);
+         assert("helloˇ.---..ˇtest", cx);
+         assert("testˇ.--ˇ test", cx);
+         assert("oneˇ,;:!?ˇtwo", cx);
+        
     }
 
     #[gpui::test]
