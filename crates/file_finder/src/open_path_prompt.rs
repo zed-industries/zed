@@ -57,25 +57,32 @@ impl OpenPathDelegate {
         }
     }
 
-    fn get_entry(&self, i: usize) -> Option<CandidateInfo> {
+    fn get_entry(&self, selected_match_index: usize) -> Option<CandidateInfo> {
         match &self.directory_state {
-            DirectoryState::List { entries, .. } => Some(entries.get(i)?.clone()),
+            DirectoryState::List { entries, .. } => {
+                let id = self.string_matches.get(selected_match_index)?.candidate_id;
+                entries.iter().find(|entry| entry.path.id == id).cloned()
+            }
             DirectoryState::Create {
                 user_input,
                 entries,
                 ..
             } => {
-                if i == 0 {
-                    if let Some(user_input) = user_input {
-                        if !user_input.exists || !user_input.is_dir {
+                let mut i = selected_match_index;
+                if let Some(user_input) = user_input {
+                    if !user_input.exists || !user_input.is_dir {
+                        if i == 0 {
                             return Some(CandidateInfo {
                                 path: user_input.file.clone(),
                                 is_dir: false,
                             });
+                        } else {
+                            i -= 1;
                         }
                     }
                 }
-                Some(entries.get(i)?.clone())
+                let id = self.string_matches.get(i)?.candidate_id;
+                entries.iter().find(|entry| entry.path.id == id).cloned()
             }
             DirectoryState::None { .. } => None,
         }
@@ -191,7 +198,16 @@ impl PickerDelegate for OpenPathDelegate {
     type ListItem = ui::ListItem;
 
     fn match_count(&self) -> usize {
-        self.string_matches.len()
+        let user_input = if let DirectoryState::Create { user_input, .. } = &self.directory_state {
+            user_input
+                .as_ref()
+                .filter(|input| !input.exists || !input.is_dir)
+                .into_iter()
+                .count()
+        } else {
+            0
+        };
+        self.string_matches.len() + user_input
     }
 
     fn selected_index(&self) -> usize {
@@ -572,8 +588,27 @@ impl PickerDelegate for OpenPathDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
-        let m = self.string_matches.get(ix)?;
         let candidate = self.get_entry(ix)?;
+        let match_positions = match &self.directory_state {
+            DirectoryState::List { .. } => self.string_matches.get(ix)?.positions.clone(),
+            DirectoryState::Create { user_input, .. } => {
+                if let Some(user_input) = user_input {
+                    if !user_input.exists || !user_input.is_dir {
+                        if ix == 0 {
+                            Vec::new()
+                        } else {
+                            self.string_matches.get(ix - 1)?.positions.clone()
+                        }
+                    } else {
+                        self.string_matches.get(ix)?.positions.clone()
+                    }
+                } else {
+                    self.string_matches.get(ix)?.positions.clone()
+                }
+            }
+            DirectoryState::None { .. } => Vec::new(),
+        };
+
         let file_icon = maybe!({
             if !settings.file_icons {
                 return None;
@@ -588,24 +623,21 @@ impl PickerDelegate for OpenPathDelegate {
         });
 
         match &self.directory_state {
-            DirectoryState::List { parent_path, .. } => {
-                let highlight_positions = m.positions.clone();
-                Some(
-                    ListItem::new(ix)
-                        .spacing(ListItemSpacing::Sparse)
-                        .start_slot::<Icon>(file_icon)
-                        .inset(true)
-                        .toggle_state(selected)
-                        .child(HighlightedLabel::new(
-                            if parent_path == PROMPT_ROOT {
-                                format!("{}{}", PROMPT_ROOT, candidate.path.string)
-                            } else {
-                                candidate.path.string.clone()
-                            },
-                            highlight_positions,
-                        )),
-                )
-            }
+            DirectoryState::List { parent_path, .. } => Some(
+                ListItem::new(ix)
+                    .spacing(ListItemSpacing::Sparse)
+                    .start_slot::<Icon>(file_icon)
+                    .inset(true)
+                    .toggle_state(selected)
+                    .child(HighlightedLabel::new(
+                        if parent_path == PROMPT_ROOT {
+                            format!("{}{}", PROMPT_ROOT, candidate.path.string)
+                        } else {
+                            candidate.path.string.clone()
+                        },
+                        match_positions,
+                    )),
+            ),
             DirectoryState::Create {
                 parent_path,
                 user_input,
@@ -653,7 +685,7 @@ impl PickerDelegate for OpenPathDelegate {
                         }
                     }
                     None => {
-                        let mut highlight_positions = m.positions.clone();
+                        let mut highlight_positions = match_positions;
                         highlight_positions.iter_mut().for_each(|position| {
                             *position += delta;
                         });
