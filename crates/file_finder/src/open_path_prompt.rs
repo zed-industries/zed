@@ -247,8 +247,14 @@ impl PickerDelegate for OpenPathDelegate {
                     Some(lister.list_directory(dir.clone(), cx))
                 }
             }
-            DirectoryState::Create { parent_path, .. } => {
-                if parent_path == &dir {
+            DirectoryState::Create {
+                parent_path,
+                user_input,
+                ..
+            } => {
+                if parent_path == &dir
+                    && user_input.as_ref().map(|input| &input.file.string) == Some(&suffix)
+                {
                     None
                 } else {
                     Some(lister.list_directory(dir.clone(), cx))
@@ -365,6 +371,21 @@ impl PickerDelegate for OpenPathDelegate {
                             string: m.path.string.clone(),
                         })
                         .collect();
+                    this.delegate.directory_state =
+                        match &this.delegate.directory_state {
+                            DirectoryState::None { create: false }
+                            | DirectoryState::List { .. } => DirectoryState::List {
+                                parent_path: dir.clone(),
+                                entries: new_entries,
+                                error: None,
+                            },
+                            DirectoryState::None { create: true }
+                            | DirectoryState::Create { .. } => DirectoryState::Create {
+                                parent_path: dir.clone(),
+                                user_input: None,
+                                entries: new_entries,
+                            },
+                        };
                     cx.notify();
                 })
                 .ok();
@@ -427,20 +448,20 @@ impl PickerDelegate for OpenPathDelegate {
                             error: None,
                         }
                     }
-                    DirectoryState::None { create: true } | DirectoryState::Create { .. } => {
-                        let mut exists = false;
-                        let mut is_dir = false;
-                        let mut new_id = None;
-                        new_entries.retain(|entry| {
-                            new_id = new_id.max(Some(entry.path.id));
-                            if entry.path.string == suffix {
-                                exists = true;
-                                is_dir = entry.is_dir;
-                            }
-                            !exists || is_dir
-                        });
-
-                        let new_id = new_id.map(|id| id + 1).unwrap_or(0);
+                    DirectoryState::None { create: true } => DirectoryState::Create {
+                        entries: new_entries,
+                        parent_path: dir.clone(),
+                        user_input: Some(UserInput {
+                            file: StringMatchCandidate::new(0, &suffix),
+                            exists: false,
+                            is_dir: false,
+                        }),
+                    },
+                    DirectoryState::Create { user_input, .. } => {
+                        let (new_id, exists, is_dir) = user_input
+                            .as_ref()
+                            .map(|input| (input.file.id, input.exists, input.is_dir))
+                            .unwrap_or_else(|| (0, false, false));
                         DirectoryState::Create {
                             entries: new_entries,
                             parent_path: dir.clone(),
