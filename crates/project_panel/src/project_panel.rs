@@ -4222,6 +4222,7 @@ impl ProjectPanel {
                                                     div()
                                                     .on_drop(cx.listener(move |this, selections: &DraggedSelection, window, cx| {
                                                         this.hover_scroll_task.take();
+                                                        this.drag_target_entry = None;
                                                         this.folded_directory_drag_target = None;
                                                         if let Some(target_entry_id) = target_entry_id {
                                                             this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
@@ -4304,6 +4305,7 @@ impl ProjectPanel {
                                                 ))
                                                 .on_drop(cx.listener(move |this, selections: &DraggedSelection, window,cx| {
                                                     this.hover_scroll_task.take();
+                                                    this.drag_target_entry = None;
                                                     this.folded_directory_drag_target = None;
                                                     if let Some(target_entry_id) = target_entry_id {
                                                         this.drag_onto(selections, target_entry_id, kind.is_file(), window, cx);
