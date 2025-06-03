@@ -63,6 +63,9 @@ impl LineWrapper {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
                             }
+                        } else if c == ' ' && Self::is_word_char(prev_c) {
+                            last_candidate_ix = ix;
+                            last_candidate_width = width;
                         } else {
                             // CJK may not be space separated, e.g.: `Hello world你好世界`
                             if c != ' ' && first_non_whitespace_ix.is_some() {
@@ -285,6 +288,7 @@ impl<'a> LineFragment<'a> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WrapBoundaryCandidate {
     Char { character: char },
     Element { width: Pixels, len_utf8: usize },
@@ -349,6 +353,24 @@ mod tests {
                 strikethrough: None,
             })
             .collect()
+    }
+
+    #[test]
+    fn test_wrap_line_thanks_notpeter() {
+        let mut wrapper = build_wrapper();
+
+        assert_eq!(
+            wrapper
+                .wrap_line(
+                    &[
+                        LineFragment::text("Child: Mister Owl, how many licks does it take to get to the tootsie roll center of a tootsie pop?"),
+                    ],
+                    px(768.)
+                ).collect::<Vec<_>>(),
+            &[
+                Boundary::new(80, 0),
+            ]
+        );
     }
 
     #[test]
