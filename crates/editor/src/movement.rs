@@ -268,9 +268,10 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         // Make alt-left skip punctuation on Mac OS to respect the Mac behaviour. For example: hello.| goes to |hello.
         if cfg!(target_os = "macos") && !no_longer_punctuation && classifier.is_punctuation(right) {
+            no_longer_punctuation = classifier.is_punctuation(left);
             return false;
         }
-        no_longer_punctuation = true;
+
 
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
@@ -316,13 +317,16 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         // Make alt-right skip punctuation on Mac OS to respect the Mac behaviour. For example: |.hello goes to .hello|
         if cfg!(target_os = "macos") && !no_longer_punctuation && classifier.is_punctuation(left) {
+            no_longer_punctuation = classifier.is_punctuation(right);
             return false;
         }
-        no_longer_punctuation = true;
+
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
             || right == '\n'
     })
 }
+
+
 
 /// Returns a position of the next word boundary, where a word character is defined as either
 /// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
