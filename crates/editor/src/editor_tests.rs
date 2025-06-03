@@ -17991,6 +17991,126 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let language = Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            block_comment: Some(("/*".into(), "*/".into())),
+            overrides: [(
+                "element".into(),
+                LanguageConfigOverride {
+                    block_comment: Override::Set(("{/*".into(), "*/}".into())),
+                    ..Default::default()
+                },
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    )
+    .with_fold_query(
+        r#"
+            (comment)+ @comment.around
+        "#,
+    )
+    .unwrap();
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx_update_buffer| {
+        buffer.set_language(Some(Arc::new(language)), cx_update_buffer);
+    });
+
+    cx.set_state(indoc::indoc! {"
+        const a = 1;ˇ
+        /* Start of block comment.
+           Inside block comment.
+        */
+        const b = 2;
+        // Sequences of line comments are
+        // foldable.
+        const Component = () => (
+          <div> 
+                {/* Start of JSX block comment.
+                Line inside JSX comment.
+                */}
+          </div>
+        );
+        // A single line comment is not foldable.
+    "});
+    cx.executor().run_until_parked();
+
+    fn check_foldability(
+        cx: &mut EditorTestContext,
+        row: MultiBufferRow,
+        should_be_foldable_by_block_comment: bool,
+        description: &str,
+    ) {
+        cx.update_editor(|editor, window, inner_cx| {
+            let initial_snapshot = editor.snapshot(window, inner_cx);
+            let line_text_for_debug: String = initial_snapshot
+                .buffer_snapshot
+                .text_for_range(Point::new(row.0, 0)..Point::new(row.0 + 1, 0))
+                .collect();
+            let syntactic_folds_map = initial_snapshot
+                .buffer_snapshot
+                .create_syntactic_folds_map();
+
+            let toggle_element = initial_snapshot.render_crease_toggle(
+                row,
+                true,
+                inner_cx.entity().clone(),
+                window,
+                inner_cx,
+                &syntactic_folds_map,
+            );
+
+            if should_be_foldable_by_block_comment {
+                assert!(
+                    toggle_element.is_some(),
+                    "Toggle SHOULD be rendered for: {} (line content: '{}')",
+                    description,
+                    line_text_for_debug.trim_end()
+                );
+            } else {
+                assert!(
+                    toggle_element.is_none(),
+                    "Toggle SHOULD NOT be rendered for: {} (line content: '{}')",
+                    description,
+                    line_text_for_debug.trim_end()
+                );
+            }
+        });
+    }
+
+    check_foldability(&mut cx, MultiBufferRow(0), false, "regular code line");
+    check_foldability(&mut cx, MultiBufferRow(1), true, "block comment start");
+    check_foldability(&mut cx, MultiBufferRow(2), false, "inside block comment");
+    check_foldability(&mut cx, MultiBufferRow(4), false, "another code line");
+    check_foldability(
+        &mut cx,
+        MultiBufferRow(5),
+        true,
+        "sequence of line comments start",
+    );
+    check_foldability(
+        &mut cx,
+        MultiBufferRow(6),
+        false,
+        "inside sequence of line comments",
+    );
+    check_foldability(&mut cx, MultiBufferRow(9), true, "JSX block comment start");
+    check_foldability(
+        &mut cx,
+        MultiBufferRow(10),
+        false,
+        "inside JSX block comment",
+    );
+    check_foldability(&mut cx, MultiBufferRow(14), false, "single line comment");
+}
+
+#[gpui::test]
 async fn test_input_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
