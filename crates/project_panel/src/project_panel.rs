@@ -3703,6 +3703,67 @@ impl ProjectPanel {
         (depth, difference)
     }
 
+    fn highlight_entry_for_external_drag(
+        &self,
+        target_entry: &Entry,
+        target_worktree: &Worktree,
+    ) -> Option<ProjectEntryId> {
+        // Always highlight directory or parent directory if it's file
+        if target_entry.is_dir() {
+            Some(target_entry.id)
+        } else if let Some(parent_entry) = target_entry
+            .path
+            .parent()
+            .and_then(|parent_path| target_worktree.entry_for_path(parent_path))
+        {
+            Some(parent_entry.id)
+        } else {
+            None
+        }
+    }
+
+    fn highlight_entry_for_selection_drag(
+        &self,
+        target_entry: &Entry,
+        target_worktree: &Worktree,
+        dragged_selection: &DraggedSelection,
+        cx: &Context<Self>,
+    ) -> Option<ProjectEntryId> {
+        let target_parent_path = target_entry.path.parent();
+
+        // In case of single item drag, we do not highlight existing
+        // directory which item belongs too
+        if dragged_selection.items().count() == 1 {
+            let active_entry_path = self
+                .project
+                .read(cx)
+                .path_for_entry(dragged_selection.active_selection.entry_id, cx)?;
+
+            if let Some(active_parent_path) = active_entry_path.path.parent() {
+                // Do not highlight active entry parent
+                if active_parent_path == target_entry.path.as_ref() {
+                    return None;
+                }
+
+                // Do not highlight active entry sibling files
+                if Some(active_parent_path) == target_parent_path && target_entry.is_file() {
+                    return None;
+                }
+            }
+        }
+
+        // Always highlight directory or parent directory if it's file
+        if target_entry.is_dir() {
+            Some(target_entry.id)
+        } else if let Some(parent_entry) =
+            target_parent_path.and_then(|parent_path| target_worktree.entry_for_path(parent_path))
+        {
+            Some(parent_entry.id)
+        } else {
+            None
+        }
+    }
+
     fn render_entry(
         &self,
         entry_id: ProjectEntryId,
@@ -3810,6 +3871,7 @@ impl ProjectPanel {
                 .as_ref()
                 .and_then(|drag_target| drag_target.highlight_entry_id)
             {
+                // Highlight if same entry or it's children
                 if entry_id == highlight_entry_id {
                     true
                 } else {
@@ -3854,18 +3916,9 @@ impl ProjectPanel {
                     }
 
                     let Some((entry_id, highlight_entry_id)) = maybe!({
-                        let worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
-                        let target_entry = worktree.entry_for_path(&path_for_external_paths)?;
-
-                        // Always highlight directory or parent directory if it's file
-                        let highlight_entry_id = if target_entry.is_dir() {
-                            Some(target_entry.id)
-                        } else if let Some(parent_entry) = target_entry.path.parent().and_then(|parent_path| worktree.entry_for_path(parent_path)) {
-                            Some(parent_entry.id)
-                        } else {
-                            None
-                        };
-
+                        let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
+                        let target_entry = target_worktree.entry_for_path(&path_for_external_paths)?;
+                        let highlight_entry_id = this.highlight_entry_for_external_drag(target_entry, target_worktree);
                         Some((target_entry.id, highlight_entry_id))
                     }) else {
                         return;
@@ -3905,31 +3958,10 @@ impl ProjectPanel {
                     }
 
                     let Some((entry_id, highlight_entry_id)) = maybe!({
-                        let worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
-
-                        let target_entry = worktree.entry_for_path(&path_for_dragged_selection)?;
-                        let target_parent_path = target_entry.path.parent();
-
-                        let active_entry = worktree.entry_for_id(event.drag(cx).active_selection.entry_id)?;
-                        let active_parent_path = active_entry.path.parent();
-
-                        let highlight_entry_id = if active_parent_path == Some(&target_entry.path) {
-                            // Do not highlight active entry parent
-                            None
-                        } else if target_parent_path.is_some() && active_parent_path == target_parent_path && target_entry.is_file() {
-                           // Do not highlight active entry sibling files
-                            None
-                        } else {
-                            // Always highlight directory or parent directory if it's file
-                            if target_entry.is_dir() {
-                                Some(target_entry.id)
-                            } else if let Some(parent_entry) = target_parent_path.and_then(|parent_path| worktree.entry_for_path(parent_path)){
-                                Some(parent_entry.id)
-                            } else{
-                                None
-                            }
-                        };
-
+                        let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
+                        let target_entry = target_worktree.entry_for_path(&path_for_dragged_selection)?;
+                        let dragged_selection = event.drag(cx);
+                        let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, dragged_selection, cx);
                         Some((target_entry.id, highlight_entry_id))
                     }) else {
                         return;
