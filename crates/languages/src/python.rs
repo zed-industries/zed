@@ -355,7 +355,7 @@ impl LspAdapter for PythonLspAdapter {
                                 let venv_path = if parent == adapter.worktree_root_path() {
                                     ".".to_string()
                                 } else {
-                                    parent.to_string_lossy().to_string()
+                                    parent.to_string_lossy().into_owned()
                                 };
                                 object.insert("venvPath".to_string(), Value::String(venv_path));
                             }
