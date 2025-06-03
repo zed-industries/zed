@@ -5531,9 +5531,18 @@ impl Editor {
             }
         }
 
+        let mut common_prefix_len = 0;
+        for (a, b) in old_text.chars().zip(new_text.chars()) {
+            if a == b {
+                common_prefix_len += a.len_utf8();
+            } else {
+                break;
+            }
+        }
+
         cx.emit(EditorEvent::InputHandled {
             utf16_range_to_replace: None,
-            text: new_text.clone().into(),
+            text: new_text[common_prefix_len..].into(),
         });
 
         self.transact(window, cx, |this, window, cx| {
@@ -8929,7 +8938,10 @@ impl Editor {
                 .iter()
                 .cloned()
                 .map(|range| (range, snippet_text.clone()));
-            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
+            let autoindent_mode = AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            };
+            buffer.edit(edits, Some(autoindent_mode), cx);
 
             let snapshot = &*buffer.read(cx);
             let snippet = &snippet;
@@ -8958,7 +8970,9 @@ impl Editor {
                             })
                         })
                         .collect::<Vec<_>>();
-                    tabstop_ranges.sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot));
+                    // Sort in reverse order so that the first range is the newest created
+                    // selection. Completions will use it and autoscroll will prioritize it.
+                    tabstop_ranges.sort_unstable_by(|a, b| b.start.cmp(&a.start, snapshot));
 
                     Tabstop {
                         is_end_tabstop,
@@ -9086,7 +9100,7 @@ impl Editor {
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
                 self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_anchor_ranges(current_ranges.iter().cloned())
+                    s.select_ranges(current_ranges.iter().cloned())
                 });
 
                 if let Some(choices) = &snippet.choices[snippet.active_index] {

@@ -439,7 +439,6 @@ impl TerminalPanel {
                 weak_workspace.clone(),
                 database_id,
                 project.downgrade(),
-                false,
                 window,
                 cx,
             )
@@ -677,7 +676,6 @@ impl TerminalPanel {
                         workspace.weak_handle(),
                         workspace.database_id(),
                         workspace.project().downgrade(),
-                        false,
                         window,
                         cx,
                     )
@@ -718,7 +716,6 @@ impl TerminalPanel {
                         workspace.weak_handle(),
                         workspace.database_id(),
                         workspace.project().downgrade(),
-                        false,
                         window,
                         cx,
                     )

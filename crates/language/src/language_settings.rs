@@ -23,6 +23,7 @@ use serde_json::Value;
 use settings::{
     Settings, SettingsLocation, SettingsSources, SettingsStore, add_references_to_properties,
 };
+use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
@@ -1331,9 +1332,10 @@ impl settings::Settings for AllLanguageSettings {
                 disabled_globs: completion_globs
                     .iter()
                     .filter_map(|g| {
+                        let expanded_g = shellexpand::tilde(g).into_owned();
                         Some(DisabledGlob {
-                            matcher: globset::Glob::new(g).ok()?.compile_matcher(),
-                            is_absolute: Path::new(g).is_absolute(),
+                            matcher: globset::Glob::new(&expanded_g).ok()?.compile_matcher(),
+                            is_absolute: Path::new(&expanded_g).is_absolute(),
                         })
                     })
                     .collect(),
@@ -1712,10 +1714,12 @@ mod tests {
                         };
                         #[cfg(windows)]
                         let glob_str = glob_str.as_str();
-
+                        let expanded_glob_str = shellexpand::tilde(glob_str).into_owned();
                         DisabledGlob {
-                            matcher: globset::Glob::new(glob_str).unwrap().compile_matcher(),
-                            is_absolute: Path::new(glob_str).is_absolute(),
+                            matcher: globset::Glob::new(&expanded_glob_str)
+                                .unwrap()
+                                .compile_matcher(),
+                            is_absolute: Path::new(&expanded_glob_str).is_absolute(),
                         }
                     })
                     .collect(),
@@ -1811,6 +1815,12 @@ mod tests {
         let dot_env_file = make_test_file(&[".env"]);
         let settings = build_settings(&[".env"]);
         assert!(!settings.enabled_for_file(&dot_env_file, &cx));
+
+        // Test tilde expansion
+        let home = shellexpand::tilde("~").into_owned().to_string();
+        let home_file = make_test_file(&[&home, "test.rs"]);
+        let settings = build_settings(&["~/test.rs"]);
+        assert!(!settings.enabled_for_file(&home_file, &cx));
     }
 
     #[test]
