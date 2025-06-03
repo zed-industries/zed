@@ -10,7 +10,7 @@ use gpui::{
 use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, WorktreeId};
-use std::{path::Path, sync::Arc};
+use std::{borrow::Cow, path::Path, sync::Arc};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -172,18 +172,8 @@ impl ToolchainSelectorDelegate {
                 let relative_path = this
                     .read_with(cx, |this, _| this.delegate.relative_path.clone())
                     .ok()?;
-                let placeholder_text = format!(
-                    "Select a {} for `{}`…",
-                    term.to_lowercase(),
-                    relative_path.to_string_lossy()
-                )
-                .into();
-                let _ = this.update_in(cx, move |this, window, cx| {
-                    this.delegate.placeholder_text = placeholder_text;
-                    this.refresh_placeholder(window, cx);
-                });
 
-                let available_toolchains = project
+                let (available_toolchains, relative_path) = project
                     .update(cx, |this, cx| {
                         this.available_toolchains(
                             ProjectPath {
@@ -196,6 +186,21 @@ impl ToolchainSelectorDelegate {
                     })
                     .ok()?
                     .await?;
+                let pretty_path = {
+                    let path = relative_path.to_string_lossy();
+                    if path.is_empty() {
+                        Cow::Borrowed("worktree root")
+                    } else {
+                        Cow::Owned(format!("`{}`", path))
+                    }
+                };
+                let placeholder_text =
+                    format!("Select a {} for {pretty_path}…", term.to_lowercase(),).into();
+                let _ = this.update_in(cx, move |this, window, cx| {
+                    this.delegate.relative_path = relative_path;
+                    this.delegate.placeholder_text = placeholder_text;
+                    this.refresh_placeholder(window, cx);
+                });
 
                 let _ = this.update_in(cx, move |this, window, cx| {
                     this.delegate.candidates = available_toolchains;

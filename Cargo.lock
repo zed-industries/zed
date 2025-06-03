@@ -114,6 +114,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "smol",
+ "sqlez",
  "streaming_diff",
  "telemetry",
  "telemetry_events",
@@ -133,6 +134,7 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zed_llm_client",
+ "zstd",
 ]
 
 [[package]]
@@ -525,6 +527,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "indexed_docs",
+ "indoc",
  "language",
  "language_model",
  "languages",
@@ -7070,6 +7073,7 @@ dependencies = [
  "image",
  "inventory",
  "itertools 0.14.0",
+ "libc",
  "log",
  "lyon",
  "media",
@@ -8758,6 +8762,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "shellexpand 2.1.2",
  "smallvec",
  "smol",
  "streaming-iterator",

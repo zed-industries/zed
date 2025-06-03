@@ -1421,7 +1421,7 @@ impl Session {
             ));
             return cx.spawn(async move |this, cx| {
                 this.update(cx, |this, cx| process_result(this, error, cx))
-                    .log_err()
+                    .ok()
                     .flatten()
             });
         }
@@ -1430,7 +1430,7 @@ impl Session {
         cx.spawn(async move |this, cx| {
             let result = request.await;
             this.update(cx, |this, cx| process_result(this, result, cx))
-                .log_err()
+                .ok()
                 .flatten()
         })
     }
@@ -2193,5 +2193,9 @@ impl Session {
         } else {
             self.shutdown(cx).detach();
         }
+    }
+
+    pub fn thread_state(&self, thread_id: ThreadId) -> Option<ThreadStatus> {
+        self.thread_states.thread_state(thread_id)
     }
 }

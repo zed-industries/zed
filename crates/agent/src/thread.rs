@@ -1673,6 +1673,7 @@ impl Thread {
                                         }
                                         CompletionRequestStatus::ToolUseLimitReached => {
                                             thread.tool_use_limit_reached = true;
+                                            cx.emit(ThreadEvent::ToolUseLimitReached);
                                         }
                                     }
                                 }
@@ -2843,6 +2844,7 @@ pub enum ThreadEvent {
     },
     CheckpointChanged,
     ToolConfirmationNeeded,
+    ToolUseLimitReached,
     CancelEditing,
     CompletionCanceled,
 }
