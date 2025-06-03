@@ -600,7 +600,7 @@ pub(crate) fn handle_from(
                     })
                     .collect::<Vec<_>>();
                 this.update_in(cx, |this, window, cx| {
-                    this.change_selections_without_showing_completions(None, window, cx, |s| {
+                    this.change_selections_without_updating_completions(None, window, cx, |s| {
                         s.select(base_selections);
                     });
                 })
