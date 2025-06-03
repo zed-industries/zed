@@ -28,11 +28,18 @@ These adapters enable Zed to provide a consistent debugging experience across mu
 
 ## Getting Started
 
-For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
+Zed supports zero-configuration debugging of tests and main functions in several popular languages:
+- Rust
+- Go
+- Python
+- JavaScript and TypeScript
+If you use one of these languages, the easiest way to get started with debugging in Zed is by opening the definition of the test or function you want to debug, clicking on the triangular "play" icon in the gutter, and selecting the debug task from the list that appears.
 
-For more advanced use cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
+You can also see a contextual list of debug tasks for the current project by opening the new process modal with the `debugger: start` action (bound by default to <kbd>f4</kbd>).
 
-You can then use the `New Session Modal` to select a configuration and start debugging.
+The new process modal can also be used to manually start a debugging session. This is especially useful for languages like C, C++, and Swift that don't have zero-configuration debugging support in Zed. To start a basic debugging session manually from the modal, click on "Launch", then select a debug adapter from the dropdown menu and fill in the command line and working directory for the process you want to debug. You can pass environment variables to the debuggee process by using syntax like `ENV=var command arg1 arg2` in the command line field.
+
+For more advanced use-cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory. These handwritten debugging configurations also appear in the list shown by the new process modal.
 
 ### Configuration
 
@@ -58,17 +65,17 @@ While configuration fields are debug adapter-dependent, most adapters support th
 ]
 ```
 
-#### Tasks
+All configuration fields support task variables. See [Tasks Variables](./tasks.md#variables).
 
-All configuration fields support task variables. See [Tasks Variables](./tasks.md#variables)
+#### Build Tasks
 
 Zed also allows embedding a task that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
-See an example [here](#build-binary-then-debug)
+See an example [here](#build-binary-then-debug).
 
 #### Python Examples
 
-##### Python Active File
+##### Debug the Current File
 
 ```json
 [
@@ -122,9 +129,9 @@ For a common Flask Application with a file structure similar to the following:
 ]
 ```
 
-#### Rust/C++/C
+#### Rust/C++/C Examples
 
-##### Using pre-built binary
+##### Debug a Pre-Built Binary
 
 ```json
 [
@@ -137,12 +144,12 @@ For a common Flask Application with a file structure similar to the following:
 ]
 ```
 
-##### Build binary then debug
+##### Using a Build Task
 
 ```json
 [
   {
-    "label": "Build & Debug native binary",
+    "label": "Build & Debug Rust binary",
     "build": {
       "command": "cargo",
       "args": ["build"]
@@ -150,6 +157,13 @@ For a common Flask Application with a file structure similar to the following:
     "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
     "request": "launch",
     "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+  },
+  {
+    "label": "Build & Debug C++ binary",
+    "build": {
+      "command": "make"
+    },
+    "program": "$ZED_WORKTREE_ROOT/build/binary"
   }
 ]
 ```
