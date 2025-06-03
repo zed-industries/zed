@@ -234,6 +234,39 @@ async fn copy_extension_resources(
         .with_context(|| "failed to copy icons")?;
     }
 
+    if let Some(snippet_path) = &manifest.snippets {
+        let src_path = extension_path.join(snippet_path);
+        let dst_path = output_dir.join(snippet_path);
+
+        if src_path.is_dir() {
+            println!("dir");
+            copy_recursive(
+                fs.as_ref(),
+                &src_path,
+                &dst_path,
+                CopyOptions {
+                    overwrite: true,
+                    ignore_if_exists: false,
+                },
+            ).await
+            .with_context(|| {
+                format!("failed to copy snippet dir '{}'", snippet_path.display())
+            })?;
+        } else {
+            println!("file");
+            if let Some(parent) = dst_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(
+                &src_path,
+                &dst_path,
+            )
+            .with_context(|| {
+                format!("failed to copy snippet file '{}'", snippet_path.display())
+            })?;
+        }
+    }
+
     if !manifest.languages.is_empty() {
         let output_languages_dir = output_dir.join("languages");
         fs::create_dir_all(&output_languages_dir)?;
