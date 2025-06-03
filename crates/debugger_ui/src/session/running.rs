@@ -8,6 +8,7 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
+    ToggleExpandItem,
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
 };
@@ -347,6 +348,7 @@ pub(crate) fn new_debugger_pane(
                 false
             }
         })));
+        pane.set_can_toggle_zoom(false, cx);
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane.set_should_display_tab_bar(|_, _| true);
@@ -472,17 +474,19 @@ pub(crate) fn new_debugger_pane(
                                     },
                                 )
                                 .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |pane, _, window, cx| {
-                                    pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
+                                .on_click(cx.listener(move |pane, _, _, cx| {
+                                    let is_zoomed = pane.is_zoomed();
+                                    pane.set_zoomed(!is_zoomed, cx);
+                                    cx.notify();
                                 }))
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |window, cx| {
                                         let zoomed_text =
-                                            if zoomed { "Zoom Out" } else { "Zoom In" };
+                                            if zoomed { "Minimize" } else { "Expand" };
                                         Tooltip::for_action_in(
                                             zoomed_text,
-                                            &workspace::ToggleZoom,
+                                            &ToggleExpandItem,
                                             &focus_handle,
                                             window,
                                             cx,
@@ -1259,18 +1263,6 @@ impl RunningState {
             }
             Event::Focus => {
                 this.active_pane = source_pane.clone();
-            }
-            Event::ZoomIn => {
-                source_pane.update(cx, |pane, cx| {
-                    pane.set_zoomed(true, cx);
-                });
-                cx.notify();
-            }
-            Event::ZoomOut => {
-                source_pane.update(cx, |pane, cx| {
-                    pane.set_zoomed(false, cx);
-                });
-                cx.notify();
             }
             _ => {}
         }

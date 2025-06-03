@@ -311,6 +311,7 @@ pub struct Pane {
     >,
     can_split_predicate:
         Option<Arc<dyn Fn(&mut Self, &dyn Any, &mut Window, &mut Context<Self>) -> bool>>,
+    can_toggle_zoom: bool,
     should_display_tab_bar: Rc<dyn Fn(&Window, &mut Context<Pane>) -> bool>,
     render_tab_bar_buttons: Rc<
         dyn Fn(
@@ -450,6 +451,7 @@ impl Pane {
             can_drop_predicate,
             custom_drop_handle: None,
             can_split_predicate: None,
+            can_toggle_zoom: true,
             should_display_tab_bar: Rc::new(|_, cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(default_render_tab_bar_buttons),
             render_tab_bar: Rc::new(Self::render_tab_bar),
@@ -648,6 +650,11 @@ impl Pane {
         >,
     ) {
         self.can_split_predicate = can_split_predicate;
+    }
+
+    pub fn set_can_toggle_zoom(&mut self, can_toggle_zoom: bool, cx: &mut Context<Self>) {
+        self.can_toggle_zoom = can_toggle_zoom;
+        cx.notify();
     }
 
     pub fn set_close_pane_if_empty(&mut self, close_pane_if_empty: bool, cx: &mut Context<Self>) {
@@ -1104,7 +1111,9 @@ impl Pane {
     }
 
     pub fn toggle_zoom(&mut self, _: &ToggleZoom, window: &mut Window, cx: &mut Context<Self>) {
-        if self.zoomed {
+        if !self.can_toggle_zoom {
+            cx.propagate();
+        } else if self.zoomed {
             cx.emit(Event::ZoomOut);
         } else if !self.items.is_empty() {
             if !self.focus_handle.contains_focused(window, cx) {

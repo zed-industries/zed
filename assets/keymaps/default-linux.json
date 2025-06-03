@@ -884,7 +884,8 @@
     "context": "DebugPanel",
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",
-      "ctrl-i": "debugger::ToggleSessionPicker"
+      "ctrl-i": "debugger::ToggleSessionPicker",
+      "shift-alt-escape": "debugger::ToggleExpandItem"
     }
   },
   {
