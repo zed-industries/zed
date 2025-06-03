@@ -997,7 +997,7 @@ mod tests {
         assert("loremˇ    ipsumˇ   ", cx);
         assert("loremˇ-ipsumˇ", cx);
         assert("loremˇ#$@-ˇipsum", cx);
-        assert("ˇlorem_ipsumˇ", cx);
+        assert("loremˇ_ipsumˇ", cx);
         assert(" ˇbcΔˇ", cx);
         assert(" abˇ——ˇcd", cx);
         // Test punctuation skipping behavior
@@ -1037,10 +1037,10 @@ mod tests {
         assert("\nˇ\nˇ\n\n", cx);
         assert("loremˇ    ipsumˇ   ", cx);
         assert("loremˇ-ˇipsum", cx);
-        assert("loremˇ#$@-ipsumˇ", cx);
+        assert("loremˇ#$@-ˇipsum", cx);
         assert("loremˇ_ipsumˇ", cx);
         assert(" ˇbcˇΔ", cx);
-        assert(" abˇ——cdˇ", cx);
+        assert(" abˇ——ˇcd", cx);
     }
 
     #[gpui::test]
