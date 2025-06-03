@@ -1,7 +1,7 @@
 # Configuration
 
 There are various aspects about the Agent Panel that you can customize.
-All of them can be seen by either visiting [the Configuring Zed page](./configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
+All of them can be seen by either visiting [the Configuring Zed page](../configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
 Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
 ## LLM Providers

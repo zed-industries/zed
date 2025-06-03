@@ -73,7 +73,7 @@ jobs:
     timeout-minutes: 60
     runs-on:
       - self-hosted
-      - test
+      - macOS
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -200,7 +200,7 @@ jobs:
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - self-hosted
-      - test
+      - macOS
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -482,7 +482,9 @@ jobs:
       - macos_tests
       - windows_clippy
       - windows_tests
-    if: always()
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      always()
     steps:
       - name: Check all tests passed
         run: |

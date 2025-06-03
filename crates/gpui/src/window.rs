@@ -25,7 +25,7 @@ use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
 use parking_lot::RwLock;
-use raw_window_handle::{HandleError, HasWindowHandle};
+use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -4011,6 +4011,12 @@ impl Window {
         self.platform_window.gpu_specs()
     }
 
+    /// Perform titlebar double-click action.
+    /// This is MacOS specific.
+    pub fn titlebar_double_click(&self) {
+        self.platform_window.titlebar_double_click();
+    }
+
     /// Toggles the inspector mode on this window.
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub fn toggle_inspector(&mut self, cx: &mut App) {
@@ -4419,6 +4425,14 @@ impl AnyWindowHandle {
 impl HasWindowHandle for Window {
     fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
         self.platform_window.window_handle()
+    }
+}
+
+impl HasDisplayHandle for Window {
+    fn display_handle(
+        &self,
+    ) -> std::result::Result<raw_window_handle::DisplayHandle<'_>, HandleError> {
+        self.platform_window.display_handle()
     }
 }
 

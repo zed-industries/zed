@@ -106,7 +106,7 @@ impl TerminalInlineAssistant {
         });
         let prompt_editor_render = prompt_editor.clone();
         let block = terminal_view::BlockProperties {
-            height: 2,
+            height: 4,
             render: Box::new(move |_| prompt_editor_render.clone().into_any_element()),
         };
         terminal_view.update(cx, |terminal_view, cx| {
@@ -202,7 +202,7 @@ impl TerminalInlineAssistant {
             .update(cx, |terminal, cx| {
                 terminal
                     .terminal()
-                    .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
+                    .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.as_bytes()));
             })
             .log_err();
 
