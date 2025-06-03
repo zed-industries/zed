@@ -862,28 +862,22 @@ impl<T: Item> ItemHandle for Entity<T> {
                                 && item.workspace_settings(cx).close_on_file_delete
                             {
                                 let item_id = item.item_id();
-                                let pane = pane.clone();
-                                cx.spawn_in(window, async move |_workspace, cx| {
-                                    // Close the item first
-                                    let result = pane
-                                        .update_in(cx, |pane, window, cx| {
-                                            pane.close_item_by_id(
-                                                item_id,
-                                                crate::SaveIntent::Close,
-                                                window,
-                                                cx,
-                                            )
-                                        })?
-                                        .await;
-
-                                    // Then remove from navigation history after close completes
-                                    if result.is_ok() {
-                                        pane.update_in(cx, |pane, _window, _cx| {
+                                let close_item_task = pane.update(cx, |pane, cx| {
+                                    pane.close_item_by_id(
+                                        item_id,
+                                        crate::SaveIntent::Close,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                                cx.spawn_in(window, {
+                                    let pane = pane.clone();
+                                    async move |_workspace, cx| {
+                                        close_item_task.await?;
+                                        pane.update(cx, |pane, _cx| {
                                             pane.nav_history_mut().remove_item(item_id);
-                                        })?;
+                                        })
                                     }
-
-                                    result
                                 })
                                 .detach_and_log_err(cx);
                             } else {
