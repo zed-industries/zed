@@ -1062,6 +1062,7 @@ pub fn new_terminal_pane(
                                             &new_pane,
                                             item_id_to_move,
                                             new_pane.read(cx).active_item_index(),
+                                            true,
                                             window,
                                             cx,
                                         );
