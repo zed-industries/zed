@@ -34,6 +34,15 @@ For more advanced use cases, you can create debug configurations by directly edi
 
 You can then use the `New Session Modal` to select a configuration and start debugging.
 
+### Launching & Attaching
+
+Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
+Which one you choose depends on what you are trying to achieve.
+
+When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program. Running unit tests or a debug build of your application is a good use case for launching.
+
+Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because e.g. the bug is not reproducible outside of a production environment or some other circumstances.
+
 ## Configuration
 
 While configuration fields are debug adapter-dependent, most adapters support the following fields:
@@ -93,7 +102,47 @@ Build tasks can also refer to the existing tasks by unsubstituted label:
 ]
 ```
 
+### Automatic scenario creation
+
+Given a Zed task, Zed can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
+Automatic scenario creation is currently supported for Rust, Go and Python. Javascript/TypeScript support being worked on.
+
 ### Example Configurations
+
+#### JavaScript
+
+##### Debug Active File
+
+```json
+[
+  {
+    "label": "Debug with node",
+    "adapter": "JavaScript",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "console": "integratedTerminal",
+    "type": "pwa-node"
+  }
+]
+```
+
+##### Attach debugger to a server running in web browser (`npx serve`)
+
+Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
+
+```json
+[
+  {
+    "label": "Inspect ",
+    "adapter": "JavaScript",
+    "type": "pwa-chrome",
+    "request": "launch",
+    "url": "http://localhost:5500", // Fill your URL here.
+    "program": "$ZED_FILE",
+    "webRoot": "${ZED_WORKTREE_ROOT}"
+  }
+]
+```
 
 #### Python
 
