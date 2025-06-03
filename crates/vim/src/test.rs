@@ -7,8 +7,8 @@ use std::time::Duration;
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine, display_map::DisplayRow,
-    test::editor_test_context::EditorTestContext,
+    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
+    display_map::DisplayRow, test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
 use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
@@ -876,7 +876,22 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.simulate_keystrokes("i j");
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
-    cx.assert_state("ˇhello", Mode::Insert);
+    cx.assert_state("ˇjhello", Mode::Insert);
+    cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let highlights = editor
+            .text_highlights::<editor::PendingInput>(cx)
+            .unwrap()
+            .1;
+
+        assert_eq!(
+            highlights
+                .iter()
+                .map(|highlight| highlight.to_offset(&snapshot.buffer_snapshot))
+                .collect::<Vec<_>>(),
+            vec![0..1]
+        )
+    });
     cx.executor().advance_clock(Duration::from_millis(500));
     cx.run_until_parked();
     cx.assert_state("jˇhello", Mode::Insert);
