@@ -3848,12 +3848,13 @@ impl ProjectPanel {
                         let worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
                         let target_entry = worktree.entry_for_path(&path_for_external_paths)?;
 
+                        // Always highlight directory or parent directory if it's file
                         let highlight_entry_id = if target_entry.is_dir() {
                             Some(target_entry.id)
-                        } else {
-                            let parent_path = target_entry.path.parent()?;
-                            let parent_entry = worktree.entry_for_path(parent_path)?;
+                        } else if let Some(parent_entry) = target_entry.path.parent().and_then(|parent_path| worktree.entry_for_path(parent_path)) {
                             Some(parent_entry.id)
+                        } else {
+                            None
                         };
 
                         Some((target_entry.id, highlight_entry_id))
@@ -3886,25 +3887,27 @@ impl ProjectPanel {
 
                     let Some((entry_id, highlight_entry_id)) = maybe!({
                         let worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
-                        let target_entry = worktree.entry_for_path(&path_for_dragged_selection)?;
 
-                        let highlight_entry_id = if target_entry.is_dir() {
-                            Some(target_entry.id)
+                        let target_entry = worktree.entry_for_path(&path_for_dragged_selection)?;
+                        let target_parent_path = target_entry.path.parent();
+
+                        let active_entry = worktree.entry_for_id(event.drag(cx).active_selection.entry_id)?;
+                        let active_parent_path = active_entry.path.parent();
+
+                        let highlight_entry_id = if active_parent_path == Some(&target_entry.path) {
+                            // Do not highlight active entry parent
+                            None
+                        } else if target_parent_path.is_some() && active_parent_path == target_parent_path && target_entry.is_file() {
+                           // Do not highlight active entry sibling files
+                            None
                         } else {
-                            // Do not highlight parent of active entry that is been dragged
-                            let active_drag_entry = worktree.entry_for_id(event.drag(cx).active_selection.entry_id)?;
-                            let active_parent = active_drag_entry.path.parent();
-                            if active_parent == Some(&path) {
+                            // Always highlight directory or parent directory if it's file
+                            if target_entry.is_dir() {
+                                Some(target_entry.id)
+                            } else if let Some(parent_entry) = target_parent_path.and_then(|parent_path| worktree.entry_for_path(parent_path)){
+                                Some(parent_entry.id)
+                            } else{
                                 None
-                            } else {
-                                // Do not hightlight if same directory
-                                let target_parent_path = target_entry.path.parent()?;
-                                if active_parent == Some(target_parent_path) {
-                                    None
-                                } else {
-                                    let parent_entry = worktree.entry_for_path(target_parent_path)?;
-                                    Some(parent_entry.id)
-                                }
                             }
                         };
 
