@@ -226,7 +226,9 @@ Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#google-ai-custom-models}
 
-By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models), with the Google AI provider by adding the following to your Zed `settings.json`:
+By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models). You can configure a model to use [thinking mode](https://ai.google.dev/gemini-api/docs/thinking) (if it supports it) by adding a `mode` configuration to your model. This is useful for controlling reasoning token usage and response speed. If not specified, Gemini will automatically choose the thinking budget.
+
+Here is an example of a custom Google AI model you could add to your Zed `settings.json`:
 
 ```json
 {
@@ -234,9 +236,13 @@ By default, Zed will use `stable` versions of models, but you can use specific v
     "google": {
       "available_models": [
         {
-          "name": "gemini-1.5-flash-latest",
-          "display_name": "Gemini 1.5 Flash (Latest)",
-          "max_tokens": 1000000
+          "name": "gemini-2.5-flash-preview-05-20",
+          "display_name": "Gemini 2.5 Flash (Thinking)",
+          "max_tokens": 1000000,
+          "mode": {
+            "type": "thinking",
+            "budget_tokens": 24000
+          }
         }
       ]
     }
