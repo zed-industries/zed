@@ -230,6 +230,8 @@ pub enum Event {
         item: Box<dyn ItemHandle>,
     },
     Split(SplitDirection),
+    ItemPinned,
+    ItemUnpinned,
     JoinAll,
     JoinIntoNext,
     ChangeItemTitle,
@@ -274,6 +276,8 @@ impl fmt::Debug for Event {
                 .field("item", &item.id())
                 .field("save_intent", save_intent)
                 .finish(),
+            Event::ItemPinned => f.write_str("ItemPinned"),
+            Event::ItemUnpinned => f.write_str("ItemUnpinned"),
         }
     }
 }
@@ -780,11 +784,12 @@ impl Pane {
         }
     }
 
-    pub(crate) fn set_pinned_count(&mut self, count: usize) {
+    /// Should only be used when deserializing a pane.
+    pub fn set_pinned_count(&mut self, count: usize) {
         self.pinned_tab_count = count;
     }
 
-    pub(crate) fn pinned_count(&self) -> usize {
+    pub fn pinned_count(&self) -> usize {
         self.pinned_tab_count
     }
 
@@ -2074,6 +2079,7 @@ impl Pane {
                     })
                     .ok()?;
             }
+            cx.emit(Event::ItemPinned);
 
             Some(())
         });
@@ -2087,13 +2093,18 @@ impl Pane {
 
             let id = self.item_for_index(ix)?.item_id();
 
-            self.workspace
-                .update(cx, |_, cx| {
-                    cx.defer_in(window, move |_, window, cx| {
-                        move_item(&pane, &pane, id, destination_index, window, cx)
-                    });
-                })
-                .ok()?;
+            if ix == destination_index {
+                cx.notify()
+            } else {
+                self.workspace
+                    .update(cx, |_, cx| {
+                        cx.defer_in(window, move |_, window, cx| {
+                            move_item(&pane, &pane, id, destination_index, window, cx)
+                        });
+                    })
+                    .ok()?;
+            }
+            cx.emit(Event::ItemUnpinned);
 
             Some(())
         });
@@ -4083,6 +4094,30 @@ mod tests {
 
         add_labeled_item(&pane, "G", true, cx);
         assert_item_labels(&pane, ["A^", "B^", "C^", "G*^"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_toggle_pin_tab(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_labeled_items(&pane, ["A", "B*", "C"], cx);
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_pin_tab(&TogglePinTab, window, cx);
+        });
+        assert_item_labels(&pane, ["B*!", "A", "C"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.toggle_pin_tab(&TogglePinTab, window, cx);
+        });
+        assert_item_labels(&pane, ["B*", "A", "C"], cx);
     }
 
     #[gpui::test]

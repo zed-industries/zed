@@ -1464,7 +1464,10 @@ impl AgentDiff {
         if !AgentSettings::get_global(cx).single_file_review {
             for (editor, _) in self.reviewing_editors.drain() {
                 editor
-                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .update(cx, |editor, cx| {
+                        editor.end_temporary_diff_override(cx);
+                        editor.unregister_addon::<EditorAgentDiffAddon>();
+                    })
                     .ok();
             }
             return;
@@ -1560,7 +1563,10 @@ impl AgentDiff {
 
             if in_workspace {
                 editor
-                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .update(cx, |editor, cx| {
+                        editor.end_temporary_diff_override(cx);
+                        editor.unregister_addon::<EditorAgentDiffAddon>();
+                    })
                     .ok();
                 self.reviewing_editors.remove(&editor);
             }

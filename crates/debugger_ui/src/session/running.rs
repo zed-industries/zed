@@ -8,7 +8,7 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    new_session_modal::resolve_path,
+    new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
 };
 
@@ -566,7 +566,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn relativlize_paths(
+    pub(crate) fn relativize_paths(
         key: Option<&str>,
         config: &mut serde_json::Value,
         context: &TaskContext,
@@ -574,12 +574,12 @@ impl RunningState {
         match config {
             serde_json::Value::Object(obj) => {
                 obj.iter_mut()
-                    .for_each(|(key, value)| Self::relativlize_paths(Some(key), value, context));
+                    .for_each(|(key, value)| Self::relativize_paths(Some(key), value, context));
             }
             serde_json::Value::Array(array) => {
                 array
                     .iter_mut()
-                    .for_each(|value| Self::relativlize_paths(None, value, context));
+                    .for_each(|value| Self::relativize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
                 // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
@@ -806,7 +806,7 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
-            Self::relativlize_paths(None, &mut config, &task_context);
+            Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             let request_type = dap_registry
