@@ -785,4 +785,330 @@ mod tests {
         .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
         .unwrap()
     }
+
+    #[gpui::test]
+    async fn test_grep_security_boundaries(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        // This test verifies two critical security requirements for the grep tool:
+        // 1. It should NEVER search files outside the project worktree boundaries
+        // 2. It should respect file exclusion settings (e.g., .git, node_modules, .env files)
+        //
+        // CURRENT STATUS:
+        // ✓ Requirement 1 is working correctly - files outside project are not searched
+        // ✗ Requirement 2 is BROKEN - excluded files are being returned in search results
+        //
+        // EXPECTED BEHAVIOR ONCE FIXED:
+        // The grep tool should use the project's file exclusion settings (likely from
+        // ProjectSettings or gitignore rules) to filter out sensitive files. This means:
+        // - .git directories should never be searched
+        // - node_modules should be excluded by default
+        // - Files matching .gitignore patterns should be excluded
+        // - Hidden files (starting with .) should follow project settings
+        // - Binary files and build artifacts should be excluded
+        // - Files matching the private_files setting should be excluded
+        //
+        // The test is intentionally written to fail until this security issue is resolved.
+
+        let fs = FakeFs::new(cx.executor().clone());
+
+        // Create a comprehensive test structure with:
+        // - Multiple worktree roots (/project1, /project2)
+        // - Files outside the project (/outside, /home) that should NEVER be searched
+        // - Various file types that should be excluded by default
+        fs.insert_tree(
+            "/",
+            serde_json::json!({
+                // === PROJECT WORKTREE 1 ===
+                "project1": {
+                    // Normal files - should be included in search
+                    "main.rs": "fn main() { println!(\"Hello from project1\"); }",
+                    "lib.rs": "fn library_function() { /* project1 lib */ }",
+                    "README.md": "# Project 1\nfn in_markdown() { }",
+
+                    // Files that should be excluded by default
+                    ".git": {
+                        "config": "fn git_config() { /* should be excluded */ }",
+                        "HEAD": "fn git_head() { /* should be excluded */ }"
+                    },
+                    "node_modules": {
+                        "dep.rs": "fn node_module() { /* should be excluded */ }",
+                        "package.json": "{ \"name\": \"fn_in_json\" }"
+                    },
+                    "target": {
+                        "debug": {
+                            "build.rs": "fn build_artifact() { /* should be excluded */ }"
+                        }
+                    },
+                    ".env": "SECRET_KEY=abc123\nfn env_secrets() { /* should be excluded */ }",
+                    ".env.local": "LOCAL_SECRET=xyz789\nfn local_env() { /* should be excluded */ }",
+                    ".hidden.rs": "fn hidden_function() { /* should be excluded */ }",
+                    ".DS_Store": "fn ds_store() { /* should be excluded */ }",
+                    "private.pem": "fn private_key() { /* private_files setting */ }",
+                    "server.key": "fn server_key() { /* private_files setting */ }",
+                    "client.cert": "fn client_cert() { /* private_files setting */ }",
+                    "secrets.yml": "fn secrets_yaml() { /* private_files setting */ }"
+                },
+
+                // === PROJECT WORKTREE 2 ===
+                "project2": {
+                    // Normal files - should be included
+                    "app.rs": "fn app_function() { println!(\"Hello from project2\"); }",
+                    "util.rs": "fn utility_function() { /* project2 util */ }",
+
+                    // More excluded files
+                    ".git": {
+                        "hooks": {
+                            "pre-commit": "fn pre_commit() { /* should be excluded */ }"
+                        }
+                    },
+                    "target": {
+                        "release": {
+                            "final.rs": "fn release_build() { /* should be excluded */ }"
+                        }
+                    },
+                    "Cargo.lock": "fn in_lock_file() { /* often excluded */ }",
+                    ".gitignore": "target/\nfn in_gitignore() { }",
+                    "api.key": "fn api_key() { /* private_files setting */ }",
+                    "database.crt": "fn database_cert() { /* private_files setting */ }"
+                },
+
+                // === OUTSIDE PROJECT - CRITICAL: These should NEVER be searched ===
+                "outside": {
+                    "secret.rs": "fn secret_function() { /* OUTSIDE PROJECT */ }",
+                    "config": {
+                        "passwords.txt": "fn password() { /* OUTSIDE PROJECT */ }"
+                    }
+                },
+                "home": {
+                    "user": {
+                        "private.rs": "fn private_data() { /* OUTSIDE PROJECT */ }",
+                        ".ssh": {
+                            "id_rsa": "fn ssh_key() { /* OUTSIDE PROJECT */ }"
+                        }
+                    }
+                },
+                "etc": {
+                    "passwd": "fn system_file() { /* OUTSIDE PROJECT */ }"
+                }
+            }),
+        )
+        .await;
+
+        // Create project with two worktree roots
+        let project = Project::test(
+            fs.clone(),
+            [path!("/project1").as_ref(), path!("/project2").as_ref()],
+            cx,
+        )
+        .await;
+
+        // === TEST 1: Basic search to check file inclusion/exclusion ===
+        println!("\n=== TEST 1: Testing file inclusion/exclusion rules ===");
+
+        let input = serde_json::to_value(GrepToolInput {
+            regex: "fn".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let results = run_grep_tool(input, project.clone(), cx).await;
+        let result_paths = extract_paths_from_results(&results);
+
+        println!("Found {} files with matches", result_paths.len());
+
+        // Define expected behavior
+        let should_include = vec![
+            "project1/main.rs",
+            "project1/lib.rs",
+            "project1/README.md",
+            "project2/app.rs",
+            "project2/util.rs",
+        ];
+
+        let should_exclude_patterns = vec![
+            (".git", "Git repository files"),
+            ("node_modules", "Node.js dependencies"),
+            ("target", "Build artifacts"),
+            (".env", "Environment files with secrets (private_files)"),
+            (".hidden", "Hidden files"),
+            (".DS_Store", "macOS system files"),
+            ("outside", "Files outside project roots"),
+            ("/home/", "User home directory"),
+            ("/etc/", "System files"),
+            (".pem", "Private key files (private_files)"),
+            (".key", "Key files (private_files)"),
+            (".cert", "Certificate files (private_files)"),
+            (".crt", "Certificate files (private_files)"),
+            ("secrets.yml", "Secrets configuration (private_files)"),
+        ];
+
+        // Check included files
+        println!("\nChecking files that SHOULD be included:");
+        for path in &should_include {
+            let found = result_paths.iter().any(|p| p.contains(path));
+            println!("  {} {}", if found { "✓" } else { "✗" }, path);
+            assert!(found, "Expected file '{}' was not found in results", path);
+        }
+
+        // Check excluded files
+        println!("\nChecking patterns that SHOULD be excluded:");
+        let mut security_issues = Vec::new();
+        for (pattern, description) in &should_exclude_patterns {
+            let found = result_paths.iter().any(|p| p.contains(pattern));
+            if found {
+                println!("  ✗ {} ({})", pattern, description);
+                security_issues.push(format!("{} ({})", pattern, description));
+            } else {
+                println!("  ✓ {} ({})", pattern, description);
+            }
+        }
+
+        // Report security issues
+        if !security_issues.is_empty() {
+            println!("\n⚠️  SECURITY ISSUES FOUND:");
+            println!("The grep tool is exposing the following sensitive files:");
+            for issue in &security_issues {
+                println!("  - {}", issue);
+            }
+        }
+
+        // === TEST 2: Verify project boundary enforcement ===
+        println!("\n=== TEST 2: Testing project boundary enforcement ===");
+
+        let boundary_input = serde_json::to_value(GrepToolInput {
+            regex: "OUTSIDE PROJECT|secret_function|private_data|ssh_key|system_file".to_string(),
+            include_pattern: None,
+            offset: 0,
+            case_sensitive: false,
+        })
+        .unwrap();
+
+        let boundary_results = run_grep_tool(boundary_input, project.clone(), cx).await;
+        let boundary_paths = extract_paths_from_results(&boundary_results);
+
+        let outside_project_paths: Vec<_> = boundary_paths
+            .iter()
+            .filter(|path| !path.starts_with("project1/") && !path.starts_with("project2/"))
+            .collect();
+
+        if outside_project_paths.is_empty() {
+            println!("✓ Project boundaries are properly enforced");
+            println!("  No files outside /project1 and /project2 were searched");
+        } else {
+            println!("✗ CRITICAL: Project boundaries were violated!");
+            println!("  The following paths outside the project were searched:");
+            for path in &outside_project_paths {
+                println!("    - {}", path);
+            }
+        }
+
+        // === TEST 3: Try to escape project with malicious include patterns ===
+        println!("\n=== TEST 3: Testing escape attempts with include patterns ===");
+
+        let escape_attempts = vec![
+            ("../outside/**/*.rs", "Relative path escape"),
+            ("/outside/**/*.rs", "Absolute path escape"),
+            ("../../**/*.rs", "Multiple parent directory escape"),
+            ("/home/**/*", "Absolute path to home directory"),
+        ];
+
+        for (pattern, description) in escape_attempts {
+            let escape_input = serde_json::to_value(GrepToolInput {
+                regex: "fn".to_string(),
+                include_pattern: Some(pattern.to_string()),
+                offset: 0,
+                case_sensitive: false,
+            })
+            .unwrap();
+
+            let escape_results = run_grep_tool(escape_input, project.clone(), cx).await;
+            let escape_paths = extract_paths_from_results(&escape_results);
+
+            let escaped = escape_paths
+                .iter()
+                .any(|p| !p.starts_with("project1/") && !p.starts_with("project2/"));
+
+            if escaped {
+                println!("  ✗ {} - ESCAPED PROJECT BOUNDARY!", description);
+            } else {
+                println!("  ✓ {} - properly contained", description);
+            }
+
+            assert!(
+                !escaped,
+                "CRITICAL: Include pattern '{}' allowed escaping project boundaries!",
+                pattern
+            );
+        }
+
+        // === TEST 4: Verify private_files setting is respected ===
+        println!("\n=== TEST 4: Testing private_files setting enforcement ===");
+
+        // Test specifically for files that should be excluded by the private_files setting
+        let private_files_patterns = vec![
+            ".env",
+            ".env.local",
+            ".pem",
+            ".key",
+            ".cert",
+            ".crt",
+            "secrets.yml",
+        ];
+
+        let mut private_files_found = Vec::new();
+        for pattern in &private_files_patterns {
+            if result_paths.iter().any(|p| p.contains(pattern)) {
+                private_files_found.push(pattern);
+            }
+        }
+
+        if !private_files_found.is_empty() {
+            println!("✗ SECURITY ISSUE: Files matching private_files setting are exposed:");
+            for pattern in &private_files_found {
+                println!("  - Files matching '{}'", pattern);
+            }
+        } else {
+            println!("✓ No private files found (but this might be due to other exclusions)");
+        }
+
+        // === FINAL ASSERTIONS ===
+
+        // This assertion documents the current BROKEN behavior
+        // It SHOULD pass but currently fails, indicating the security issue
+        assert!(
+            !result_paths.iter().any(|p| p.contains(".env")),
+            "SECURITY ISSUE: .env files containing secrets are being exposed in search results!"
+        );
+
+        // Additional assertion for private_files
+        assert!(
+            private_files_found.is_empty(),
+            "SECURITY ISSUE: Files matching private_files setting are exposed: {:?}",
+            private_files_found
+        );
+
+        // This assertion verifies project boundaries are respected (currently passing)
+        assert!(
+            outside_project_paths.is_empty(),
+            "CRITICAL: Files outside project boundaries were searched!"
+        );
+    }
+
+    // Helper function to extract file paths from grep results
+    fn extract_paths_from_results(results: &str) -> Vec<String> {
+        results
+            .lines()
+            .filter(|line| line.starts_with("## Matches in "))
+            .map(|line| {
+                line.strip_prefix("## Matches in ")
+                    .unwrap()
+                    .trim()
+                    .to_string()
+            })
+            .collect()
+    }
 }
