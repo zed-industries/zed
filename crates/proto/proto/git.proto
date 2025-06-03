@@ -75,7 +75,7 @@ message GetPermalinkToLineResponse {
 
 message Branch {
     bool is_head = 1;
-    string name = 2;
+    string ref_name = 2;
     optional uint64 unix_timestamp = 3;
     optional GitUpstream upstream = 4;
     optional CommitSummary most_recent_commit = 5;

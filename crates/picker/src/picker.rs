@@ -1,5 +1,13 @@
+mod head;
+pub mod highlighted_match_with_paths;
+pub mod popover_menu;
+
 use anyhow::Result;
-use editor::{Editor, scroll::Autoscroll};
+use editor::{
+    Editor,
+    actions::{MoveDown, MoveUp},
+    scroll::Autoscroll,
+};
 use gpui::{
     AnyElement, App, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, Length, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Render,
@@ -15,9 +23,6 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::ModalView;
-
-mod head;
-pub mod highlighted_match_with_paths;
 
 enum ElementContainer {
     List(ListState),
@@ -185,7 +190,7 @@ pub trait PickerDelegate: Sized + 'static {
                     .overflow_hidden()
                     .flex_none()
                     .h_9()
-                    .px_3()
+                    .px_2p5()
                     .child(editor.clone()),
             )
             .when(
@@ -451,6 +456,10 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
+    pub fn editor_move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_previous(&Default::default(), window, cx);
+    }
+
     fn select_previous(
         &mut self,
         _: &menu::SelectPrevious,
@@ -466,7 +475,16 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn editor_move_down(&mut self, _: &MoveDown, window: &mut Window, cx: &mut Context<Self>) {
+        self.select_next(&Default::default(), window, cx);
+    }
+
+    pub fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let count = self.delegate.match_count();
         if count > 0 {
             self.set_selected_index(0, Some(Direction::Down), true, window, cx);
@@ -588,7 +606,9 @@ impl<D: PickerDelegate> Picker<D> {
                 self.update_matches(query, window, cx);
             }
             editor::EditorEvent::Blurred => {
-                self.cancel(&menu::Cancel, window, cx);
+                if self.is_modal {
+                    self.cancel(&menu::Cancel, window, cx);
+                }
             }
             _ => {}
         }
@@ -855,6 +875,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when(self.is_modal, |this| this.elevation_3(cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::editor_move_down))
+            .on_action(cx.listener(Self::editor_move_up))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::cancel))

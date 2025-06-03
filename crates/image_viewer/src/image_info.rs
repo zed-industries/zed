@@ -2,6 +2,7 @@ use gpui::{Context, Entity, IntoElement, ParentElement, Render, Subscription, di
 use project::image_store::{ImageFormat, ImageMetadata};
 use settings::Settings;
 use ui::prelude::*;
+use util::size::format_file_size;
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
 use crate::{ImageFileSizeUnit, ImageView, ImageViewerSettings};
@@ -36,27 +37,9 @@ impl ImageInfo {
     }
 }
 
-fn format_file_size(size: u64, image_unit_type: ImageFileSizeUnit) -> String {
-    match image_unit_type {
-        ImageFileSizeUnit::Binary => {
-            if size < 1024 {
-                format!("{size}B")
-            } else if size < 1024 * 1024 {
-                format!("{:.1}KiB", size as f64 / 1024.0)
-            } else {
-                format!("{:.1}MiB", size as f64 / (1024.0 * 1024.0))
-            }
-        }
-        ImageFileSizeUnit::Decimal => {
-            if size < 1000 {
-                format!("{size}B")
-            } else if size < 1000 * 1000 {
-                format!("{:.1}KB", size as f64 / 1000.0)
-            } else {
-                format!("{:.1}MB", size as f64 / (1000.0 * 1000.0))
-            }
-        }
-    }
+fn format_image_size(size: u64, image_unit_type: ImageFileSizeUnit) -> String {
+    let use_decimal = matches!(image_unit_type, ImageFileSizeUnit::Decimal);
+    format_file_size(size, use_decimal)
 }
 
 impl Render for ImageInfo {
@@ -69,7 +52,7 @@ impl Render for ImageInfo {
 
         let mut components = Vec::new();
         components.push(format!("{}x{}", metadata.width, metadata.height));
-        components.push(format_file_size(metadata.file_size, settings.unit));
+        components.push(format_image_size(metadata.file_size, settings.unit));
 
         if let Some(colors) = metadata.colors {
             components.push(format!(

@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use axum::headers::HeaderMapExt;
 use axum::{
     Extension, Router,
@@ -8,7 +8,7 @@ use axum::{
 };
 
 use collab::api::CloudflareIpCountryHeader;
-use collab::api::billing::sync_llm_usage_with_stripe_periodically;
+use collab::api::billing::sync_llm_request_usage_with_stripe_periodically;
 use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
 use collab::user_backfiller::spawn_user_backfiller;
@@ -36,6 +36,7 @@ use util::{ResultExt as _, maybe};
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
 
+#[expect(clippy::result_large_err)]
 #[tokio::main]
 async fn main() -> Result<()> {
     if let Err(error) = env::load_dotenv() {
@@ -137,11 +138,11 @@ async fn main() -> Result<()> {
                             .config
                             .llm_database_url
                             .as_ref()
-                            .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
+                            .context("missing LLM_DATABASE_URL")?;
                         let max_connections = state
                             .config
                             .llm_database_max_connections
-                            .ok_or_else(|| anyhow!("missing LLM_DATABASE_MAX_CONNECTIONS"))?;
+                            .context("missing LLM_DATABASE_MAX_CONNECTIONS")?;
 
                         let mut db_options = db::ConnectOptions::new(database_url);
                         db_options.max_connections(max_connections);
@@ -152,7 +153,7 @@ async fn main() -> Result<()> {
 
                     if let Some(mut llm_db) = llm_db {
                         llm_db.initialize().await?;
-                        sync_llm_usage_with_stripe_periodically(state.clone());
+                        sync_llm_request_usage_with_stripe_periodically(state.clone());
                     }
 
                     app = app
@@ -286,7 +287,7 @@ async fn setup_llm_database(config: &Config) -> Result<()> {
     let database_url = config
         .llm_database_url
         .as_ref()
-        .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
+        .context("missing LLM_DATABASE_URL")?;
 
     let db_options = db::ConnectOptions::new(database_url.clone());
     let db = LlmDatabase::new(db_options, Executor::Production).await?;

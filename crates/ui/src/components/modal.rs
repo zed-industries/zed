@@ -20,7 +20,7 @@ impl Modal {
     pub fn new(id: impl Into<SharedString>, scroll_handle: Option<ScrollHandle>) -> Self {
         let id = id.into();
 
-        let container_id = ElementId::Name(format!("{}_container", id.clone()).into());
+        let container_id = ElementId::Name(format!("{}_container", id).into());
         Self {
             id: ElementId::Name(id),
             header: ModalHeader::new(),
@@ -253,7 +253,7 @@ impl RenderOnce for ModalFooter {
             .mt_4()
             .p(DynamicSpacing::Base08.rems(cx))
             .flex_none()
-            .justify_end()
+            .justify_between()
             .gap_1()
             .border_t_1()
             .border_color(cx.theme().colors().border_variant)

@@ -1,3 +1,4 @@
+use agent_settings::AgentProfileId;
 use anyhow::Result;
 use assistant_tools::FindPathToolInput;
 use async_trait::async_trait;
@@ -16,6 +17,9 @@ impl Example for FileSearchExample {
             revision: "03ecb88fe30794873f191ddb728f597935b3101c".to_string(),
             language_server: None,
             max_assertions: Some(3),
+            profile_id: AgentProfileId::default(),
+            existing_thread_json: None,
+            max_turns: None,
         }
     }
 

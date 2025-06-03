@@ -5,6 +5,7 @@ use crate::{
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::{Autoscroll, ScrollAmount},
 };
+use anyhow::Context as _;
 use gpui::{
     AnyElement, AsyncWindowContext, Context, Entity, Focusable as _, FontWeight, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
@@ -164,7 +165,7 @@ pub fn hover_at_inlay(
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.update(cx, |p, _| p.languages().clone())?;
+                let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
 
@@ -341,7 +342,7 @@ fn show_hover(
                         .and_then(|renderer| {
                             renderer.render_hover(group, point_range, buffer_id, cx)
                         })
-                        .ok_or_else(|| anyhow::anyhow!("no rendered diagnostic"))
+                        .context("no rendered diagnostic")
                 })??;
 
                 let (background_color, border_color) = cx.update(|_, cx| {
@@ -582,13 +583,6 @@ async fn parse_blocks(
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
-    let fallback_language_name = if let Some(ref l) = language {
-        let l = Arc::clone(l);
-        Some(l.lsp_id().clone())
-    } else {
-        None
-    };
-
     let combined_text = blocks
         .iter()
         .map(|block| match &block.kind {
@@ -606,7 +600,7 @@ async fn parse_blocks(
             Markdown::new(
                 combined_text.into(),
                 Some(language_registry.clone()),
-                fallback_language_name,
+                language.map(|language| language.name()),
                 cx,
             )
         })
@@ -655,11 +649,59 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         },
         syntax: cx.theme().syntax().clone(),
         selection_background_color: { cx.theme().players().local().selection },
-        height_is_multiple_of_line_height: true,
         heading: StyleRefinement::default()
             .font_weight(FontWeight::BOLD)
             .text_base()
             .mt(rems(1.))
+            .mb_0(),
+        ..Default::default()
+    }
+}
+
+pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
+    let settings = ThemeSettings::get_global(cx);
+    let ui_font_family = settings.ui_font.family.clone();
+    let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
+    let buffer_font_family = settings.buffer_font.family.clone();
+    let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
+
+    let mut base_text_style = window.text_style();
+    base_text_style.refine(&TextStyleRefinement {
+        font_family: Some(ui_font_family.clone()),
+        font_fallbacks: ui_font_fallbacks,
+        color: Some(cx.theme().colors().editor_foreground),
+        ..Default::default()
+    });
+    MarkdownStyle {
+        base_text_style,
+        code_block: StyleRefinement::default().my(rems(1.)).font_buffer(cx),
+        inline_code: TextStyleRefinement {
+            background_color: Some(cx.theme().colors().editor_background.opacity(0.5)),
+            font_family: Some(buffer_font_family),
+            font_fallbacks: buffer_font_fallbacks,
+            ..Default::default()
+        },
+        rule_color: cx.theme().colors().border,
+        block_quote_border_color: Color::Muted.color(cx),
+        block_quote: TextStyleRefinement {
+            color: Some(Color::Muted.color(cx)),
+            ..Default::default()
+        },
+        link: TextStyleRefinement {
+            color: Some(cx.theme().colors().editor_foreground),
+            underline: Some(gpui::UnderlineStyle {
+                thickness: px(1.),
+                color: Some(cx.theme().colors().editor_foreground),
+                wavy: false,
+            }),
+            ..Default::default()
+        },
+        syntax: cx.theme().syntax().clone(),
+        selection_background_color: { cx.theme().players().local().selection },
+        height_is_multiple_of_line_height: true,
+        heading: StyleRefinement::default()
+            .font_weight(FontWeight::BOLD)
+            .text_base()
             .mb_0(),
         ..Default::default()
     }
@@ -836,6 +878,7 @@ impl InfoPopover {
                 *keyboard_grace = false;
                 cx.stop_propagation();
             })
+            .p_2()
             .when_some(self.parsed_content.clone(), |this, markdown| {
                 this.child(
                     div()
@@ -843,12 +886,12 @@ impl InfoPopover {
                         .overflow_y_scroll()
                         .max_w(max_size.width)
                         .max_h(max_size.height)
-                        .p_2()
                         .track_scroll(&self.scroll_handle)
                         .child(
                             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
                                     copy_button: false,
+                                    copy_button_on_hover: false,
                                     border: false,
                                 })
                                 .on_url_click(open_markdown_url),
@@ -951,7 +994,7 @@ impl DiagnosticPopover {
                     .child(
                         MarkdownElement::new(
                             self.markdown.clone(),
-                            hover_markdown_style(window, cx),
+                            diagnostics_markdown_style(window, cx),
                         )
                         .on_url_click(move |link, window, cx| {
                             if let Some(renderer) = GlobalDiagnosticRenderer::global(cx) {
@@ -1007,7 +1050,9 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     match event {
-                        MarkdownEvent::SubstitutedText(parsed) => rendered_text.push_str(parsed),
+                        MarkdownEvent::SubstitutedText(parsed) => {
+                            rendered_text.push_str(parsed.as_str())
+                        }
                         MarkdownEvent::Text | MarkdownEvent::Code => {
                             rendered_text.push_str(&text[range.clone()])
                         }
@@ -1050,14 +1095,15 @@ mod tests {
         //prompt autocompletion menu
         cx.simulate_keystroke(".");
         handle_completion_request(
-            &mut cx,
             indoc! {"
                         one.|<>
                         two
                         three
                     "},
             vec!["first_completion", "second_completion"],
+            true,
             counter.clone(),
+            &mut cx,
         )
         .await;
         cx.condition(|editor, _| editor.context_menu_visible()) // wait until completion menu is visible

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
@@ -25,11 +25,15 @@ use ui::{
     ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
     LabelCommon, Styled, Window, prelude::*,
 };
+use util::serde::default_true;
 use workspace::{AppState, ModalView, Workspace};
 
 #[derive(Deserialize)]
 pub struct SshSettings {
     pub ssh_connections: Option<Vec<SshConnection>>,
+    /// Whether to read ~/.ssh/config for ssh connection sources.
+    #[serde(default = "default_true")]
+    pub read_ssh_config: bool,
 }
 
 impl SshSettings {
@@ -115,6 +119,7 @@ pub struct SshProject {
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
+    pub read_ssh_config: Option<bool>,
 }
 
 impl Settings for SshSettings {
@@ -479,15 +484,14 @@ impl remote::SshClientDelegate for SshClientDelegate {
                 cx,
             )
             .await
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
+            .with_context(|| {
+                format!(
+                    "Downloading remote server binary (version: {}, os: {}, arch: {})",
                     version
                         .map(|v| format!("{}", v))
                         .unwrap_or("unknown".to_string()),
                     platform.os,
                     platform.arch,
-                    e
                 )
             })?;
             Ok(binary_path)
@@ -565,7 +569,23 @@ pub async fn open_ssh_project(
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
-        let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
+        let workspace_position = cx
+            .update(|cx| {
+                workspace::ssh_workspace_position_from_db(
+                    connection_options.host.clone(),
+                    connection_options.port,
+                    connection_options.username.clone(),
+                    &paths,
+                    cx,
+                )
+            })?
+            .await
+            .context("fetching ssh workspace position from db")?;
+
+        let mut options =
+            cx.update(|cx| (app_state.build_window_options)(workspace_position.display, cx))?;
+        options.window_bounds = workspace_position.window_bounds;
+
         cx.open_window(options, |window, cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
@@ -576,7 +596,11 @@ pub async fn open_ssh_project(
                 None,
                 cx,
             );
-            cx.new(|cx| Workspace::new(None, project, app_state.clone(), window, cx))
+            cx.new(|cx| {
+                let mut workspace = Workspace::new(None, project, app_state.clone(), window, cx);
+                workspace.centered_layout = workspace_position.centered_layout;
+                workspace
+            })
         })?
     };
 
@@ -634,7 +658,7 @@ pub async fn open_ssh_project(
             .ok();
 
         if let Err(e) = did_open_ssh_project {
-            log::error!("Failed to open project: {:?}", e);
+            log::error!("Failed to open project: {e:?}");
             let response = window
                 .update(cx, |_, window, cx| {
                     window.prompt(

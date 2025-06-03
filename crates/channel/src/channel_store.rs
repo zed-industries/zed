@@ -1,7 +1,7 @@
 mod channel_index;
 
 use crate::{ChannelMessage, channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use channel_index::ChannelIndex;
 use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, UserStore};
 use collections::{HashMap, HashSet, hash_map};
@@ -332,10 +332,8 @@ impl ChannelStore {
         cx.spawn(async move |this, cx| {
             if let Some(request) = request {
                 let response = request.await?;
-                let this = this
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("channel store dropped"))?;
-                let user_store = this.update(cx, |this, _| this.user_store.clone())?;
+                let this = this.upgrade().context("channel store dropped")?;
+                let user_store = this.read_with(cx, |this, _| this.user_store.clone())?;
                 ChannelMessage::from_proto_vec(response.messages, &user_store, cx).await
             } else {
                 Ok(Vec::new())
@@ -480,9 +478,9 @@ impl ChannelStore {
                 hash_map::Entry::Vacant(e) => {
                     let task = cx
                         .spawn(async move |this, cx| {
-                            let channel = this.update(cx, |this, _| {
+                            let channel = this.read_with(cx, |this, _| {
                                 this.channel_for_id(channel_id).cloned().ok_or_else(|| {
-                                    Arc::new(anyhow!("no channel for id: {}", channel_id))
+                                    Arc::new(anyhow!("no channel for id: {channel_id}"))
                                 })
                             })??;
 
@@ -514,7 +512,7 @@ impl ChannelStore {
                 }
             }
         };
-        cx.background_spawn(async move { task.await.map_err(|error| anyhow!("{}", error)) })
+        cx.background_spawn(async move { task.await.map_err(|error| anyhow!("{error}")) })
     }
 
     pub fn is_channel_admin(&self, channel_id: ChannelId) -> bool {
@@ -578,9 +576,7 @@ impl ChannelStore {
                 })
                 .await?;
 
-            let channel = response
-                .channel
-                .ok_or_else(|| anyhow!("missing channel in response"))?;
+            let channel = response.channel.context("missing channel in response")?;
             let channel_id = ChannelId(channel.id);
 
             this.update(cx, |this, cx| {
@@ -752,7 +748,7 @@ impl ChannelStore {
                 })
                 .await?
                 .channel
-                .ok_or_else(|| anyhow!("missing channel in response"))?;
+                .context("missing channel in response")?;
             this.update(cx, |this, cx| {
                 let task = this.update_channels(
                     proto::UpdateChannels {
@@ -852,7 +848,7 @@ impl ChannelStore {
         message: TypedEnvelope<proto::UpdateChannels>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, _| {
+        this.read_with(&mut cx, |this, _| {
             this.update_channels_tx
                 .unbounded_send(message.payload)
                 .unwrap();
@@ -976,6 +972,7 @@ impl ChannelStore {
                                     .log_err();
 
                                 if let Some(operations) = operations {
+                                    channel_buffer.connected(cx);
                                     let client = this.client.clone();
                                     cx.background_spawn(async move {
                                         let operations = operations.await;
@@ -1016,8 +1013,8 @@ impl ChannelStore {
 
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
-                        for (_, buffer) in this.opened_buffers.drain() {
-                            if let OpenEntityHandle::Open(buffer) = buffer {
+                        for (_, buffer) in &this.opened_buffers {
+                            if let OpenEntityHandle::Open(buffer) = &buffer {
                                 if let Some(buffer) = buffer.upgrade() {
                                     buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
                                 }

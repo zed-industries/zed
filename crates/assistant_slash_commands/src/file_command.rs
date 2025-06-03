@@ -230,7 +230,10 @@ fn collect_files(
         })
         .collect::<anyhow::Result<Vec<custom_path_matcher::PathMatcher>>>()
     else {
-        return futures::stream::once(async { Err(anyhow!("invalid path")) }).boxed();
+        return futures::stream::once(async {
+            anyhow::bail!("invalid path");
+        })
+        .boxed();
     };
 
     let project_handle = project.downgrade();
@@ -584,9 +587,7 @@ mod test {
     use super::collect_files;
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);

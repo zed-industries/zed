@@ -1,13 +1,10 @@
-use std::path::PathBuf;
-
-use anyhow::anyhow;
 use collections::HashMap;
+use gpui::SharedString;
 use serde::Deserialize;
 use util::ResultExt as _;
 
 use crate::{
-    AttachRequest, DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugTaskTemplate,
-    EnvVariableReplacer, LaunchRequest, TcpArgumentsTemplate, VariableName,
+    DebugScenario, DebugTaskFile, EnvVariableReplacer, TcpArgumentsTemplate, VariableName,
 };
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -39,47 +36,26 @@ struct VsCodeDebugTaskDefinition {
     #[serde(default)]
     stop_on_entry: Option<bool>,
     #[serde(flatten)]
-    other_attributes: HashMap<String, serde_json_lenient::Value>,
+    other_attributes: serde_json::Value,
 }
 
 impl VsCodeDebugTaskDefinition {
-    fn try_to_zed(self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugTaskTemplate> {
-        let label = replacer.replace(&self.name);
+    fn try_to_zed(self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugScenario> {
+        let label = replacer.replace(&self.name).into();
         // TODO based on grep.app results it seems that vscode supports whitespace-splitting this field (ugh)
-        let definition = DebugTaskDefinition {
+        let definition = DebugScenario {
             label,
-            request: match self.request {
-                Request::Launch => {
-                    let cwd = self.cwd.map(|cwd| PathBuf::from(replacer.replace(&cwd)));
-                    let program = self.program.ok_or_else(|| {
-                        anyhow!("vscode debug launch configuration does not define a program")
-                    })?;
-                    let program = replacer.replace(&program);
-                    let args = self
-                        .args
-                        .into_iter()
-                        .map(|arg| replacer.replace(&arg))
-                        .collect();
-                    DebugRequest::Launch(LaunchRequest { program, cwd, args })
-                }
-                Request::Attach => DebugRequest::Attach(AttachRequest { process_id: None }),
-            },
-            adapter: task_type_to_adapter_name(self.r#type),
+            build: None,
+            adapter: task_type_to_adapter_name(&self.r#type),
             // TODO host?
             tcp_connection: self.port.map(|port| TcpArgumentsTemplate {
                 port: Some(port),
                 host: None,
                 timeout: None,
             }),
-            stop_on_entry: self.stop_on_entry,
-            // TODO
-            initialize_args: None,
+            config: self.other_attributes,
         };
-        let template = DebugTaskTemplate {
-            locator: None,
-            definition,
-        };
-        Ok(template)
+        Ok(definition)
     }
 }
 
@@ -110,24 +86,25 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
     }
 }
 
-// TODO figure out how to make JsDebugAdapter::ADAPTER_NAME et al available here
-fn task_type_to_adapter_name(task_type: String) -> String {
-    match task_type.as_str() {
-        "node" => "JavaScript".to_owned(),
-        "go" => "Delve".to_owned(),
-        "php" => "PHP".to_owned(),
-        "cppdbg" | "lldb" => "CodeLLDB".to_owned(),
-        "debugpy" => "Debugpy".to_owned(),
+// todo(debugger) figure out how to make JsDebugAdapter::ADAPTER_NAME et al available here
+fn task_type_to_adapter_name(task_type: &str) -> SharedString {
+    match task_type {
+        "node" => "JavaScript",
+        "go" => "Delve",
+        "php" => "PHP",
+        "cppdbg" | "lldb" => "CodeLLDB",
+        "debugpy" => "Debugpy",
         _ => task_type,
     }
+    .to_owned()
+    .into()
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        DebugRequest, DebugTaskDefinition, DebugTaskFile, DebugTaskTemplate, LaunchRequest,
-        TcpArgumentsTemplate,
-    };
+    use serde_json::json;
+
+    use crate::{DebugScenario, DebugTaskFile, TcpArgumentsTemplate};
 
     use super::VsCodeDebugTaskFile;
 
@@ -159,24 +136,18 @@ mod tests {
         let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
         pretty_assertions::assert_eq!(
             zed,
-            DebugTaskFile(vec![DebugTaskTemplate {
-                locator: None,
-                definition: DebugTaskDefinition {
-                    label: "Debug my JS app".into(),
-                    adapter: "JavaScript".into(),
-                    stop_on_entry: Some(true),
-                    initialize_args: None,
-                    tcp_connection: Some(TcpArgumentsTemplate {
-                        port: Some(17),
-                        host: None,
-                        timeout: None,
-                    }),
-                    request: DebugRequest::Launch(LaunchRequest {
-                        program: "${ZED_WORKTREE_ROOT}/xyz.js".into(),
-                        args: vec!["--foo".into(), "${ZED_WORKTREE_ROOT}/thing".into()],
-                        cwd: Some("${ZED_WORKTREE_ROOT}/${FOO}/sub".into()),
-                    }),
-                }
+            DebugTaskFile(vec![DebugScenario {
+                label: "Debug my JS app".into(),
+                adapter: "JavaScript".into(),
+                config: json!({
+                    "showDevDebugOutput": false,
+                }),
+                tcp_connection: Some(TcpArgumentsTemplate {
+                    port: Some(17),
+                    host: None,
+                    timeout: None,
+                }),
+                build: None
             }])
         );
     }

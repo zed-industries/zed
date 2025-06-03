@@ -19,12 +19,11 @@ pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
 
 impl FeatureFlags {
     fn has_flag<T: FeatureFlag>(&self) -> bool {
-        if self.staff && T::enabled_for_staff() {
+        if T::enabled_for_all() {
             return true;
         }
 
-        #[cfg(debug_assertions)]
-        if T::enabled_in_development() {
+        if self.staff && T::enabled_for_staff() {
             return true;
         }
 
@@ -48,15 +47,13 @@ pub trait FeatureFlag {
         true
     }
 
-    fn enabled_in_development() -> bool {
-        Self::enabled_for_staff() && !*ZED_DISABLE_STAFF
+    /// Returns whether this feature flag is enabled for everyone.
+    ///
+    /// This is generally done on the server, but we provide this as a way to entirely enable a feature flag client-side
+    /// without needing to remove all of the call sites.
+    fn enabled_for_all() -> bool {
+        false
     }
-}
-
-pub struct Assistant2FeatureFlag;
-
-impl FeatureFlag for Assistant2FeatureFlag {
-    const NAME: &'static str = "assistant2";
 }
 
 pub struct PredictEditsRateCompletionsFeatureFlag;
@@ -94,6 +91,12 @@ impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
     }
 }
 
+pub struct JjUiFeatureFlag {}
+
+impl FeatureFlag for JjUiFeatureFlag {
+    const NAME: &'static str = "jj-ui";
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, window: &Window, callback: F) -> Subscription
     where
@@ -128,7 +131,6 @@ where
         if self
             .try_global::<FeatureFlags>()
             .is_some_and(|f| f.has_flag::<T>())
-            || cfg!(debug_assertions) && T::enabled_in_development()
         {
             self.defer_in(window, move |view, window, cx| {
                 callback(view, window, cx);

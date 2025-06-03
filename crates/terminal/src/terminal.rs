@@ -46,9 +46,10 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::{ResultExt, paths::home_dir, truncate_and_trailoff};
+use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
+    borrow::Cow,
     cmp::{self, min},
     fmt::Display,
     ops::{Deref, Index, RangeInclusive},
@@ -269,13 +270,12 @@ impl TerminalError {
                     Err(s) => s,
                 }
             })
-            .unwrap_or_else(|| {
-                let default_dir =
-                    dirs::home_dir().map(|buf| buf.into_os_string().to_string_lossy().to_string());
-                match default_dir {
-                    Some(dir) => format!("<none specified, using home directory> {}", dir),
-                    None => "<none specified, could not find home directory>".to_string(),
-                }
+            .unwrap_or_else(|| match dirs::home_dir() {
+                Some(dir) => format!(
+                    "<none specified, using home directory> {}",
+                    dir.into_os_string().to_string_lossy()
+                ),
+                None => "<none specified, could not find home directory>".to_string(),
             })
     }
 
@@ -313,7 +313,7 @@ impl Display for TerminalError {
 
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
-const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
 const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
 // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
 // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
@@ -517,7 +517,7 @@ impl TerminalBuilder {
             while let Some(event) = self.events_rx.next().await {
                 terminal.update(cx, |terminal, cx| {
                     //Process the first event immediately for lowered latency
-                    terminal.process_event(&event, cx);
+                    terminal.process_event(event, cx);
                 })?;
 
                 'outer: loop {
@@ -555,11 +555,11 @@ impl TerminalBuilder {
 
                     terminal.update(cx, |this, cx| {
                         if wakeup {
-                            this.process_event(&AlacTermEvent::Wakeup, cx);
+                            this.process_event(AlacTermEvent::Wakeup, cx);
                         }
 
                         for event in events {
-                            this.process_event(&event, cx);
+                            this.process_event(event, cx);
                         }
                     })?;
                     smol::future::yield_now().await;
@@ -601,9 +601,11 @@ pub struct TerminalContent {
     pub cursor_char: char,
     pub terminal_bounds: TerminalBounds,
     pub last_hovered_word: Option<HoveredWord>,
+    pub scrolled_to_top: bool,
+    pub scrolled_to_bottom: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct HoveredWord {
     pub word: String,
     pub word_match: RangeInclusive<AlacPoint>,
@@ -625,6 +627,8 @@ impl Default for TerminalContent {
             cursor_char: Default::default(),
             terminal_bounds: Default::default(),
             last_hovered_word: None,
+            scrolled_to_top: false,
+            scrolled_to_bottom: false,
         }
     }
 }
@@ -701,10 +705,10 @@ impl TaskStatus {
 }
 
 impl Terminal {
-    fn process_event(&mut self, event: &AlacTermEvent, cx: &mut Context<Self>) {
+    fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
         match event {
             AlacTermEvent::Title(title) => {
-                self.breadcrumb_text = title.to_string();
+                self.breadcrumb_text = title;
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ResetTitle => {
@@ -712,7 +716,7 @@ impl Terminal {
                 cx.emit(Event::BreadcrumbsChanged);
             }
             AlacTermEvent::ClipboardStore(_, data) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(data.to_string()))
+                cx.write_to_clipboard(ClipboardItem::new_string(data))
             }
             AlacTermEvent::ClipboardLoad(_, format) => {
                 self.write_to_pty(
@@ -720,12 +724,13 @@ impl Terminal {
                         // The terminal only supports pasting strings, not images.
                         Some(text) => format(text),
                         _ => format(""),
-                    },
+                    }
+                    .into_bytes(),
                 )
             }
-            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.clone()),
+            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.into_bytes()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
-                self.write_to_pty(format(self.last_content.terminal_bounds.into()))
+                self.write_to_pty(format(self.last_content.terminal_bounds.into()).into_bytes())
             }
             AlacTermEvent::CursorBlinkingChange => {
                 let terminal = self.term.lock();
@@ -755,13 +760,12 @@ impl Terminal {
                 // Instead of locking, we could store the colors in `self.last_content`. But then
                 // we might respond with out of date value if a "set color" sequence is immediately
                 // followed by a color request sequence.
-                let color = self.term.lock().colors()[*index].unwrap_or_else(|| {
-                    to_alac_rgb(get_color_at_index(*index, cx.theme().as_ref()))
-                });
-                self.write_to_pty(format(color));
+                let color = self.term.lock().colors()[index]
+                    .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
+                self.write_to_pty(format(color).into_bytes());
             }
             AlacTermEvent::ChildExit(error_code) => {
-                self.register_task_finished(Some(*error_code), cx);
+                self.register_task_finished(Some(error_code), cx);
             }
         }
     }
@@ -1084,7 +1088,7 @@ impl Terminal {
         }
 
         self.last_content.last_hovered_word = Some(HoveredWord {
-            word: word.clone(),
+            word,
             word_match,
             id: self.next_link_id(),
         });
@@ -1208,6 +1212,14 @@ impl Terminal {
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
     }
 
+    pub fn scrolled_to_top(&self) -> bool {
+        self.last_content.scrolled_to_top
+    }
+
+    pub fn scrolled_to_bottom(&self) -> bool {
+        self.last_content.scrolled_to_bottom
+    }
+
     ///Resize the terminal and the PTY.
     pub fn set_size(&mut self, new_bounds: TerminalBounds) {
         if self.last_content.terminal_bounds != new_bounds {
@@ -1216,28 +1228,16 @@ impl Terminal {
     }
 
     ///Write the Input payload to the tty.
-    fn write_to_pty(&self, input: String) {
-        self.pty_tx.notify(input.into_bytes());
+    fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
+        self.pty_tx.notify(input.into());
     }
 
-    fn write_bytes_to_pty(&self, input: Vec<u8>) {
-        self.pty_tx.notify(input);
-    }
-
-    pub fn input(&mut self, input: String) {
+    pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
 
         self.write_to_pty(input);
-    }
-
-    pub fn input_bytes(&mut self, input: Vec<u8>) {
-        self.events
-            .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
-        self.events.push_back(InternalEvent::SetSelection(None));
-
-        self.write_bytes_to_pty(input);
     }
 
     pub fn toggle_vi_mode(&mut self) {
@@ -1249,12 +1249,13 @@ impl Terminal {
             return;
         }
 
-        let mut key = keystroke.key.clone();
-        if keystroke.modifiers.shift {
-            key = key.to_uppercase();
-        }
+        let key: Cow<'_, str> = if keystroke.modifiers.shift {
+            Cow::Owned(keystroke.key.to_uppercase())
+        } else {
+            Cow::Borrowed(keystroke.key.as_str())
+        };
 
-        let motion: Option<ViMotion> = match key.as_str() {
+        let motion: Option<ViMotion> = match key.as_ref() {
             "h" | "left" => Some(ViMotion::Left),
             "j" | "down" => Some(ViMotion::Down),
             "k" | "up" => Some(ViMotion::Up),
@@ -1284,7 +1285,7 @@ impl Terminal {
             return;
         }
 
-        let scroll_motion = match key.as_str() {
+        let scroll_motion = match key.as_ref() {
             "g" => Some(AlacScroll::Top),
             "G" => Some(AlacScroll::Bottom),
             "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
@@ -1305,7 +1306,7 @@ impl Terminal {
             return;
         }
 
-        match key.as_str() {
+        match key.as_ref() {
             "v" => {
                 let point = self.last_content.cursor.point;
                 let selection_type = SelectionType::Simple;
@@ -1345,7 +1346,10 @@ impl Terminal {
         // Keep default terminal behavior
         let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
         if let Some(esc) = esc {
-            self.input(esc);
+            match esc {
+                Cow::Borrowed(string) => self.input(string.as_bytes()),
+                Cow::Owned(string) => self.input(string.into_bytes()),
+            };
             true
         } else {
             false
@@ -1378,7 +1382,7 @@ impl Terminal {
             text.replace("\r\n", "\r").replace('\n', "\r")
         };
 
-        self.input(paste_text);
+        self.input(paste_text.into_bytes());
     }
 
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1417,7 +1421,16 @@ impl Terminal {
             cursor_char: term.grid()[content.cursor.point].c,
             terminal_bounds: last_content.terminal_bounds,
             last_hovered_word: last_content.last_hovered_word.clone(),
+            scrolled_to_top: content.display_offset == term.history_size(),
+            scrolled_to_bottom: content.display_offset == 0,
         }
+    }
+
+    pub fn get_content(&self) -> String {
+        let term = self.term.lock_unfair();
+        let start = AlacPoint::new(term.topmost_line(), Column(0));
+        let end = AlacPoint::new(term.bottommost_line(), term.last_column());
+        term.bounds_to_string(start, end)
     }
 
     pub fn last_n_non_empty_lines(&self, n: usize) -> Vec<String> {
@@ -1478,13 +1491,13 @@ impl Terminal {
 
     pub fn focus_in(&self) {
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.write_to_pty("\x1b[I".to_string());
+            self.write_to_pty("\x1b[I".as_bytes());
         }
     }
 
     pub fn focus_out(&mut self) {
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.write_to_pty("\x1b[O".to_string());
+            self.write_to_pty("\x1b[O".as_bytes());
         }
     }
 
@@ -1651,7 +1664,7 @@ impl Terminal {
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default().to_string();
-                        self.input(text);
+                        self.input(text.into_bytes());
                     }
                 }
                 _ => {}
@@ -1823,7 +1836,7 @@ impl Terminal {
                                 .map(|name| name.to_string_lossy().to_string())
                                 .unwrap_or_default();
 
-                            let argv = fpi.argv.clone();
+                            let argv = fpi.argv.as_slice();
                             let process_name = format!(
                                 "{}{}",
                                 fpi.name,
@@ -1856,8 +1869,9 @@ impl Terminal {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
-                return cx
-                    .spawn(async move |_| completion_receiver.recv().await.log_err().flatten());
+                return cx.spawn(async move |_| completion_receiver.recv().await.ok().flatten());
+            } else if let Ok(status) = task.completion_rx.try_recv() {
+                return Task::ready(status);
             }
         }
         Task::ready(None)

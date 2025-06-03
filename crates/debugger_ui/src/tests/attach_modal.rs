@@ -1,12 +1,13 @@
 use crate::{attach_modal::Candidate, tests::start_debug_session_with, *};
 use attach_modal::AttachModal;
-use dap::{FakeAdapter, client::SessionId};
+use dap::{FakeAdapter, adapters::DebugTaskDefinition};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachRequest, DebugTaskDefinition, TcpArgumentsTemplate};
+use task::AttachRequest;
 use tests::{init_test, init_test_workspace};
+use util::path;
 
 #[gpui::test]
 async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -15,14 +16,14 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
@@ -30,18 +31,19 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
         &workspace,
         cx,
         DebugTaskDefinition {
-            adapter: "fake-adapter".to_string(),
-            request: dap::DebugRequest::Attach(AttachRequest {
-                process_id: Some(10),
+            adapter: "fake-adapter".into(),
+            label: "label".into(),
+            config: json!({
+               "request": "attach",
+              "process_id": 10,
             }),
-            label: "label".to_string(),
-            initialize_args: None,
             tcp_connection: None,
-            stop_on_entry: None,
         },
         |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
-                assert_eq!(json!({"request": "attach", "process_id": 10}), args.raw);
+                let raw = &args.raw;
+                assert_eq!(raw["request"], "attach");
+                assert_eq!(raw["process_id"], 10);
 
                 Ok(())
             });
@@ -77,37 +79,37 @@ async fn test_show_attach_modal_and_select_process(
     let fs = FakeFs::new(executor.clone());
 
     fs.insert_tree(
-        "/project",
+        path!("/project"),
         json!({
             "main.rs": "First line\nSecond line\nThird line\nFourth line",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     // Set up handlers for sessions spawned via modal.
     let _initialize_subscription =
         project::debugger::test::intercept_debug_sessions(cx, |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
-                assert_eq!(json!({"request": "attach", "process_id": 1}), args.raw);
+                let raw = &args.raw;
+                assert_eq!(raw["request"], "attach");
+                assert_eq!(raw["process_id"], 1);
 
                 Ok(())
             });
         });
     let attach_modal = workspace
         .update(cx, |workspace, window, cx| {
-            let workspace_handle = cx.entity();
+            let workspace_handle = cx.weak_entity();
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
                     workspace_handle,
-                    DebugTaskDefinition {
+                    task::ZedDebugConfig {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
                         request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
-                        initialize_args: None,
-                        tcp_connection: Some(TcpArgumentsTemplate::default()),
                         stop_on_entry: None,
                     },
                     vec![
@@ -176,14 +178,4 @@ async fn test_show_attach_modal_and_select_process(
             assert!(workspace.active_modal::<AttachModal>(cx).is_none());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            let session = dap_store.session_by_id(SessionId(0)).unwrap();
-
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }

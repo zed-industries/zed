@@ -5,7 +5,7 @@ mod tables;
 pub mod tests;
 
 use crate::{Error, Result, executor::Executor};
-use anyhow::anyhow;
+use anyhow::{Context as _, anyhow};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
@@ -56,6 +56,12 @@ pub use sea_orm::ConnectOptions;
 pub use tables::user::Model as User;
 pub use tables::*;
 
+#[cfg(test)]
+pub struct DatabaseTestOptions {
+    pub runtime: tokio::runtime::Runtime,
+    pub query_failure_probability: parking_lot::Mutex<f64>,
+}
+
 /// Database gives you a handle that lets you access the database.
 /// It handles pooling internally.
 pub struct Database {
@@ -68,7 +74,7 @@ pub struct Database {
     notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
     notification_kinds_by_name: HashMap<String, NotificationKindId>,
     #[cfg(test)]
-    runtime: Option<tokio::runtime::Runtime>,
+    test_options: Option<DatabaseTestOptions>,
 }
 
 // The `Database` type has so many methods that its impl blocks are split into
@@ -87,7 +93,7 @@ impl Database {
             notification_kinds_by_name: HashMap::default(),
             executor,
             #[cfg(test)]
-            runtime: None,
+            test_options: None,
         })
     }
 
@@ -320,11 +326,9 @@ impl Database {
 
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
-        let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
-            return Err(anyhow!(
-                "couldn't complete transaction because it's still in use"
-            ))?;
-        };
+        let tx = Arc::get_mut(&mut tx)
+            .and_then(|tx| tx.take())
+            .context("couldn't complete transaction because it's still in use")?;
 
         Ok((tx, result))
     }
@@ -344,11 +348,9 @@ impl Database {
 
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
-        let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
-            return Err(anyhow!(
-                "couldn't complete transaction because it's still in use"
-            ))?;
-        };
+        let tx = Arc::get_mut(&mut tx)
+            .and_then(|tx| tx.take())
+            .context("couldn't complete transaction because it's still in use")?;
 
         Ok((tx, result))
     }
@@ -359,11 +361,16 @@ impl Database {
     {
         #[cfg(test)]
         {
+            let test_options = self.test_options.as_ref().unwrap();
             if let Executor::Deterministic(executor) = &self.executor {
                 executor.simulate_random_delay().await;
+                let fail_probability = *test_options.query_failure_probability.lock();
+                if executor.rng().gen_bool(fail_probability) {
+                    return Err(anyhow!("simulated query failure"))?;
+                }
             }
 
-            self.runtime.as_ref().unwrap().block_on(future)
+            test_options.runtime.block_on(future)
         }
 
         #[cfg(not(test))]
@@ -543,7 +550,7 @@ pub struct MembershipUpdated {
 
 /// The result of setting a member's role.
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
+
 pub enum SetMemberRoleResult {
     InviteUpdated(Channel),
     MembershipUpdated(MembershipUpdated),
@@ -800,6 +807,7 @@ impl LocalSettingsKind {
             proto::LocalSettingsKind::Settings => Self::Settings,
             proto::LocalSettingsKind::Tasks => Self::Tasks,
             proto::LocalSettingsKind::Editorconfig => Self::Editorconfig,
+            proto::LocalSettingsKind::Debug => Self::Debug,
         }
     }
 
@@ -808,6 +816,7 @@ impl LocalSettingsKind {
             Self::Settings => proto::LocalSettingsKind::Settings,
             Self::Tasks => proto::LocalSettingsKind::Tasks,
             Self::Editorconfig => proto::LocalSettingsKind::Editorconfig,
+            Self::Debug => proto::LocalSettingsKind::Debug,
         }
     }
 }
@@ -851,9 +860,7 @@ fn db_status_to_proto(
                 )
             }
             _ => {
-                return Err(anyhow!(
-                    "Unexpected combination of status fields: {entry:?}"
-                ));
+                anyhow::bail!("Unexpected combination of status fields: {entry:?}");
             }
         };
     Ok(proto::StatusEntry {

@@ -36,12 +36,7 @@ pub fn intercept_debug_sessions<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
 
 fn register_default_handlers(session: &Session, client: &Arc<DebugAdapterClient>, cx: &mut App) {
     client.on_request::<dap::requests::Initialize, _>(move |_, _| Ok(Default::default()));
-    let paths = session
-        .as_local()
-        .unwrap()
-        .breakpoint_store
-        .read(cx)
-        .breakpoint_paths();
+    let paths = session.breakpoint_store.read(cx).breakpoint_paths();
 
     client.on_request::<dap::requests::SetBreakpoints, _>(move |_, args| {
         let p = Arc::from(Path::new(&args.source.path.unwrap()));

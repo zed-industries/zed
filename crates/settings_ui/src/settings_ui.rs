@@ -1,6 +1,7 @@
 mod appearance_settings_controls;
 
 use std::any::TypeId;
+use std::sync::Arc;
 
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
@@ -12,7 +13,7 @@ use gpui::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::SettingsStore;
+use settings::{SettingsStore, VsCodeSettingsSource};
 use ui::prelude::*;
 use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
@@ -31,7 +32,13 @@ pub struct ImportVsCodeSettings {
     pub skip_prompt: bool,
 }
 
-impl_actions!(zed, [ImportVsCodeSettings]);
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema)]
+pub struct ImportCursorSettings {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+impl_actions!(zed, [ImportVsCodeSettings, ImportCursorSettings]);
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {
@@ -61,49 +68,30 @@ pub fn init(cx: &mut App) {
 
             window
                 .spawn(cx, async move |cx: &mut AsyncWindowContext| {
-                    let vscode =
-                        match settings::VsCodeSettings::load_user_settings(fs.clone()).await {
-                            Ok(vscode) => vscode,
-                            Err(err) => {
-                                println!(
-                                    "Failed to load VsCode settings: {}",
-                                    err.context(format!(
-                                        "Loading VsCode settings from path: {:?}",
-                                        paths::vscode_settings_file()
-                                    ))
-                                );
+                    handle_import_vscode_settings(
+                        VsCodeSettingsSource::VsCode,
+                        action.skip_prompt,
+                        fs,
+                        cx,
+                    )
+                    .await
+                })
+                .detach();
+        });
 
-                                let _ = cx.prompt(
-                                    gpui::PromptLevel::Info,
-                                    "Could not find or load a VsCode settings file",
-                                    None,
-                                    &["Ok"],
-                                );
-                                return;
-                            }
-                        };
+        workspace.register_action(|_workspace, action: &ImportCursorSettings, window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            let action = *action;
 
-                    let prompt = if action.skip_prompt {
-                        Task::ready(Some(0))
-                    } else {
-                        let prompt = cx.prompt(
-                            gpui::PromptLevel::Warning,
-                            "Importing settings may overwrite your existing settings",
-                            None,
-                            &["Ok", "Cancel"],
-                        );
-                        cx.spawn(async move |_| prompt.await.ok())
-                    };
-                    if prompt.await != Some(0) {
-                        return;
-                    }
-
-                    cx.update(|_, cx| {
-                        cx.global::<SettingsStore>()
-                            .import_vscode_settings(fs, vscode);
-                        log::info!("Imported settings from VsCode");
-                    })
-                    .ok();
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    handle_import_vscode_settings(
+                        VsCodeSettingsSource::Cursor,
+                        action.skip_prompt,
+                        fs,
+                        cx,
+                    )
+                    .await
                 })
                 .detach();
         });
@@ -133,6 +121,56 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+async fn handle_import_vscode_settings(
+    source: VsCodeSettingsSource,
+    skip_prompt: bool,
+    fs: Arc<dyn Fs>,
+    cx: &mut AsyncWindowContext,
+) {
+    let vscode = match settings::VsCodeSettings::load_user_settings(source, fs.clone()).await {
+        Ok(vscode) => vscode,
+        Err(err) => {
+            println!(
+                "Failed to load {source} settings: {}",
+                err.context(format!(
+                    "Loading {source} settings from path: {:?}",
+                    paths::vscode_settings_file()
+                ))
+            );
+
+            let _ = cx.prompt(
+                gpui::PromptLevel::Info,
+                &format!("Could not find or load a {source} settings file"),
+                None,
+                &["Ok"],
+            );
+            return;
+        }
+    };
+
+    let prompt = if skip_prompt {
+        Task::ready(Some(0))
+    } else {
+        let prompt = cx.prompt(
+            gpui::PromptLevel::Warning,
+            "Importing settings may overwrite your existing settings",
+            None,
+            &["Ok", "Cancel"],
+        );
+        cx.spawn(async move |_| prompt.await.ok())
+    };
+    if prompt.await != Some(0) {
+        return;
+    }
+
+    cx.update(|_, cx| {
+        cx.global::<SettingsStore>()
+            .import_vscode_settings(fs, vscode);
+        log::info!("Imported settings from {source}");
+    })
+    .ok();
+}
+
 pub struct SettingsPage {
     focus_handle: FocusHandle,
 }
@@ -160,8 +198,8 @@ impl Item for SettingsPage {
         Some(Icon::new(IconName::Settings))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("Settings".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Settings".into()
     }
 
     fn show_toolbar(&self) -> bool {

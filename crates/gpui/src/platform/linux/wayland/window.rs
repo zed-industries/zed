@@ -29,8 +29,8 @@ use crate::platform::{
 use crate::scene::Scene;
 use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, RequestFrameOptions, ResizeEdge,
-    ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
+    PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ResizeEdge, ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams, px,
     size,
 };
@@ -751,12 +751,28 @@ where
 
 impl rwh::HasWindowHandle for WaylandWindow {
     fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let surface = self.0.surface().id().as_ptr() as *mut libc::c_void;
+        let c_ptr = NonNull::new(surface).ok_or(rwh::HandleError::Unavailable)?;
+        let handle = rwh::WaylandWindowHandle::new(c_ptr);
+        let raw_handle = rwh::RawWindowHandle::Wayland(handle);
+        Ok(unsafe { rwh::WindowHandle::borrow_raw(raw_handle) })
     }
 }
+
 impl rwh::HasDisplayHandle for WaylandWindow {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
-        unimplemented!()
+        let display = self
+            .0
+            .surface()
+            .backend()
+            .upgrade()
+            .ok_or(rwh::HandleError::Unavailable)?
+            .display_ptr() as *mut libc::c_void;
+
+        let c_ptr = NonNull::new(display).ok_or(rwh::HandleError::Unavailable)?;
+        let handle = rwh::WaylandDisplayHandle::new(c_ptr);
+        let raw_handle = rwh::RawDisplayHandle::Wayland(handle);
+        Ok(unsafe { rwh::DisplayHandle::borrow_raw(raw_handle) })
     }
 }
 
@@ -862,7 +878,7 @@ impl PlatformWindow for WaylandWindow {
         _level: PromptLevel,
         _msg: &str,
         _detail: Option<&str>,
-        _answers: &[&str],
+        _answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
         None
     }

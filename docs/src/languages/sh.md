@@ -19,7 +19,7 @@ You can configure various settings for Shell Scripts in your Zed User Settings (
 
 ### Formatting
 
-Zed supports auto-formatting Shell Scripts using external tools like [`shfmt`](https://github.com/patrickvane/shfmt).
+Zed supports auto-formatting Shell Scripts using external tools like [`shfmt`](https://github.com/mvdan/sh).
 
 1. Install `shfmt`:
 

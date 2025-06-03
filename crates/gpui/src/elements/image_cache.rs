@@ -1,7 +1,8 @@
 use crate::{
     AnyElement, AnyEntity, App, AppContext, Asset, AssetLogger, Bounds, Element, ElementId, Entity,
-    GlobalElementId, ImageAssetLoader, ImageCacheError, IntoElement, LayoutId, ParentElement,
-    Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window, hash,
+    GlobalElementId, ImageAssetLoader, ImageCacheError, InspectorElementId, IntoElement, LayoutId,
+    ParentElement, Pixels, RenderImage, Resource, Style, StyleRefinement, Styled, Task, Window,
+    hash,
 };
 
 use futures::{FutureExt, future::Shared};
@@ -102,14 +103,19 @@ impl Element for ImageCacheElement {
         None
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let image_cache = self.image_cache_provider.provide(window, cx);
-        window.with_image_cache(image_cache, |window| {
+        window.with_image_cache(Some(image_cache), |window| {
             let child_layout_ids = self
                 .children
                 .iter_mut()
@@ -125,6 +131,7 @@ impl Element for ImageCacheElement {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -138,6 +145,7 @@ impl Element for ImageCacheElement {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
@@ -145,7 +153,7 @@ impl Element for ImageCacheElement {
         cx: &mut App,
     ) {
         let image_cache = self.image_cache_provider.provide(window, cx);
-        window.with_image_cache(image_cache, |window| {
+        window.with_image_cache(Some(image_cache), |window| {
             for child in &mut self.children {
                 child.paint(window, cx);
             }
@@ -217,9 +225,9 @@ impl<T: ImageCache> ImageCacheProvider for Entity<T> {
 }
 
 /// An implementation of ImageCache, that uses an LRU caching strategy to unload images when the cache is full
-pub struct HashMapImageCache(HashMap<u64, ImageCacheItem>);
+pub struct RetainAllImageCache(HashMap<u64, ImageCacheItem>);
 
-impl fmt::Debug for HashMapImageCache {
+impl fmt::Debug for RetainAllImageCache {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("HashMapImageCache")
             .field("num_images", &self.0.len())
@@ -227,11 +235,11 @@ impl fmt::Debug for HashMapImageCache {
     }
 }
 
-impl HashMapImageCache {
+impl RetainAllImageCache {
     /// Create a new image cache.
     #[inline]
     pub fn new(cx: &mut App) -> Entity<Self> {
-        let e = cx.new(|_cx| HashMapImageCache(HashMap::new()));
+        let e = cx.new(|_cx| RetainAllImageCache(HashMap::new()));
         cx.observe_release(&e, |image_cache, cx| {
             for (_, mut item) in std::mem::replace(&mut image_cache.0, HashMap::new()) {
                 if let Some(Ok(image)) = item.get() {
@@ -307,13 +315,39 @@ impl HashMapImageCache {
     }
 }
 
-impl ImageCache for HashMapImageCache {
+impl ImageCache for RetainAllImageCache {
     fn load(
         &mut self,
         resource: &Resource,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Result<Arc<RenderImage>, ImageCacheError>> {
-        HashMapImageCache::load(self, resource, window, cx)
+        RetainAllImageCache::load(self, resource, window, cx)
+    }
+}
+
+/// Constructs a retain-all image cache that uses the element state associated with the given ID.
+pub fn retain_all(id: impl Into<ElementId>) -> RetainAllImageCacheProvider {
+    RetainAllImageCacheProvider { id: id.into() }
+}
+
+/// A provider struct for creating a retain-all image cache inline
+pub struct RetainAllImageCacheProvider {
+    id: ElementId,
+}
+
+impl ImageCacheProvider for RetainAllImageCacheProvider {
+    fn provide(&mut self, window: &mut Window, cx: &mut App) -> AnyImageCache {
+        window
+            .with_global_id(self.id.clone(), |global_id, window| {
+                window.with_element_state::<Entity<RetainAllImageCache>, _>(
+                    global_id,
+                    |cache, _window| {
+                        let mut cache = cache.unwrap_or_else(|| RetainAllImageCache::new(cx));
+                        (cache.clone(), cache)
+                    },
+                )
+            })
+            .into()
     }
 }

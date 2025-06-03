@@ -1,14 +1,15 @@
-use dap::DebugRequest;
+use dap::{DapRegistry, DebugRequest};
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{DismissEvent, Entity, EventEmitter, Focusable, Render};
+use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Render};
 use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
+use task::ZedDebugConfig;
+use util::debug_panic;
 
 use std::sync::Arc;
 use sysinfo::System;
 use ui::{Context, Tooltip, prelude::*};
 use ui::{ListItem, ListItemSpacing};
-use util::debug_panic;
 use workspace::{ModalView, Workspace};
 
 use crate::debugger_panel::DebugPanel;
@@ -24,20 +25,20 @@ pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
+    pub(crate) definition: ZedDebugConfig,
     workspace: WeakEntity<Workspace>,
-    pub(crate) debug_config: task::DebugTaskDefinition,
     candidates: Arc<[Candidate]>,
 }
 
 impl AttachModalDelegate {
     fn new(
-        workspace: Entity<Workspace>,
-        debug_config: task::DebugTaskDefinition,
+        workspace: WeakEntity<Workspace>,
+        definition: ZedDebugConfig,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
-            workspace: workspace.downgrade(),
-            debug_config,
+            workspace,
+            definition,
             candidates,
             selected_index: 0,
             matches: Vec::default(),
@@ -53,8 +54,8 @@ pub struct AttachModal {
 
 impl AttachModal {
     pub fn new(
-        workspace: Entity<Workspace>,
-        debug_config: task::DebugTaskDefinition,
+        definition: ZedDebugConfig,
+        workspace: WeakEntity<Workspace>,
         modal: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -77,12 +78,12 @@ impl AttachModal {
             .collect();
         processes.sort_by_key(|k| k.name.clone());
         let processes = processes.into_iter().collect();
-        Self::with_processes(workspace, debug_config, processes, modal, window, cx)
+        Self::with_processes(workspace, definition, processes, modal, window, cx)
     }
 
     pub(super) fn with_processes(
-        workspace: Entity<Workspace>,
-        debug_config: task::DebugTaskDefinition,
+        workspace: WeakEntity<Workspace>,
+        definition: ZedDebugConfig,
         processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
@@ -90,7 +91,7 @@ impl AttachModal {
     ) -> Self {
         let picker = cx.new(|cx| {
             Picker::uniform_list(
-                AttachModalDelegate::new(workspace, debug_config, processes),
+                AttachModalDelegate::new(workspace, definition, processes),
                 window,
                 cx,
             )
@@ -157,7 +158,7 @@ impl PickerDelegate for AttachModalDelegate {
     ) -> gpui::Task<()> {
         cx.spawn(async move |this, cx| {
             let Some(processes) = this
-                .update(cx, |this, _| this.delegate.candidates.clone())
+                .read_with(cx, |this, _| this.delegate.candidates.clone())
                 .ok()
             else {
                 return;
@@ -217,7 +218,7 @@ impl PickerDelegate for AttachModalDelegate {
             return cx.emit(DismissEvent);
         };
 
-        match &mut self.debug_config.request {
+        match &mut self.definition.request {
             DebugRequest::Attach(config) => {
                 config.process_id = Some(candidate.pid);
             }
@@ -227,7 +228,14 @@ impl PickerDelegate for AttachModalDelegate {
             }
         }
 
-        let definition = self.debug_config.clone();
+        let Some(scenario) = cx.read_global::<DapRegistry, _>(|registry, _| {
+            registry
+                .adapter(&self.definition.adapter)
+                .and_then(|adapter| adapter.config_from_zed_format(self.definition.clone()).ok())
+        }) else {
+            return;
+        };
+
         let panel = self
             .workspace
             .update(cx, |workspace, cx| workspace.panel::<DebugPanel>(cx))
@@ -235,9 +243,10 @@ impl PickerDelegate for AttachModalDelegate {
             .flatten();
         if let Some(panel) = panel {
             panel.update(cx, |panel, cx| {
-                panel.start_session(definition, window, cx);
+                panel.start_session(scenario, Default::default(), None, None, window, cx);
             });
         }
+
         cx.emit(DismissEvent);
     }
 
@@ -300,7 +309,7 @@ impl PickerDelegate for AttachModalDelegate {
 
 #[cfg(any(test, feature = "test-support"))]
 pub(crate) fn _process_names(modal: &AttachModal, cx: &mut Context<AttachModal>) -> Vec<String> {
-    modal.picker.update(cx, |picker, _| {
+    modal.picker.read_with(cx, |picker, _| {
         picker
             .delegate
             .matches

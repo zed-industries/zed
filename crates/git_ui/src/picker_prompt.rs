@@ -144,7 +144,7 @@ impl PickerDelegate for PickerPromptDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         cx.spawn_in(window, async move |picker, cx| {
-            let candidates = picker.update(cx, |picker, _| {
+            let candidates = picker.read_with(cx, |picker, _| {
                 picker
                     .delegate
                     .all_options

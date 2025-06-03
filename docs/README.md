@@ -4,13 +4,15 @@ Welcome to Zed's documentation.
 
 This is built on push to `main` and published automatically to [https://zed.dev/docs](https://zed.dev/docs).
 
-To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook`) and then run:
+To preview the docs locally you will need to install [mdBook](https://rust-lang.github.io/mdBook/) (`cargo install mdbook@0.4.40`) and then run:
 
 ```sh
 mdbook serve docs
 ```
 
-Before committing, verify that the docs are formatted in the way prettier expects with:
+It's important to note the version number above. For an unknown reason, as of 2025-04-23, running 0.4.48 will cause odd URL behavior that breaks docs.
+
+Before committing, verify that the docs are formatted in the way Prettier expects with:
 
 ```
 cd docs && pnpm dlx prettier@3.5.0 . --write && cd ..
@@ -60,7 +62,7 @@ This will render a human-readable version of the action name, e.g., "zed: open s
 
 ### Creating New Templates
 
-New templates can be created by implementing the `Template` trait for your desired template in the `docs_preprocessor` crate.
+Templates are just functions that modify the source of the docs pages (usually with a regex match & replace). You can see how the actions and keybindings are templated in `crates/docs_preprocessor/src/main.rs` for reference on how to create new templates.
 
 ### References
 

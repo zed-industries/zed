@@ -4,7 +4,7 @@
 mod reliability;
 mod zed;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
@@ -15,12 +15,12 @@ use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
-use futures::{StreamExt, future};
+use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
-use http_client::{Uri, read_proxy_from_env};
+use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use prompt_store::PromptBuilder;
 use reqwest_client::ReqwestClient;
@@ -44,7 +44,7 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{BaseKeymap, FIRST_OPEN, show_welcome_view};
 use workspace::{AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore};
@@ -54,9 +54,6 @@ use zed::{
     handle_settings_file_changes, initialize_workspace, inline_completion_registry,
     open_paths_with_positions,
 };
-
-#[cfg(unix)]
-use util::{load_login_shell_environment, load_shell_from_passwd};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -167,6 +164,24 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 fn main() {
+    #[cfg(unix)]
+    {
+        let is_root = nix::unistd::geteuid().is_root();
+        let allow_root = env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
+
+        // Prevent running Zed with root privileges on Unix systems unless explicitly allowed
+        if is_root && !allow_root {
+            eprintln!(
+                "\
+Error: Running Zed as root or via sudo is unsupported.
+       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
+       It is untested and not recommended, don't complain when things break.
+       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
+            );
+            process::exit(1);
+        }
+    }
+
     // Check if there is a pending installer
     // If there is, run the installer and exit
     // And we don't want to run the installer if we are not the first instance
@@ -220,7 +235,7 @@ fn main() {
 
     let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
-        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
+        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
 
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
@@ -297,21 +312,29 @@ fn main() {
         fs.clone(),
         paths::settings_file().clone(),
     );
+    let global_settings_file_rx = watch_config_file(
+        &app.background_executor(),
+        fs.clone(),
+        paths::global_settings_file().clone(),
+    );
     let user_keymap_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::keymap_file().clone(),
     );
 
-    #[cfg(unix)]
+    let (shell_env_loaded_tx, shell_env_loaded_rx) = oneshot::channel();
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
-                load_shell_from_passwd().log_err();
-                load_login_shell_environment().log_err();
+                #[cfg(unix)]
+                util::load_login_shell_environment().log_err();
+                shell_env_loaded_tx.send(()).ok();
             })
             .detach()
-    };
+    } else {
+        drop(shell_env_loaded_tx)
+    }
 
     app.on_open_urls({
         let open_listener = open_listener.clone();
@@ -340,7 +363,12 @@ fn main() {
         }
         settings::init(cx);
         zlog_settings::init(cx);
-        handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
+        handle_settings_file_changes(
+            user_settings_file_rx,
+            global_settings_file_rx,
+            cx,
+            handle_settings_changed,
+        );
         handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
@@ -354,7 +382,7 @@ fn main() {
             .as_ref()
             .and_then(|input| {
                 input
-                    .parse::<Uri>()
+                    .parse::<Url>()
                     .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                     .ok()
             })
@@ -378,7 +406,7 @@ fn main() {
         let extension_host_proxy = ExtensionHostProxy::global(cx);
 
         let client = Client::production(cx);
-        cx.set_http_client(client.http_client().clone());
+        cx.set_http_client(client.http_client());
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
@@ -386,7 +414,7 @@ fn main() {
         cx.observe_global::<SettingsStore>(move |cx| {
             let settings = &ProjectSettings::get_global(cx).node;
             let options = NodeBinaryOptions {
-                allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+                allow_path_lookup: !settings.ignore_system_version,
                 // TODO: Expose this setting
                 allow_binary_download: true,
                 use_paths: settings.path.as_ref().map(|node_path| {
@@ -407,8 +435,9 @@ fn main() {
             tx.send(Some(options)).log_err();
         })
         .detach();
-        let node_runtime = NodeRuntime::new(client.http_client(), rx);
+        let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
+        debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -503,16 +532,12 @@ fn main() {
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
-        assistant::init(
-            app_state.fs.clone(),
-            app_state.client.clone(),
-            prompt_builder.clone(),
-            cx,
-        );
         agent::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             prompt_builder.clone(),
+            app_state.languages.clone(),
+            false,
             cx,
         );
         assistant_tools::init(app_state.client.http_client(), cx);
@@ -560,12 +585,14 @@ fn main() {
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);
+        jj_ui::init(cx);
         feedback::init(cx);
         markdown_preview::init(cx);
         welcome::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
+        inspector_ui::init(app_state.clone(), cx);
 
         cx.observe_global::<SettingsStore>({
             let fs = fs.clone();
@@ -619,9 +646,17 @@ fn main() {
 
         cx.spawn({
             let client = app_state.client.clone();
-            async move |cx| authenticate(client, &cx).await
+            async move |cx| match authenticate(client, &cx).await {
+                ConnectionResult::Timeout => log::error!("Timeout during initial auth"),
+                ConnectionResult::ConnectionReset => {
+                    log::error!("Connection reset during initial auth")
+                }
+                ConnectionResult::Result(r) => {
+                    r.log_err();
+                }
+            }
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         let urls: Vec<_> = args
             .paths_or_urls
@@ -657,7 +692,7 @@ fn main() {
 
         let app_state = app_state.clone();
 
-        component_preview::init(app_state.clone(), cx);
+        crate::zed::component_preview::init(app_state.clone(), cx);
 
         cx.spawn(async move |cx| {
             while let Some(urls) = open_rx.next().await {
@@ -734,7 +769,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 let client = app_state.client.clone();
                 // we continue even if authentication fails as join_channel/ open channel notes will
                 // show a visible error message.
-                authenticate(client, &cx).await.log_err();
+                match authenticate(client, &cx).await {
+                    ConnectionResult::Timeout => {
+                        log::error!("Timeout during open request handling")
+                    }
+                    ConnectionResult::ConnectionReset => {
+                        log::error!("Connection reset during open request handling")
+                    }
+                    ConnectionResult::Result(r) => r?,
+                };
 
                 if let Some(channel_id) = request.join_channel {
                     cx.update(|cx| {
@@ -784,17 +827,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 }
 
-async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
+async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> ConnectionResult<()> {
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
-            client.authenticate_and_connect(false, cx).await?;
+            return client.authenticate_and_connect(false, cx).await;
         } else if client.has_credentials(cx).await {
-            client.authenticate_and_connect(true, cx).await?;
+            return client.authenticate_and_connect(true, cx).await;
         }
     } else if client.has_credentials(cx).await {
-        client.authenticate_and_connect(true, cx).await?;
+        return client.authenticate_and_connect(true, cx).await;
     }
-    Ok::<_, anyhow::Error>(())
+
+    ConnectionResult::Result(Ok(()))
 }
 
 async fn system_id() -> Result<IdType> {
@@ -1049,7 +1093,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
             {
                 Ok(arg.into())
             } else {
-                Err(anyhow!("error parsing path argument: {}", error))
+                anyhow::bail!("error parsing path argument: {error}")
             }
         }
     }

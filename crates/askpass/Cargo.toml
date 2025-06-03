@@ -15,6 +15,7 @@ path = "src/askpass.rs"
 anyhow.workspace = true
 futures.workspace = true
 gpui.workspace = true
+shlex.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 util.workspace = true

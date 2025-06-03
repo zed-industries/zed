@@ -4,7 +4,7 @@ use crate::{
 };
 use collections::BTreeMap;
 use gpui::{App, Context, Entity, EventEmitter, Global, prelude::*};
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 use util::maybe;
 
 pub fn init(cx: &mut App) {
@@ -27,9 +27,34 @@ pub struct LanguageModelRegistry {
     inline_alternatives: Vec<Arc<dyn LanguageModel>>,
 }
 
+#[derive(Debug)]
 pub struct SelectedModel {
     pub provider: LanguageModelProviderId,
     pub model: LanguageModelId,
+}
+
+impl FromStr for SelectedModel {
+    type Err = String;
+
+    /// Parse string identifiers like `provider_id/model_id` into a `SelectedModel`
+    fn from_str(id: &str) -> Result<SelectedModel, Self::Err> {
+        let parts: Vec<&str> = id.split('/').collect();
+        let [provider_id, model_id] = parts.as_slice() else {
+            return Err(format!(
+                "Invalid model identifier format: `{}`. Expected `provider_id/model_id`",
+                id
+            ));
+        };
+
+        if provider_id.is_empty() || model_id.is_empty() {
+            return Err(format!("Provider and model ids can't be empty: `{}`", id));
+        }
+
+        Ok(SelectedModel {
+            provider: LanguageModelProviderId(provider_id.to_string().into()),
+            model: LanguageModelId(model_id.to_string().into()),
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -188,7 +213,7 @@ impl LanguageModelRegistry {
             .collect::<Vec<_>>();
     }
 
-    fn select_model(
+    pub fn select_model(
         &mut self,
         selected_model: &SelectedModel,
         cx: &mut Context<Self>,
@@ -286,6 +311,7 @@ impl LanguageModelRegistry {
 
         self.commit_message_model
             .clone()
+            .or_else(|| self.default_fast_model.clone())
             .or_else(|| self.default_model.clone())
     }
 

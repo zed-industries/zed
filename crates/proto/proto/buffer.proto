@@ -261,6 +261,7 @@ message Diagnostic {
 
     bool is_disk_based = 10;
     bool is_unnecessary = 11;
+    bool underline = 15;
 
     enum Severity {
         None = 0;
@@ -271,6 +272,7 @@ message Diagnostic {
     }
     optional string data = 12;
     optional string code_description = 13;
+    optional string markdown = 14;
 }
 
 message SearchQuery {

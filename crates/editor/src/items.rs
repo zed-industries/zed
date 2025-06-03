@@ -23,7 +23,7 @@ use project::{
     Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
-use rpc::proto::{self, PeerId, update_view};
+use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
     any::TypeId,
@@ -39,7 +39,7 @@ use theme::{Theme, ThemeSettings};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt};
 use workspace::{
-    ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
+    CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
@@ -170,14 +170,14 @@ impl FollowableItem for Editor {
         }))
     }
 
-    fn set_leader_peer_id(
+    fn set_leader_id(
         &mut self,
-        leader_peer_id: Option<PeerId>,
+        leader_id: Option<CollaboratorId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.leader_peer_id = leader_peer_id;
-        if self.leader_peer_id.is_some() {
+        self.leader_id = leader_id;
+        if self.leader_id.is_some() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.remove_active_selections(cx);
             });
@@ -350,6 +350,30 @@ impl FollowableItem for Editor {
             None
         }
     }
+
+    fn update_agent_location(
+        &mut self,
+        location: language::Anchor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer = self.buffer.read(cx);
+        let buffer = buffer.read(cx);
+        let Some((excerpt_id, _, _)) = buffer.as_singleton() else {
+            return;
+        };
+        let position = buffer.anchor_in_excerpt(*excerpt_id, location).unwrap();
+        let selection = Selection {
+            id: 0,
+            reversed: false,
+            start: position,
+            end: position,
+            goal: SelectionGoal::None,
+        };
+        drop(buffer);
+        self.set_selections_from_remote(vec![selection], None, window, cx);
+        self.request_autoscroll_remotely(Autoscroll::fit(), cx);
+    }
 }
 
 async fn update_editor_from_message(
@@ -421,7 +445,7 @@ async fn update_editor_from_message(
             }
 
             multibuffer.remove_excerpts(removed_excerpt_ids, cx);
-            Result::<(), anyhow::Error>::Ok(())
+            anyhow::Ok(())
         })
     })??;
 
@@ -619,9 +643,12 @@ impl Item for Editor {
         None
     }
 
-    fn tab_description(&self, detail: usize, cx: &App) -> Option<SharedString> {
-        let path = path_for_buffer(&self.buffer, detail, true, cx)?;
-        Some(path.to_string_lossy().to_string().into())
+    fn tab_content_text(&self, detail: usize, cx: &App) -> SharedString {
+        if let Some(path) = path_for_buffer(&self.buffer, detail, true, cx) {
+            path.to_string_lossy().to_string().into()
+        } else {
+            "untitled".into()
+        }
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
@@ -814,7 +841,7 @@ impl Item for Editor {
                 // so that language servers or other downstream listeners of save events get notified.
                 let (dirty_buffers, clean_buffers) = buffers.into_iter().partition(|buffer| {
                     buffer
-                        .update(cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
+                        .read_with(cx, |buffer, _| buffer.is_dirty() || buffer.has_conflict())
                         .unwrap_or(false)
                 });
 
@@ -1011,12 +1038,10 @@ impl SerializableItem for Editor {
     fn cleanup(
         workspace_id: WorkspaceId,
         alive_items: Vec<ItemId>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        window.spawn(cx, async move |_| {
-            DB.delete_unloaded_items(workspace_id, alive_items).await
-        })
+        workspace::delete_unloaded_items(alive_items, workspace_id, "editors", &DB, cx)
     }
 
     fn deserialize(
@@ -1064,7 +1089,7 @@ impl SerializableItem for Editor {
                 let project = project.clone();
                 async move |cx| {
                     let language_registry =
-                        project.update(cx, |project, _| project.languages().clone())?;
+                        project.read_with(cx, |project, _| project.languages().clone())?;
 
                     let language = if let Some(language_name) = language {
                         // We don't fail here, because we'd rather not set the language if the name changed
@@ -1110,7 +1135,7 @@ impl SerializableItem for Editor {
                 mtime,
                 ..
             } => {
-                let project_item = project.update(cx, |project, cx| {
+                let opened_buffer = project.update(cx, |project, cx| {
                     let (worktree, path) = project.find_worktree(&abs_path, cx)?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
@@ -1119,13 +1144,10 @@ impl SerializableItem for Editor {
                     Some(project.open_path(project_path, cx))
                 });
 
-                match project_item {
-                    Some(project_item) => {
+                match opened_buffer {
+                    Some(opened_buffer) => {
                         window.spawn(cx, async move |cx| {
-                            let (_, project_item) = project_item.await?;
-                            let buffer = project_item.downcast::<Buffer>().map_err(|_| {
-                                anyhow!("Project item at stored path was not a buffer")
-                            })?;
+                            let (_, buffer) = opened_buffer.await?;
 
                             // This is a bit wasteful: we're loading the whole buffer from
                             // disk and then overwrite the content.
@@ -1200,6 +1222,9 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
+        if self.mode.is_minimap() {
+            return None;
+        }
         let mut serialize_dirty_buffers = self.serialize_dirty_buffers;
 
         let project = self.project.clone()?;
@@ -1292,7 +1317,7 @@ impl ProjectItem for Editor {
 
     fn for_project_item(
         project: Entity<Project>,
-        pane: &Pane,
+        pane: Option<&Pane>,
         buffer: Entity<Buffer>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1303,7 +1328,7 @@ impl ProjectItem for Editor {
         {
             if WorkspaceSettings::get(None, cx).restore_on_file_reopen {
                 if let Some(restoration_data) = Self::project_item_kind()
-                    .and_then(|kind| pane.project_item_restoration_data.get(&kind))
+                    .and_then(|kind| pane.as_ref()?.project_item_restoration_data.get(&kind))
                     .and_then(|data| data.downcast_ref::<EditorRestorationData>())
                     .and_then(|data| {
                         let file = project::File::from_dyn(buffer.read(cx).file())?;
@@ -1357,7 +1382,7 @@ impl Editor {
         cx: &mut Context<Self>,
         write: impl for<'a> FnOnce(&'a mut RestorationData) + 'static,
     ) {
-        if !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
+        if self.mode.is_minimap() || !WorkspaceSettings::get(None, cx).restore_on_file_reopen {
             return;
         }
 
@@ -2007,7 +2032,7 @@ mod tests {
         {
             let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
-            project.update(cx, |project, _| project.languages().add(rust_language()));
+            project.read_with(cx, |project, _| project.languages().add(rust_language()));
 
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));

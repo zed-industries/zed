@@ -11,6 +11,7 @@ use buffer_diff::{
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
+    GitHostingProviderRegistry,
     repository::RepoPath,
     status::{StatusCode, TrackedStatus},
 };
@@ -217,6 +218,71 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        GitHostingProviderRegistry::default_global(cx);
+        git_hosting_providers::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let str_path = path!("/dir");
+    let path = Path::new(str_path);
+
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{
+                    "git_hosting_providers": [
+                        {
+                            "provider": "gitlab",
+                            "base_url": "https://google.com",
+                            "name": "foo"
+                        }
+                    ]
+                }"#
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (_worktree, _) =
+        project.read_with(cx, |project, cx| project.find_worktree(path, cx).unwrap());
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let provider = GitHostingProviderRegistry::global(cx);
+        assert!(
+            provider
+                .list_hosting_providers()
+                .into_iter()
+                .any(|provider| provider.name() == "foo")
+        );
+    });
+
+    fs.atomic_write(
+        Path::new(path!("/dir/.zed/settings.json")).to_owned(),
+        "{}".into(),
+    )
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        let provider = GitHostingProviderRegistry::global(cx);
+        assert!(
+            !provider
+                .list_hosting_providers()
+                .into_iter()
+                .any(|provider| provider.name() == "foo")
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     TaskStore::init(None);
@@ -292,7 +358,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         })
         .into_iter()
         .map(|(source_kind, task)| {
-            let resolved = task.resolved.unwrap();
+            let resolved = task.resolved;
             (
                 source_kind,
                 task.resolved_label,
@@ -359,7 +425,6 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         }])
                         .to_string(),
                     ),
-                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -370,7 +435,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .update(|cx| get_all_tasks(&project, &task_contexts, cx))
         .into_iter()
         .map(|(source_kind, task)| {
-            let resolved = task.resolved.unwrap();
+            let resolved = task.resolved;
             (
                 source_kind,
                 task.resolved_label,
@@ -495,7 +560,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         active_worktree_tasks
             .into_iter()
             .map(|(source_kind, task)| {
-                let resolved = task.resolved.unwrap();
+                let resolved = task.resolved;
                 (source_kind, resolved.command)
             })
             .collect::<Vec<_>>(),
@@ -1090,6 +1155,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
             }],
         })
         .await
+        .into_response()
         .unwrap();
     fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
         let file_changes = file_changes.clone();
@@ -3014,7 +3080,12 @@ async fn test_completions_with_text_edit(cx: &mut gpui::TestAppContext) {
         .next()
         .await;
 
-    let completions = completions.await.unwrap().unwrap();
+    let completions = completions
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     assert_eq!(completions.len(), 1);
@@ -3097,7 +3168,12 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
             .next()
             .await;
 
-        let completions = completions.await.unwrap().unwrap();
+        let completions = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>();
         let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         assert_eq!(completions.len(), 1);
@@ -3139,7 +3215,12 @@ async fn test_completions_with_edit_ranges(cx: &mut gpui::TestAppContext) {
             .next()
             .await;
 
-        let completions = completions.await.unwrap().unwrap();
+        let completions = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>();
         let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
         assert_eq!(completions.len(), 1);
@@ -3210,7 +3291,12 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap().unwrap();
+    let completions = completions
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fullyQualifiedName");
@@ -3237,7 +3323,12 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap().unwrap();
+    let completions = completions
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "component");
@@ -3305,7 +3396,12 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         })
         .next()
         .await;
-    let completions = completions.await.unwrap().unwrap();
+    let completions = completions
+        .await
+        .unwrap()
+        .into_iter()
+        .flat_map(|response| response.completions)
+        .collect::<Vec<_>>();
     assert_eq!(completions.len(), 1);
     assert_eq!(completions[0].new_text, "fully\nQualified\nName");
 }
@@ -3432,6 +3528,7 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
                             },
                         )
                         .await
+                        .into_response()
                         .unwrap();
                     Ok(Some(json!(null)))
                 }
@@ -8297,7 +8394,10 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
             ".git": {
                 "worktrees": {
                     "some-worktree": {
-                        "commondir": "../..\n"
+                        "commondir": "../..\n",
+                        // For is_git_dir
+                        "HEAD": "",
+                        "config": ""
                     }
                 },
                 "modules": {
@@ -8524,9 +8624,7 @@ async fn search(
 }
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    zlog::init_test();
 
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
@@ -8763,4 +8861,90 @@ fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Sta
         .iter()
         .map(|status| (status.path().unwrap().to_string(), status.status()))
         .collect()
+}
+
+#[gpui::test]
+async fn test_find_project_path_abs(
+    background_executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    // find_project_path should work with absolute paths
+    init_test(cx);
+
+    let fs = FakeFs::new(background_executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project1": {
+                "file1.txt": "content1",
+                "subdir": {
+                    "file2.txt": "content2"
+                }
+            },
+            "project2": {
+                "file3.txt": "content3"
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(
+        fs.clone(),
+        [
+            path!("/root/project1").as_ref(),
+            path!("/root/project2").as_ref(),
+        ],
+        cx,
+    )
+    .await;
+
+    // Make sure the worktrees are fully initialized
+    for worktree in project.read_with(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>()) {
+        worktree
+            .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+    }
+    cx.run_until_parked();
+
+    let (project1_abs_path, project1_id, project2_abs_path, project2_id) =
+        project.read_with(cx, |project, cx| {
+            let worktrees: Vec<_> = project.worktrees(cx).collect();
+            let abs_path1 = worktrees[0].read(cx).abs_path().to_path_buf();
+            let id1 = worktrees[0].read(cx).id();
+            let abs_path2 = worktrees[1].read(cx).abs_path().to_path_buf();
+            let id2 = worktrees[1].read(cx).id();
+            (abs_path1, id1, abs_path2, id2)
+        });
+
+    project.update(cx, |project, cx| {
+        let abs_path = project1_abs_path.join("file1.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project1_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("file1.txt"));
+
+        let abs_path = project1_abs_path.join("subdir").join("file2.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project1_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("subdir/file2.txt"));
+
+        let abs_path = project2_abs_path.join("file3.txt");
+        let found_path = project.find_project_path(abs_path, cx).unwrap();
+        assert_eq!(found_path.worktree_id, project2_id);
+        assert_eq!(found_path.path.as_ref(), Path::new("file3.txt"));
+
+        let abs_path = project1_abs_path.join("nonexistent.txt");
+        let found_path = project.find_project_path(abs_path, cx);
+        assert!(
+            found_path.is_some(),
+            "Should find project path for nonexistent file in worktree"
+        );
+
+        // Test with an absolute path outside any worktree
+        let abs_path = Path::new("/some/other/path");
+        let found_path = project.find_project_path(abs_path, cx);
+        assert!(
+            found_path.is_none(),
+            "Should not find project path for path outside any worktree"
+        );
+    });
 }

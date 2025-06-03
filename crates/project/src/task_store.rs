@@ -5,13 +5,14 @@ use std::{
 
 use anyhow::Context as _;
 use collections::HashMap;
+use fs::Fs;
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    ContextProvider as _, LanguageToolchainStore, Location,
+    ContextLocation, ContextProvider as _, LanguageToolchainStore, Location,
     proto::{deserialize_anchor, serialize_anchor},
 };
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
-use settings::{InvalidSettingsError, SettingsLocation, TaskKind};
+use settings::{InvalidSettingsError, SettingsLocation};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::{BufferId, OffsetRangeExt};
 use util::ResultExt;
@@ -21,7 +22,7 @@ use crate::{
     worktree_store::WorktreeStore,
 };
 
-#[allow(clippy::large_enum_variant)] // platform-dependent warning
+// platform-dependent warning
 pub enum TaskStore {
     Functional(StoreState),
     Noop,
@@ -70,7 +71,7 @@ impl TaskStore {
             .payload
             .location
             .context("no location given for task context handling")?;
-        let (buffer_store, is_remote) = store.update(&mut cx, |store, _| {
+        let (buffer_store, is_remote) = store.read_with(&mut cx, |store, _| {
             Ok(match store {
                 TaskStore::Functional(state) => (
                     state.buffer_store.clone(),
@@ -264,7 +265,6 @@ impl TaskStore {
         &self,
         location: TaskSettingsLocation<'_>,
         raw_tasks_json: Option<&str>,
-        task_type: TaskKind,
         cx: &mut Context<Self>,
     ) -> Result<(), InvalidSettingsError> {
         let task_inventory = match self {
@@ -276,7 +276,26 @@ impl TaskStore {
             .filter(|json| !json.is_empty());
 
         task_inventory.update(cx, |inventory, _| {
-            inventory.update_file_based_tasks(location, raw_tasks_json, task_type)
+            inventory.update_file_based_tasks(location, raw_tasks_json)
+        })
+    }
+
+    pub(super) fn update_user_debug_scenarios(
+        &self,
+        location: TaskSettingsLocation<'_>,
+        raw_tasks_json: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), InvalidSettingsError> {
+        let task_inventory = match self {
+            TaskStore::Functional(state) => &state.task_inventory,
+            TaskStore::Noop => return Ok(()),
+        };
+        let raw_tasks_json = raw_tasks_json
+            .map(|json| json.trim())
+            .filter(|json| !json.is_empty());
+
+        task_inventory.update(cx, |inventory, _| {
+            inventory.update_file_based_scenarios(location, raw_tasks_json)
         })
     }
 }
@@ -293,15 +312,12 @@ fn local_task_context_for_location(
     let worktree_abs_path = worktree_id
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
         .and_then(|worktree| worktree.read(cx).root_dir());
+    let fs = worktree_store.read(cx).fs();
 
     cx.spawn(async move |cx| {
         let project_env = environment
             .update(cx, |environment, cx| {
-                environment.get_buffer_environment(
-                    location.buffer.clone(),
-                    worktree_store.clone(),
-                    cx,
-                )
+                environment.get_buffer_environment(&location.buffer, &worktree_store, cx)
             })
             .ok()?
             .await;
@@ -310,6 +326,8 @@ fn local_task_context_for_location(
             .update(|cx| {
                 combine_task_variables(
                     captured_variables,
+                    fs,
+                    worktree_store.clone(),
                     location,
                     project_env.clone(),
                     BasicContextProvider::new(worktree_store),
@@ -344,9 +362,15 @@ fn remote_task_context_for_location(
         // We need to gather a client context, as the headless one may lack certain information (e.g. tree-sitter parsing is disabled there, so symbols are not available).
         let mut remote_context = cx
             .update(|cx| {
+                let worktree_root = worktree_root(&worktree_store, &location, cx);
+
                 BasicContextProvider::new(worktree_store).build_context(
                     &TaskVariables::default(),
-                    &location,
+                    ContextLocation {
+                        fs: None,
+                        worktree_root,
+                        file_location: &location,
+                    },
                     None,
                     toolchain_store,
                     cx,
@@ -394,8 +418,34 @@ fn remote_task_context_for_location(
     })
 }
 
+fn worktree_root(
+    worktree_store: &Entity<WorktreeStore>,
+    location: &Location,
+    cx: &mut App,
+) -> Option<PathBuf> {
+    location
+        .buffer
+        .read(cx)
+        .file()
+        .map(|f| f.worktree_id(cx))
+        .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
+        .and_then(|worktree| {
+            let worktree = worktree.read(cx);
+            if !worktree.is_visible() {
+                return None;
+            }
+            let root_entry = worktree.root_entry()?;
+            if !root_entry.is_dir() {
+                return None;
+            }
+            worktree.absolutize(&root_entry.path).ok()
+        })
+}
+
 fn combine_task_variables(
     mut captured_variables: TaskVariables,
+    fs: Option<Arc<dyn Fs>>,
+    worktree_store: Entity<WorktreeStore>,
     location: Location,
     project_env: Option<HashMap<String, String>>,
     baseline: BasicContextProvider,
@@ -410,9 +460,14 @@ fn combine_task_variables(
     cx.spawn(async move |cx| {
         let baseline = cx
             .update(|cx| {
+                let worktree_root = worktree_root(&worktree_store, &location, cx);
                 baseline.build_context(
                     &captured_variables,
-                    &location,
+                    ContextLocation {
+                        fs: fs.clone(),
+                        worktree_root,
+                        file_location: &location,
+                    },
                     project_env.clone(),
                     toolchain_store.clone(),
                     cx,
@@ -424,9 +479,14 @@ fn combine_task_variables(
         if let Some(provider) = language_context_provider {
             captured_variables.extend(
                 cx.update(|cx| {
+                    let worktree_root = worktree_root(&worktree_store, &location, cx);
                     provider.build_context(
                         &captured_variables,
-                        &location,
+                        ContextLocation {
+                            fs,
+                            worktree_root,
+                            file_location: &location,
+                        },
                         project_env,
                         toolchain_store,
                         cx,

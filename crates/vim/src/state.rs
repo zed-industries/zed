@@ -557,7 +557,9 @@ impl MarksState {
             }
             return;
         };
-        let buffer = buffer.unwrap();
+        let Some(buffer) = buffer else {
+            return;
+        };
 
         let buffer_id = buffer.read(cx).remote_id();
         self.buffer_marks.entry(buffer_id).or_default().insert(
@@ -588,7 +590,7 @@ impl MarksState {
             }
 
             let singleton = multi_buffer.read(cx).as_singleton()?;
-            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first().unwrap();
+            let excerpt_id = *multi_buffer.read(cx).excerpt_ids().first()?;
             let buffer_id = singleton.read(cx).remote_id();
             if let Some(anchors) = self.buffer_marks.get(&buffer_id) {
                 let text_anchors = anchors.get(name)?;
@@ -609,6 +611,60 @@ impl MarksState {
                 let points = self.serialized_marks.get(path)?;
                 return Some(Mark::Path(path.clone(), points.get(name)?.clone()));
             }
+        }
+    }
+    pub fn delete_mark(
+        &mut self,
+        mark_name: String,
+        multi_buffer: &Entity<MultiBuffer>,
+        cx: &mut Context<Self>,
+    ) {
+        let path = if let Some(target) = self.global_marks.get(&mark_name.clone()) {
+            let name = mark_name.clone();
+            if let Some(workspace_id) = self.workspace_id(cx) {
+                cx.background_spawn(async move {
+                    DB.delete_global_marks_path(workspace_id, name).await
+                })
+                .detach_and_log_err(cx);
+            }
+            self.buffer_marks.iter_mut().for_each(|(_, m)| {
+                m.remove(&mark_name.clone());
+            });
+
+            match target {
+                MarkLocation::Buffer(entity_id) => {
+                    self.multibuffer_marks
+                        .get_mut(&entity_id)
+                        .map(|m| m.remove(&mark_name.clone()));
+                    return;
+                }
+                MarkLocation::Path(path) => path.clone(),
+            }
+        } else {
+            self.multibuffer_marks
+                .get_mut(&multi_buffer.entity_id())
+                .map(|m| m.remove(&mark_name.clone()));
+
+            if let Some(singleton) = multi_buffer.read(cx).as_singleton() {
+                let buffer_id = singleton.read(cx).remote_id();
+                self.buffer_marks
+                    .get_mut(&buffer_id)
+                    .map(|m| m.remove(&mark_name.clone()));
+                let Some(path) = self.path_for_buffer(&singleton, cx) else {
+                    return;
+                };
+                path
+            } else {
+                return;
+            }
+        };
+        self.global_marks.remove(&mark_name.clone());
+        self.serialized_marks
+            .get_mut(&path.clone())
+            .map(|m| m.remove(&mark_name.clone()));
+        if let Some(workspace_id) = self.workspace_id(cx) {
+            cx.background_spawn(async move { DB.delete_mark(workspace_id, path, mark_name).await })
+                .detach_and_log_err(cx);
         }
     }
 }
@@ -757,7 +813,7 @@ impl VimGlobals {
                 }
                 if kind.linewise() || contains_newline {
                     let mut content = content;
-                    for i in '1'..'8' {
+                    for i in '1'..='9' {
                         if let Some(moved) = self.registers.insert(i, content) {
                             content = moved;
                         } else {
@@ -954,7 +1010,7 @@ impl Operator {
             Operator::AutoIndent => "eq",
             Operator::ShellCommand => "sh",
             Operator::Rewrap => "gq",
-            Operator::ReplaceWithRegister => "gr",
+            Operator::ReplaceWithRegister => "gR",
             Operator::Exchange => "cx",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
@@ -1689,6 +1745,21 @@ impl VimDb {
             .collect())
     }
 
+    pub(crate) async fn delete_mark(
+        &self,
+        workspace_id: WorkspaceId,
+        path: Arc<Path>,
+        mark_name: String,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM vim_marks
+                WHERE workspace_id = ? AND mark_name = ? AND path = ?
+            ))?((workspace_id, mark_name, path))
+        })
+        .await
+    }
+
     pub(crate) async fn set_global_mark_path(
         &self,
         workspace_id: WorkspaceId,
@@ -1715,5 +1786,19 @@ impl VimDb {
         SELECT mark_name, path FROM vim_global_marks_paths
             WHERE workspace_id = ?
         ))?(workspace_id)
+    }
+
+    pub(crate) async fn delete_global_marks_path(
+        &self,
+        workspace_id: WorkspaceId,
+        mark_name: String,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            conn.exec_bound(sql!(
+                DELETE FROM vim_global_marks_paths
+                WHERE workspace_id = ? AND mark_name = ?
+            ))?((workspace_id, mark_name))
+        })
+        .await
     }
 }

@@ -1,18 +1,15 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use collections::HashMap;
 use editor::Editor;
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
-use modal::TaskOverrides;
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
-use task::{
-    RevealTarget, TaskContext, TaskId, TaskModal, TaskTemplate, TaskVariables, VariableName,
-};
+use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
 use workspace::Workspace;
 
 mod modal;
 
-pub use modal::{Rerun, ShowAttachModal, Spawn, TasksModal};
+pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -65,13 +62,13 @@ pub fn init(cx: &mut App) {
                             })
                             .detach()
                         } else {
-                            if let Some(resolved) = last_scheduled_task.resolved.as_mut() {
-                                if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
-                                    resolved.allow_concurrent_runs = allow_concurrent_runs;
-                                }
-                                if let Some(use_new_terminal) = action.use_new_terminal {
-                                    resolved.use_new_terminal = use_new_terminal;
-                                }
+                            let resolved = &mut last_scheduled_task.resolved;
+
+                            if let Some(allow_concurrent_runs) = action.allow_concurrent_runs {
+                                resolved.allow_concurrent_runs = allow_concurrent_runs;
+                            }
+                            if let Some(use_new_terminal) = action.use_new_terminal {
+                                resolved.use_new_terminal = use_new_terminal;
                             }
 
                             workspace.schedule_resolved_task(
@@ -83,7 +80,7 @@ pub fn init(cx: &mut App) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, None, TaskModal::ScriptModal, window, cx).detach();
+                        toggle_modal(workspace, None, window, cx).detach();
                     };
                 });
         },
@@ -97,6 +94,11 @@ fn spawn_task_or_modal(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    if let Some(provider) = workspace.debugger_provider() {
+        provider.spawn_task_or_modal(workspace, action, window, cx);
+        return;
+    }
+
     match action {
         Spawn::ByName {
             task_name,
@@ -125,21 +127,15 @@ fn spawn_task_or_modal(
             )
             .detach_and_log_err(cx)
         }
-        Spawn::ViaModal { reveal_target } => toggle_modal(
-            workspace,
-            *reveal_target,
-            TaskModal::ScriptModal,
-            window,
-            cx,
-        )
-        .detach(),
+        Spawn::ViaModal { reveal_target } => {
+            toggle_modal(workspace, *reveal_target, window, cx).detach()
+        }
     }
 }
 
 pub fn toggle_modal(
     workspace: &mut Workspace,
     reveal_target: Option<RevealTarget>,
-    task_type: TaskModal,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> Task<()> {
@@ -151,7 +147,7 @@ pub fn toggle_modal(
     if can_open_modal {
         let task_contexts = task_contexts(workspace, window, cx);
         cx.spawn_in(window, async move |workspace, cx| {
-            let task_contexts = task_contexts.await;
+            let task_contexts = Arc::new(task_contexts.await);
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
@@ -161,8 +157,8 @@ pub fn toggle_modal(
                             reveal_target.map(|target| TaskOverrides {
                                 reveal_target: Some(target),
                             }),
+                            true,
                             workspace_handle,
-                            task_type,
                             window,
                             cx,
                         )
@@ -175,7 +171,7 @@ pub fn toggle_modal(
     }
 }
 
-fn spawn_tasks_filtered<F>(
+pub fn spawn_tasks_filtered<F>(
     mut predicate: F,
     overrides: Option<TaskOverrides>,
     window: &mut Window,
@@ -279,7 +275,11 @@ pub fn task_contexts(
                 .read(cx)
                 .worktree_for_id(*worktree_id, cx)
                 .map_or(false, |worktree| is_visible_directory(&worktree, cx))
-        });
+        })
+        .or(workspace
+            .visible_worktrees(cx)
+            .next()
+            .map(|tree| tree.read(cx).id()));
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 
@@ -309,9 +309,12 @@ pub fn task_contexts(
         .unwrap_or_default();
 
     let latest_selection = active_editor.as_ref().map(|active_editor| {
-        active_editor.update(cx, |editor, _| {
-            editor.selections.newest_anchor().head().text_anchor
-        })
+        active_editor
+            .read(cx)
+            .selections
+            .newest_anchor()
+            .head()
+            .text_anchor
     });
 
     let mut worktree_abs_paths = workspace
@@ -421,7 +424,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-        let worktree_store = project.update(cx, |project, _| project.worktree_store().clone());
+        let worktree_store = project.read_with(cx, |project, _| project.worktree_store().clone());
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
@@ -511,6 +514,7 @@ mod tests {
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
                     (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
                     (VariableName::WorktreeRoot, path!("/dir").into()),
@@ -542,6 +546,7 @@ mod tests {
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
                     (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
                     (VariableName::WorktreeRoot, path!("/dir").into()),
@@ -570,6 +575,7 @@ mod tests {
                     (VariableName::File, path!("/dir/a.ts").into()),
                     (VariableName::Filename, "a.ts".into()),
                     (VariableName::RelativeFile, "a.ts".into()),
+                    (VariableName::RelativeDir, ".".into()),
                     (VariableName::Dirname, path!("/dir").into()),
                     (VariableName::Stem, "a".into()),
                     (VariableName::WorktreeRoot, path!("/dir").into()),
