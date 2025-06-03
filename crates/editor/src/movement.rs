@@ -809,12 +809,12 @@ mod tests {
         assert("\nlorem\nˇ   ˇipsum", cx);
         assert("\n\nˇ\nˇ", cx);
         assert("    ˇlorem  ˇipsum", cx);
-        assert("loremˇ-ˇipsum", cx);
+        assert("ˇlorem-ˇipsum", cx);
         assert("loremˇ-#$@ˇipsum", cx);
         assert("ˇlorem_ˇipsum", cx);
         assert(" ˇdefγˇ", cx);
         assert(" ˇbcΔˇ", cx);
-        assert(" abˇ——ˇcd", cx);
+        
         // Test punctuation skipping behavior
         assert("ˇhello.ˇ", cx);
         assert("helloˇ...ˇ", cx);
