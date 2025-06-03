@@ -23,7 +23,6 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
-
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
@@ -124,7 +123,6 @@ impl LspAdapter for PythonLspAdapter {
             }
         })))
     }
-
 
     async fn check_if_user_installed(
         &self,
@@ -339,17 +337,17 @@ impl LspAdapter for PythonLspAdapter {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
-                
+
                 let interpreter_path = toolchain.path.to_string();
-                
+
                 // Detect if this is a virtual environment
                 if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
                     if let Some(venv_dir) = interpreter_dir.parent() {
                         // Check if this looks like a virtual environment
-                        if venv_dir.join("pyvenv.cfg").exists() || 
-                           venv_dir.join("bin/activate").exists() ||
-                           venv_dir.join("Scripts/activate.bat").exists() {
-                            
+                        if venv_dir.join("pyvenv.cfg").exists()
+                            || venv_dir.join("bin/activate").exists()
+                            || venv_dir.join("Scripts/activate.bat").exists()
+                        {
                             // Set venvPath and venv at the root level
                             // This matches the format of a pyrightconfig.json file
                             if let Some(parent) = venv_dir.parent() {
@@ -361,17 +359,17 @@ impl LspAdapter for PythonLspAdapter {
                                 };
                                 object.insert("venvPath".to_string(), Value::String(venv_path));
                             }
-                            
+
                             if let Some(venv_name) = venv_dir.file_name() {
                                 object.insert(
                                     "venv".to_string(),
-                                    Value::String(venv_name.to_string_lossy().to_string())
+                                    Value::String(venv_name.to_string_lossy().to_string()),
                                 );
                             }
                         }
                     }
                 }
-                
+
                 // Always set the python interpreter path
                 // Get or create the python section
                 let python = object
@@ -379,10 +377,16 @@ impl LspAdapter for PythonLspAdapter {
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
                     .unwrap();
-                
+
                 // Set both pythonPath and defaultInterpreterPath for compatibility
-                python.insert("pythonPath".to_string(), Value::String(interpreter_path.clone()));
-                python.insert("defaultInterpreterPath".to_string(), Value::String(interpreter_path));
+                python.insert(
+                    "pythonPath".to_string(),
+                    Value::String(interpreter_path.clone()),
+                );
+                python.insert(
+                    "defaultInterpreterPath".to_string(),
+                    Value::String(interpreter_path),
+                );
             }
 
             user_settings
