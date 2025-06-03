@@ -29,8 +29,8 @@ use ui::{
     ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, InteractiveElement, IntoElement, Label, LabelCommon as _,
     ListItem, ListItemSpacing, ParentElement, RenderOnce, SharedString, Styled, StyledExt,
-    StyledTypography, ToggleButton, ToggleState, Toggleable, Window, div, h_flex, px, relative,
-    rems, v_flex,
+    StyledTypography, ToggleButton, ToggleState, Toggleable, Tooltip, Window, div, h_flex, px,
+    relative, rems, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
@@ -643,6 +643,7 @@ impl Render for NewProcessModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
+                                .tooltip(Tooltip::text("Run predefined task"))
                                 .first(),
                             )
                             .child(
@@ -658,6 +659,7 @@ impl Render for NewProcessModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
+                                .tooltip(Tooltip::text("Start a predefined debug scenario"))
                                 .middle(),
                             )
                             .child(
@@ -682,6 +684,7 @@ impl Render for NewProcessModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
+                                .tooltip(Tooltip::text("Attach the debugger to a running process"))
                                 .middle(),
                             )
                             .child(
@@ -697,6 +700,7 @@ impl Render for NewProcessModal {
                                     this.mode_focus_handle(cx).focus(window);
                                     cx.notify();
                                 }))
+                                .tooltip(Tooltip::text("Launch a new process with a debugger"))
                                 .last(),
                             ),
                     )
