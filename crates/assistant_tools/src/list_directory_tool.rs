@@ -3,9 +3,10 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::Project;
+use project::{Project, Worktree, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
@@ -115,9 +116,32 @@ impl Tool for ListDirectoryTool {
         else {
             return Task::ready(Err(anyhow!("Worktree not found"))).into();
         };
-        let worktree = worktree.read(cx);
 
-        let Some(entry) = worktree.entry_for_path(&project_path.path) else {
+        let global_settings = WorktreeSettings::get_global(cx);
+
+        // Check if the directory itself is excluded or private
+        if let Worktree::Local(local_worktree) = worktree.read(cx) {
+            if local_worktree.is_path_private(&project_path.path) {
+                return Task::ready(Err(anyhow!(
+                    "Cannot list private directory: {}",
+                    &input.path
+                )))
+                .into();
+            }
+
+            if global_settings.is_path_excluded(&project_path.path) {
+                return Task::ready(Err(anyhow!(
+                    "Cannot list directory because its path matches the `file_scan_exclusions` setting: {}",
+                    &input.path
+                )))
+                .into();
+            }
+        }
+
+        let worktree_snapshot = worktree.read(cx).snapshot();
+        let worktree_root_name = worktree.read(cx).root_name().to_string();
+
+        let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
             return Task::ready(Err(anyhow!("Path not found: {}", input.path))).into();
         };
 
@@ -128,8 +152,19 @@ impl Tool for ListDirectoryTool {
         let mut folders = Vec::new();
         let mut files = Vec::new();
 
-        for entry in worktree.child_entries(&project_path.path) {
-            let full_path = Path::new(worktree.root_name())
+        let is_local_worktree = worktree.read(cx).as_local().is_some();
+
+        for entry in worktree_snapshot.child_entries(&project_path.path) {
+            // Skip excluded and private files for local worktrees
+            if is_local_worktree {
+                if global_settings.is_path_excluded(&entry.path)
+                    || global_settings.is_path_private(&entry.path)
+                {
+                    continue;
+                }
+            }
+
+            let full_path = Path::new(&worktree_root_name)
                 .join(&entry.path)
                 .display()
                 .to_string();
@@ -162,10 +197,10 @@ impl Tool for ListDirectoryTool {
 mod tests {
     use super::*;
     use assistant_tool::Tool;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use indoc::indoc;
     use language_model::fake_provider::FakeLanguageModel;
-    use project::{FakeFs, Project};
+    use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -406,6 +441,181 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("is not a directory")
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_directory_security(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                "normal_dir": {
+                    "file1.txt": "content",
+                    "file2.txt": "content"
+                },
+                ".mysecrets": "SECRET_KEY=abc123",
+                ".secretdir": {
+                    "config": "special configuration",
+                    "secret.txt": "secret content"
+                },
+                ".mymetadata": "custom metadata",
+                "visible_dir": {
+                    "normal.txt": "normal content",
+                    "special.privatekey": "private key content",
+                    "data.mysensitive": "sensitive data",
+                    ".hidden_subdir": {
+                        "hidden_file.txt": "hidden content"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        // Configure settings explicitly
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.file_scan_exclusions = Some(vec![
+                        "**/.secretdir".to_string(),
+                        "**/.mymetadata".to_string(),
+                        "**/.hidden_subdir".to_string(),
+                    ]);
+                    settings.private_files = Some(vec![
+                        "**/.mysecrets".to_string(),
+                        "**/*.privatekey".to_string(),
+                        "**/*.mysensitive".to_string(),
+                    ]);
+                });
+            });
+        });
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let tool = Arc::new(ListDirectoryTool);
+
+        // Listing root directory should exclude private and excluded files
+        let input = json!({
+            "path": "project"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+
+        // Should include normal directories
+        assert!(
+            content.contains("project/normal_dir"),
+            "Should list normal_dir"
+        );
+        assert!(
+            content.contains("project/visible_dir"),
+            "Should list visible_dir"
+        );
+
+        // Should NOT include excluded or private files
+        assert!(
+            !content.contains(".secretdir"),
+            "Should not list .secretdir (file_scan_exclusions)"
+        );
+        assert!(
+            !content.contains(".mymetadata"),
+            "Should not list .mymetadata (file_scan_exclusions)"
+        );
+        assert!(
+            !content.contains(".mysecrets"),
+            "Should not list .mysecrets (private_files)"
+        );
+
+        // Trying to list an excluded directory should fail
+        let input = json!({
+            "path": "project/.secretdir"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(
+            result.is_err(),
+            "Should not be able to list excluded directory"
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("file_scan_exclusions"),
+            "Error should mention file_scan_exclusions"
+        );
+
+        // Listing a directory should exclude private files within it
+        let input = json!({
+            "path": "project/visible_dir"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+
+        // Should include normal files
+        assert!(content.contains("normal.txt"), "Should list normal.txt");
+
+        // Should NOT include private files
+        assert!(
+            !content.contains("privatekey"),
+            "Should not list .privatekey files (private_files)"
+        );
+        assert!(
+            !content.contains("mysensitive"),
+            "Should not list .mysensitive files (private_files)"
+        );
+
+        // Should NOT include subdirectories that match exclusions
+        assert!(
+            !content.contains(".hidden_subdir"),
+            "Should not list .hidden_subdir (file_scan_exclusions)"
         );
     }
 }
