@@ -623,6 +623,7 @@ impl GoogleEventMapper {
                             )));
                         }
                         Part::FunctionResponsePart(_) => {}
+                        Part::ThoughtPart(_) => {}
                     });
             }
         }
