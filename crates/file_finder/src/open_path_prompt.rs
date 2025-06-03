@@ -192,12 +192,26 @@ impl PickerDelegate for OpenPathDelegate {
         }
 
         let query = match &self.directory_state {
-            DirectoryState::List { parent_path, .. }
-            | DirectoryState::Create { parent_path, .. } => {
+            DirectoryState::List { parent_path, .. } => {
                 if parent_path == &dir {
                     None
                 } else {
                     Some(lister.list_directory(dir.clone(), cx))
+                }
+            }
+            DirectoryState::Create {
+                parent_path,
+                current_match,
+            } => {
+                let refresh = match current_match {
+                    CurrentMatch::Directory { .. } => parent_path != &dir,
+                    CurrentMatch::File { .. } => true,
+                };
+
+                if refresh {
+                    Some(lister.list_directory(dir.clone(), cx))
+                } else {
+                    None
                 }
             }
             DirectoryState::None { .. } => Some(lister.list_directory(dir.clone(), cx)),
@@ -216,37 +230,13 @@ impl PickerDelegate for OpenPathDelegate {
                 this.update(cx, |this, _| match &this.delegate.directory_state {
                     DirectoryState::None { create: false } | DirectoryState::List { .. } => {
                         this.delegate.directory_state = match paths {
-                            Ok(mut paths) => {
-                                if dir == PROMPT_ROOT {
-                                    paths.push(DirectoryItem {
-                                        is_dir: true,
-                                        path: PathBuf::default(),
-                                    });
-                                }
-
-                                paths.sort_by(|a, b| {
-                                    compare_paths((&a.path, true), (&b.path, true))
-                                });
-                                let match_candidates = paths
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(ix, item)| CandidateInfo {
-                                        path: StringMatchCandidate::new(
-                                            ix,
-                                            &item.path.to_string_lossy(),
-                                        ),
-                                        is_dir: item.is_dir,
-                                    })
-                                    .collect::<Vec<_>>();
-
-                                DirectoryState::List {
-                                    current_match: CurrentMatch::Directory {
-                                        entries: match_candidates,
-                                    },
-                                    parent_path: dir,
-                                    error: None,
-                                }
-                            }
+                            Ok(paths) => DirectoryState::List {
+                                current_match: CurrentMatch::Directory {
+                                    entries: path_candidates(&dir, paths),
+                                },
+                                parent_path: dir,
+                                error: None,
+                            },
                             Err(err) => DirectoryState::List {
                                 current_match: CurrentMatch::Directory {
                                     entries: Vec::new(),
@@ -258,36 +248,12 @@ impl PickerDelegate for OpenPathDelegate {
                     }
                     DirectoryState::None { create: true } | DirectoryState::Create { .. } => {
                         this.delegate.directory_state = match paths {
-                            Ok(mut paths) => {
-                                if dir == PROMPT_ROOT {
-                                    paths.push(DirectoryItem {
-                                        is_dir: true,
-                                        path: PathBuf::default(),
-                                    });
-                                }
-
-                                paths.sort_by(|a, b| {
-                                    compare_paths((&a.path, true), (&b.path, true))
-                                });
-                                let match_candidates = paths
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(ix, item)| CandidateInfo {
-                                        path: StringMatchCandidate::new(
-                                            ix,
-                                            &item.path.to_string_lossy(),
-                                        ),
-                                        is_dir: item.is_dir,
-                                    })
-                                    .collect::<Vec<_>>();
-
-                                DirectoryState::Create {
-                                    current_match: CurrentMatch::Directory {
-                                        entries: match_candidates,
-                                    },
-                                    parent_path: dir,
-                                }
-                            }
+                            Ok(paths) => DirectoryState::Create {
+                                current_match: CurrentMatch::Directory {
+                                    entries: path_candidates(&dir, paths),
+                                },
+                                parent_path: dir,
+                            },
                             Err(_) => DirectoryState::Create {
                                 current_match: CurrentMatch::File {
                                     exists: false,
@@ -335,6 +301,7 @@ impl PickerDelegate for OpenPathDelegate {
                         this.delegate
                             .matches
                             .extend(entries.iter().map(|m| m.path.id));
+                        // TODO kb is it enough? fill more fields?
                     }
 
                     cx.notify();
@@ -343,21 +310,56 @@ impl PickerDelegate for OpenPathDelegate {
                 return;
             }
 
-            let candidates = match &current_match {
-                CurrentMatch::Directory { entries } => {
-                    entries.iter().map(|entry| &entry.path).collect::<Vec<_>>()
-                }
-                CurrentMatch::File { file, .. } => vec![file],
+            let Ok(is_create_state) =
+                this.update(cx, |this, _| match &this.delegate.directory_state {
+                    DirectoryState::Create { .. } => true,
+                    DirectoryState::List { .. } | DirectoryState::None { .. } => false,
+                })
+            else {
+                return;
             };
-            let matches = fuzzy::match_strings(
-                candidates.as_slice(),
-                &suffix,
-                false,
-                100,
-                &cancel_flag,
-                cx.background_executor().clone(),
-            )
-            .await;
+
+            let matches = if is_create_state {
+                // TODO kb this matching should include both the "non-existing" file and whatever matched
+                match current_match {
+                    CurrentMatch::Directory { entries } => entries
+                        .into_iter()
+                        .map(|entry| entry.path)
+                        .filter(|candidate| candidate.string == suffix)
+                        .map(|candidate| StringMatch {
+                            string: candidate.string.clone(),
+                            candidate_id: candidate.id,
+                            score: 1.0,
+                            positions: Vec::new(),
+                        })
+                        .collect(),
+                    CurrentMatch::File { .. } => vec![StringMatch {
+                        string: suffix.clone(),
+                        candidate_id: 0,
+                        score: 1.0,
+                        positions: Vec::new(),
+                    }],
+                }
+            } else {
+                let candidates = match &current_match {
+                    CurrentMatch::Directory { entries } => {
+                        entries.iter().map(|entry| &entry.path).collect()
+                    }
+                    CurrentMatch::File { file, .. } => {
+                        vec![file]
+                    }
+                };
+                fuzzy::match_strings(
+                    candidates.as_slice(),
+                    &suffix,
+                    false,
+                    100,
+                    &cancel_flag,
+                    cx.background_executor().clone(),
+                )
+                .await
+            };
+
             if cancel_flag.load(atomic::Ordering::Acquire) {
                 return;
             }
@@ -386,9 +388,7 @@ impl PickerDelegate for OpenPathDelegate {
                         })
                     }
                     DirectoryState::Create { current_match, .. } => {
-                        // TODO kb no conflict & other custom highlights
-                        // TODO kb when added a new file in query, then removed characters, odd result persists
-                        // TODO kb confirm(?) does not work
+                        // TODO kb no conflict custom highlights
                         if this.delegate.matches.is_empty() {
                             let id = 0;
                             *current_match = CurrentMatch::File {
@@ -399,7 +399,7 @@ impl PickerDelegate for OpenPathDelegate {
                             this.delegate.string_matches = vec![StringMatch {
                                 candidate_id: id,
                                 score: 1.0,
-                                positions: (0..suffix.len()).collect(),
+                                positions: Vec::new(),
                                 string: suffix,
                             }];
                         } else {
@@ -732,4 +732,23 @@ impl PickerDelegate for OpenPathDelegate {
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
     }
+}
+
+fn path_candidates(parent_path: &String, mut children: Vec<DirectoryItem>) -> Vec<CandidateInfo> {
+    if *parent_path == PROMPT_ROOT {
+        children.push(DirectoryItem {
+            is_dir: true,
+            path: PathBuf::default(),
+        });
+    }
+
+    children.sort_by(|a, b| compare_paths((&a.path, true), (&b.path, true)));
+    children
+        .iter()
+        .enumerate()
+        .map(|(ix, item)| CandidateInfo {
+            path: StringMatchCandidate::new(ix, &item.path.to_string_lossy()),
+            is_dir: item.is_dir,
+        })
+        .collect()
 }

@@ -1933,7 +1933,7 @@ impl Workspace {
                             Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
                         })
                     })
-                    .or_else(|| std::env::home_dir())
+                    .or_else(std::env::home_dir)
                     .unwrap_or_else(|| PathBuf::from(""));
                 cx.prompt_for_new_path(&relative_to)
             })?;
