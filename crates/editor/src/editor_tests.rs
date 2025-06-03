@@ -8513,108 +8513,123 @@ async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
 async fn test_snippets(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let (text, insertion_ranges) = marked_text_ranges(
-        indoc! {"
-            a.ˇ b
-            a.ˇ b
-            a.ˇ b
-        "},
-        false,
-    );
+    let mut cx = EditorTestContext::new(cx).await;
 
-    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    cx.set_state(indoc! {"
+        a.ˇ b
+        a.ˇ b
+        a.ˇ b
+    "});
 
-    editor.update_in(cx, |editor, window, cx| {
+    cx.update_editor(|editor, window, cx| {
         let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
-
+        let insertion_ranges = editor
+            .selections
+            .all(cx)
+            .iter()
+            .map(|s| s.range().clone())
+            .collect::<Vec<_>>();
         editor
             .insert_snippet(&insertion_ranges, snippet, window, cx)
             .unwrap();
-
-        fn assert(editor: &mut Editor, cx: &mut Context<Editor>, marked_text: &str) {
-            let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
-            assert_eq!(editor.text(cx), expected_text);
-            assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
-        }
-
-        assert(
-            editor,
-            cx,
-            indoc! {"
-                a.f(«one», two, «three») b
-                a.f(«one», two, «three») b
-                a.f(«one», two, «three») b
-            "},
-        );
-
-        // Can't move earlier than the first tab stop
-        assert!(!editor.move_to_prev_snippet_tabstop(window, cx));
-        assert(
-            editor,
-            cx,
-            indoc! {"
-                a.f(«one», two, «three») b
-                a.f(«one», two, «three») b
-                a.f(«one», two, «three») b
-            "},
-        );
-
-        assert!(editor.move_to_next_snippet_tabstop(window, cx));
-        assert(
-            editor,
-            cx,
-            indoc! {"
-                a.f(one, «two», three) b
-                a.f(one, «two», three) b
-                a.f(one, «two», three) b
-            "},
-        );
-
-        editor.move_to_prev_snippet_tabstop(window, cx);
-        assert(
-            editor,
-            cx,
-            indoc! {"
-                a.f(«one», two, «three») b
-                a.f(«one», two, «three») b
-                a.f(«one», two, «three») b
-            "},
-        );
-
-        assert!(editor.move_to_next_snippet_tabstop(window, cx));
-        assert(
-            editor,
-            cx,
-            indoc! {"
-                a.f(one, «two», three) b
-                a.f(one, «two», three) b
-                a.f(one, «two», three) b
-            "},
-        );
-        assert!(editor.move_to_next_snippet_tabstop(window, cx));
-        assert(
-            editor,
-            cx,
-            indoc! {"
-                a.f(one, two, three)ˇ b
-                a.f(one, two, three)ˇ b
-                a.f(one, two, three)ˇ b
-            "},
-        );
-
-        // As soon as the last tab stop is reached, snippet state is gone
-        editor.move_to_prev_snippet_tabstop(window, cx);
-        assert(
-            editor,
-            cx,
-            indoc! {"
-                a.f(one, two, three)ˇ b
-                a.f(one, two, three)ˇ b
-                a.f(one, two, three)ˇ b
-            "},
-        );
     });
+
+    cx.assert_editor_state(indoc! {"
+        a.f(«oneˇ», two, «threeˇ») b
+        a.f(«oneˇ», two, «threeˇ») b
+        a.f(«oneˇ», two, «threeˇ») b
+    "});
+
+    // Can't move earlier than the first tab stop
+    cx.update_editor(|editor, window, cx| {
+        assert!(!editor.move_to_prev_snippet_tabstop(window, cx))
+    });
+    cx.assert_editor_state(indoc! {"
+        a.f(«oneˇ», two, «threeˇ») b
+        a.f(«oneˇ», two, «threeˇ») b
+        a.f(«oneˇ», two, «threeˇ») b
+    "});
+
+    cx.update_editor(|editor, window, cx| assert!(editor.move_to_next_snippet_tabstop(window, cx)));
+    cx.assert_editor_state(indoc! {"
+        a.f(one, «twoˇ», three) b
+        a.f(one, «twoˇ», three) b
+        a.f(one, «twoˇ», three) b
+    "});
+
+    cx.update_editor(|editor, window, cx| assert!(editor.move_to_prev_snippet_tabstop(window, cx)));
+    cx.assert_editor_state(indoc! {"
+        a.f(«oneˇ», two, «threeˇ») b
+        a.f(«oneˇ», two, «threeˇ») b
+        a.f(«oneˇ», two, «threeˇ») b
+    "});
+
+    cx.update_editor(|editor, window, cx| assert!(editor.move_to_next_snippet_tabstop(window, cx)));
+    cx.assert_editor_state(indoc! {"
+        a.f(one, «twoˇ», three) b
+        a.f(one, «twoˇ», three) b
+        a.f(one, «twoˇ», three) b
+    "});
+    cx.update_editor(|editor, window, cx| assert!(editor.move_to_next_snippet_tabstop(window, cx)));
+    cx.assert_editor_state(indoc! {"
+        a.f(one, two, three)ˇ b
+        a.f(one, two, three)ˇ b
+        a.f(one, two, three)ˇ b
+    "});
+
+    // As soon as the last tab stop is reached, snippet state is gone
+    cx.update_editor(|editor, window, cx| {
+        assert!(!editor.move_to_prev_snippet_tabstop(window, cx))
+    });
+    cx.assert_editor_state(indoc! {"
+        a.f(one, two, three)ˇ b
+        a.f(one, two, three)ˇ b
+        a.f(one, two, three)ˇ b
+    "});
+}
+
+#[gpui::test]
+async fn test_snippet_indentation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        let snippet = Snippet::parse(indoc! {"
+            /*
+             * Multiline comment with leading indentation
+             *
+             * $1
+             */
+            $0"})
+        .unwrap();
+        let insertion_ranges = editor
+            .selections
+            .all(cx)
+            .iter()
+            .map(|s| s.range().clone())
+            .collect::<Vec<_>>();
+        editor
+            .insert_snippet(&insertion_ranges, snippet, window, cx)
+            .unwrap();
+    });
+
+    cx.assert_editor_state(indoc! {"
+        /*
+         * Multiline comment with leading indentation
+         *
+         * ˇ
+         */
+    "});
+
+    cx.update_editor(|editor, window, cx| assert!(editor.move_to_next_snippet_tabstop(window, cx)));
+    cx.assert_editor_state(indoc! {"
+        /*
+         * Multiline comment with leading indentation
+         *
+         *•
+         */
+        ˇ"});
 }
 
 #[gpui::test]
