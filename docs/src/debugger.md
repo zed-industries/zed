@@ -236,6 +236,31 @@ the following configuration can be used:
 ]
 ```
 
+#### TypeScript
+
+##### Attach debugger to a server running in web browser (`npx serve`)
+
+Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
+
+```json
+[
+  {
+    "label": "Launch Chromee (TypeScript)",
+    "adapter": "JavaScript",
+    "type": "pwa-chrome",
+    "request": "launch",
+    "url": "http://localhost:5500",
+    "program": "$ZED_FILE",
+    "webRoot": "${ZED_WORKTREE_ROOT}",
+    "sourceMaps": true,
+    "build": {
+      "command": "npx",
+      "args": ["tsc"]
+    }
+  }
+]
+```
+
 ## Breakpoints
 
 To set a breakpoint, simply click next to the line number in the editor gutter.
