@@ -114,11 +114,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if let Some(position_map) = &self.last_position_map {
-            let editor_width = position_map.text_hitbox.bounds.size.width.0;
-            let offset = editor_width / 2.0;
-            self.set_scroll_horizontal(offset, window, cx);
-        }
+        self.scroll_right(window, cx);
     }
 
     pub fn scroll_cursor_left(
@@ -130,6 +126,12 @@ impl Editor {
         if let Some(position_map) = &self.last_position_map {
             let editor_width = position_map.text_hitbox.bounds.size.width.0;
             let offset = -(editor_width / 2.0);
+            // Update the implementation to:
+            // 1. Leverage the implementation's map `point_for_position`
+            // 2. Maintain the current row, but retrieve a new column, as we'll
+            // need to move the cursor to the new column.
+            // 3. This should return a display point, which we can then use like
+            // we're doing for the top row.
             self.set_scroll_horizontal(offset, window, cx);
         }
     }

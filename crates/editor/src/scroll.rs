@@ -20,6 +20,7 @@ use std::{
     cmp::Ordering,
     time::{Duration, Instant},
 };
+use text::SelectionGoal;
 use util::ResultExt;
 use workspace::{ItemId, WorkspaceId};
 
@@ -559,6 +560,36 @@ impl Editor {
 
         anchor.offset = gpui::Point::new(x, 0.0);
         self.set_scroll_anchor(anchor, window, cx);
+    }
+
+    pub fn scroll_right(&mut self, window: &mut Window, cx: &mut Context<Editor>) {
+        if let Some(position_map) = &self.last_position_map {
+            // Update this to actually fetch the current cursor position and calculate half
+            // of the editor's width in order to tell the scroll manager where to scroll to.
+            // TODO: Be sure to also consider that, it shouldn't always scroll half of screen's width,
+            // in case the line where the cursor is located is not longer than the editor's width.
+            let position: gpui::Point<gpui::Pixels> =
+                gpui::Point::new(gpui::Pixels::from(200.0), gpui::Pixels::from(200.0));
+            let point_for_position = position_map.point_for_position(position);
+            let display_point = point_for_position.next_valid;
+            let snapshot = self.snapshot(window, cx).display_snapshot;
+            let offset = display_point.to_offset(&snapshot, sum_tree::Bias::Left);
+            let mut anchor = self.scroll_manager.anchor();
+            anchor.offset = gpui::Point::new(offset as f32, 0.0);
+
+            // Actually scroll the editor.
+            self.set_scroll_anchor(anchor, window, cx);
+
+            // Now, to actually move the cursor.
+            self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.move_cursors_with(|_map, cursor, goal| {
+                    dbg!(&cursor, &goal);
+                    (display_point, SelectionGoal::None)
+                })
+            });
+
+            dbg!(display_point, offset);
+        }
     }
 
     pub(crate) fn set_scroll_position_internal(
