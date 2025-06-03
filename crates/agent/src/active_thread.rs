@@ -1586,9 +1586,7 @@ impl ActiveThread {
 
         let edited_text = state.editor.read(cx).text(cx);
 
-        let creases = state
-            .editor
-            .update(cx, |editor, cx| extract_message_creases(editor, cx));
+        let creases = state.editor.update(cx, extract_message_creases);
 
         let new_context = self
             .context_store

@@ -264,7 +264,7 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 ## Breakpoints
 
 To set a breakpoint, simply click next to the line number in the editor gutter.
-Breakpoints can be tweaked dependending on your needs; to access additional options of a given breakpoint, right-click on the breakpoint icon in the gutter and select the desired option.
+Breakpoints can be tweaked depending on your needs; to access additional options of a given breakpoint, right-click on the breakpoint icon in the gutter and select the desired option.
 At present, you can:
 
 - Add a log to a breakpoint, which will output a log message whenever that breakpoint is hit.
