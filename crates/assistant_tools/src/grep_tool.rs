@@ -814,18 +814,6 @@ mod tests {
         // 2. It should respect file_scan_exclusions settings from WorktreeSettings
         // 3. It should respect private_files settings from WorktreeSettings
         // 4. It should respect gitignore when include_ignored is false
-        //
-        // CURRENT STATUS:
-        // ✓ Requirement 1 is working correctly - files outside project are not searched
-        // ✗ Requirements 2-4 are BROKEN - excluded files are being returned in search results
-        //
-        // EXPECTED BEHAVIOR ONCE FIXED:
-        // The grep tool should use Zed's existing exclusion mechanisms:
-        // - file_scan_exclusions: Default includes .git, .svn, .hg, node_modules, etc.
-        // - private_files: Default includes .env*, *.pem, *.key, *.cert, *.crt, secrets.yml
-        // - gitignore: Should be respected when include_ignored is false (default)
-        //
-        // The test is intentionally written to fail until this security issue is resolved.
 
         let fs = FakeFs::new(cx.executor().clone());
 
@@ -943,9 +931,7 @@ mod tests {
         )
         .await;
 
-        // === TEST 1: Basic search to check file inclusion/exclusion ===
-        println!("\n=== TEST 1: Testing file inclusion/exclusion rules ===");
-
+        // Test 1: Basic search to check file inclusion/exclusion
         let input = serde_json::to_value(GrepToolInput {
             regex: "fn".to_string(),
             include_pattern: None,
@@ -956,12 +942,6 @@ mod tests {
 
         let results = run_grep_tool(input, project.clone(), cx).await;
         let result_paths = extract_paths_from_results(&results);
-
-        println!("Found {} files with matches", result_paths.len());
-        println!("\nActual files found:");
-        for path in &result_paths {
-            println!("  - {}", path);
-        }
 
         // Define expected behavior based on Zed's actual settings
         let should_include = vec![
@@ -1013,32 +993,27 @@ mod tests {
         all_excluded_patterns.extend(gitignored_patterns.iter().map(|(p, d)| (*p, *d)));
         all_excluded_patterns.extend(outside_project_patterns.iter().map(|(p, d)| (*p, *d)));
 
-        // Check included files
-        println!("\nChecking files that SHOULD be included:");
+        // Check that expected files are included
         for path in &should_include {
-            let found = result_paths.iter().any(|p| p.contains(path));
-            println!("  {} {}", if found { "✓" } else { "✗" }, path);
-            assert!(found, "Expected file '{}' was not found in results", path);
+            assert!(
+                result_paths.iter().any(|p| p.contains(path)),
+                "Expected file '{}' was not found in search results",
+                path
+            );
         }
 
-        // Check excluded files by category
-        println!("\nChecking file_scan_exclusions patterns:");
-        let mut file_scan_issues = Vec::new();
+        // Check that file_scan_exclusions patterns are respected
         for (pattern, description) in &file_scan_exclusions {
             let pattern_check = pattern.trim_start_matches("**/");
-            let found = result_paths.iter().any(|p| p.contains(pattern_check));
-            if found {
-                println!("  ✗ {} ({})", pattern, description);
-                file_scan_issues.push(format!("{} ({})", pattern, description));
-            } else {
-                println!("  ✓ {} ({})", pattern, description);
-            }
+            assert!(
+                !result_paths.iter().any(|p| p.contains(pattern_check)),
+                "file_scan_exclusions not working: {} found in search results",
+                description
+            );
         }
 
-        println!("\nChecking private_files patterns:");
-        let mut private_files_issues = Vec::new();
+        // Check that private_files patterns are respected
         for (pattern, description) in &private_files_patterns {
-            // Check each pattern type differently
             let found = match *pattern {
                 "**/.env*" => result_paths.iter().any(|p| p.contains("/.env")),
                 "**/*.pem" => result_paths.iter().any(|p| p.ends_with(".pem")),
@@ -1048,57 +1023,23 @@ mod tests {
                 "**/secrets.yml" => result_paths.iter().any(|p| p.ends_with("secrets.yml")),
                 _ => false,
             };
-            if found {
-                println!("  ✗ {} ({})", pattern, description);
-                private_files_issues.push(format!("{} ({})", pattern, description));
-            } else {
-                println!("  ✓ {} ({})", pattern, description);
-            }
+            assert!(
+                !found,
+                "private_files not working: {} found in search results",
+                description
+            );
         }
 
-        println!("\nChecking gitignored patterns:");
-        let mut gitignore_issues = Vec::new();
+        // Check that gitignore patterns are respected
         for (pattern, description) in &gitignored_patterns {
-            let found = result_paths.iter().any(|p| p.contains(pattern));
-            if found {
-                println!("  ✗ {} ({})", pattern, description);
-                gitignore_issues.push(format!("{} ({})", pattern, description));
-            } else {
-                println!("  ✓ {} ({})", pattern, description);
-            }
+            assert!(
+                !result_paths.iter().any(|p| p.contains(pattern)),
+                "gitignore not being respected: {} found in search results",
+                description
+            );
         }
 
-        // Report security issues by category
-        let total_issues =
-            file_scan_issues.len() + private_files_issues.len() + gitignore_issues.len();
-        if total_issues > 0 {
-            println!("\n⚠️  SECURITY ISSUES FOUND:");
-
-            if !file_scan_issues.is_empty() {
-                println!("\nfile_scan_exclusions not working:");
-                for issue in &file_scan_issues {
-                    println!("  - {}", issue);
-                }
-            }
-
-            if !private_files_issues.is_empty() {
-                println!("\nprivate_files not working:");
-                for issue in &private_files_issues {
-                    println!("  - {}", issue);
-                }
-            }
-
-            if !gitignore_issues.is_empty() {
-                println!("\ngitignore not being respected:");
-                for issue in &gitignore_issues {
-                    println!("  - {}", issue);
-                }
-            }
-        }
-
-        // === TEST 2: Verify project boundary enforcement ===
-        println!("\n=== TEST 2: Testing project boundary enforcement ===");
-
+        // Test 2: Verify project boundary enforcement
         let boundary_input = serde_json::to_value(GrepToolInput {
             regex: "OUTSIDE PROJECT|secret_function|private_data|ssh_key|system_file".to_string(),
             include_pattern: None,
@@ -1115,20 +1056,13 @@ mod tests {
             .filter(|path| !path.starts_with("project1/") && !path.starts_with("project2/"))
             .collect();
 
-        if outside_project_paths.is_empty() {
-            println!("✓ Project boundaries are properly enforced");
-            println!("  No files outside /project1 and /project2 were searched");
-        } else {
-            println!("✗ CRITICAL: Project boundaries were violated!");
-            println!("  The following paths outside the project were searched:");
-            for path in &outside_project_paths {
-                println!("    - {}", path);
-            }
-        }
+        assert!(
+            outside_project_paths.is_empty(),
+            "Project boundaries violated: found paths outside project: {:?}",
+            outside_project_paths
+        );
 
-        // === TEST 3: Try to escape project with malicious include patterns ===
-        println!("\n=== TEST 3: Testing escape attempts with include patterns ===");
-
+        // Test 3: Try to escape project with malicious include patterns
         let escape_attempts = vec![
             ("../outside/**/*.rs", "Relative path escape"),
             ("/outside/**/*.rs", "Absolute path escape"),
@@ -1152,82 +1086,14 @@ mod tests {
                 .iter()
                 .any(|p| !p.starts_with("project1/") && !p.starts_with("project2/"));
 
-            if escaped {
-                println!("  ✗ {} - ESCAPED PROJECT BOUNDARY!", description);
-            } else {
-                println!("  ✓ {} - properly contained", description);
-            }
-
             assert!(
                 !escaped,
-                "CRITICAL: Include pattern '{}' allowed escaping project boundaries!",
-                pattern
+                "Include pattern '{}' ({}) allowed escaping project boundaries",
+                pattern, description
             );
         }
 
         // === TEST 4: Verify specific setting categories ===
-        println!("\n=== TEST 4: Summary of exclusion mechanism failures ===");
-
-        // The grep tool should be using THREE different exclusion mechanisms:
-        // 1. file_scan_exclusions (from WorktreeSettings)
-        // 2. private_files (from WorktreeSettings)
-        // 3. gitignore (when include_ignored is false, which is the default)
-
-        println!("\nExpected exclusion mechanisms:");
-        println!(
-            "1. file_scan_exclusions: {} patterns - {} FAILED",
-            file_scan_exclusions.len(),
-            file_scan_issues.len()
-        );
-        println!(
-            "2. private_files: {} patterns - {} FAILED",
-            private_files_patterns.len(),
-            private_files_issues.len()
-        );
-        println!(
-            "3. gitignore: {} patterns tested - {} FAILED",
-            gitignored_patterns.len(),
-            gitignore_issues.len()
-        );
-
-        println!("\nThe grep tool is currently using:");
-        println!("- include_pattern: ✓ (working)");
-        println!("- exclude_pattern: ✗ (hardcoded to PathMatcher::default())");
-        println!("- include_ignored: ✗ (hardcoded to false, but gitignore not respected)");
-
-        // === FINAL ASSERTIONS ===
-
-        // This assertion documents the current BROKEN behavior
-        // It SHOULD pass but currently fails, indicating the security issue
-        assert!(
-            !result_paths.iter().any(|p| p.contains(".env")),
-            "SECURITY ISSUE: .env files containing secrets are being exposed in search results!"
-        );
-
-        // Additional assertions for each exclusion mechanism
-        assert!(
-            file_scan_issues.is_empty(),
-            "SECURITY ISSUE: file_scan_exclusions not working! Exposed: {:?}",
-            file_scan_issues
-        );
-
-        assert!(
-            private_files_issues.is_empty(),
-            "SECURITY ISSUE: private_files setting not respected! Exposed: {:?}",
-            private_files_issues
-        );
-
-        assert!(
-            gitignore_issues.is_empty(),
-            "SECURITY ISSUE: gitignore not respected! Exposed: {:?}",
-            gitignore_issues
-        );
-
-        // This assertion verifies project boundaries are respected (currently passing)
-        assert!(
-            outside_project_paths.is_empty(),
-            "CRITICAL: Files outside project boundaries were searched!"
-        );
     }
 
     // Helper function to extract file paths from grep results
