@@ -1497,11 +1497,11 @@
       }
     },
     "LaTeX": {
-      "format_on_save": "on",
       "formatter": "language_server",
       "language_servers": ["texlab", "..."],
       "prettier": {
-        "allowed": false
+        "allowed": true,
+        "plugins": ["prettier-plugin-latex"]
       }
     },
     "Markdown": {
