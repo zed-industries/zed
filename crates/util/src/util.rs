@@ -28,9 +28,6 @@ use std::{
 };
 use unicase::UniCase;
 
-#[cfg(unix)]
-use anyhow::Context as _;
-
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, separator, uri};
@@ -313,26 +310,19 @@ fn load_shell_from_passwd() -> Result<()> {
 pub fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
-
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
     // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    let output = shell_env::capture(&shell, env::var_os("HOME"))??;
-
-    for (key, value) in shell_env::parse(&output)? {
-        if let Some(value) = value {
-            unsafe { env::set_var(key.as_ref(), value.as_ref()) };
-        }
+    for (name, value) in shell_env::capture(env::var_os("HOME"))? {
+        unsafe { env::set_var(&name, &value) };
     }
 
     log::info!(
-        "set environment variables from shell:{shell}, path:{}",
-        env::var("PATH").unwrap_or_default(),
+        "set environment variables from shell:{}, path:{}",
+        std::env::var("SHELL").unwrap_or_default(),
+        std::env::var("PATH").unwrap_or_default(),
     );
 
     Ok(())

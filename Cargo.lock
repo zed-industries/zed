@@ -17125,6 +17125,7 @@ dependencies = [
  "take-until",
  "tempfile",
  "tendril",
+ "thiserror 2.0.12",
  "unicase",
  "util_macros",
  "walkdir",

@@ -1,13 +1,48 @@
-use anyhow::{Context as _, Result};
-use std::io::{self, Read};
-use std::{borrow::Cow, ffi::OsStr, path::Path, process::Command};
+use anyhow::Context as _;
+use collections::HashMap;
+use std::borrow::Cow;
+use std::ffi::OsStr;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use tempfile::NamedTempFile;
 
-pub fn capture(
-    shell_path: impl AsRef<Path>,
-    change_dir: Option<impl AsRef<Path>>,
-) -> io::Result<Result<String>> {
-    let shell_name = shell_path.as_ref().file_name().and_then(OsStr::to_str);
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error(
+        "SHELL environment variable is not assigned so we can't source login environment variables"
+    )]
+    CannotResolveShellPath(std::env::VarError),
+
+    #[error(transparent)]
+    CannotCreateTempfile(std::io::Error),
+
+    #[error(transparent)]
+    SpawnFailed(std::io::Error),
+
+    #[error(transparent)]
+    CannotReadTempfile(std::io::Error),
+
+    #[error(
+        "login shell exited with {}. stdout: {:?}, stderr: {:?}",
+        .0.status,
+        String::from_utf8_lossy(&.0.stdout),
+        String::from_utf8_lossy(&.0.stderr),
+    )]
+    ShellExitedWithError(std::process::Output),
+
+    #[error(transparent)]
+    ParseFailed(anyhow::Error),
+}
+
+/// Capture all environment variables from the login shell.
+pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, String>> {
+    let shell_path = std::env::var("SHELL")
+        .map(PathBuf::from)
+        .map_err(Error::CannotResolveShellPath)?;
+    let shell_name = shell_path.file_name().and_then(OsStr::to_str);
 
     let mut command_string = String::new();
 
@@ -27,13 +62,13 @@ pub fn capture(
         _ => "",
     });
 
-    let mut env_output_file = NamedTempFile::new()?;
+    let mut env_output_file = NamedTempFile::new().map_err(Error::CannotCreateTempfile)?;
     command_string.push_str(&format!(
         "sh -c 'export -p' > '{}';",
         env_output_file.path().to_string_lossy(),
     ));
 
-    let mut command = Command::new(shell_path.as_ref());
+    let mut command = Command::new(&shell_path);
 
     // For csh/tcsh, the login shell option is set by passing `-` as
     // the 0th argument instead of using `-l`.
@@ -46,45 +81,60 @@ pub fn capture(
 
     command.args(["-i", "-c", &command_string]);
 
-    let process_output = super::set_pre_exec_to_start_new_session(&mut command).output()?;
+    let process_output = super::set_pre_exec_to_start_new_session(&mut command)
+        .output()
+        .map_err(Error::SpawnFailed)?;
 
-    Ok(if process_output.status.success() {
-        let mut env_output = String::new();
-        env_output_file.read_to_string(&mut env_output)?;
-        Ok(env_output)
-    } else {
-        Err(anyhow::anyhow!(
-            "login shell exited with {}. stdout: {:?}, stderr: {:?}",
-            process_output.status,
-            String::from_utf8_lossy(&process_output.stdout),
-            String::from_utf8_lossy(&process_output.stderr),
-        ))
-    })
+    if !process_output.status.success() {
+        return Err(Error::ShellExitedWithError(process_output));
+    }
+
+    let mut env_output = String::new();
+    env_output_file
+        .read_to_string(&mut env_output)
+        .map_err(Error::CannotReadTempfile)?;
+
+    parse(&env_output)
+        .filter_map(|entry| match entry {
+            Ok((name, value)) => Some(Ok((name.into(), value?.into()))),
+            Err(err) => Some(Err(err)),
+        })
+        .collect::<Result<HashMap<String, String>>>()
 }
 
 /// Parse the result of calling `sh -c 'export -p'`.
 ///
 /// https://www.man7.org/linux/man-pages/man1/export.1p.html
-pub fn parse(mut input: &str) -> Result<Vec<(Cow<'_, str>, Option<Cow<'_, str>>)>> {
-    let mut entry;
-    let mut envs = Vec::new();
-    while !input.is_empty() {
-        (entry, input) = parse_declaration(input)?;
-        envs.push(entry);
-    }
-    Ok(envs)
+fn parse(mut input: &str) -> impl Iterator<Item = Result<(Cow<'_, str>, Option<Cow<'_, str>>)>> {
+    std::iter::from_fn(move || {
+        if input.is_empty() {
+            return None;
+        }
+        match parse_declaration(input) {
+            Ok((entry, rest)) => {
+                input = rest;
+                Some(Ok(entry))
+            }
+            Err(err) => Some(Err(err)),
+        }
+    })
 }
 
 fn parse_declaration(input: &str) -> Result<((Cow<'_, str>, Option<Cow<'_, str>>), &str)> {
     let rest = input
         .strip_prefix("export ")
-        .context("expected 'export ' prefix")?;
+        .context("expected 'export ' prefix")
+        .map_err(Error::ParseFailed)?;
 
     if let Some((name, rest)) = parse_name_and_terminator(rest, '\n') {
         Ok(((name, None), rest))
     } else {
-        let (name, rest) = parse_name_and_terminator(rest, '=').context("invalid name")?;
-        let (value, rest) = parse_literal_and_terminator(rest, '\n').context("invalid value")?;
+        let (name, rest) = parse_name_and_terminator(rest, '=')
+            .context("invalid name")
+            .map_err(Error::ParseFailed)?;
+        let (value, rest) = parse_literal_and_terminator(rest, '\n')
+            .context("invalid value")
+            .map_err(Error::ParseFailed)?;
         Ok(((name, Some(value)), rest))
     }
 }
@@ -190,7 +240,7 @@ mod tests {
             Some("b\na\nz"),
             Some("b\\\na\\\nz"),
             Some("baz"),
-            Some(indoc::indoc! { r#"
+            Some(indoc::indoc! {r#"
             \`Hello\`
             \"wo\
             rld\"\n!\\
@@ -204,7 +254,7 @@ mod tests {
             .map(|value| ("foo".into(), value.map(Into::into)))
             .collect::<Vec<_>>();
 
-        let actual = parse(input).unwrap();
+        let actual = parse(input).collect::<Result<Vec<_>>>().unwrap();
         assert_eq!(expected, actual);
     }
 

@@ -175,6 +175,32 @@ impl EnvironmentErrorMessage {
     }
 }
 
+impl From<util::shell_env::Error> for EnvironmentErrorMessage {
+    fn from(err: util::shell_env::Error) -> Self {
+        use util::shell_env::Error;
+        Self::from_str(match err {
+            Error::CannotResolveShellPath(_) => {
+                "Failed to get login environment. SHELL environment variable is not set"
+            }
+            Error::CannotCreateTempfile(_) => {
+                "Failed to create temporary file for environment capture. See logs for details"
+            }
+            Error::SpawnFailed(_) => {
+                "Failed to spawn login shell to source login environment variables. See logs for details"
+            }
+            Error::CannotReadTempfile(_) => {
+                "Failed to read temporary file for environment capture. See logs for details"
+            }
+            Error::ShellExitedWithError(_) => {
+                "Login shell exited with nonzero exit code. See logs for details"
+            }
+            Error::ParseFailed(_) => {
+                "Failed to parse exported environment variables. See logs for the output"
+            }
+        })
+    }
+}
+
 async fn load_directory_shell_environment(
     abs_path: &Path,
     load_direnv: &DirenvSettings,
@@ -245,40 +271,17 @@ async fn load_shell_environment(
     Option<HashMap<String, String>>,
     Option<EnvironmentErrorMessage>,
 ) {
-    use crate::direnv::{DirenvError, load_direnv_environment};
+    use crate::direnv::load_direnv_environment;
     use util::shell_env;
 
-    fn message<T>(with: &str) -> (Option<T>, Option<EnvironmentErrorMessage>) {
-        let message = EnvironmentErrorMessage::from_str(with);
-        (None, Some(message))
-    }
-
-    let Some(shell) = std::env::var("SHELL").log_err() else {
-        return message("Failed to get login environment. SHELL environment variable is not set");
-    };
-
     let dir_ = dir.to_owned();
-    let captured = match smol::unblock(move || shell_env::capture(shell, Some(dir_))).await {
-        Err(err) => {
-            util::log_err(&err);
-            return message(
-                "Failed to spawn login shell to source login environment variables. See logs for details",
-            );
-        }
-        Ok(Err(err)) => {
-            util::log_err(&err);
-            return message("Login shell exited with nonzero exit code. See logs for details");
-        }
-        Ok(Ok(output)) => output,
+    let mut envs = match smol::unblock(move || shell_env::capture(Some(dir_)))
+        .await
+        .inspect_err(util::log_err)
+    {
+        Ok(envs) => envs,
+        Err(err) => return (None, Some(err.into())),
     };
-
-    let Some(parsed_env) = shell_env::parse(&captured).log_err() else {
-        return message("Failed to parse exported environment variables. See logs for the output");
-    };
-    let mut parsed_env = parsed_env
-        .into_iter()
-        .filter_map(|(key, value)| Some((key.to_string(), value?.to_string())))
-        .collect::<HashMap<String, String>>();
 
     // If the user selects `Direct` for direnv, it would set an environment
     // variable that later uses to know that it should not run the hook.
@@ -286,19 +289,16 @@ async fn load_shell_environment(
     // even if direnv direct mode is enabled.
     let (direnv_environment, direnv_error) = match load_direnv {
         DirenvSettings::ShellHook => (None, None),
-        DirenvSettings::Direct => match load_direnv_environment(&parsed_env, dir).await {
+        DirenvSettings::Direct => match load_direnv_environment(&envs, dir).await {
             Ok(env) => (Some(env), None),
-            Err(err) => (
-                None,
-                <Option<EnvironmentErrorMessage> as From<DirenvError>>::from(err),
-            ),
+            Err(err) => (None, err.into()),
         },
     };
-    for (key, value) in direnv_environment.unwrap_or(HashMap::default()) {
-        parsed_env.insert(key, value);
+    if let Some(direnv_environment) = direnv_environment {
+        envs.extend(direnv_environment);
     }
 
-    (Some(parsed_env), direnv_error)
+    (Some(envs), direnv_error)
 }
 
 fn get_directory_env_impl(
