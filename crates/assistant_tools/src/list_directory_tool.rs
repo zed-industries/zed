@@ -6,7 +6,7 @@ use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchem
 use project::{Project, Worktree, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
@@ -117,25 +117,39 @@ impl Tool for ListDirectoryTool {
             return Task::ready(Err(anyhow!("Worktree not found"))).into();
         };
 
+        // Check if the directory whose contents we're listing is itself excluded or private
         let global_settings = WorktreeSettings::get_global(cx);
+        if global_settings.is_path_excluded(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
 
-        // Check if the directory itself is excluded or private
-        if let Worktree::Local(local_worktree) = worktree.read(cx) {
-            if local_worktree.is_path_private(&project_path.path) {
-                return Task::ready(Err(anyhow!(
-                    "Cannot list private directory: {}",
-                    &input.path
-                )))
-                .into();
-            }
+        if global_settings.is_path_private(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot list directory because its path matches the user's global `private_files` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
 
-            if global_settings.is_path_excluded(&project_path.path) {
-                return Task::ready(Err(anyhow!(
-                    "Cannot list directory because its path matches the `file_scan_exclusions` setting: {}",
-                    &input.path
-                )))
-                .into();
-            }
+        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+        if worktree_settings.is_path_excluded(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot list directory because its path matches the user's worktree`file_scan_exclusions` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
+
+        if worktree_settings.is_path_private(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
+                &input.path
+            )))
+            .into();
         }
 
         let worktree_snapshot = worktree.read(cx).snapshot();
@@ -152,16 +166,26 @@ impl Tool for ListDirectoryTool {
         let mut folders = Vec::new();
         let mut files = Vec::new();
 
-        let is_local_worktree = worktree.read(cx).as_local().is_some();
-
         for entry in worktree_snapshot.child_entries(&project_path.path) {
-            // Skip excluded and private files for local worktrees
-            if is_local_worktree {
-                if global_settings.is_path_excluded(&entry.path)
-                    || global_settings.is_path_private(&entry.path)
-                {
-                    continue;
-                }
+            // Skip private and excluded files and directories
+            if global_settings.is_path_private(&entry.path)
+                || global_settings.is_path_excluded(&entry.path)
+            {
+                continue;
+            }
+
+            if project
+                .read(cx)
+                .find_project_path(&entry.path, cx)
+                .map(|project_path| {
+                    let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+
+                    worktree_settings.is_path_excluded(&project_path.path)
+                        || worktree_settings.is_path_private(&project_path.path)
+                })
+                .unwrap_or(false)
+            {
+                continue;
             }
 
             let full_path = Path::new(&worktree_root_name)
