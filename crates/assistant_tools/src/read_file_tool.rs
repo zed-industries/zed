@@ -12,9 +12,10 @@ use language::{Anchor, Point};
 use language_model::{
     LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
 };
-use project::{AgentLocation, Project, Worktree};
+use project::{AgentLocation, Project, Worktree, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
@@ -103,7 +104,7 @@ impl Tool for ReadFileTool {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
 
-        // This tool may not read private files, as that could send sensitive info to third-party servers.
+        // This tool may not read private files or excluded files, as that could send sensitive info to third-party servers.
         if let Some(worktree) = project
             .read(cx)
             .worktree_store()
@@ -113,6 +114,11 @@ impl Tool for ReadFileTool {
             if let Worktree::Local(local_worktree) = worktree.read(cx) {
                 if local_worktree.is_path_private(&project_path.path) {
                     return Task::ready(Err(anyhow!("Cannot read private file: {}", &input.path)))
+                        .into();
+                }
+
+                if WorktreeSettings::get_global(cx).is_path_excluded(&project_path.path) {
+                    return Task::ready(Err(anyhow!("Cannot read file because its path matches the `file_scan_inclusions` setting: {}", &input.path)))
                         .into();
                 }
             }
@@ -624,9 +630,15 @@ mod test {
             json!({
                 "project_root": {
                     "allowed_file.txt": "This file is in the project",
-                    ".env": "SECRET_KEY=abc123",
+                    ".mysecrets": "SECRET_KEY=abc123",
+                    ".secretdir": {
+                        "config": "special configuration"
+                    },
+                    ".mymetadata": "custom metadata",
                     "subdir": {
-                        "normal_file.txt": "Normal file content"
+                        "normal_file.txt": "Normal file content",
+                        "special.privatekey": "private key content",
+                        "data.mysensitive": "sensitive data"
                     }
                 },
                 "outside_project": {
@@ -635,6 +647,26 @@ mod test {
             }),
         )
         .await;
+
+        // Configure settings explicitly for all tests
+        cx.update(|cx| {
+            use gpui::UpdateGlobal;
+            use project::WorktreeSettings;
+            use settings::SettingsStore;
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.file_scan_exclusions = Some(vec![
+                        "**/.secretdir".to_string(),
+                        "**/.mymetadata".to_string(),
+                    ]);
+                    settings.private_files = Some(vec![
+                        "**/.mysecrets".to_string(),
+                        "**/*.privatekey".to_string(),
+                        "**/*.mysensitive".to_string(),
+                    ]);
+                });
+            });
+        });
 
         let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -688,27 +720,11 @@ mod test {
             "read_file_tool should be able to read files inside worktrees"
         );
 
-        // Configure private_files setting to exclude .blah files
-        cx.update(|cx| {
-            use gpui::UpdateGlobal;
-            use project::WorktreeSettings;
-            use settings::SettingsStore;
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.private_files = Some(vec!["**/.blah*".to_string()]);
-                });
-            });
-        });
-
-        // Create a new project to pick up the settings
-        let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        // Rading private files should fail
+        // Reading files that match file_scan_exclusions should fail
         let result = cx
             .update(|cx| {
                 let input = json!({
-                    "path": "project_root/example.blah"
+                    "path": "project_root/.secretdir/config"
                 });
                 Arc::new(ReadFileTool)
                     .run(
@@ -725,7 +741,100 @@ mod test {
             .await;
         assert!(
             result.is_err(),
-            "read_file_tool should error when attempting to read a file whose path matches the user's `private_files` setting"
+            "read_file_tool should error when attempting to read files in .secretdir (file_scan_exclusions)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/.mymetadata"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read .mymetadata files (file_scan_exclusions)"
+        );
+
+        // Test 4: Reading private files should fail
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/.mysecrets"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read .mysecrets (private_files)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/subdir/special.privatekey"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read .privatekey files (private_files)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/subdir/data.mysensitive"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read .mysensitive files (private_files)"
         );
 
         // Reading a normal file should still work, even with private_files configured
@@ -747,7 +856,7 @@ mod test {
                     .output
             })
             .await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "Should be able to read normal files");
         assert_eq!(
             result.unwrap().content.as_str().unwrap(),
             "Normal file content"
