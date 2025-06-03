@@ -2127,10 +2127,12 @@ impl Pane {
                     .ok()?;
             }
 
-            match operation {
-                PinOperation::Pin => cx.emit(Event::ItemPinned),
-                PinOperation::Unpin => cx.emit(Event::ItemUnpinned),
-            }
+            let event = match operation {
+                PinOperation::Pin => Event::ItemPinned,
+                PinOperation::Unpin => Event::ItemUnpinned,
+            };
+
+            cx.emit(event);
 
             Some(())
         });
