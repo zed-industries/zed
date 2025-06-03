@@ -286,7 +286,7 @@ async fn test_new_path_prompt(cx: &mut TestAppContext) {
     insert_query(path!("/root/d"), &picker, cx).await;
     assert_eq!(
         collect_match_candidates(&picker, cx),
-        vec!["dir1", "dir2", "d"]
+        vec!["d", "dir1", "dir2"]
     );
 
     insert_query(path!("/root/dir1"), &picker, cx).await;
