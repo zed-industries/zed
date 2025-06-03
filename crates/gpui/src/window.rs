@@ -408,7 +408,7 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: Option<HitboxId>, // None represents whole window
+    pub(crate) hitbox_id: HitboxId,
     pub(crate) style: CursorStyle,
 }
 
@@ -608,6 +608,7 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
+    window_cursor_style: Option<CursorStyle>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -651,6 +652,7 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
+            window_cursor_style: None,
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -675,12 +677,24 @@ impl Frame {
         self.hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+        self.window_cursor_style = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
             self.next_inspector_instance_ids.clear();
             self.inspector_hitboxes.clear();
         }
+    }
+
+    pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
+        self.window_cursor_style.or_else(|| {
+            self.cursor_styles.iter().rev().find_map(|request| {
+                request
+                    .hitbox_id
+                    .is_hovered(window)
+                    .then_some(request.style)
+            })
+        })
     }
 
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
@@ -2125,12 +2139,21 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.map(|hitbox| hitbox.id),
+            hitbox_id: hitbox.id,
             style,
         });
+    }
+
+    /// Updates the cursor style for the entire window at the platform level. A cursor
+    /// style using this method will have precedence over any cursor style set using
+    /// `set_cursor_style`. This method should only be called during the prepaint
+    /// phase of element drawing.
+    pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_cursor_style = Some(style);
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
@@ -3205,15 +3228,7 @@ impl Window {
         if self.is_window_hovered() {
             let style = self
                 .rendered_frame
-                .cursor_styles
-                .iter()
-                .rev()
-                .find(|request| {
-                    request
-                        .hitbox_id
-                        .map_or(true, |hitbox_id| hitbox_id.is_hovered(self))
-                })
-                .map(|request| request.style)
+                .cursor_style(self)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }

@@ -291,10 +291,12 @@ impl Element for Scrollbar {
                 Hsla::transparent_black(),
                 BorderStyle::default(),
             ));
-            window.set_cursor_style(
-                CursorStyle::Arrow,
-                (!thumb_state.is_dragging()).then_some(hitbox),
-            );
+
+            if thumb_state.is_dragging() {
+                window.set_window_cursor_style(CursorStyle::Arrow);
+            } else {
+                window.set_cursor_style(CursorStyle::Arrow, hitbox);
+            }
 
             let scroll = self.state.scroll_handle.clone();
 
