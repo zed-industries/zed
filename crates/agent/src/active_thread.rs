@@ -999,7 +999,7 @@ impl ActiveThread {
             ThreadEvent::Stopped(reason) => match reason {
                 Ok(StopReason::EndTurn | StopReason::MaxTokens) => {
                     let used_tools = self.thread.read(cx).used_tools_since_last_user_message();
-                    self.play_notification_sound(cx);
+                    self.play_notification_sound(window, cx);
                     self.show_notification(
                         if used_tools {
                             "Finished running tools"
@@ -1014,11 +1014,11 @@ impl ActiveThread {
                 _ => {}
             },
             ThreadEvent::ToolConfirmationNeeded => {
-                self.play_notification_sound(cx);
+                self.play_notification_sound(window, cx);
                 self.show_notification("Waiting for tool confirmation", IconName::Info, window, cx);
             }
             ThreadEvent::ToolUseLimitReached => {
-                self.play_notification_sound(cx);
+                self.play_notification_sound(window, cx);
                 self.show_notification(
                     "Consecutive tool use limit reached.",
                     IconName::Warning,
@@ -1160,9 +1160,9 @@ impl ActiveThread {
         cx.notify();
     }
 
-    fn play_notification_sound(&self, cx: &mut App) {
+    fn play_notification_sound(&self, window: &Window, cx: &mut App) {
         let settings = AgentSettings::get_global(cx);
-        if settings.play_sound_when_agent_done {
+        if settings.play_sound_when_agent_done && !window.is_window_active() {
             Audio::play_sound(Sound::AgentDone, cx);
         }
     }
