@@ -610,9 +610,9 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
-    /// Minimum width for line numbers in characters
+    /// Minimum width for line numbers in characters.
     ///
-    /// Default 4
+    /// Default: 4
     pub line_number_base_width: Option<usize>,
     /// Whether to show runnable buttons in the gutter.
     ///
