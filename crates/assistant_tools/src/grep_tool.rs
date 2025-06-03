@@ -6,11 +6,12 @@ use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{OffsetRangeExt, ParseStatus, Point};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{
-    Project,
+    Project, WorktreeSettings,
     search::{SearchQuery, SearchResult},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{cmp, fmt::Write, sync::Arc};
 use ui::IconName;
 use util::RangeExt;
@@ -126,6 +127,23 @@ impl Tool for GrepTool {
             }
         };
 
+        // Exclude file_scan_exclusions and private_files
+        let exclude_matcher = {
+            let settings = WorktreeSettings::get_global(cx);
+            let exclude_patterns = settings
+                .file_scan_exclusions
+                .sources()
+                .iter()
+                .chain(settings.private_files.sources().iter());
+
+            match PathMatcher::new(exclude_patterns) {
+                Ok(matcher) => matcher,
+                Err(error) => {
+                    return Task::ready(Err(anyhow!("invalid exclude pattern: {error}"))).into();
+                }
+            }
+        };
+
         let query = match SearchQuery::regex(
             &input.regex,
             false,
@@ -133,7 +151,7 @@ impl Tool for GrepTool {
             false,
             false,
             include_matcher,
-            PathMatcher::default(), // For now, keep it simple and don't enable an exclude pattern.
+            exclude_matcher,
             true, // Always match file include pattern against *full project paths* that start with a project root.
             None,
         ) {
