@@ -6641,7 +6641,7 @@ impl Render for Workspace {
                                 .child({
                                     #[cfg(debug_assertions)]
                                     {
-                                        use gpui::{PathBuilder, px, point};
+                                        use gpui::{PathBuilder, px, point, SharedString};
                                         
                                         // Debug grid overlay to visualize position coordinates
                                         div()
@@ -6651,6 +6651,7 @@ impl Render for Workspace {
                                             .size_full()
                                             .stop_mouse_events_except_scroll()
                                             .child({
+                                                // Grid lines layer
                                                 canvas(
                                                     move |_bounds, _window, _cx| {
                                                         // No prepaint state needed
@@ -6658,7 +6659,7 @@ impl Render for Workspace {
                                                     move |bounds, _state, window, _cx| {
                                                         // Draw debug grid
                                                         let grid_size = px(50.0); // 50px grid
-                                                        let line_color = gpui::rgba(0x00FF0080); // Semi-transparent green
+                                                        let line_color = gpui::rgba(0x00FF0030); // More subtle green
                                                         
                                                         // Draw vertical lines
                                                         let mut x = px(0.0);
@@ -6683,12 +6684,50 @@ impl Render for Workspace {
                                                             }
                                                             y += grid_size;
                                                         }
-                                                        
-                                                        // TODO: Add coordinate labels - needs text rendering API
-                                                        // For now just the grid lines provide spatial reference
                                                     },
                                                 )
                                                 .size_full()
+                                            })
+                                            .children({
+                                                // Coordinate labels layer
+                                                let mut labels = Vec::new();
+                                                let grid_size = 50.0; // px
+                                                
+                                                // X-axis labels along top
+                                                let mut x = grid_size;
+                                                while x <= 2000.0 { // Reasonable max width
+                                                    labels.push(
+                                                        div()
+                                                            .absolute()
+                                                            .left(px(x + 2.0))
+                                                            .top(px(2.0))
+                                                            .text_xs()
+                                                            .text_color(gpui::rgba(0x00FF0060)) // More subtle green text
+                                                            .bg(gpui::rgba(0x00000040)) // More subtle black background
+                                                            .px_1()
+                                                            .child(format!("{:.0}", x))
+                                                    );
+                                                    x += grid_size;
+                                                }
+                                                
+                                                // Y-axis labels along left
+                                                let mut y = grid_size;
+                                                while y <= 2000.0 { // Reasonable max height
+                                                    labels.push(
+                                                        div()
+                                                            .absolute()
+                                                            .left(px(2.0))
+                                                            .top(px(y + 2.0))
+                                                            .text_xs()
+                                                            .text_color(gpui::rgba(0x00FF0060)) // More subtle green text
+                                                            .bg(gpui::rgba(0x00000040)) // More subtle black background
+                                                            .px_1()
+                                                            .child(format!("{:.0}", y))
+                                                    );
+                                                    y += grid_size;
+                                                }
+                                                
+                                                labels
                                             })
                                     }
                                     #[cfg(not(debug_assertions))]
