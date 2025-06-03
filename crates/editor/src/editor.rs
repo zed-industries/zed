@@ -5533,7 +5533,6 @@ impl Editor {
 
         let common_prefix_len = old_text
             .chars()
-            .iter()
             .zip(new_text.chars())
             .take_while(|(a, b)| a == b)
             .map(|(a, _)| a.len_utf8())
