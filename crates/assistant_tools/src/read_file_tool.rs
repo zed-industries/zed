@@ -12,7 +12,6 @@ use language::{Anchor, Point};
 use language_model::{
     LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
 };
-use project::{AgentLocation, Project};
 use project::{AgentLocation, Project, Worktree};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
