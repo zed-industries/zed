@@ -292,7 +292,17 @@ pub struct UsageMetadata {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
-    pub thinking_budget: usize,
+    pub thinking_budget: u32,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GoogleModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -504,7 +514,8 @@ pub enum Model {
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: usize,
-        thinking_budget: Option<usize>,
+        #[serde(default)]
+        mode: GoogleModelMode,
     },
 }
 
@@ -562,12 +573,18 @@ impl Model {
         }
     }
 
-    pub fn thinking_budget(&self) -> Option<usize> {
+    pub fn mode(&self) -> GoogleModelMode {
         match self {
-            Model::Custom {
-                thinking_budget, ..
-            } => *thinking_budget,
-            _ => None,
+            Self::Gemini15Pro
+            | Self::Gemini15Flash
+            | Self::Gemini20Pro
+            | Self::Gemini20Flash
+            | Self::Gemini20FlashThinking
+            | Self::Gemini20FlashLite
+            | Self::Gemini25ProExp0325
+            | Self::Gemini25ProPreview0325
+            | Self::Gemini25FlashPreview0417 => GoogleModelMode::Default,
+            Self::Custom { mode, .. } => *mode,
         }
     }
 }
