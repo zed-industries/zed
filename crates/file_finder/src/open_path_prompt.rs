@@ -655,33 +655,39 @@ impl PickerDelegate for OpenPathDelegate {
 
                 let label_with_highlights = match user_input {
                     Some(user_input) => {
-                        if user_input.is_dir && user_input.exists {
-                            return None;
-                        } else if user_input.exists {
-                            let label = if user_input.is_dir {
-                                label
+                        if user_input.file.string == candidate.path.string {
+                            if user_input.exists {
+                                let label = if user_input.is_dir {
+                                    label
+                                } else {
+                                    format!("{label} (replace)")
+                                };
+                                StyledText::new(label)
+                                    .with_default_highlights(
+                                        &window.text_style().clone(),
+                                        vec![(
+                                            delta..delta + label_len,
+                                            HighlightStyle::color(Color::Conflict.color(cx)),
+                                        )],
+                                    )
+                                    .into_any_element()
                             } else {
-                                format!("{label} (replace)")
-                            };
-                            StyledText::new(label)
-                                .with_default_highlights(
-                                    &window.text_style().clone(),
-                                    vec![(
-                                        delta..delta + label_len,
-                                        HighlightStyle::color(Color::Conflict.color(cx)),
-                                    )],
-                                )
-                                .into_any_element()
+                                StyledText::new(format!("{label} (create)"))
+                                    .with_default_highlights(
+                                        &window.text_style().clone(),
+                                        vec![(
+                                            delta..delta + label_len,
+                                            HighlightStyle::color(Color::Created.color(cx)),
+                                        )],
+                                    )
+                                    .into_any_element()
+                            }
                         } else {
-                            StyledText::new(format!("{label} (create)"))
-                                .with_default_highlights(
-                                    &window.text_style().clone(),
-                                    vec![(
-                                        delta..delta + label_len,
-                                        HighlightStyle::color(Color::Created.color(cx)),
-                                    )],
-                                )
-                                .into_any_element()
+                            let mut highlight_positions = match_positions;
+                            highlight_positions.iter_mut().for_each(|position| {
+                                *position += delta;
+                            });
+                            HighlightedLabel::new(label, highlight_positions).into_any_element()
                         }
                     }
                     None => {
