@@ -380,7 +380,7 @@ impl LspAdapter for PythonLspAdapter {
 
                 // Set both pythonPath and defaultInterpreterPath for compatibility
                 python.insert(
-                    "pythonPath".to_string(),
+                    "pythonPath".to_owned(),
                     Value::String(interpreter_path.clone()),
                 );
                 python.insert(
