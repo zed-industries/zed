@@ -5550,14 +5550,12 @@ impl Editor {
             }
         }
 
-        let mut common_prefix_len = 0;
-        for (a, b) in old_text.chars().zip(new_text.chars()) {
-            if a == b {
-                common_prefix_len += a.len_utf8();
-            } else {
-                break;
-            }
-        }
+        let common_prefix_len = old_text
+            .chars()
+            .zip(new_text.chars())
+            .take_while(|(a, b)| a == b)
+            .map(|(a, _)| a.len_utf8())
+            .sum::<usize>();
 
         cx.emit(EditorEvent::InputHandled {
             utf16_range_to_replace: None,
