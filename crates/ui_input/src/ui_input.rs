@@ -1,12 +1,13 @@
 //! # UI – Text Field
 //!
-//! This crate provides a text field component that can be used to create text fields like search inputs, form fields, etc.
+//! This crate provides text field components that can be used to create text fields like search inputs, form fields, etc.
 //!
 //! It can't be located in the `ui` crate because it depends on `editor`.
 //!
 
 use component::{example_group, single_example};
 use editor::{Editor, EditorElement, EditorStyle};
+use language;
 use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, TextStyle};
 use settings::Settings;
 use theme::ThemeSettings;
@@ -181,6 +182,193 @@ impl Component for SingleLineInput {
                 .gap_6()
                 .children(vec![example_group(vec![single_example(
                     "Default",
+                    div().child(input_1.clone()).into_any_element(),
+                )])])
+                .into_any_element(),
+        )
+    }
+}
+
+/// A MultiLine Text Field that can be used to create multiline text inputs like textareas, descriptions, etc.
+///
+/// It wraps an [`Editor`] with AutoHeight mode and allows for common field properties like labels, placeholders, etc.
+#[derive(RegisterComponent)]
+pub struct MultiLineInput {
+    /// An optional label for the text field.
+    label: Option<SharedString>,
+    /// The placeholder text for the text field.
+    placeholder: SharedString,
+    /// Exposes the underlying [`Entity<Editor>`] to allow for customizing the editor beyond the provided API.
+    pub editor: Entity<Editor>,
+    /// Whether the text field is disabled.
+    disabled: bool,
+    /// Maximum number of lines before scrolling.
+    #[allow(dead_code)]
+    max_lines: usize,
+    /// Minimum height in lines.
+    min_lines: usize,
+}
+
+impl Focusable for MultiLineInput {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl MultiLineInput {
+    pub fn new(window: &mut Window, cx: &mut App, placeholder: impl Into<SharedString>) -> Self {
+        Self::with_max_lines(window, cx, placeholder, 10)
+    }
+
+    pub fn with_max_lines(
+        window: &mut Window,
+        cx: &mut App,
+        placeholder: impl Into<SharedString>,
+        max_lines: usize,
+    ) -> Self {
+        let placeholder_text = placeholder.into();
+
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::auto_height(max_lines, window, cx);
+            editor.set_placeholder_text(placeholder_text.clone(), cx);
+            editor.set_show_gutter(false, cx);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
+            editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor
+        });
+
+        Self {
+            label: None,
+            placeholder: placeholder_text,
+            editor,
+            disabled: false,
+            max_lines,
+            min_lines: 3,
+        }
+    }
+
+    pub fn label(mut self, label: impl Into<SharedString>) -> Self {
+        self.label = Some(label.into());
+        self
+    }
+
+    pub fn min_lines(mut self, min_lines: usize) -> Self {
+        self.min_lines = min_lines;
+        self
+    }
+
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        self.disabled = disabled;
+        self.editor
+            .update(cx, |editor, _| editor.set_read_only(disabled))
+    }
+
+    pub fn is_empty(&self, cx: &App) -> bool {
+        self.editor().read(cx).text(cx).trim().is_empty()
+    }
+
+    pub fn editor(&self) -> &Entity<Editor> {
+        &self.editor
+    }
+
+    pub fn set_text(&self, text: impl Into<SharedString>, window: &mut Window, cx: &mut Context<Self>) {
+        let text = text.into();
+        self.editor.update(cx, |editor, cx| {
+            editor.set_text(text.to_string(), window, cx);
+        });
+    }
+
+    pub fn text(&self, cx: &App) -> String {
+        self.editor().read(cx).text(cx)
+    }
+}
+
+impl Render for MultiLineInput {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let theme_color = cx.theme().colors();
+
+        let mut style = SingleLineInputStyle {
+            text_color: theme_color.text,
+            background_color: theme_color.editor_background,
+            border_color: theme_color.border_variant,
+        };
+
+        if self.disabled {
+            style.text_color = theme_color.text_disabled;
+            style.background_color = theme_color.editor_background;
+            style.border_color = theme_color.border_disabled;
+        }
+
+        let text_style = TextStyle {
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.buffer_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.2),
+            color: style.text_color,
+            ..Default::default()
+        };
+
+        let editor_style = EditorStyle {
+            background: theme_color.ghost_element_background,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            ..Default::default()
+        };
+
+        v_flex()
+            .id(self.placeholder.clone())
+            .w_full()
+            .gap_1()
+            .when_some(self.label.clone(), |this, label| {
+                this.child(
+                    Label::new(label)
+                        .size(LabelSize::Default)
+                        .color(if self.disabled {
+                            Color::Disabled
+                        } else {
+                            Color::Muted
+                        }),
+                )
+            })
+            .child(
+                div()
+                    .px_2()
+                    .py_1()
+                    .bg(style.background_color)
+                    .text_color(style.text_color)
+                    .rounded_md()
+                    .border_1()
+                    .border_color(style.border_color)
+                    .min_w_48()
+                    .min_h(px(self.min_lines as f32 * 1.5 * 16.0))
+                    .w_full()
+                    .flex_grow()
+                    .child(EditorElement::new(&self.editor, editor_style)),
+            )
+    }
+}
+
+impl Component for MultiLineInput {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        let input_1 = cx.new(|cx| {
+            MultiLineInput::new(window, cx, "Enter multiple lines of text...")
+                .label("Multi-line Description")
+                .min_lines(4)
+        });
+
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group(vec![single_example(
+                    "MultiLine",
                     div().child(input_1.clone()).into_any_element(),
                 )])])
                 .into_any_element(),
