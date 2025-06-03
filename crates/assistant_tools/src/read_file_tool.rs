@@ -12,7 +12,7 @@ use language::{Anchor, Point};
 use language_model::{
     LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
 };
-use project::{AgentLocation, Project, Worktree, WorktreeSettings};
+use project::{AgentLocation, Project, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -104,27 +104,40 @@ impl Tool for ReadFileTool {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
 
-        if WorktreeSettings::get_global(cx).is_path_excluded(&project_path.path) {
+        // Error out if this path is either excluded or private in global settings
+        let global_settings = WorktreeSettings::get_global(cx);
+        if global_settings.is_path_excluded(&project_path.path) {
             return Task::ready(Err(anyhow!(
-                "Cannot read file because its path matches the `file_scan_exclusions` user setting: {}",
+                "Cannot read file because its path matches the global `file_scan_exclusions` setting: {}",
                 &input.path
             )))
             .into();
         }
 
-        // This tool may not read private files or excluded files, as that could send sensitive info to third-party servers.
-        if let Some(worktree) = project
-            .read(cx)
-            .worktree_store()
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-        {
-            if let Worktree::Local(local_worktree) = worktree.read(cx) {
-                if local_worktree.is_path_private(&project_path.path) {
-                    return Task::ready(Err(anyhow!("Cannot read file because its path matches the `private_files` user setting: {}", &input.path)))
-                        .into();
-                }
-            }
+        if global_settings.is_path_private(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot read file because its path matches the global `private_files` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
+
+        // Error out if this path is either excluded or private in worktree settings
+        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+        if worktree_settings.is_path_excluded(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot read file because its path matches the worktree `file_scan_exclusions` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
+
+        if worktree_settings.is_path_private(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot read file because its path matches the worktree `private_files` setting: {}",
+                &input.path
+            )))
+            .into();
         }
 
         let file_path = input.path.clone();
@@ -272,10 +285,10 @@ impl Tool for ReadFileTool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use language_model::fake_provider::FakeLanguageModel;
-    use project::{FakeFs, Project};
+    use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -886,6 +899,279 @@ mod test {
         assert!(
             result.is_err(),
             "read_file_tool should error when attempting to read a relative path that resolves to outside a worktree"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_with_multiple_worktree_settings(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create first worktree with its own private files
+        fs.insert_tree(
+            "/worktree1",
+            json!({
+                "src": {
+                    "main.rs": "fn main() { println!(\"Hello from worktree1\"); }",
+                    "secret.rs": "const API_KEY: &str = \"secret_key_1\";",
+                    "config.toml": "[database]\nurl = \"postgres://localhost/db1\""
+                },
+                "tests": {
+                    "test.rs": "mod tests { fn test_it() {} }",
+                    "fixture.sql": "CREATE TABLE users (id INT, name VARCHAR(255));"
+                },
+                ".zed": {
+                    "settings.json": r#"{
+                        "file_scan_exclusions": ["**/fixture.*"],
+                        "private_files": ["**/secret.rs", "**/config.toml"]
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        // Create second worktree with different private files
+        fs.insert_tree(
+            "/worktree2",
+            json!({
+                "lib": {
+                    "public.js": "export function greet() { return 'Hello from worktree2'; }",
+                    "private.js": "const SECRET_TOKEN = \"private_token_2\";",
+                    "data.json": "{\"api_key\": \"json_secret_key\"}"
+                },
+                "docs": {
+                    "README.md": "# Public Documentation",
+                    "internal.md": "# Internal Secrets and Configuration"
+                },
+                ".zed": {
+                    "settings.json": r#"{
+                        "file_scan_exclusions": ["**/internal.*"],
+                        "private_files": ["**/private.js", "**/data.json"]
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        // Set global settings
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.private_files = Some(vec!["**/.env".to_string()]);
+                });
+            });
+        });
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
+            cx,
+        )
+        .await;
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let tool = Arc::new(ReadFileTool);
+
+        // Test reading allowed files in worktree1
+        let input = json!({
+            "path": "worktree1/src/main.rs"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.content.as_str().unwrap(),
+            "fn main() { println!(\"Hello from worktree1\"); }"
+        );
+
+        // Test reading private file in worktree1 should fail
+        let input = json!({
+            "path": "worktree1/src/secret.rs"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `private_files` setting"),
+            "Error should mention worktree private_files setting"
+        );
+
+        // Test reading excluded file in worktree1 should fail
+        let input = json!({
+            "path": "worktree1/tests/fixture.sql"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `file_scan_exclusions` setting"),
+            "Error should mention worktree file_scan_exclusions setting"
+        );
+
+        // Test reading allowed files in worktree2
+        let input = json!({
+            "path": "worktree2/lib/public.js"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.content.as_str().unwrap(),
+            "export function greet() { return 'Hello from worktree2'; }"
+        );
+
+        // Test reading private file in worktree2 should fail
+        let input = json!({
+            "path": "worktree2/lib/private.js"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `private_files` setting"),
+            "Error should mention worktree private_files setting"
+        );
+
+        // Test reading excluded file in worktree2 should fail
+        let input = json!({
+            "path": "worktree2/docs/internal.md"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `file_scan_exclusions` setting"),
+            "Error should mention worktree file_scan_exclusions setting"
+        );
+
+        // Test that files allowed in one worktree but not in another are handled correctly
+        // (e.g., config.toml is private in worktree1 but doesn't exist in worktree2)
+        let input = json!({
+            "path": "worktree1/src/config.toml"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `private_files` setting"),
+            "Config.toml should be blocked by worktree1's private_files setting"
         );
     }
 }

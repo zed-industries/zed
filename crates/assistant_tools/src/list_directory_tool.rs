@@ -3,10 +3,10 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::{Project, Worktree, WorktreeSettings};
+use project::{Project, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation};
+use settings::Settings;
 use std::{fmt::Write, path::Path, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
@@ -162,6 +162,7 @@ impl Tool for ListDirectoryTool {
         if !entry.is_dir() {
             return Task::ready(Err(anyhow!("{} is not a directory.", input.path))).into();
         }
+        let worktree_snapshot = worktree.read(cx).snapshot();
 
         let mut folders = Vec::new();
         let mut files = Vec::new();
@@ -641,5 +642,226 @@ mod tests {
             !content.contains(".hidden_subdir"),
             "Should not list .hidden_subdir (file_scan_exclusions)"
         );
+    }
+
+    #[gpui::test]
+    async fn test_list_directory_with_multiple_worktree_settings(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create first worktree with its own private files
+        fs.insert_tree(
+            "/worktree1",
+            json!({
+                ".zed": {
+                    "settings.json": r#"{
+                        "file_scan_exclusions": ["**/fixture.*"],
+                        "private_files": ["**/secret.rs", "**/config.toml"]
+                    }"#
+                },
+                "src": {
+                    "main.rs": "fn main() { println!(\"Hello from worktree1\"); }",
+                    "secret.rs": "const API_KEY: &str = \"secret_key_1\";",
+                    "config.toml": "[database]\nurl = \"postgres://localhost/db1\""
+                },
+                "tests": {
+                    "test.rs": "mod tests { fn test_it() {} }",
+                    "fixture.sql": "CREATE TABLE users (id INT, name VARCHAR(255));"
+                }
+            }),
+        )
+        .await;
+
+        // Create second worktree with different private files
+        fs.insert_tree(
+            "/worktree2",
+            json!({
+                ".zed": {
+                    "settings.json": r#"{
+                        "file_scan_exclusions": ["**/internal.*"],
+                        "private_files": ["**/private.js", "**/data.json"]
+                    }"#
+                },
+                "lib": {
+                    "public.js": "export function greet() { return 'Hello from worktree2'; }",
+                    "private.js": "const SECRET_TOKEN = \"private_token_2\";",
+                    "data.json": "{\"api_key\": \"json_secret_key\"}"
+                },
+                "docs": {
+                    "README.md": "# Public Documentation",
+                    "internal.md": "# Internal Secrets and Configuration"
+                }
+            }),
+        )
+        .await;
+
+        // Set global settings
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.private_files = Some(vec!["**/.env".to_string()]);
+                });
+            });
+        });
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
+            cx,
+        )
+        .await;
+
+        // Wait for worktrees to be fully scanned
+        cx.executor().run_until_parked();
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let tool = Arc::new(ListDirectoryTool);
+
+        // Test listing worktree1/src - should exclude secret.rs and config.toml based on local settings
+        let input = json!({
+            "path": "worktree1/src"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        assert!(content.contains("main.rs"), "Should list main.rs");
+        assert!(
+            !content.contains("secret.rs"),
+            "Should not list secret.rs (local private_files)"
+        );
+        assert!(
+            !content.contains("config.toml"),
+            "Should not list config.toml (local private_files)"
+        );
+
+        // Test listing worktree1/tests - should exclude fixture.sql based on local settings
+        let input = json!({
+            "path": "worktree1/tests"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        assert!(content.contains("test.rs"), "Should list test.rs");
+        assert!(
+            !content.contains("fixture.sql"),
+            "Should not list fixture.sql (local file_scan_exclusions)"
+        );
+
+        // Test listing worktree2/lib - should exclude private.js and data.json based on local settings
+        let input = json!({
+            "path": "worktree2/lib"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        assert!(content.contains("public.js"), "Should list public.js");
+        assert!(
+            !content.contains("private.js"),
+            "Should not list private.js (local private_files)"
+        );
+        assert!(
+            !content.contains("data.json"),
+            "Should not list data.json (local private_files)"
+        );
+
+        // Test listing worktree2/docs - should exclude internal.md based on local settings
+        let input = json!({
+            "path": "worktree2/docs"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        let content = result.content.as_str().unwrap();
+        assert!(content.contains("README.md"), "Should list README.md");
+        assert!(
+            !content.contains("internal.md"),
+            "Should not list internal.md (local file_scan_exclusions)"
+        );
+
+        // Test trying to list an excluded directory directly
+        let input = json!({
+            "path": "worktree1/src/secret.rs"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        // This should fail because we're trying to list a file, not a directory
+        assert!(result.is_err(), "Should fail when trying to list a file");
     }
 }
