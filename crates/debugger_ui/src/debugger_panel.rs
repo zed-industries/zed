@@ -1350,8 +1350,8 @@ impl Render for DebugPanel {
                 active_pane.update(cx, |pane, cx| {
                     let is_zoomed = pane.is_zoomed();
                     pane.set_zoomed(!is_zoomed, cx);
-                    cx.notify();
-                })
+                });
+                cx.notify();
             }))
             .when(self.active_session.is_some(), |this| {
                 this.on_mouse_down(
