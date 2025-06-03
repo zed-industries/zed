@@ -773,6 +773,19 @@ pub enum DirectoryLister {
     Local(Entity<Project>, Arc<dyn Fs>),
 }
 
+impl std::fmt::Debug for DirectoryLister {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DirectoryLister::Project(project) => {
+                write!(f, "DirectoryLister::Project({project:?})")
+            }
+            DirectoryLister::Local(project, _) => {
+                write!(f, "DirectoryLister::Local({project:?})")
+            }
+        }
+    }
+}
+
 impl DirectoryLister {
     pub fn is_local(&self, cx: &App) -> bool {
         match self {
