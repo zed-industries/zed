@@ -1013,7 +1013,6 @@ impl Database {
 
             if channel.is_root() {
                 log::info!("Skipping reorder of root channel {}", channel.id,);
-
                 return Ok(vec![]);
             }
 
