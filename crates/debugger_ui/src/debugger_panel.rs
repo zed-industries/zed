@@ -3,10 +3,10 @@ use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
-    ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleExpandItem,
-    ToggleIgnoreBreakpoints, ToggleSessionPicker, ToggleThreadPicker, persistence,
-    spawn_task_or_modal,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewProcessModal,
+    NewProcessMode, Pause, Restart, ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop,
+    ToggleExpandItem, ToggleIgnoreBreakpoints, ToggleSessionPicker, ToggleThreadPicker,
+    persistence, spawn_task_or_modal,
 };
 use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
@@ -337,10 +337,17 @@ impl DebugPanel {
         let Some(task_inventory) = task_store.read(cx).task_inventory() else {
             return;
         };
+        let workspace = self.workspace.clone();
         let Some(scenario) = task_inventory.read(cx).last_scheduled_scenario().cloned() else {
+            window.defer(cx, move |window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        NewProcessModal::show(workspace, window, NewProcessMode::Launch, None, cx);
+                    })
+                    .ok();
+            });
             return;
         };
-        let workspace = self.workspace.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let task_contexts = workspace
@@ -1455,5 +1462,11 @@ impl workspace::DebuggerProvider for DebuggerProvider {
 
     fn debug_scenario_scheduled_last(&self, cx: &App) -> bool {
         self.0.read(cx).debug_scenario_scheduled_last
+    }
+
+    fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus> {
+        let session = self.0.read(cx).active_session()?;
+        let thread = session.read(cx).running_state().read(cx).thread_id()?;
+        session.read(cx).session(cx).read(cx).thread_state(thread)
     }
 }
