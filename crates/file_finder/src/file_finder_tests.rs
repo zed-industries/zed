@@ -739,7 +739,6 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         .update_in(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.close_active_item(&CloseActiveItem::default(), window, cx)
-                    .unwrap()
             })
         })
         .await

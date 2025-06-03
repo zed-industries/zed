@@ -14,7 +14,7 @@ use http_client::HttpClientWithUrl;
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, ProjectPath, Symbol, WorktreeId};
+use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, Symbol, WorktreeId};
 use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
@@ -746,7 +746,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         _trigger: CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Option<Vec<Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let state = buffer.update(cx, |buffer, _cx| {
             let position = buffer_position.to_point(buffer);
             let line_start = Point::new(position.row, 0);
@@ -756,13 +756,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             MentionCompletion::try_parse(line, offset_to_line)
         });
         let Some(state) = state else {
-            return Task::ready(Ok(None));
+            return Task::ready(Ok(Vec::new()));
         };
 
         let Some((workspace, context_store)) =
             self.workspace.upgrade().zip(self.context_store.upgrade())
         else {
-            return Task::ready(Ok(None));
+            return Task::ready(Ok(Vec::new()));
         };
 
         let snapshot = buffer.read(cx).snapshot();
@@ -815,10 +815,10 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         cx.spawn(async move |_, cx| {
             let matches = search_task.await;
             let Some(editor) = editor.upgrade() else {
-                return Ok(None);
+                return Ok(Vec::new());
             };
 
-            Ok(Some(cx.update(|cx| {
+            let completions = cx.update(|cx| {
                 matches
                     .into_iter()
                     .filter_map(|mat| match mat {
@@ -901,7 +901,14 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                         ),
                     })
                     .collect()
-            })?))
+            })?;
+
+            Ok(vec![CompletionResponse {
+                completions,
+                // Since this does its own filtering (see `filter_completions()` returns false),
+                // there is no benefit to computing whether this set of completions is incomplete.
+                is_incomplete: true,
+            }])
         })
     }
 

@@ -482,7 +482,9 @@ jobs:
       - macos_tests
       - windows_clippy
       - windows_tests
-    if: always()
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      always()
     steps:
       - name: Check all tests passed
         run: |

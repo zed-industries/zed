@@ -20,8 +20,8 @@ use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
 
-const SEND_LINE: &str = "// Send:";
-const RECEIVE_LINE: &str = "// Receive:";
+const SEND_LINE: &str = "// Send:\n";
+const RECEIVE_LINE: &str = "// Receive:\n";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
 pub struct LogStore {
@@ -464,8 +464,7 @@ impl LogStore {
         while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
         }
-        let entry: &str = message.as_ref();
-        let entry = entry.to_string();
+        let entry = format!("{}\n", message.as_ref().trim());
         let visible = message.should_include(current_severity);
         log_lines.push_back(message);
 
@@ -580,7 +579,7 @@ impl LogStore {
         });
         cx.emit(Event::NewServerLogEntry {
             id: language_server_id,
-            entry: message.to_string(),
+            entry: format!("{}\n\n", message),
             kind: LogKind::Rpc,
         });
         cx.notify();
@@ -644,13 +643,7 @@ impl LspLogView {
                             let last_point = editor.buffer().read(cx).len(cx);
                             let newest_cursor_is_at_end =
                                 editor.selections.newest::<usize>(cx).start >= last_point;
-                            editor.edit(
-                                vec![
-                                    (last_point..last_point, entry.trim()),
-                                    (last_point..last_point, "\n"),
-                                ],
-                                cx,
-                            );
+                            editor.edit(vec![(last_point..last_point, entry.as_str())], cx);
                             let entry_length = entry.len();
                             if entry_length > 1024 {
                                 editor.fold_ranges(

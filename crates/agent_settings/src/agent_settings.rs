@@ -372,6 +372,7 @@ impl AgentSettingsContent {
                                 None,
                                 None,
                                 Some(language_model.supports_tools()),
+                                None,
                             )),
                             api_url,
                         });
@@ -689,6 +690,7 @@ pub struct AgentSettingsContentV2 {
 pub enum CompletionMode {
     #[default]
     Normal,
+    #[serde(alias = "max")]
     Burn,
 }
 
