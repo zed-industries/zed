@@ -38,6 +38,7 @@ pub struct Model {
     pub max_tokens: usize,
     pub keep_alive: Option<KeepAlive>,
     pub supports_tools: Option<bool>,
+    pub supports_vision: Option<bool>,
     pub supports_thinking: Option<bool>,
 }
 
@@ -68,6 +69,7 @@ impl Model {
         display_name: Option<&str>,
         max_tokens: Option<usize>,
         supports_tools: Option<bool>,
+        supports_vision: Option<bool>,
         supports_thinking: Option<bool>,
     ) -> Self {
         Self {
@@ -78,6 +80,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
+            supports_vision,
             supports_thinking,
         }
     }
@@ -101,10 +104,14 @@ pub enum ChatMessage {
     Assistant {
         content: String,
         tool_calls: Option<Vec<OllamaToolCall>>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<String>>,
         thinking: Option<String>,
     },
     User {
         content: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<String>>,
     },
     System {
         content: String,
@@ -219,6 +226,10 @@ impl ModelShow {
     pub fn supports_tools(&self) -> bool {
         // .contains expects &String, which would require an additional allocation
         self.capabilities.iter().any(|v| v == "tools")
+    }
+
+    pub fn supports_vision(&self) -> bool {
+        self.capabilities.iter().any(|v| v == "vision")
     }
 
     pub fn supports_thinking(&self) -> bool {
@@ -468,6 +479,7 @@ mod tests {
             ChatMessage::Assistant {
                 content,
                 tool_calls,
+                images: _,
                 thinking,
             } => {
                 assert!(content.is_empty());
@@ -533,5 +545,71 @@ mod tests {
         assert!(result.supports_tools());
         assert!(result.capabilities.contains(&"tools".to_string()));
         assert!(result.capabilities.contains(&"completion".to_string()));
+    }
+
+    #[test]
+    fn serialize_chat_request_with_images() {
+        let base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+        let request = ChatRequest {
+            model: "llava".to_string(),
+            messages: vec![ChatMessage::User {
+                content: "What do you see in this image?".to_string(),
+                images: Some(vec![base64_image.to_string()]),
+            }],
+            stream: false,
+            keep_alive: KeepAlive::default(),
+            options: None,
+            think: None,
+            tools: vec![],
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(serialized.contains("images"));
+        assert!(serialized.contains(base64_image));
+    }
+
+    #[test]
+    fn serialize_chat_request_without_images() {
+        let request = ChatRequest {
+            model: "llama3.2".to_string(),
+            messages: vec![ChatMessage::User {
+                content: "Hello, world!".to_string(),
+                images: None,
+            }],
+            stream: false,
+            keep_alive: KeepAlive::default(),
+            options: None,
+            think: None,
+            tools: vec![],
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+        assert!(!serialized.contains("images"));
+    }
+
+    #[test]
+    fn test_json_format_with_images() {
+        let base64_image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+        let request = ChatRequest {
+            model: "llava".to_string(),
+            messages: vec![ChatMessage::User {
+                content: "What do you see?".to_string(),
+                images: Some(vec![base64_image.to_string()]),
+            }],
+            stream: false,
+            keep_alive: KeepAlive::default(),
+            options: None,
+            think: None,
+            tools: vec![],
+        };
+
+        let serialized = serde_json::to_string(&request).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        let message_images = parsed["messages"][0]["images"].as_array().unwrap();
+        assert_eq!(message_images.len(), 1);
+        assert_eq!(message_images[0].as_str().unwrap(), base64_image);
     }
 }
