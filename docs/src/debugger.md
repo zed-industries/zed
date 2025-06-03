@@ -156,7 +156,9 @@ For a common Flask Application with a file structure similar to the following:
 
 ## Breakpoints
 
-Zed currently supports these types of breakpoints:
+To set a breakpoint, simply click next to the line number in the editor gutter.
+Breakpoints can be tweaked depending on your needs; to access additional options of a given breakpoint, right-click on the breakpoint icon in the gutter and select the desired option.
+At present, you can:
 
 - Standard Breakpoints: Stop at the breakpoint when it's hit
 - Log Breakpoints: Output a log message instead of stopping at the breakpoint when it's hit

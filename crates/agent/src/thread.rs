@@ -1026,6 +1026,7 @@ impl Thread {
         id: MessageId,
         new_role: Role,
         new_segments: Vec<MessageSegment>,
+        creases: Vec<MessageCrease>,
         loaded_context: Option<LoadedContext>,
         checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
@@ -1035,6 +1036,7 @@ impl Thread {
         };
         message.role = new_role;
         message.segments = new_segments;
+        message.creases = creases;
         if let Some(context) = loaded_context {
             message.loaded_context = context;
         }
