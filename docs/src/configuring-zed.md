@@ -38,22 +38,11 @@ Extensions that provide language servers may also provide default settings for t
 ```json
 {
   "active_pane_modifiers": {
-    "magnification": 1.0,
     "border_size": 0.0,
     "inactive_opacity": 1.0
   }
 }
 ```
-
-### Magnification
-
-- Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `magnification`
-- Default: `1.0`
-
-**Options**
-
-`float` values
 
 ### Border size
 
