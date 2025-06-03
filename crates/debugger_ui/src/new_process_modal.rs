@@ -522,17 +522,6 @@ pub(crate) enum NewProcessMode {
     Debug,
 }
 
-impl NewProcessMode {
-    fn tooltip(&self) -> SharedString {
-        match self {
-            NewProcessMode::Task => "Run",
-            NewProcessMode::Debug => "Debug",
-            NewProcessMode::Attach => "Attach",
-            NewProcessMode::Launch => "Launch",
-        }
-        .into()
-    }
-}
 impl std::fmt::Display for NewProcessMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mode = match self {
