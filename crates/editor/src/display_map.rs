@@ -961,7 +961,10 @@ impl DisplaySnapshot {
                 if chunk.is_unnecessary {
                     diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
                 }
-                if chunk.underline && editor_style.show_underlines {
+                if chunk.underline
+                    && editor_style.show_underlines
+                    && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
+                {
                     let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
                     diagnostic_highlight.underline = Some(UnderlineStyle {
                         color: Some(diagnostic_color),
