@@ -1912,19 +1912,19 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
         assert_selection_ranges("use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("use stdˇ::str::{foo, bar}\n\n  ˇ{baz.qux()}", editor, cx);
+        assert_selection_ranges("use stdˇ::str::{foo, bar}\n\nˇ  {baz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("use ˇstd::str::{foo, bar}\n\nˇ  {baz.qux()}", editor, cx);
-
-        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("ˇuse std::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
+        assert_selection_ranges("use ˇstd::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
         assert_selection_ranges("ˇuse std::str::{foo, barˇ}\n\n  {baz.qux()}", editor, cx);
 
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("ˇuse std::str::{foo, ˇbar}\n\n  {baz.qux()}", editor, cx);
+
         editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
-        assert_selection_ranges("useˇ std::str::{foo, bar}ˇ\n\n  {baz.qux()}", editor, cx);
+        assert_selection_ranges("useˇ std::str::{foo, barˇ}\n\n  {baz.qux()}", editor, cx);
 
         editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
         assert_selection_ranges("use stdˇ::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
@@ -1942,7 +1942,7 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
 
         editor.select_to_previous_word_start(&SelectToPreviousWordStart, window, cx);
         assert_selection_ranges(
-            "use std«ˇ::s»tr::{foo, bar}\n\n  «ˇ{b»az.qux()}",
+            "use std«ˇ::s»tr::{foo, bar}\n\n«ˇ  {b»az.qux()}",
             editor,
             cx,
         );
