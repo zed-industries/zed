@@ -18,11 +18,12 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     Action, AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context,
-    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
-    Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
-    anchored, deferred, div, impl_actions, point, px, size, transparent_white, uniform_list,
+    CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, impl_actions, point, px, size, transparent_white, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -3106,6 +3107,30 @@ impl ProjectPanel {
         .detach();
     }
 
+    fn refresh_drag_cursor_style(
+        &self,
+        modifiers: &Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(existing_cursor) = cx.active_drag_cursor_style() {
+            let new_cursor = if Self::is_copy_modifier_set(modifiers) {
+                CursorStyle::DragCopy
+            } else {
+                CursorStyle::PointingHand
+            };
+            dbg!(&existing_cursor, &new_cursor);
+            if existing_cursor != new_cursor {
+                cx.set_active_drag_cursor_style(new_cursor, window);
+            }
+        }
+    }
+
+    fn is_copy_modifier_set(modifiers: &Modifiers) -> bool {
+        cfg!(target_os = "macos") && modifiers.alt
+            || cfg!(not(target_os = "macos")) && modifiers.control
+    }
+
     fn drag_onto(
         &mut self,
         selections: &DraggedSelection,
@@ -3114,9 +3139,7 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let should_copy = cfg!(target_os = "macos") && window.modifiers().alt
-            || cfg!(not(target_os = "macos")) && window.modifiers().control;
-        if should_copy {
+        if Self::is_copy_modifier_set(&window.modifiers()) {
             let _ = maybe!({
                 let project = self.project.read(cx);
                 let target_worktree = project.worktree_for_entry(target_entry_id, cx)?;
@@ -4741,6 +4764,11 @@ impl Render for ProjectPanel {
                 .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
                 .size_full()
                 .relative()
+                .on_modifiers_changed(cx.listener(
+                    |this, event: &ModifiersChangedEvent, window, cx| {
+                        this.refresh_drag_cursor_style(&event.modifiers, window, cx);
+                    },
+                ))
                 .on_hover(cx.listener(|this, hovered, window, cx| {
                     if *hovered {
                         this.show_scrollbar = true;
