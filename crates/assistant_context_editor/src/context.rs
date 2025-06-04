@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod context_tests;
 
-use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
+use anyhow::{Context as _, Result, bail};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -21,14 +21,15 @@ use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, P
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolUseId, MaxMonthlySpendReachedError, MessageContent, PaymentRequiredError,
-    Role, StopReason, report_assistant_event,
+    LanguageModelToolUseId, MessageContent, PaymentRequiredError, Role, StopReason,
+    report_assistant_event,
 };
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     cmp::{Ordering, max},
@@ -44,6 +45,7 @@ use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
+use zed_llm_client::CompletionIntent;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -133,7 +135,7 @@ pub enum ContextOperation {
         version: clock::Global,
     },
     UpdateSummary {
-        summary: ContextSummary,
+        summary: ContextSummaryContent,
         version: clock::Global,
     },
     SlashCommandStarted {
@@ -203,7 +205,7 @@ impl ContextOperation {
                 version: language::proto::deserialize_version(&update.version),
             }),
             proto::context_operation::Variant::UpdateSummary(update) => Ok(Self::UpdateSummary {
-                summary: ContextSummary {
+                summary: ContextSummaryContent {
                     text: update.summary,
                     done: update.done,
                     timestamp: language::proto::deserialize_timestamp(
@@ -447,7 +449,6 @@ impl ContextOperation {
 pub enum ContextEvent {
     ShowAssistError(SharedString),
     ShowPaymentRequiredError,
-    ShowMaxMonthlySpendReachedError,
     MessagesEdited,
     SummaryChanged,
     SummaryGenerated,
@@ -467,11 +468,73 @@ pub enum ContextEvent {
     Operation(ContextOperation),
 }
 
-#[derive(Clone, Default, Debug)]
-pub struct ContextSummary {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ContextSummary {
+    Pending,
+    Content(ContextSummaryContent),
+    Error,
+}
+
+#[derive(Default, Clone, Debug, Eq, PartialEq)]
+pub struct ContextSummaryContent {
     pub text: String,
     pub done: bool,
-    timestamp: clock::Lamport,
+    pub timestamp: clock::Lamport,
+}
+
+impl ContextSummary {
+    pub const DEFAULT: &str = "New Text Thread";
+
+    pub fn or_default(&self) -> SharedString {
+        self.unwrap_or(Self::DEFAULT)
+    }
+
+    pub fn unwrap_or(&self, message: impl Into<SharedString>) -> SharedString {
+        self.content()
+            .map_or_else(|| message.into(), |content| content.text.clone().into())
+    }
+
+    pub fn content(&self) -> Option<&ContextSummaryContent> {
+        match self {
+            ContextSummary::Content(content) => Some(content),
+            ContextSummary::Pending | ContextSummary::Error => None,
+        }
+    }
+
+    fn content_as_mut(&mut self) -> Option<&mut ContextSummaryContent> {
+        match self {
+            ContextSummary::Content(content) => Some(content),
+            ContextSummary::Pending | ContextSummary::Error => None,
+        }
+    }
+
+    fn content_or_set_empty(&mut self) -> &mut ContextSummaryContent {
+        match self {
+            ContextSummary::Content(content) => content,
+            ContextSummary::Pending | ContextSummary::Error => {
+                let content = ContextSummaryContent::default();
+                *self = ContextSummary::Content(content);
+                self.content_as_mut().unwrap()
+            }
+        }
+    }
+
+    pub fn is_pending(&self) -> bool {
+        matches!(self, ContextSummary::Pending)
+    }
+
+    fn timestamp(&self) -> Option<clock::Lamport> {
+        match self {
+            ContextSummary::Content(content) => Some(content.timestamp),
+            ContextSummary::Pending | ContextSummary::Error => None,
+        }
+    }
+}
+
+impl PartialOrd for ContextSummary {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.timestamp().partial_cmp(&other.timestamp())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -607,7 +670,7 @@ pub struct AssistantContext {
     message_anchors: Vec<MessageAnchor>,
     contents: Vec<Content>,
     messages_metadata: HashMap<MessageId, MessageMetadata>,
-    summary: Option<ContextSummary>,
+    summary: ContextSummary,
     summary_task: Task<Option<()>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
@@ -621,6 +684,7 @@ pub struct AssistantContext {
     language_registry: Arc<LanguageRegistry>,
     project: Option<Entity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
+    completion_mode: agent_settings::CompletionMode,
 }
 
 trait ContextAnnotation {
@@ -655,6 +719,14 @@ impl AssistantContext {
             telemetry,
             cx,
         )
+    }
+
+    pub fn completion_mode(&self) -> agent_settings::CompletionMode {
+        self.completion_mode
+    }
+
+    pub fn set_completion_mode(&mut self, completion_mode: agent_settings::CompletionMode) {
+        self.completion_mode = completion_mode;
     }
 
     pub fn new(
@@ -694,7 +766,7 @@ impl AssistantContext {
             slash_command_output_sections: Vec::new(),
             thought_process_output_sections: Vec::new(),
             edits_since_last_parse: edits_since_last_slash_command_parse,
-            summary: None,
+            summary: ContextSummary::Pending,
             summary_task: Task::ready(None),
             completion_count: Default::default(),
             pending_completions: Default::default(),
@@ -703,6 +775,7 @@ impl AssistantContext {
             pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
             telemetry,
@@ -753,7 +826,7 @@ impl AssistantContext {
                 .collect(),
             summary: self
                 .summary
-                .as_ref()
+                .content()
                 .map(|summary| summary.text.clone())
                 .unwrap_or_default(),
             slash_command_output_sections: self
@@ -939,12 +1012,10 @@ impl AssistantContext {
                     summary: new_summary,
                     ..
                 } => {
-                    if self
-                        .summary
-                        .as_ref()
-                        .map_or(true, |summary| new_summary.timestamp > summary.timestamp)
-                    {
-                        self.summary = Some(new_summary);
+                    if self.summary.timestamp().map_or(true, |current_timestamp| {
+                        new_summary.timestamp > current_timestamp
+                    }) {
+                        self.summary = ContextSummary::Content(new_summary);
                         summary_generated = true;
                     }
                 }
@@ -1102,8 +1173,8 @@ impl AssistantContext {
         self.path.as_ref()
     }
 
-    pub fn summary(&self) -> Option<&ContextSummary> {
-        self.summary.as_ref()
+    pub fn summary(&self) -> &ContextSummary {
+        &self.summary
     }
 
     pub fn parsed_slash_commands(&self) -> &[ParsedSlashCommand] {
@@ -1671,9 +1742,8 @@ impl AssistantContext {
                                 merge_same_roles,
                             } => {
                                 if !merge_same_roles && Some(role) != last_role {
-                                    let offset = this.buffer.read_with(cx, |buffer, _cx| {
-                                        insert_position.to_offset(buffer)
-                                    });
+                                    let buffer = this.buffer.read(cx);
+                                    let offset = insert_position.to_offset(buffer);
                                     this.insert_message_at_offset(
                                         offset,
                                         role,
@@ -2095,12 +2165,6 @@ impl AssistantContext {
                                 metadata.status = MessageStatus::Canceled;
                             });
                             Some(error.to_string())
-                        } else if error.is::<MaxMonthlySpendReachedError>() {
-                            cx.emit(ContextEvent::ShowMaxMonthlySpendReachedError);
-                            this.update_metadata(assistant_message_id, cx, |metadata| {
-                                metadata.status = MessageStatus::Canceled;
-                            });
-                            Some(error.to_string())
                         } else {
                             let error_message = error
                                 .chain()
@@ -2151,6 +2215,7 @@ impl AssistantContext {
                             StopReason::ToolUse => {}
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
+                            StopReason::Refusal => {}
                         }
                     }
                 })
@@ -2208,13 +2273,13 @@ impl AssistantContext {
         let mut completion_request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: Some(CompletionIntent::UserPrompt),
             mode: None,
             messages: Vec::new(),
             tools: Vec::new(),
             tool_choice: None,
             stop: Vec::new(),
-            temperature: model
-                .and_then(|model| AssistantSettings::temperature_for_model(model, cx)),
+            temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {
@@ -2269,7 +2334,15 @@ impl AssistantContext {
                 completion_request.messages.push(request_message);
             }
         }
+        let supports_max_mode = if let Some(model) = model {
+            model.supports_max_mode()
+        } else {
+            false
+        };
 
+        if supports_max_mode {
+            completion_request.mode = Some(self.completion_mode.into());
+        }
         completion_request
     }
 
@@ -2576,7 +2649,7 @@ impl AssistantContext {
             return;
         };
 
-        if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_none()) {
+        if replace_old || (self.message_anchors.len() >= 2 && self.summary.is_pending()) {
             if !model.provider.is_authenticated(cx) {
                 return;
             }
@@ -2593,17 +2666,20 @@ impl AssistantContext {
 
             // If there is no summary, it is set with `done: false` so that "Loading Summary…" can
             // be displayed.
-            if self.summary.is_none() {
-                self.summary = Some(ContextSummary {
-                    text: "".to_string(),
-                    done: false,
-                    timestamp: clock::Lamport::default(),
-                });
-                replace_old = true;
+            match self.summary {
+                ContextSummary::Pending | ContextSummary::Error => {
+                    self.summary = ContextSummary::Content(ContextSummaryContent {
+                        text: "".to_string(),
+                        done: false,
+                        timestamp: clock::Lamport::default(),
+                    });
+                    replace_old = true;
+                }
+                ContextSummary::Content(_) => {}
             }
 
             self.summary_task = cx.spawn(async move |this, cx| {
-                async move {
+                let result = async {
                     let stream = model.model.stream_completion_text(request, &cx);
                     let mut messages = stream.await?;
 
@@ -2614,7 +2690,7 @@ impl AssistantContext {
                         this.update(cx, |this, cx| {
                             let version = this.version.clone();
                             let timestamp = this.next_timestamp();
-                            let summary = this.summary.get_or_insert(ContextSummary::default());
+                            let summary = this.summary.content_or_set_empty();
                             if !replaced && replace_old {
                                 summary.text.clear();
                                 replaced = true;
@@ -2636,10 +2712,19 @@ impl AssistantContext {
                         }
                     }
 
+                    this.read_with(cx, |this, _cx| {
+                        if let Some(summary) = this.summary.content() {
+                            if summary.text.is_empty() {
+                                bail!("Model generated an empty summary");
+                            }
+                        }
+                        Ok(())
+                    })??;
+
                     this.update(cx, |this, cx| {
                         let version = this.version.clone();
                         let timestamp = this.next_timestamp();
-                        if let Some(summary) = this.summary.as_mut() {
+                        if let Some(summary) = this.summary.content_as_mut() {
                             summary.done = true;
                             summary.timestamp = timestamp;
                             let operation = ContextOperation::UpdateSummary {
@@ -2654,8 +2739,18 @@ impl AssistantContext {
 
                     anyhow::Ok(())
                 }
-                .log_err()
-                .await
+                .await;
+
+                if let Err(err) = result {
+                    this.update(cx, |this, cx| {
+                        this.summary = ContextSummary::Error;
+                        cx.emit(ContextEvent::SummaryChanged);
+                    })
+                    .log_err();
+                    log::error!("Error generating context summary: {}", err);
+                }
+
+                Some(())
             });
         }
     }
@@ -2769,7 +2864,7 @@ impl AssistantContext {
 
             let (old_path, summary) = this.read_with(cx, |this, _| {
                 let path = this.path.clone();
-                let summary = if let Some(summary) = this.summary.as_ref() {
+                let summary = if let Some(summary) = this.summary.content() {
                     if summary.done {
                         Some(summary.text.clone())
                     } else {
@@ -2823,20 +2918,11 @@ impl AssistantContext {
 
     pub fn set_custom_summary(&mut self, custom_summary: String, cx: &mut Context<Self>) {
         let timestamp = self.next_timestamp();
-        let summary = self.summary.get_or_insert(ContextSummary::default());
+        let summary = self.summary.content_or_set_empty();
         summary.timestamp = timestamp;
         summary.done = true;
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
-    }
-
-    pub const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Text Thread");
-
-    pub fn summary_or_default(&self) -> SharedString {
-        self.summary
-            .as_ref()
-            .map(|summary| summary.text.clone().into())
-            .unwrap_or(Self::DEFAULT_SUMMARY)
     }
 }
 
@@ -2945,7 +3031,7 @@ impl SavedContext {
         let saved_context_json = serde_json::from_str::<serde_json::Value>(json)?;
         match saved_context_json
             .get("version")
-            .ok_or_else(|| anyhow!("version not found"))?
+            .context("version not found")?
         {
             serde_json::Value::String(version) => match version.as_str() {
                 SavedContext::VERSION => {
@@ -2966,9 +3052,9 @@ impl SavedContext {
                         serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
                     Ok(saved_context.upgrade())
                 }
-                _ => Err(anyhow!("unrecognized saved context version: {}", version)),
+                _ => anyhow::bail!("unrecognized saved context version: {version:?}"),
             },
-            _ => Err(anyhow!("version not found on saved context")),
+            _ => anyhow::bail!("version not found on saved context"),
         }
     }
 
@@ -3053,7 +3139,7 @@ impl SavedContext {
 
         let timestamp = next_timestamp.tick();
         operations.push(ContextOperation::UpdateSummary {
-            summary: ContextSummary {
+            summary: ContextSummaryContent {
                 text: self.summary,
                 done: true,
                 timestamp,

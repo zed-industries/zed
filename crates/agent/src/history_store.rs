@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, path::Path, sync::Arc};
 
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use assistant_context_editor::{AssistantContext, SavedContextMetadata};
 use chrono::{DateTime, Utc};
 use futures::future::{TryFutureExt as _, join_all};
@@ -71,8 +71,8 @@ impl Eq for RecentEntry {}
 impl RecentEntry {
     pub(crate) fn summary(&self, cx: &App) -> SharedString {
         match self {
-            RecentEntry::Thread(_, thread) => thread.read(cx).summary_or_default(),
-            RecentEntry::Context(context) => context.read(cx).summary_or_default(),
+            RecentEntry::Thread(_, thread) => thread.read(cx).summary().or_default(),
+            RecentEntry::Context(context) => context.read(cx).summary().or_default(),
         }
     }
 }
@@ -130,7 +130,10 @@ impl HistoryStore {
                                         .boxed()
                                 })
                                 .unwrap_or_else(|_| {
-                                    async { Err(anyhow!("no thread store")) }.boxed()
+                                    async {
+                                        anyhow::bail!("no thread store");
+                                    }
+                                    .boxed()
                                 }),
                             SerializedRecentEntry::Context(id) => context_store
                                 .update(cx, |context_store, cx| {
@@ -140,13 +143,16 @@ impl HistoryStore {
                                         .boxed()
                                 })
                                 .unwrap_or_else(|_| {
-                                    async { Err(anyhow!("no context store")) }.boxed()
+                                    async {
+                                        anyhow::bail!("no context store");
+                                    }
+                                    .boxed()
                                 }),
                         });
                     let entries = join_all(entries)
                         .await
                         .into_iter()
-                        .filter_map(|result| result.log_err())
+                        .filter_map(|result| result.log_with_level(log::Level::Debug))
                         .collect::<VecDeque<_>>();
 
                     this.update(cx, |this, _| {

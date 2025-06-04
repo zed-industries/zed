@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
@@ -343,6 +343,8 @@ impl Prettier {
                                 prettier_plugin_dir.join("plugin.js"),
                                 // this one is for @prettier/plugin-php
                                 prettier_plugin_dir.join("standalone.js"),
+                                // this one is for prettier-plugin-latex
+                                prettier_plugin_dir.join("dist").join("prettier-plugin-latex.js"),
                                 prettier_plugin_dir,
                             ]
                             .into_iter()
@@ -421,7 +423,7 @@ impl Prettier {
                             prettier_parser = prettier_parser.or_else(|| buffer_language.and_then(|language| language.prettier_parser_name()));
                             if prettier_parser.is_none() {
                                 log::error!("Formatting unsaved file with prettier failed. No prettier parser configured for language {buffer_language:?}");
-                                return Err(anyhow!("Cannot determine prettier parser for unsaved file"));
+                                anyhow::bail!("Cannot determine prettier parser for unsaved file");
                             }
 
                         }

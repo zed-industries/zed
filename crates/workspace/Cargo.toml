@@ -74,7 +74,6 @@ call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
@@ -82,3 +81,4 @@ session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
+zlog.workspace = true

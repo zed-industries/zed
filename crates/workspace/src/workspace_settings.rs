@@ -28,6 +28,7 @@ pub struct WorkspaceSettings {
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub on_last_window_closed: OnLastWindowClosed,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
+    pub close_on_file_delete: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -52,12 +53,6 @@ impl OnLastWindowClosed {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivePanelModifiers {
-    /// Scale by which to zoom the active pane.
-    /// When set to 1.0, the active pane has the same size as others,
-    /// but when set to a larger value, the active pane takes up more space.
-    ///
-    /// Default: `1.0`
-    pub magnification: Option<f32>,
     /// Size of the border surrounding the active pane.
     /// When set to 0, the active pane doesn't have any border.
     /// The border is drawn inset.
@@ -203,6 +198,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: ["left"]
     pub resize_all_panels_in_dock: Option<Vec<DockPosition>>,
+    /// Whether to automatically close files that have been deleted on disk.
+    ///
+    /// Default: false
+    pub close_on_file_delete: Option<bool>,
 }
 
 #[derive(Deserialize)]

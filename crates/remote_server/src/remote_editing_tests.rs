@@ -2,7 +2,7 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
-use assistant_tool::Tool as _;
+use assistant_tool::{Tool as _, ToolResultContent};
 use assistant_tools::{ReadFileTool, ReadFileToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
@@ -513,8 +513,8 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     assert_eq!(
         result
-            .unwrap()
             .into_iter()
+            .flat_map(|response| response.completions)
             .map(|c| c.label.text)
             .collect::<Vec<_>>(),
         vec!["boop".to_string()]
@@ -1593,7 +1593,7 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
         )
     });
     let output = exists_result.output.await.unwrap().content;
-    assert_eq!(output, "B");
+    assert_eq!(output, ToolResultContent::Text("B".to_string()));
 
     let input = ReadFileToolInput {
         path: "project/c.txt".into(),
@@ -1663,9 +1663,7 @@ pub async fn init_test(
 }
 
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    zlog::init_test();
 }
 
 fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {

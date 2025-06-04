@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
@@ -120,6 +120,8 @@ pub trait Settings: 'static + Send + Sync {
 pub struct SettingsSources<'a, T> {
     /// The default Zed settings.
     pub default: &'a T,
+    /// Global settings (loaded before user settings).
+    pub global: Option<&'a T>,
     /// Settings provided by extensions.
     pub extensions: Option<&'a T>,
     /// The user settings.
@@ -140,8 +142,9 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
 
     /// Returns an iterator over all of the settings customizations.
     pub fn customizations(&self) -> impl Iterator<Item = &T> {
-        self.extensions
+        self.global
             .into_iter()
+            .chain(self.extensions)
             .chain(self.user)
             .chain(self.release_channel)
             .chain(self.server)
@@ -180,6 +183,7 @@ pub struct SettingsLocation<'a> {
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: Value,
+    raw_global_settings: Option<Value>,
     raw_user_settings: Value,
     raw_server_settings: Option<Value>,
     raw_extension_settings: Value,
@@ -246,6 +250,7 @@ trait AnySettingValue: 'static + Send + Sync {
         cx: &mut App,
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
     fn json_schema(
@@ -272,6 +277,7 @@ impl SettingsStore {
         Self {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
+            raw_global_settings: None,
             raw_user_settings: serde_json::json!({}),
             raw_server_settings: None,
             raw_extension_settings: serde_json::json!({}),
@@ -341,6 +347,7 @@ impl SettingsStore {
                 .load_setting(
                     SettingsSources {
                         default: &default_settings,
+                        global: None,
                         extensions: extension_value.as_ref(),
                         user: user_value.as_ref(),
                         release_channel: release_channel_value.as_ref(),
@@ -370,6 +377,24 @@ impl SettingsStore {
             .expect("no default value for setting type")
     }
 
+    /// Get all values from project specific settings
+    pub fn get_all_locals<T: Settings>(&self) -> Vec<(WorktreeId, Arc<Path>, &T)> {
+        self.setting_values
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
+            .all_local_values()
+            .into_iter()
+            .map(|(id, path, any)| {
+                (
+                    id,
+                    path,
+                    any.downcast_ref::<T>()
+                        .expect("wrong value type for setting"),
+                )
+            })
+            .collect()
+    }
+
     /// Override the global value for a setting.
     ///
     /// The given value will be overwritten if the user settings file changes.
@@ -386,6 +411,11 @@ impl SettingsStore {
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> &Value {
         &self.raw_user_settings
+    }
+
+    /// Access the raw JSON value of the global settings.
+    pub fn raw_global_settings(&self) -> Option<&Value> {
+        self.raw_global_settings.as_ref()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -419,6 +449,20 @@ impl SettingsStore {
                 if let Some(e) = err.downcast_ref::<std::io::Error>() {
                     if e.kind() == std::io::ErrorKind::NotFound {
                         return Ok(crate::initial_user_settings_content().to_string());
+                    }
+                }
+                Err(err)
+            }
+        }
+    }
+
+    pub async fn load_global_settings(fs: &Arc<dyn Fs>) -> Result<String> {
+        match fs.load(paths::global_settings_file()).await {
+            result @ Ok(_) => result,
+            Err(err) => {
+                if let Some(e) = err.downcast_ref::<std::io::Error>() {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        return Ok("{}".to_string());
                     }
                 }
                 Err(err)
@@ -610,13 +654,10 @@ impl SettingsStore {
         cx: &mut App,
     ) -> Result<()> {
         let settings: Value = parse_json_with_comments(default_settings_content)?;
-        if settings.is_object() {
-            self.raw_default_settings = settings;
-            self.recompute_values(None, cx)?;
-            Ok(())
-        } else {
-            Err(anyhow!("settings must be an object"))
-        }
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_default_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
     }
 
     /// Sets the user settings via a JSON string.
@@ -633,6 +674,24 @@ impl SettingsStore {
 
         anyhow::ensure!(settings.is_object(), "settings must be an object");
         self.raw_user_settings = settings.clone();
+        self.recompute_values(None, cx)?;
+        Ok(settings)
+    }
+
+    /// Sets the global settings via a JSON string.
+    pub fn set_global_settings(
+        &mut self,
+        global_settings_content: &str,
+        cx: &mut App,
+    ) -> Result<Value> {
+        let settings: Value = if global_settings_content.is_empty() {
+            parse_json_with_comments("{}")?
+        } else {
+            parse_json_with_comments(global_settings_content)?
+        };
+
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_global_settings = Some(settings.clone());
         self.recompute_values(None, cx)?;
         Ok(settings)
     }
@@ -935,6 +994,11 @@ impl SettingsStore {
                     message: e.to_string(),
                 })?;
 
+            let global_settings = self
+                .raw_global_settings
+                .as_ref()
+                .and_then(|setting| setting_value.deserialize_setting(setting).log_err());
+
             let extension_settings = setting_value
                 .deserialize_setting(&self.raw_extension_settings)
                 .log_err();
@@ -972,6 +1036,7 @@ impl SettingsStore {
                     .load_setting(
                         SettingsSources {
                             default: &default_settings,
+                            global: global_settings.as_ref(),
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
                             release_channel: release_channel_settings.as_ref(),
@@ -1023,6 +1088,7 @@ impl SettingsStore {
                             .load_setting(
                                 SettingsSources {
                                     default: &default_settings,
+                                    global: global_settings.as_ref(),
                                     extensions: extension_settings.as_ref(),
                                     user: user_settings.as_ref(),
                                     release_channel: release_channel_settings.as_ref(),
@@ -1139,6 +1205,9 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         Ok(Box::new(T::load(
             SettingsSources {
                 default: values.default.0.downcast_ref::<T::FileContent>().unwrap(),
+                global: values
+                    .global
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 extensions: values
                     .extensions
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
@@ -1183,6 +1252,13 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             .map(|value| DeserializedSetting(Box::new(value)))
             .map_err(anyhow::Error::from);
         (key, value)
+    }
+
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)> {
+        self.local_values
+            .iter()
+            .map(|(id, path, value)| (*id, path.clone(), value as _))
+            .collect()
     }
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
@@ -1472,6 +1548,8 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
 
 #[cfg(test)]
 mod tests {
+    use crate::VsCodeSettingsSource;
+
     use super::*;
     use serde_derive::Deserialize;
     use unindent::Unindent;
@@ -1954,7 +2032,10 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old, cx).ok();
-        let new = store.get_vscode_edits(old, &VsCodeSettings::from_str(&vscode).unwrap());
+        let new = store.get_vscode_edits(
+            old,
+            &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
+        );
         pretty_assertions::assert_eq!(new, expected);
     }
 
@@ -1966,7 +2047,8 @@ mod tests {
     }
 
     #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
-    struct UserSettingsJson {
+    #[schemars(deny_unknown_fields)]
+    struct UserSettingsContent {
         name: Option<String>,
         age: Option<u32>,
         staff: Option<bool>,
@@ -1974,7 +2056,7 @@ mod tests {
 
     impl Settings for UserSettings {
         const KEY: Option<&'static str> = Some("user");
-        type FileContent = UserSettingsJson;
+        type FileContent = UserSettingsContent;
 
         fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
             sources.json_merge()
@@ -2008,6 +2090,7 @@ mod tests {
     }
 
     #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+    #[schemars(deny_unknown_fields)]
     struct MultiKeySettingsJson {
         key1: Option<String>,
         key2: Option<String>,
@@ -2046,6 +2129,7 @@ mod tests {
     }
 
     #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+    #[schemars(deny_unknown_fields)]
     struct JournalSettingsJson {
         pub path: Option<String>,
         pub hour_format: Option<HourFormat>,
@@ -2069,6 +2153,70 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_global_settings(cx: &mut App) {
+        let mut store = SettingsStore::new(cx);
+        store.register_setting::<UserSettings>(cx);
+        store
+            .set_default_settings(
+                r#"{
+                    "user": {
+                        "name": "John Doe",
+                        "age": 30,
+                        "staff": false
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
+
+        // Set global settings - these should override defaults but not user settings
+        store
+            .set_global_settings(
+                r#"{
+                    "user": {
+                        "name": "Global User",
+                        "age": 35,
+                        "staff": true
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
+
+        // Before user settings, global settings should apply
+        assert_eq!(
+            store.get::<UserSettings>(None),
+            &UserSettings {
+                name: "Global User".to_string(),
+                age: 35,
+                staff: true,
+            }
+        );
+
+        // Set user settings - these should override both defaults and global
+        store
+            .set_user_settings(
+                r#"{
+                    "user": {
+                        "age": 40
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
+
+        // User settings should override global settings
+        assert_eq!(
+            store.get::<UserSettings>(None),
+            &UserSettings {
+                name: "Global User".to_string(), // Name from global settings
+                age: 40,                         // Age from user settings
+                staff: true,                     // Staff from global settings
+            }
+        );
+    }
+
     #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
     struct LanguageSettings {
         #[serde(default)]
@@ -2076,6 +2224,7 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+    #[schemars(deny_unknown_fields)]
     struct LanguageSettingEntry {
         language_setting_1: Option<bool>,
         language_setting_2: Option<bool>,

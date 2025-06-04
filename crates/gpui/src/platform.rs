@@ -45,6 +45,7 @@ use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use parking::Unparker;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -417,7 +418,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
     fn is_active(&self) -> bool;
@@ -444,6 +445,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     // macOS specific methods
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
+    fn titlebar_double_click(&self) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
@@ -595,7 +597,7 @@ impl PlatformTextSystem for NoopTextSystem {
                 .unwrap()
                 .width
             / metrics.units_per_em as f32;
-        let mut glyphs = SmallVec::default();
+        let mut glyphs = Vec::new();
         for (ix, c) in text.char_indices() {
             if let Some(glyph) = self.glyph_for_char(FontId(0), c) {
                 glyphs.push(ShapedGlyph {
@@ -1243,8 +1245,60 @@ pub enum PromptLevel {
     Critical,
 }
 
+/// Prompt Button
+#[derive(Clone, Debug, PartialEq)]
+pub enum PromptButton {
+    /// Ok button
+    Ok(SharedString),
+    /// Cancel button
+    Cancel(SharedString),
+    /// Other button
+    Other(SharedString),
+}
+
+impl PromptButton {
+    /// Create a button with label
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        PromptButton::Other(label.into())
+    }
+
+    /// Create an Ok button
+    pub fn ok(label: impl Into<SharedString>) -> Self {
+        PromptButton::Ok(label.into())
+    }
+
+    /// Create a Cancel button
+    pub fn cancel(label: impl Into<SharedString>) -> Self {
+        PromptButton::Cancel(label.into())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_cancel(&self) -> bool {
+        matches!(self, PromptButton::Cancel(_))
+    }
+
+    /// Returns the label of the button
+    pub fn label(&self) -> &SharedString {
+        match self {
+            PromptButton::Ok(label) => label,
+            PromptButton::Cancel(label) => label,
+            PromptButton::Other(label) => label,
+        }
+    }
+}
+
+impl From<&str> for PromptButton {
+    fn from(value: &str) -> Self {
+        match value.to_lowercase().as_str() {
+            "ok" => PromptButton::Ok("Ok".into()),
+            "cancel" => PromptButton::Cancel("Cancel".into()),
+            _ => PromptButton::Other(SharedString::from(value.to_owned())),
+        }
+    }
+}
+
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum CursorStyle {
     /// The default cursor
     Arrow,

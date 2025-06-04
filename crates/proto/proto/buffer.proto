@@ -261,6 +261,7 @@ message Diagnostic {
 
     bool is_disk_based = 10;
     bool is_unnecessary = 11;
+    bool underline = 15;
 
     enum Severity {
         None = 0;
