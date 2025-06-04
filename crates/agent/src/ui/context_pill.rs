@@ -626,11 +626,11 @@ impl AddedContext {
                 message: "Loading…".into(),
             },
             ImageStatus::Error => ContextStatus::Error {
-                message: "Failed to load image".into(),
+                message: "Failed to load Image".into(),
             },
             ImageStatus::Warning => ContextStatus::Warning {
                 message: format!(
-                    "{} doesn't support images",
+                    "{} doesn't support attaching Images as Context",
                     model.map(|m| m.name().0).unwrap_or_else(|| "Model".into())
                 )
                 .into(),
