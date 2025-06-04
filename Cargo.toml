@@ -598,7 +598,6 @@ tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml",
 unicase = "2.6"
 unicode-script = "0.5.7"
 unicode-segmentation = "1.10"
-unicode-width = "0.2"
 unindent = "0.2.0"
 url = "2.2"
 urlencoding = "2.1.2"

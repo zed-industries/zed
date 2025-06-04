@@ -208,7 +208,6 @@ mod tests {
         vte::ansi::Handler,
     };
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};
-    use unicode_width::UnicodeWidthChar;
     use url::Url;
     use util::paths::PathWithPosition;
 
@@ -1005,10 +1004,18 @@ mod tests {
     }
 
     fn line_cells_count(line: &str) -> usize {
+        // This avoids taking a dependency on the unicode-width crate
+        fn width(c: char) -> usize {
+            match c {
+                // Fullwidth unicode characters used in tests
+                '例' | '🏃' | '🦀' | '🔥' => 2,
+                _ => 1,
+            }
+        }
         const CONTROL_CHARS: &str = "‹«👉👈»›";
         line.chars()
             .filter(|c| !CONTROL_CHARS.contains(*c))
-            .filter_map(UnicodeWidthChar::width)
+            .map(width)
             .sum::<usize>()
     }
 
