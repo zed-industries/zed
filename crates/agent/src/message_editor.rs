@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::agent_model_selector::{AgentModelSelector, ModelType};
+use crate::agent_model_selector::AgentModelSelector;
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
@@ -52,8 +52,8 @@ use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
     ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
-    NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode, ToggleContextPicker,
-    ToggleProfileSelector, register_agent_preview,
+    ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
+    ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
 
 #[derive(RegisterComponent)]
@@ -197,7 +197,7 @@ impl MessageEditor {
                 fs.clone(),
                 model_selector_menu_handle,
                 editor.focus_handle(cx),
-                ModelType::Default(thread.clone()),
+                ModelUsageContext::Thread(thread.clone()),
                 window,
                 cx,
             )
