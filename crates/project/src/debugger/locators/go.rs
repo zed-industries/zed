@@ -58,6 +58,7 @@ impl DapLocator for GoLocator {
                     tags: vec![],
                     show_summary: true,
                     show_command: true,
+                    ..TaskTemplate::default()
                 };
 
                 Some(DebugScenario {
@@ -192,6 +193,7 @@ mod tests {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            ..TaskTemplate::default()
         };
 
         let scenario =
@@ -240,6 +242,7 @@ mod tests {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            ..TaskTemplate::default()
         };
 
         let scenario =
@@ -266,6 +269,7 @@ mod tests {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            ..TaskTemplate::default()
         };
 
         let scenario = locator.create_scenario(
@@ -298,6 +302,7 @@ mod tests {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            ..TaskTemplate::default()
         };
 
         let scenario =
@@ -351,6 +356,7 @@ mod tests {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            ..TaskTemplate::default()
         };
 
         let scenario =
@@ -384,6 +390,7 @@ mod tests {
             tags: vec![],
             show_summary: true,
             show_command: true,
+            ..TaskTemplate::default()
         };
 
         let scenario =
