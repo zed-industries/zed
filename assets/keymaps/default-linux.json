@@ -911,7 +911,9 @@
     "context": "CollabPanel && not_editing",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm"
+      "space": "menu::Confirm",
+      "ctrl-up": "collab_panel::MoveChannelUp",
+      "ctrl-down": "collab_panel::MoveChannelDown"
     }
   },
   {
