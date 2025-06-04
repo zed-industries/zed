@@ -163,9 +163,7 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 
-<<<<<<< Conflict 1 of 1
-+++++++ Contents of side #1
-fn main() {
+pub fn main() {
     #[cfg(unix)]
     {
         let is_root = nix::unistd::geteuid().is_root();
@@ -184,7 +182,6 @@ Error: Running Zed as root or via sudo is unsupported.
         }
     }
 
-pub fn main() {
     // Check if there is a pending installer
     // If there is, run the installer and exit
     // And we don't want to run the installer if we are not the first instance
