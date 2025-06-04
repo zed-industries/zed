@@ -767,12 +767,8 @@ impl ImageContext {
             None => ImageStatus::Loading,
             Some(None) => ImageStatus::Error,
             Some(Some(_)) => {
-                if let Some(model) = model {
-                    if !model.supports_images() {
-                        ImageStatus::Warning
-                    } else {
-                        ImageStatus::Ready
-                    }
+                if model.is_some_and(|model| !model.supports_images()) {
+                    ImageStatus::Warning
                 } else {
                     ImageStatus::Ready
                 }
