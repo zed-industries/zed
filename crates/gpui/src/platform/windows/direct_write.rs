@@ -1361,12 +1361,8 @@ fn make_direct_write_feature(feature_name: &str, parameter: u32) -> DWRITE_FONT_
 
 #[inline]
 fn make_open_type_tag(tag_name: &str) -> u32 {
-    let bytes = tag_name.bytes().collect_vec();
-    assert_eq!(bytes.len(), 4);
-    ((bytes[3] as u32) << 24)
-        | ((bytes[2] as u32) << 16)
-        | ((bytes[1] as u32) << 8)
-        | (bytes[0] as u32)
+    let bytes: [u8; 4] = tag_name.as_bytes().try_into().unwrap();
+    u32::from_le_bytes(bytes)
 }
 
 #[inline]
