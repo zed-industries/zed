@@ -1494,16 +1494,6 @@ impl RemoteConnection for SshRemoteConnection {
 }
 
 impl SshRemoteConnection {
-    #[cfg(not(unix))]
-    async fn new(
-        _connection_options: SshConnectionOptions,
-        _delegate: Arc<dyn SshClientDelegate>,
-        _cx: &mut AsyncApp,
-    ) -> Result<Self> {
-        Err(anyhow!("ssh is not supported on this platform"))
-    }
-
-    #[cfg(unix)]
     async fn new(
         connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
