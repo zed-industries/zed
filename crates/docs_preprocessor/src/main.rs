@@ -48,12 +48,36 @@ fn main() -> Result<()> {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Error {
     ActionNotFound { action_name: String },
+    DeprecatedActionUsed { used: String, should_be: String },
+}
+
+impl Error {
+    fn new_for_not_found_action(action_name: String) -> Self {
+        for action in &*ALL_ACTIONS {
+            for alias in action.deprecated_aliases {
+                if alias == &action_name {
+                    return Error::DeprecatedActionUsed {
+                        used: action_name.clone(),
+                        should_be: action.name.to_string(),
+                    };
+                }
+            }
+        }
+        Error::ActionNotFound {
+            action_name: action_name.to_string(),
+        }
+    }
 }
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::ActionNotFound { action_name } => write!(f, "Action not found: {}", action_name),
+            Error::DeprecatedActionUsed { used, should_be } => write!(
+                f,
+                "Deprecated action used: {} should be {}",
+                used, should_be
+            ),
         }
     }
 }
@@ -104,9 +128,7 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Error
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let action = caps[1].trim();
                 if find_action_by_name(action).is_none() {
-                    errors.insert(Error::ActionNotFound {
-                        action_name: action.to_string(),
-                    });
+                    errors.insert(Error::new_for_not_found_action(action.to_string()));
                     return String::new();
                 }
                 let macos_binding = find_binding("macos", action).unwrap_or_default();
@@ -130,9 +152,7 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Error>) {
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let name = caps[1].trim();
                 let Some(action) = find_action_by_name(name) else {
-                    errors.insert(Error::ActionNotFound {
-                        action_name: name.to_string(),
-                    });
+                    errors.insert(Error::new_for_not_found_action(name.to_string()));
                     return String::new();
                 };
                 format!("<code class=\"hljs\">{}</code>", &action.human_name)
@@ -218,7 +238,7 @@ where
 struct ActionDef {
     name: &'static str,
     human_name: String,
-    aliases: &'static [&'static str],
+    deprecated_aliases: &'static [&'static str],
 }
 
 fn dump_all_gpui_actions() -> Vec<ActionDef> {
@@ -227,7 +247,7 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),
-            aliases: action.aliases,
+            deprecated_aliases: action.aliases,
         })
         .collect::<Vec<ActionDef>>();
 
