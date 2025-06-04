@@ -3121,7 +3121,6 @@ impl ProjectPanel {
             } else {
                 CursorStyle::PointingHand
             };
-            dbg!(&existing_cursor, &new_cursor);
             if existing_cursor != new_cursor {
                 cx.set_active_drag_cursor_style(new_cursor, window);
             }
