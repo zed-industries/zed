@@ -97,7 +97,7 @@ Prepared new Zed versions locally. You will need to push the branches and open a
 
 # To push and open a PR to update main:
 
-    git push origin \\
+    git push -u origin \\
       ${preview_tag_name} \\
       ${stable_tag_name} \\
       ${minor_branch_name} \\

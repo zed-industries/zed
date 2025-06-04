@@ -126,6 +126,7 @@ mod tests {
                     }
                 },
                 "required": ["location"],
+                "additionalProperties": false
             })
         );
     }

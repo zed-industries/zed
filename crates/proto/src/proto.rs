@@ -176,6 +176,7 @@ messages!(
     (LspExtClearFlycheck, Background),
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
+    (ReorderChannel, Foreground),
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
@@ -392,6 +393,7 @@ request_messages!(
     (RemoveContact, Ack),
     (RenameChannel, RenameChannelResponse),
     (RenameProjectEntry, ProjectEntryResponse),
+    (ReorderChannel, Ack),
     (RequestContact, Ack),
     (
         ResolveCompletionDocumentation,
