@@ -117,7 +117,7 @@ impl LspCommand for ExpandMacro {
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -247,7 +247,7 @@ impl LspCommand for OpenDocs {
             .and_then(deserialize_anchor)
             .context("invalid position")?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 
@@ -452,7 +452,7 @@ impl LspCommand for GoToParentModule {
             .and_then(deserialize_anchor)
             .context("bad request with bad position")?;
         Ok(Self {
-            position: buffer.update(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
+            position: buffer.read_with(&mut cx, |buffer, _| position.to_point_utf16(buffer))?,
         })
     }
 

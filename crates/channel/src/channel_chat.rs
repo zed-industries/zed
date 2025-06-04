@@ -387,7 +387,7 @@ impl ChannelChat {
         let loaded_messages = messages_from_proto(proto_messages, &user_store, cx).await?;
 
         let first_loaded_message_id = loaded_messages.first().map(|m| m.id);
-        let loaded_message_ids = this.update(cx, |this, _| {
+        let loaded_message_ids = this.read_with(cx, |this, _| {
             let mut loaded_message_ids: HashSet<u64> = HashSet::default();
             for message in loaded_messages.iter() {
                 if let Some(saved_message_id) = message.id.into() {
@@ -457,7 +457,7 @@ impl ChannelChat {
                 )
                 .await?;
 
-                let pending_messages = this.update(cx, |this, _| {
+                let pending_messages = this.read_with(cx, |this, _| {
                     this.pending_messages().cloned().collect::<Vec<_>>()
                 })?;
 
@@ -531,7 +531,7 @@ impl ChannelChat {
         message: TypedEnvelope<proto::ChannelMessageSent>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
+        let user_store = this.read_with(&mut cx, |this, _| this.user_store.clone())?;
         let message = message.payload.message.context("empty message")?;
         let message_id = message.id;
 
@@ -563,7 +563,7 @@ impl ChannelChat {
         message: TypedEnvelope<proto::ChannelMessageUpdate>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
+        let user_store = this.read_with(&mut cx, |this, _| this.user_store.clone())?;
         let message = message.payload.message.context("empty message")?;
 
         let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;

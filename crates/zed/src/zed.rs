@@ -50,8 +50,8 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
-    SettingsStore, VIM_KEYMAP_PATH, initial_debug_tasks_content, initial_project_settings_content,
-    initial_tasks_content, update_settings_file,
+    SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
+    initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
@@ -503,7 +503,10 @@ fn register_actions(
                     directories: true,
                     multiple: true,
                 },
-                DirectoryLister::Local(workspace.app_state().fs.clone()),
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                ),
                 window,
                 cx,
             );
@@ -728,6 +731,14 @@ fn register_actions(
             open_settings_file(
                 paths::tasks_file(),
                 || settings::initial_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        })
+        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
+            open_settings_file(
+                paths::debug_scenarios_file(),
+                || settings::initial_debug_tasks_content().as_ref().into(),
                 window,
                 cx,
             );
@@ -1183,19 +1194,15 @@ pub fn handle_settings_file_changes(
             };
 
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let content_migrated = process_settings(content, is_user, store, cx);
-
-                if content_migrated {
-                    if let Some(notifier) = MigrationNotification::try_global(cx) {
-                        notifier.update(cx, |_, cx| {
-                            cx.emit(MigrationEvent::ContentChanged {
-                                migration_type: MigrationType::Settings,
-                                migrated: true,
-                            });
+                let migrating_in_memory = process_settings(content, is_user, store, cx);
+                if let Some(notifier) = MigrationNotification::try_global(cx) {
+                    notifier.update(cx, |_, cx| {
+                        cx.emit(MigrationEvent::ContentChanged {
+                            migration_type: MigrationType::Settings,
+                            migrating_in_memory,
                         });
-                    }
+                    });
                 }
-
                 cx.refresh_windows();
             });
 
@@ -1247,7 +1254,7 @@ pub fn handle_keymap_file_changes(
 
     cx.spawn(async move |cx| {
         let mut user_keymap_content = String::new();
-        let mut content_migrated = false;
+        let mut migrating_in_memory = false;
         loop {
             select_biased! {
                 _ = base_keymap_rx.next() => {},
@@ -1256,10 +1263,10 @@ pub fn handle_keymap_file_changes(
                     if let Some(content) = content {
                         if let Ok(Some(migrated_content)) = migrate_keymap(&content) {
                             user_keymap_content = migrated_content;
-                            content_migrated = true;
+                            migrating_in_memory = true;
                         } else {
                             user_keymap_content = content;
-                            content_migrated = false;
+                            migrating_in_memory = false;
                         }
                     }
                 }
@@ -1269,7 +1276,7 @@ pub fn handle_keymap_file_changes(
                     notifier.update(cx, |_, cx| {
                         cx.emit(MigrationEvent::ContentChanged {
                             migration_type: MigrationType::Keymap,
-                            migrated: content_migrated,
+                            migrating_in_memory,
                         });
                     });
                 }
@@ -1512,7 +1519,7 @@ fn open_project_debug_tasks_file(
     open_local_file(
         workspace,
         local_debug_file_relative_path(),
-        initial_debug_tasks_content(),
+        initial_local_debug_tasks_content(),
         window,
         cx,
     )
@@ -1535,10 +1542,10 @@ fn open_local_file(
         cx.spawn_in(window, async move |workspace, cx| {
             // Check if the file actually exists on disk (even if it's excluded from worktree)
             let file_exists = {
-                let full_path =
-                    worktree.update(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
+                let full_path = worktree
+                    .read_with(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
 
-                let fs = project.update(cx, |project, _| project.fs().clone())?;
+                let fs = project.read_with(cx, |project, _| project.fs().clone())?;
                 let file_exists = fs
                     .metadata(&full_path)
                     .await
@@ -1550,7 +1557,7 @@ fn open_local_file(
 
             if !file_exists {
                 if let Some(dir_path) = settings_relative_path.parent() {
-                    if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                    if worktree.read_with(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
                         project
                             .update(cx, |project, cx| {
                                 project.create_entry((tree_id, dir_path), true, cx)
@@ -1560,7 +1567,7 @@ fn open_local_file(
                     }
                 }
 
-                if worktree.update(cx, |tree, _| {
+                if worktree.read_with(cx, |tree, _| {
                     tree.entry_for_path(settings_relative_path).is_none()
                 })? {
                     project
@@ -2130,7 +2137,6 @@ mod tests {
                 pane.update(cx, |pane, cx| {
                     drop(editor);
                     pane.close_active_item(&Default::default(), window, cx)
-                        .unwrap()
                 })
             })
             .unwrap();

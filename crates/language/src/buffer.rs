@@ -233,6 +233,8 @@ pub struct Diagnostic {
     pub source_kind: DiagnosticSourceKind,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
+    /// Whether to underline the corresponding text range in the editor.
+    pub underline: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,6 +473,7 @@ pub struct BufferChunks<'a> {
     information_depth: usize,
     hint_depth: usize,
     unnecessary_depth: usize,
+    underline: bool,
     highlights: Option<BufferChunkHighlights<'a>>,
 }
 
@@ -491,6 +494,8 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// Whether to underline the corresponding text range in the editor.
+    pub underline: bool,
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
@@ -505,6 +510,7 @@ pub struct Diff {
 pub(crate) struct DiagnosticEndpoint {
     offset: usize,
     is_start: bool,
+    underline: bool,
     severity: DiagnosticSeverity,
     is_unnecessary: bool,
 }
@@ -3286,8 +3292,8 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
-        let mut next_chars = self.chars_at(start).peekable();
-        let mut prev_chars = self.reversed_chars_at(start).peekable();
+        let mut next_chars = self.chars_at(start).take(128).peekable();
+        let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
         let classifier = self.char_classifier_at(start);
         let word_kind = cmp::max(
@@ -4397,6 +4403,7 @@ impl<'a> BufferChunks<'a> {
             information_depth: 0,
             hint_depth: 0,
             unnecessary_depth: 0,
+            underline: true,
             highlights,
         };
         this.initialize_diagnostic_endpoints();
@@ -4457,12 +4464,14 @@ impl<'a> BufferChunks<'a> {
                         is_start: true,
                         severity: entry.diagnostic.severity,
                         is_unnecessary: entry.diagnostic.is_unnecessary,
+                        underline: entry.diagnostic.underline,
                     });
                     diagnostic_endpoints.push(DiagnosticEndpoint {
                         offset: entry.range.end,
                         is_start: false,
                         severity: entry.diagnostic.severity,
                         is_unnecessary: entry.diagnostic.is_unnecessary,
+                        underline: entry.diagnostic.underline,
                     });
                 }
                 diagnostic_endpoints
@@ -4568,6 +4577,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 if endpoint.offset <= self.range.start {
                     self.update_diagnostic_depths(endpoint);
                     diagnostic_endpoints.next();
+                    self.underline = endpoint.underline;
                 } else {
                     next_diagnostic_endpoint = endpoint.offset;
                     break;
@@ -4599,6 +4609,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,
+                underline: self.underline,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
                 ..Chunk::default()
@@ -4642,6 +4653,7 @@ impl Default for Diagnostic {
             is_primary: false,
             is_disk_based: false,
             is_unnecessary: false,
+            underline: true,
             data: None,
         }
     }

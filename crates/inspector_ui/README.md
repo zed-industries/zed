@@ -1,8 +1,6 @@
 # Inspector
 
-This is a tool for inspecting and manipulating rendered elements in Zed. It is
-only available in debug builds. Use the `dev::ToggleInspector` action to toggle
-inspector mode and click on UI elements to inspect them.
+This is a tool for inspecting and manipulating rendered elements in Zed. It is only available in debug builds. Use the `dev::ToggleInspector` action to toggle inspector mode and click on UI elements to inspect them.
 
 # Current features
 
@@ -10,43 +8,71 @@ inspector mode and click on UI elements to inspect them.
 
 * Temporary manipulation of the selected element.
 
-* Layout info and JSON-based style manipulation for `Div`.
+* Layout info for `Div`.
+
+* Both Rust and JSON-based style manipulation of `Div` style. The rust style editor only supports argumentless `Styled` and `StyledExt` method calls.
 
 * Navigation to code that constructed the element.
 
 # Known bugs
 
-* The style inspector buffer will leak memory over time due to building up
-history on each change of inspected element. Instead of using `Project` to
-create it, should just directly build the `Buffer` and `File` each time the inspected element changes.
+## JSON style editor undo history doesn't get reset
+
+The JSON style editor appends to its undo stack on every change of the active inspected element.
+
+I attempted to fix it by creating a new buffer and setting the buffer associated with the `json_style_buffer` entity. Unfortunately this doesn't work because the language server uses the `version: clock::Global` to figure out the changes, so would need some way to start the new buffer's text at that version.
+
+```
+        json_style_buffer.update(cx, |json_style_buffer, cx| {
+            let language = json_style_buffer.language().cloned();
+            let file = json_style_buffer.file().cloned();
+
+            *json_style_buffer = Buffer::local("", cx);
+
+            json_style_buffer.set_language(language, cx);
+            if let Some(file) = file {
+                json_style_buffer.file_updated(file, cx);
+            }
+        });
+```
 
 # Future features
 
-* Info and manipulation of element types other than `Div`.
+* Action and keybinding for entering pick mode.
 
 * Ability to highlight current element after it's been picked.
 
+* Info and manipulation of element types other than `Div`.
+
 * Indicate when the picked element has disappeared.
+
+* To inspect elements that disappear, it would be helpful to be able to pause the UI.
 
 * Hierarchy view?
 
-## Better manipulation than JSON
+## Methods that take arguments in Rust style editor
 
-The current approach is not easy to move back to the code. Possibilities:
+Could use TreeSitter to parse out the fluent style method chain and arguments. Tricky part of this is completions - ideally the Rust Analyzer already being used by the developer's Zed would be used.
 
-* Editable list of style attributes to apply.
+## Edit original code in Rust style editor
 
-* Rust buffer of code that does a very lenient parse to get the style attributes. Some options:
+Two approaches:
 
-  - Take all the identifier-like tokens and use them if they are the name of an attribute. A custom completion provider in a buffer could be used.
+1. Open an excerpt of the original file.
 
-  - Use TreeSitter to parse out the fluent style method chain. With this approach the buffer could even be the actual code file. Tricky part of this is LSP - ideally the LSP already being used by the developer's Zed would be used.
+2. Communicate with the Zed process that has the repo open - it would send the code for the element. This seems like a lot of work, but would be very nice for rapid development, and it would allow use of rust analyzer.
 
-## Source locations
+With both approaches, would need to record the buffer version and use that when referring to source locations, since editing elements can cause code layout shift.
+
+## Source location UI improvements
 
 * Mode to navigate to source code on every element change while picking.
 
 * Tracking of more source locations - currently the source location is often in a ui compoenent. Ideally this would have a way for the components to indicate that they are probably not the source location the user is looking for.
+
+  - Could have `InspectorElementId` be `Vec<(ElementId, Option<Location>)>`, but if there are multiple code paths that construct the same element this would cause them to be considered different.
+
+  - Probably better to have a separate `Vec<Option<Location>>` that uses the same indices as `GlobalElementId`.
 
 ## Persistent modification
 
@@ -60,9 +86,11 @@ Currently, element modifications disappear when picker mode is started. Handling
 
 * The code should probably distinguish the data that is provided by the element and the modifications from the inspector. Currently these are conflated in element states.
 
+If support is added for editing original code, then the logical selector in this case would be just matches of the source path.
+
 # Code cleanups
 
-## Remove special side pane rendering
+## Consider removing special side pane rendering
 
 Currently the inspector has special rendering in the UI, but maybe it could just be a workspace item.
 

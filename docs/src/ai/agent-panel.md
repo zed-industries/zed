@@ -3,7 +3,7 @@
 The Agent Panel provides you with a way to interact with LLMs.
 You can use it for various tasks, such as generating code, asking questions about your code base, and general inquiries such as emails and documentation.
 
-To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
+To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](./getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
 If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./configuration.md).
 
@@ -23,6 +23,8 @@ You can click on the card that contains your message and re-submit it with an ad
 
 Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message, allowing you to return your codebase to the state it was in prior to that message.
 
+The checkpoint button appears even if you interrupt the thread midway through an edit attempt, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
+
 ### Navigating History {#navigating-history}
 
 To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the hamburger icon button at the top left of the panel to open the dropdown that shows you the six most recent threads.
@@ -39,9 +41,14 @@ To follow the agent reading through your codebase and performing edits, click on
 
 ### Get Notified {#get-notified}
 
-If you send a prompt to the Agent and then move elsewhere, thus putting Zed in the background, a notification will pop up at the top right of your screen indicating that the Agent has completed its work.
+If you send a prompt to the Agent and then move elsewhere, thus putting Zed in the background, you can be notified of whether its response is finished either via:
 
-You can customize the notification behavior, including the option to turn it off entirely, by using the `agent.notify_when_agent_waiting` settings key.
+- a visual notification that appears in the top right of your screen
+- or a sound notification
+
+Both notification methods can be used together or individually according to your preference.
+
+You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
 
 ### Reviewing Changes {#reviewing-changes}
 

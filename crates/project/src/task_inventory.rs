@@ -14,7 +14,7 @@ use dap::DapRegistry;
 use gpui::{App, AppContext as _, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{
-    Buffer, ContextProvider, File, Language, LanguageToolchainStore, Location,
+    Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
     language_settings::language_settings,
 };
 use lsp::{LanguageServerId, LanguageServerName};
@@ -132,7 +132,10 @@ pub enum TaskSourceKind {
     /// Languages-specific tasks coming from extensions.
     Language { name: SharedString },
     /// Language-specific tasks coming from LSP servers.
-    Lsp(LanguageServerId),
+    Lsp {
+        language_name: SharedString,
+        server: LanguageServerId,
+    },
 }
 
 /// A collection of task contexts, derived from the current state of the workspace.
@@ -211,7 +214,10 @@ impl TaskSourceKind {
                 format!("{id_base}_{id}_{}", directory_in_worktree.display())
             }
             Self::Language { name } => format!("language_{name}"),
-            Self::Lsp(server_id) => format!("lsp_{server_id}"),
+            Self::Lsp {
+                server,
+                language_name,
+            } => format!("lsp_{language_name}_{server}"),
         }
     }
 }
@@ -228,6 +234,10 @@ impl Inventory {
         if self.last_scheduled_scenarios.len() > 5_000 {
             self.last_scheduled_scenarios.pop_front();
         }
+    }
+
+    pub fn last_scheduled_scenario(&self) -> Option<&DebugScenario> {
+        self.last_scheduled_scenarios.back()
     }
 
     pub fn list_debug_scenarios(
@@ -582,6 +592,13 @@ impl Inventory {
                     .global
                     .entry(path.to_owned())
                     .insert_entry(new_templates.collect());
+                self.last_scheduled_tasks.retain(|(kind, _)| {
+                    if let TaskSourceKind::AbsPath { abs_path, .. } = kind {
+                        abs_path != path
+                    } else {
+                        true
+                    }
+                });
             }
             TaskSettingsLocation::Worktree(location) => {
                 let new_templates = new_templates.collect::<Vec<_>>();
@@ -598,6 +615,18 @@ impl Inventory {
                         .or_default()
                         .insert(Arc::from(location.path), new_templates);
                 }
+                self.last_scheduled_tasks.retain(|(kind, _)| {
+                    if let TaskSourceKind::Worktree {
+                        directory_in_worktree,
+                        id,
+                        ..
+                    } = kind
+                    {
+                        *id != location.worktree_id || directory_in_worktree != location.path
+                    } else {
+                        true
+                    }
+                });
             }
         }
 
@@ -689,7 +718,7 @@ fn task_lru_comparator(
 
 fn task_source_kind_preference(kind: &TaskSourceKind) -> u32 {
     match kind {
-        TaskSourceKind::Lsp(..) => 0,
+        TaskSourceKind::Lsp { .. } => 0,
         TaskSourceKind::Language { .. } => 1,
         TaskSourceKind::UserInput => 2,
         TaskSourceKind::Worktree { .. } => 3,
@@ -752,6 +781,27 @@ mod test_inventory {
         });
     }
 
+    pub(super) fn register_worktree_task_used(
+        inventory: &Entity<Inventory>,
+        worktree_id: WorktreeId,
+        task_name: &str,
+        cx: &mut TestAppContext,
+    ) {
+        inventory.update(cx, |inventory, cx| {
+            let (task_source_kind, task) = inventory
+                .list_tasks(None, None, Some(worktree_id), cx)
+                .into_iter()
+                .find(|(_, task)| task.label == task_name)
+                .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
+            let id_base = task_source_kind.to_id_base();
+            inventory.task_scheduled(
+                task_source_kind.clone(),
+                task.resolve_task(&id_base, &TaskContext::default())
+                    .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
+            );
+        });
+    }
+
     pub(super) async fn list_tasks(
         inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
@@ -787,11 +837,12 @@ impl ContextProvider for BasicContextProvider {
     fn build_context(
         &self,
         _: &TaskVariables,
-        location: &Location,
+        location: ContextLocation<'_>,
         _: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut App,
     ) -> Task<Result<TaskVariables>> {
+        let location = location.file_location;
         let buffer = location.buffer.read(cx);
         let buffer_snapshot = buffer.snapshot();
         let symbols = buffer_snapshot.symbols_containing(location.range.start, None);
@@ -843,11 +894,21 @@ impl ContextProvider for BasicContextProvider {
             );
             if let Some(full_path) = current_file.as_ref() {
                 let relative_path = pathdiff::diff_paths(full_path, worktree_path);
-                if let Some(relative_path) = relative_path {
+                if let Some(relative_file) = relative_path {
                     task_variables.insert(
                         VariableName::RelativeFile,
-                        relative_path.to_sanitized_string(),
+                        relative_file.to_sanitized_string(),
                     );
+                    if let Some(relative_dir) = relative_file.parent() {
+                        task_variables.insert(
+                            VariableName::RelativeDir,
+                            if relative_dir.as_os_str().is_empty() {
+                                String::from(".")
+                            } else {
+                                relative_dir.to_sanitized_string()
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -982,6 +1043,53 @@ mod tests {
                 "2_task".to_string(),
                 "1_a_task".to_string(),
             ],
+            "Most recently used task should be at the top"
+        );
+
+        let worktree_id = WorktreeId::from_usize(0);
+        let local_worktree_location = SettingsLocation {
+            worktree_id,
+            path: Path::new("foo"),
+        };
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    TaskSettingsLocation::Worktree(local_worktree_location),
+                    Some(&mock_tasks_from_names(["worktree_task_1"])),
+                )
+                .unwrap();
+        });
+        assert_eq!(
+            resolved_task_names(&inventory, None, cx),
+            vec![
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
+                "1_a_task".to_string(),
+            ],
+            "Most recently used task should be at the top"
+        );
+        assert_eq!(
+            resolved_task_names(&inventory, Some(worktree_id), cx),
+            vec![
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
+                "worktree_task_1".to_string(),
+                "1_a_task".to_string(),
+            ],
+        );
+        register_worktree_task_used(&inventory, worktree_id, "worktree_task_1", cx);
+        assert_eq!(
+            resolved_task_names(&inventory, Some(worktree_id), cx),
+            vec![
+                "worktree_task_1".to_string(),
+                "3_task".to_string(),
+                "1_task".to_string(),
+                "2_task".to_string(),
+                "1_a_task".to_string(),
+            ],
+            "Most recently used worktree task should be at the top"
         );
 
         inventory.update(cx, |inventory, _| {
@@ -1012,13 +1120,15 @@ mod tests {
         assert_eq!(
             resolved_task_names(&inventory, None, cx),
             vec![
-                "3_task".to_string(),
+                "worktree_task_1".to_string(),
+                "1_a_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
-                "1_a_task".to_string(),
+                "3_task".to_string(),
                 "10_hello".to_string(),
                 "11_hello".to_string(),
             ],
+            "After global tasks update, worktree task usage is not erased and it's the first still; global task is back to regular order as its file was updated"
         );
 
         register_task_used(&inventory, "11_hello", cx);
@@ -1030,10 +1140,11 @@ mod tests {
             resolved_task_names(&inventory, None, cx),
             vec![
                 "11_hello".to_string(),
-                "3_task".to_string(),
+                "worktree_task_1".to_string(),
+                "1_a_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
-                "1_a_task".to_string(),
+                "3_task".to_string(),
                 "10_hello".to_string(),
             ],
         );
@@ -1191,9 +1302,7 @@ mod tests {
     }
 
     fn init_test(_cx: &mut TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
         TaskStore::init(None);
     }
 
@@ -1214,9 +1323,10 @@ mod tests {
         })
     }
 
-    fn mock_tasks_from_names<'a>(task_names: impl Iterator<Item = &'a str> + 'a) -> String {
+    fn mock_tasks_from_names<'a>(task_names: impl IntoIterator<Item = &'a str> + 'a) -> String {
         serde_json::to_string(&serde_json::Value::Array(
             task_names
+                .into_iter()
                 .map(|task_name| {
                     json!({
                         "label": task_name,

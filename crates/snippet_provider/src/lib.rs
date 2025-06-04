@@ -69,7 +69,7 @@ async fn process_updates(
     entries: Vec<PathBuf>,
     mut cx: AsyncApp,
 ) -> Result<()> {
-    let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
+    let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
     for entry_path in entries {
         if !entry_path
             .extension()
@@ -120,7 +120,7 @@ async fn initial_scan(
     path: Arc<Path>,
     mut cx: AsyncApp,
 ) -> Result<()> {
-    let fs = this.update(&mut cx, |this, _| this.fs.clone())?;
+    let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
     let entries = fs.read_dir(&path).await;
     if let Ok(entries) = entries {
         let entries = entries
@@ -183,7 +183,7 @@ impl SnippetProvider {
         let path: Arc<Path> = Arc::from(path);
 
         self.watch_tasks.push(cx.spawn(async move |this, cx| {
-            let fs = this.update(cx, |this, _| this.fs.clone())?;
+            let fs = this.read_with(cx, |this, _| this.fs.clone())?;
             let watched_path = path.clone();
             let watcher = fs.watch(&watched_path, Duration::from_secs(1));
             initial_scan(this.clone(), path, cx.clone()).await?;

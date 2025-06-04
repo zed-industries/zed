@@ -2,6 +2,9 @@ pub mod parser;
 mod path_range;
 
 use base64::Engine as _;
+use futures::FutureExt as _;
+use gpui::HitboxBehavior;
+use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 
@@ -30,7 +33,7 @@ use pulldown_cmark::Alignment;
 use sum_tree::TreeMap;
 use theme::SyntaxTheme;
 use ui::{Tooltip, prelude::*};
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 use crate::parser::CodeBlockKind;
 
@@ -98,10 +101,10 @@ pub struct Markdown {
     parsed_markdown: ParsedMarkdown,
     images_by_source_offset: HashMap<usize, Arc<Image>>,
     should_reparse: bool,
-    pending_parse: Option<Task<Option<()>>>,
+    pending_parse: Option<Task<()>>,
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
-    fallback_code_block_language: Option<String>,
+    fallback_code_block_language: Option<LanguageName>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
 }
@@ -144,7 +147,7 @@ impl Markdown {
     pub fn new(
         source: SharedString,
         language_registry: Option<Arc<LanguageRegistry>>,
-        fallback_code_block_language: Option<String>,
+        fallback_code_block_language: Option<LanguageName>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -192,6 +195,10 @@ impl Markdown {
         this
     }
 
+    pub fn is_parsing(&self) -> bool {
+        self.pending_parse.is_some()
+    }
+
     pub fn source(&self) -> &str {
         &self.source
     }
@@ -219,6 +226,7 @@ impl Markdown {
         self.parse(cx);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
         &self.parsed_markdown
     }
@@ -275,14 +283,19 @@ impl Markdown {
             self.should_reparse = true;
             return;
         }
+        self.should_reparse = false;
+        self.pending_parse = Some(self.start_background_parse(cx));
+    }
 
+    fn start_background_parse(&self, cx: &Context<Self>) -> Task<()> {
         let source = self.source.clone();
         let should_parse_links_only = self.options.parse_links_only;
         let language_registry = self.language_registry.clone();
         let fallback = self.fallback_code_block_language.clone();
+
         let parsed = cx.background_spawn(async move {
             if should_parse_links_only {
-                return anyhow::Ok((
+                return (
                     ParsedMarkdown {
                         events: Arc::from(parse_links_only(source.as_ref())),
                         source,
@@ -290,8 +303,9 @@ impl Markdown {
                         languages_by_path: TreeMap::default(),
                     },
                     Default::default(),
-                ));
+                );
             }
+
             let (events, language_names, paths) = parse_markdown(&source);
             let mut images_by_source_offset = HashMap::default();
             let mut languages_by_name = TreeMap::default();
@@ -299,9 +313,9 @@ impl Markdown {
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
                     let language = if !name.is_empty() {
-                        registry.language_for_name_or_extension(&name)
+                        registry.language_for_name_or_extension(&name).left_future()
                     } else if let Some(fallback) = &fallback {
-                        registry.language_for_name_or_extension(fallback)
+                        registry.language_for_name(fallback.as_ref()).right_future()
                     } else {
                         continue;
                     };
@@ -343,7 +357,7 @@ impl Markdown {
                 }
             }
 
-            anyhow::Ok((
+            (
                 ParsedMarkdown {
                     source,
                     events: Arc::from(events),
@@ -351,29 +365,23 @@ impl Markdown {
                     languages_by_path,
                 },
                 images_by_source_offset,
-            ))
+            )
         });
 
-        self.should_reparse = false;
-        self.pending_parse = Some(cx.spawn(async move |this, cx| {
-            async move {
-                let (parsed, images_by_source_offset) = parsed.await?;
+        cx.spawn(async move |this, cx| {
+            let (parsed, images_by_source_offset) = parsed.await;
 
-                this.update(cx, |this, cx| {
-                    this.parsed_markdown = parsed;
-                    this.images_by_source_offset = images_by_source_offset;
-                    this.pending_parse.take();
-                    if this.should_reparse {
-                        this.parse(cx);
-                    }
-                    cx.notify();
-                })
-                .ok();
-                anyhow::Ok(())
-            }
-            .log_err()
-            .await
-        }));
+            this.update(cx, |this, cx| {
+                this.parsed_markdown = parsed;
+                this.images_by_source_offset = images_by_source_offset;
+                this.pending_parse.take();
+                if this.should_reparse {
+                    this.parse(cx);
+                }
+                cx.refresh_windows();
+            })
+            .ok();
+        })
     }
 }
 
@@ -1202,8 +1210,9 @@ impl Element for MarkdownElement {
     ) -> Self::PrepaintState {
         let focus_handle = self.markdown.read(cx).focus_handle.clone();
         window.set_focus_handle(&focus_handle, cx);
+        window.set_view_id(self.markdown.entity_id());
 
-        let hitbox = window.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
         hitbox
