@@ -2842,6 +2842,9 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 .unwrap()
                 + 1
         );
+        for i in 0..snapshot.len() {
+            snapshot.innermost_enclosing_bracket_ranges(i..i, None);
+        }
 
         assert_consistent_line_numbers(&snapshot);
         assert_position_translation(&snapshot);
