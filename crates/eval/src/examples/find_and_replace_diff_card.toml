@@ -1,5 +1,4 @@
-# First slide
-# This is our equivalent of swebench, but on our own codebase
+# Slide 2: Evals. This is our equivalent of swebench, but on our own codebase
 
 url = "https://github.com/zed-industries/zed.git"
 revision = "38fcadf9481d018543c65f36ac3bafeba190179b"

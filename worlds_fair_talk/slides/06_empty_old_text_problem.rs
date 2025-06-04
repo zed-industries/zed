@@ -1,37 +1,52 @@
-// EVAL 1: The empty old_text bug
+// As we run the unit eval, we discover problems
+// Some of which can be solved alorithmically and tested deterministically
 
-#[test]
-fn eval_insert_at_beginning() {
-    eval(100, 0.95, "Add import at start of file", || async {
-        let buffer = Buffer::local(
-            "fn main() {\n    println!(\"Hello\");\n}"
-        );
+// This prompt change helped:
+//
+// - `<old_text>` cannot be empty
 
-        let (task, _) = agent.edit(
-            buffer.clone(),
-            "Add 'use std::fs;' import at the beginning",
-            &conversation,
-        );
-
-        // What models were generating:
-        // <old_text></old_text>
-        // <new_text>use std::fs;\n\n</new_text>
-
-        // The bug we discovered:
-        let matcher = StreamingFuzzyMatcher::new(buffer.snapshot());
-        let range = matcher.find_text("");  // Empty string
-        assert_eq!(range, Some(0..0));  // Matches at position 0
-
-        // But empty string also matches at position 1, 2, 3...
-        // Result: Import inserted multiple times randomly!
-
-        // Actual output: "ufn use std::fs;\n\nmain() {\n  use std::fs;\n\n  println!(\"Hello\");\n}"
+// But the model still wasn't perfect: So we then wrote a deterministic test to
+// gracefully handle the edge case:
+#[gpui::test(iterations = 100)]
+async fn test_empty_old_text(cx: &mut TestAppContext, mut rng: StdRng) {
+    let agent = init_test(cx).await;
+    let buffer = cx.new(|cx| {
+        Buffer::local(
+            indoc! {"
+                abc
+                def
+                ghi
+            "},
+            cx,
+        )
     });
+    let (apply, _events) = agent.edit(
+        buffer.clone(),
+        String::new(),
+        &LanguageModelRequest::default(),
+        &mut cx.to_async(),
+    );
+    cx.run_until_parked();
+
+    simulate_llm_output(
+        &agent,
+        indoc! {"
+            <old_text></old_text>
+            <new_text>jkl</new_text>
+            <old_text>def</old_text>
+            <new_text>DEF</new_text>
+        "},
+        &mut rng,
+        cx,
+    );
+    apply.await.unwrap();
+
+    pretty_assertions::assert_eq!(
+        buffer.read_with(cx, |buffer, _| buffer.snapshot().text()),
+        indoc! {"
+            abc
+            DEF
+            ghi
+        "}
+    );
 }
-
-// Pass rate: 0% - completely broken
-
-// PROMPT FIX:
-// Added to instructions: "`<old_text>` cannot be empty"
-
-// After fix: 99% pass rate

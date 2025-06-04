@@ -2,7 +2,6 @@
 // We test AI features by sampling their behavior:
 
 #[test]
-#[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_translate_doc_comments() {
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");

@@ -1,5 +1,5 @@
 // Our foundation: deterministic tests with controlled randomness
-#[gpui::test(iterations = 10)]
+#[gpui::test(iterations = 50)]
 async fn test_collaborative_editing(executor: BackgroundExecutor) {
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client("user_a").await;

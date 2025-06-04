@@ -29,7 +29,7 @@ fn eval_string_escaping() {
 
 // This was particularly bad for Gemini (only 35% pass rate!)
 
-// PROMPT FIX (from commit ab017129d8):
+// PROMPT FIX
 // Added: "Do not escape quotes, newlines, or other characters within tags"
 
 // Impact across models:

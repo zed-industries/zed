@@ -726,9 +726,9 @@ mod tests {
         );
         cx.run_until_parked();
 
-        // This is a more traditional unit test.
-        // It's randomized, but still fundamentally deterministic.
-        // But still relevant to working with an LLM
+        // !talk: This is a more traditional unit test.
+        // !talk: It's randomized, but still fundamentally deterministic.
+        // !talk: But still relevant to working with an LLM
         simulate_llm_output(
             &agent,
             indoc! {"
@@ -752,7 +752,7 @@ mod tests {
         );
     }
 
-    // Really interesting unit test - Again about purely algorithmic code but critical to performance on the task.
+    // !talk: Really interesting unit test - Again about purely algorithmic code but critical to performance on the task.
     #[gpui::test(iterations = 100)]
     async fn test_indentation(cx: &mut TestAppContext, mut rng: StdRng) {
         let agent = init_test(cx).await;

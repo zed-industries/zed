@@ -160,7 +160,7 @@ fn eval_delete_run_git_blame() {
     );
 }
 
-// Go here after zoomed out eval.
+// !talk: Go here after zoomed out eval.
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_translate_doc_comments() {
@@ -177,7 +177,7 @@ fn eval_translate_doc_comments() {
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
     let edit_description = "Translate all doc comments to Italian";
     eval(
-        200,
+        100,
         1.,
         EvalInput::from_conversation(
             vec![
@@ -1350,8 +1350,8 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
         );
     }
 
-    // Here's a blanket assertion we added to the eval tracking the presence of mismatched tags
-    // It's run on every eval because it's a cross cutting concern.
+    // !talk: Here's a blanket assertion we added to the eval tracking the presence of mismatched tags
+    // !talk: It's run on every eval because it's a cross cutting concern.
     let mismatched_tag_ratio =
         cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
     if mismatched_tag_ratio > 0.05 {

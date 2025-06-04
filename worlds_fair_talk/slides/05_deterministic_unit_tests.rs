@@ -37,15 +37,43 @@ fn test_fuzzy_match_algorithm() {
     assert_eq!(range, Some(0..24)); // Found despite whitespace
 }
 
-// 3. Indentation adjustment is purely algorithmic
+// 3. Streaming diff computes edits incrementally
 #[test]
-fn test_indentation_delta() {
-    let old_text = "    fn foo() {"; // 4 spaces
-    let new_text = "fn foo() {\n    bar();"; // 0 spaces
+fn test_streaming_diff() {
+    let old_text = "fn calculate() {\n    todo!()\n}";
+    let mut diff = StreamingDiff::new(old_text);
 
-    let delta = calculate_indent_delta(old_text, new_text);
-    assert_eq!(delta, 4);
+    // Simulate new text arriving in chunks
+    let ops1 = diff.push_new("fn calc");
+    assert_eq!(
+        ops1,
+        vec![
+        CharOp::Keep(7),  // "fn calc"
+    ]
+    );
 
-    let adjusted = apply_indent_delta(new_text, delta);
-    assert_eq!(adjusted, "    fn foo() {\n        bar();");
+    let ops2 = diff.push_new("ulate_total(");
+    assert_eq!(
+        ops2,
+        vec![
+            CharOp::Insert("_total"), // Insert "_total"
+            CharOp::Keep(5),          // "ulate"
+            CharOp::Delete(2),        // Remove "()"
+            CharOp::Keep(1),          // "("
+        ]
+    );
+
+    let ops3 = diff.push_new("items: &[Item]) {\n    items.iter().sum()\n}");
+    assert_eq!(
+        ops3,
+        vec![
+            CharOp::Insert("items: &[Item]"),
+            CharOp::Keep(4),    // ") {\n"
+            CharOp::Delete(10), // Remove "    todo!()"
+            CharOp::Insert("    items.iter().sum()"),
+            CharOp::Keep(2), // "\n}"
+        ]
+    );
+
+    // The magic: we computed a valid diff while text was still arriving!
 }
