@@ -575,7 +575,7 @@ tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
 tree-sitter = { version = "0.25.6", features = ["wasm"] }
-tree-sitter-bash = "0.23"
+tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
 tree-sitter-css = "0.23"
