@@ -244,6 +244,7 @@ impl Inventory {
         &self,
         task_contexts: &TaskContexts,
         lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
         add_current_language_tasks: bool,
         cx: &mut App,
     ) -> (Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>) {
@@ -260,8 +261,6 @@ impl Inventory {
         }
         scenarios.extend(self.global_debug_scenarios_from_settings());
 
-        let (_, new) = self.used_and_current_resolved_tasks(task_contexts, cx);
-
         if let Some(location) = task_contexts.location() {
             let file = location.buffer.read(cx).file();
             let language = location.buffer.read(cx).language();
@@ -277,7 +276,7 @@ impl Inventory {
                 for (kind, task) in
                     lsp_tasks
                         .into_iter()
-                        .chain(new.into_iter().filter(|(kind, _)| {
+                        .chain(current_resolved_tasks.into_iter().filter(|(kind, _)| {
                             add_current_language_tasks
                                 || !matches!(kind, TaskSourceKind::Language { .. })
                         }))

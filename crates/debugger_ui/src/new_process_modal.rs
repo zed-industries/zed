@@ -176,11 +176,6 @@ impl NewProcessModal {
                             let lsp_tasks = lsp_tasks.await;
                             let add_current_language_tasks = !prefer_lsp || lsp_tasks.is_empty();
 
-                            // let tasks = task_store.update(cx, |task_store, cx| {
-                            //     task_store
-                            //         .task_inventory()
-                            //         .used_and_current_resolved_tasks()
-                            // });
                             let lsp_tasks = lsp_tasks
                                 .into_iter()
                                 .flat_map(|(kind, tasks_with_locations)| {
@@ -191,16 +186,28 @@ impl NewProcessModal {
                                         })
                                         .map(move |(_, task)| (kind.clone(), task))
                                 })
-                                .collect();
+                                .collect::<Vec<_>>();
+
+                            let Some(task_inventory) = task_store
+                                .update(cx, |task_store, _| task_store.task_inventory().cloned())?
+                            else {
+                                return Ok(());
+                            };
+
+                            let (used_tasks, current_resolved_tasks) =
+                                task_inventory.update(cx, |task_inventory, cx| {
+                                    task_inventory
+                                        .used_and_current_resolved_tasks(&task_contexts, cx)
+                                })?;
 
                             debug_picker
                                 .update_in(cx, |picker, window, cx| {
-                                    picker.delegate.task_contexts_loaded(
+                                    picker.delegate.tasks_loaded(
                                         task_contexts.clone(),
-                                        lsp_tasks,
-                                        add_current_language_tasks,
                                         languages,
-                                        window,
+                                        lsp_tasks.clone(),
+                                        current_resolved_tasks.clone(),
+                                        add_current_language_tasks,
                                         cx,
                                     );
                                     picker.refresh(window, cx);
@@ -221,7 +228,15 @@ impl NewProcessModal {
 
                             task_modal
                                 .update_in(cx, |task_modal, window, cx| {
-                                    task_modal.task_contexts_loaded(task_contexts, window, cx);
+                                    task_modal.tasks_loaded(
+                                        task_contexts,
+                                        lsp_tasks,
+                                        used_tasks,
+                                        current_resolved_tasks,
+                                        add_current_language_tasks,
+                                        window,
+                                        cx,
+                                    );
                                 })
                                 .ok();
 
@@ -1120,13 +1135,13 @@ impl DebugDelegate {
         (language, scenario)
     }
 
-    pub fn task_contexts_loaded(
+    pub fn tasks_loaded(
         &mut self,
         task_contexts: Arc<TaskContexts>,
-        lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
-        add_current_language_tasks: bool,
         languages: Arc<LanguageRegistry>,
-        _window: &mut Window,
+        lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        add_current_language_tasks: bool,
         cx: &mut Context<Picker<Self>>,
     ) {
         self.task_contexts = Some(task_contexts.clone());
@@ -1139,6 +1154,7 @@ impl DebugDelegate {
                         inventory.list_debug_scenarios(
                             &task_contexts,
                             lsp_tasks,
+                            current_resolved_tasks,
                             add_current_language_tasks,
                             cx,
                         )
