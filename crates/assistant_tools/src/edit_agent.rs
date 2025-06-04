@@ -1410,9 +1410,9 @@ mod tests {
 
         // And AmbiguousEditRange even should be emitted
         let events = drain_events(&mut events);
-        let ambigous_ranges = vec![17..31, 52..66, 87..101];
+        let ambiguous_ranges = vec![17..31, 52..66, 87..101];
         assert!(
-            events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambigous_ranges)),
+            events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambiguous_ranges)),
             "Should emit AmbiguousEditRange for non-unique text"
         );
     }
