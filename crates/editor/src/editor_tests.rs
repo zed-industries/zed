@@ -17860,6 +17860,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
             ("file-2".into(), "two\n".into()),
             ("file-3".into(), "three\n".into()),
         ],
+        "deadbeef",
     );
 
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
