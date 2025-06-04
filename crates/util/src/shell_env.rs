@@ -1,27 +1,23 @@
 use anyhow::{Context as _, Result};
-use collections::HashMap;
 use std::borrow::Cow;
-use std::ffi::OsStr;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use tempfile::NamedTempFile;
 
 /// Capture all environment variables from the login shell.
-pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, String>> {
-    let shell_path = std::env::var("SHELL").map(PathBuf::from)?;
-    let shell_name = shell_path.file_name().and_then(OsStr::to_str);
+#[cfg(unix)]
+pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
+    use command_fds::{CommandFdExt, FdMapping};
+    use std::{io::Read, os::unix::process::CommandExt};
 
+    let shell_path = std::env::var("SHELL").map(std::path::PathBuf::from)?;
+    let shell_name = shell_path.file_name().and_then(std::ffi::OsStr::to_str);
+
+    let mut command = std::process::Command::new(&shell_path);
     let mut command_string = String::new();
 
     // What we're doing here is to spawn a shell and then `cd` into
     // the project directory to get the env in there as if the user
     // `cd`'d into it. We do that because tools like direnv, asdf, ...
     // hook into `cd` and only set up the env after that.
-    if let Some(dir) = change_dir {
-        let dir_str = dir.as_ref().to_string_lossy();
-        command_string.push_str(&format!("cd '{dir_str}';"));
-    }
+    command_string.push_str(&format!("cd '{}';", directory.display()));
 
     // In certain shells we need to execute additional_command in order to
     // trigger the behavior of direnv, etc.
@@ -30,19 +26,17 @@ pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, S
         _ => "",
     });
 
-    let mut env_output_file = NamedTempFile::new()?;
-    command_string.push_str(&format!(
-        "sh -c 'export -p' > '{}';",
-        env_output_file.path().to_string_lossy(),
-    ));
-
-    let mut command = Command::new(&shell_path);
+    let (mut env_reader, env_writer) = std::io::pipe()?;
+    command_string.push_str("sh -c 'export -p' >&3;");
+    command.fd_mappings(vec![FdMapping {
+        parent_fd: env_writer.into(),
+        child_fd: 3,
+    }])?;
 
     // For csh/tcsh, the login shell option is set by passing `-` as
     // the 0th argument instead of using `-l`.
     if let Some("tcsh" | "csh") = shell_name {
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::arg0(&mut command, "-");
+        command.arg0("-");
     } else {
         command.arg("-l");
     }
@@ -58,15 +52,16 @@ pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, S
         String::from_utf8_lossy(&process_output.stderr),
     );
 
+    drop(command);
     let mut env_output = String::new();
-    env_output_file.read_to_string(&mut env_output)?;
+    env_reader.read_to_string(&mut env_output)?;
 
     parse(&env_output)
         .filter_map(|entry| match entry {
             Ok((name, value)) => Some(Ok((name.into(), value?.into()))),
             Err(err) => Some(Err(err)),
         })
-        .collect::<Result<HashMap<String, String>>>()
+        .collect::<Result<_>>()
 }
 
 /// Parse the result of calling `sh -c 'export -p'`.
