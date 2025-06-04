@@ -92,22 +92,21 @@ impl ActionLog {
                 let diff = cx.new(|cx| BufferDiff::new(&text_snapshot, cx));
                 let (diff_update_tx, diff_update_rx) = mpsc::unbounded();
                 let diff_base;
-                let unreviewed_changes;
+                let unreviewed_edits;
                 if is_created {
                     diff_base = Rope::default();
-                    unreviewed_changes = Patch::new(vec![Edit {
+                    unreviewed_edits = Patch::new(vec![Edit {
                         old: 0..1,
                         new: 0..text_snapshot.max_point().row + 1,
                     }])
                 } else {
                     diff_base = buffer.read(cx).as_rope().clone();
-                    unreviewed_changes = Patch::default();
+                    unreviewed_edits = Patch::default();
                 }
                 TrackedBuffer {
                     buffer: buffer.clone(),
-                    git_diff: None,
                     diff_base,
-                    unreviewed_changes,
+                    unreviewed_edits: unreviewed_edits,
                     snapshot: text_snapshot.clone(),
                     status,
                     version: buffer.read(cx).version(),
@@ -176,7 +175,7 @@ impl ActionLog {
                     .map_or(false, |file| file.disk_state() != DiskState::Deleted)
                 {
                     // If the buffer had been deleted by a tool, but it got
-                    // resurrected externally, we want to clear the changes we
+                    // resurrected externally, we want to clear the edits we
                     // were tracking and reset the buffer's state.
                     self.tracked_buffers.remove(&buffer);
                     self.track_buffer_internal(buffer, false, cx);
@@ -189,41 +188,54 @@ impl ActionLog {
     async fn maintain_diff(
         this: WeakEntity<Self>,
         buffer: Entity<Buffer>,
-        mut diff_update: mpsc::UnboundedReceiver<(ChangeAuthor, text::BufferSnapshot)>,
+        mut buffer_updates: mpsc::UnboundedReceiver<(ChangeAuthor, text::BufferSnapshot)>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (repo_updated_tx, mut repo_updated_rx) = async_watch::channel(());
         let git_store = this.read_with(cx, |this, cx| this.project.read(cx).git_store().clone())?;
-        let _repo_subscription = cx.update(|cx| {
-            cx.subscribe(&git_store, move |_, _, _| {
-                repo_updated_tx.send(()).ok();
-            })
+        let git_diff = this
+            .update(cx, |this, cx| {
+                this.project.update(cx, |project, cx| {
+                    project.open_uncommitted_diff(buffer.clone(), cx)
+                })
+            })?
+            .await
+            .ok();
+        let buffer_repo = git_store.read_with(cx, |git_store, cx| {
+            git_store.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
         })?;
-        let mut old_head = git_store.read_with(cx, |store, cx| {
-            store
-                .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-                .and_then(|(repo, _)| repo.read(cx).head_commit.clone())
-        })?;
+
+        let (git_diff_updates_tx, mut git_diff_updates_rx) = async_watch::channel(());
+        let _repo_subscription =
+            if let Some((git_diff, (buffer_repo, _))) = git_diff.as_ref().zip(buffer_repo) {
+                cx.update(|cx| {
+                    let mut old_head = buffer_repo.read(cx).head_commit.clone();
+                    Some(cx.subscribe(git_diff, move |_, event, cx| match event {
+                        buffer_diff::BufferDiffEvent::DiffChanged { .. } => {
+                            let new_head = buffer_repo.read(cx).head_commit.clone();
+                            if new_head != old_head {
+                                old_head = new_head;
+                                git_diff_updates_tx.send(()).ok();
+                            }
+                        }
+                        _ => {}
+                    }))
+                })?
+            } else {
+                None
+            };
 
         loop {
             futures::select_biased! {
-                diff_update = diff_update.next() => {
-                    if let Some((author, buffer_snapshot)) = diff_update {
-                        Self::track_changes(&this, &buffer, author, buffer_snapshot, cx).await?;
+                buffer_update = buffer_updates.next() => {
+                    if let Some((author, buffer_snapshot)) = buffer_update {
+                        Self::track_edits(&this, &buffer, author, buffer_snapshot, cx).await?;
                     } else {
                         break;
                     }
                 }
-                _ = repo_updated_rx.changed().fuse() => {
-                    let new_head = git_store.read_with(cx, |store, cx| {
-                        store
-                            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-                            .and_then(|(repo, _)| repo.read(cx).head_commit.clone())
-                    })?;
-
-                    if new_head != old_head {
-                        old_head = new_head;
-                        Self::accept_committed_changes(&this, &buffer, cx).await?;
+                _ = git_diff_updates_rx.changed().fuse() => {
+                    if let Some(git_diff) = git_diff.as_ref() {
+                        Self::keep_committed_edits(&this, &buffer, &git_diff, cx).await?;
                     }
                 }
             }
@@ -232,14 +244,14 @@ impl ActionLog {
         Ok(())
     }
 
-    async fn track_changes(
+    async fn track_edits(
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
         author: ChangeAuthor,
         buffer_snapshot: text::BufferSnapshot,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let (rebase, diff, language, language_registry) = this.read_with(cx, |this, cx| {
+        let rebase = this.read_with(cx, |this, cx| {
             let tracked_buffer = this
                 .tracked_buffers
                 .get(buffer)
@@ -249,12 +261,12 @@ impl ActionLog {
                 let mut base_text = tracked_buffer.diff_base.clone();
                 let old_snapshot = tracked_buffer.snapshot.clone();
                 let new_snapshot = buffer_snapshot.clone();
-                let unreviewed_changes = tracked_buffer.unreviewed_changes.clone();
+                let unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 async move {
                     let edits = diff_snapshots(&old_snapshot, &new_snapshot);
                     if let ChangeAuthor::User = author {
-                        apply_non_conflicting_changes(
-                            &unreviewed_changes,
+                        apply_non_conflicting_edits(
+                            &unreviewed_edits,
                             edits,
                             &mut base_text,
                             new_snapshot.as_rope(),
@@ -264,102 +276,46 @@ impl ActionLog {
                 }
             });
 
-            anyhow::Ok((
-                rebase,
-                tracked_buffer.diff.clone(),
-                tracked_buffer.buffer.read(cx).language().cloned(),
-                tracked_buffer.buffer.read(cx).language_registry(),
-            ))
+            anyhow::Ok(rebase)
         })??;
         let (new_base_text, new_diff_base) = rebase.await;
-        let diff_snapshot = BufferDiff::update_diff(
-            diff.clone(),
-            buffer_snapshot.clone(),
-            Some(new_base_text),
-            true,
-            false,
-            language,
-            language_registry,
+        Self::update_diff(
+            this,
+            buffer,
+            buffer_snapshot,
+            new_base_text,
+            new_diff_base,
             cx,
         )
-        .await;
-        let mut unreviewed_changes = Patch::default();
-        if let Ok(diff_snapshot) = diff_snapshot {
-            unreviewed_changes = cx
-                .background_spawn({
-                    let diff_snapshot = diff_snapshot.clone();
-                    let buffer_snapshot = buffer_snapshot.clone();
-                    let new_diff_base = new_diff_base.clone();
-                    async move {
-                        let mut unreviewed_changes = Patch::default();
-                        for hunk in diff_snapshot
-                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer_snapshot)
-                        {
-                            let old_range = new_diff_base
-                                .offset_to_point(hunk.diff_base_byte_range.start)
-                                ..new_diff_base.offset_to_point(hunk.diff_base_byte_range.end);
-                            let new_range = hunk.range.start..hunk.range.end;
-                            unreviewed_changes.push(point_to_row_edit(
-                                Edit {
-                                    old: old_range,
-                                    new: new_range,
-                                },
-                                &new_diff_base,
-                                &buffer_snapshot.as_rope(),
-                            ));
-                        }
-                        unreviewed_changes
-                    }
-                })
-                .await;
-
-            diff.update(cx, |diff, cx| {
-                diff.set_snapshot(diff_snapshot, &buffer_snapshot, cx)
-            })?;
-        }
-        this.update(cx, |this, cx| {
-            let tracked_buffer = this
-                .tracked_buffers
-                .get_mut(buffer)
-                .context("buffer not tracked")?;
-            tracked_buffer.diff_base = new_diff_base;
-            tracked_buffer.snapshot = buffer_snapshot;
-            tracked_buffer.unreviewed_changes = unreviewed_changes;
-            cx.notify();
-            anyhow::Ok(())
-        })??;
-        Ok(())
+        .await
     }
 
-    async fn accept_committed_changes(
+    async fn keep_committed_edits(
         this: &WeakEntity<ActionLog>,
         buffer: &Entity<Buffer>,
+        git_diff: &Entity<BufferDiff>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        let Ok(git_diff) = this
-            .update(cx, |this, cx| {
-                this.project.update(cx, |project, cx| {
-                    project.open_uncommitted_diff(buffer.clone(), cx)
-                })
-            })?
-            .await
-        else {
-            return Ok(());
-        };
-
-        let (new_diff_base, new_unreviewed_changes) = this
+        let buffer_snapshot = this.read_with(cx, |this, _cx| {
+            let tracked_buffer = this
+                .tracked_buffers
+                .get(buffer)
+                .context("buffer not tracked")?;
+            anyhow::Ok(tracked_buffer.snapshot.clone())
+        })??;
+        let (new_base_text, new_diff_base) = this
             .read_with(cx, |this, cx| {
                 let tracked_buffer = this
                     .tracked_buffers
                     .get(buffer)
                     .context("buffer not tracked")?;
-                let old_unreviewed_changes = tracked_buffer.unreviewed_changes.clone();
+                let old_unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let agent_diff_base = tracked_buffer.diff_base.clone();
                 let git_diff_base = git_diff.read(cx).base_text().as_rope().clone();
                 let buffer_text = tracked_buffer.snapshot.as_rope().clone();
                 anyhow::Ok(cx.background_spawn(async move {
-                    let mut old_unreviewed_changes = old_unreviewed_changes.into_iter().peekable();
-                    let committed_changes = language::line_diff(
+                    let mut old_unreviewed_edits = old_unreviewed_edits.into_iter().peekable();
+                    let committed_edits = language::line_diff(
                         &agent_diff_base.to_string(),
                         &git_diff_base.to_string(),
                     )
@@ -368,9 +324,10 @@ impl ActionLog {
 
                     let mut new_agent_diff_base = agent_diff_base.clone();
                     let mut row_delta = 0i32;
-                    let mut unreviewed_changes = Patch::default();
-                    for committed in committed_changes {
-                        while let Some(unreviewed) = old_unreviewed_changes.peek() {
+                    for committed in committed_edits {
+                        while let Some(unreviewed) = old_unreviewed_edits.peek() {
+                            // If the committed edit matches the unreviewed
+                            // edit, assume the user wants to keep it.
                             if committed.old == unreviewed.old {
                                 let unreviewed_new =
                                     buffer_text.slice_rows(unreviewed.new.clone()).to_string();
@@ -392,45 +349,108 @@ impl ActionLog {
                                         ));
                                     new_agent_diff_base
                                         .replace(old_byte_start..old_byte_end, &unreviewed_new);
-
                                     row_delta +=
                                         unreviewed.new_len() as i32 - unreviewed.old_len() as i32;
-                                    old_unreviewed_changes.next();
-                                    continue;
                                 }
                             } else if unreviewed.old.start >= committed.old.end {
                                 break;
                             }
 
-                            unreviewed_changes.push(Edit {
-                                old: (unreviewed.old.start as i32 + row_delta) as u32
-                                    ..(unreviewed.old.end as i32 + row_delta) as u32,
-                                new: unreviewed.new.clone(),
-                            });
-                            old_unreviewed_changes.next().unwrap();
+                            old_unreviewed_edits.next().unwrap();
                         }
                     }
 
-                    for unreviewed in old_unreviewed_changes {
-                        unreviewed_changes.push(Edit {
-                            old: (unreviewed.old.start as i32 + row_delta) as u32
-                                ..(unreviewed.old.end as i32 + row_delta) as u32,
-                            new: unreviewed.new.clone(),
-                        });
-                    }
-
-                    (new_agent_diff_base, unreviewed_changes)
+                    (
+                        Arc::new(new_agent_diff_base.to_string()),
+                        new_agent_diff_base,
+                    )
                 }))
             })??
             .await;
 
+        Self::update_diff(
+            this,
+            buffer,
+            buffer_snapshot,
+            new_base_text,
+            new_diff_base,
+            cx,
+        )
+        .await
+    }
+
+    async fn update_diff(
+        this: &WeakEntity<ActionLog>,
+        buffer: &Entity<Buffer>,
+        buffer_snapshot: text::BufferSnapshot,
+        new_base_text: Arc<String>,
+        new_diff_base: Rope,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let (diff, language, language_registry) = this.read_with(cx, |this, cx| {
+            let tracked_buffer = this
+                .tracked_buffers
+                .get(buffer)
+                .context("buffer not tracked")?;
+            anyhow::Ok((
+                tracked_buffer.diff.clone(),
+                buffer.read(cx).language().cloned(),
+                buffer.read(cx).language_registry().clone(),
+            ))
+        })??;
+        let diff_snapshot = BufferDiff::update_diff(
+            diff.clone(),
+            buffer_snapshot.clone(),
+            Some(new_base_text),
+            true,
+            false,
+            language,
+            language_registry,
+            cx,
+        )
+        .await;
+        let mut unreviewed_edits = Patch::default();
+        if let Ok(diff_snapshot) = diff_snapshot {
+            unreviewed_edits = cx
+                .background_spawn({
+                    let diff_snapshot = diff_snapshot.clone();
+                    let buffer_snapshot = buffer_snapshot.clone();
+                    let new_diff_base = new_diff_base.clone();
+                    async move {
+                        let mut unreviewed_edits = Patch::default();
+                        for hunk in diff_snapshot
+                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer_snapshot)
+                        {
+                            let old_range = new_diff_base
+                                .offset_to_point(hunk.diff_base_byte_range.start)
+                                ..new_diff_base.offset_to_point(hunk.diff_base_byte_range.end);
+                            let new_range = hunk.range.start..hunk.range.end;
+                            unreviewed_edits.push(point_to_row_edit(
+                                Edit {
+                                    old: old_range,
+                                    new: new_range,
+                                },
+                                &new_diff_base,
+                                &buffer_snapshot.as_rope(),
+                            ));
+                        }
+                        unreviewed_edits
+                    }
+                })
+                .await;
+
+            diff.update(cx, |diff, cx| {
+                diff.set_snapshot(diff_snapshot, &buffer_snapshot, cx);
+            })?;
+        }
         this.update(cx, |this, cx| {
             let tracked_buffer = this
                 .tracked_buffers
                 .get_mut(buffer)
                 .context("buffer not tracked")?;
             tracked_buffer.diff_base = new_diff_base;
-            tracked_buffer.unreviewed_changes = new_unreviewed_changes;
+            tracked_buffer.snapshot = buffer_snapshot;
+            tracked_buffer.unreviewed_edits = unreviewed_edits;
             cx.notify();
             anyhow::Ok(())
         })?
@@ -496,7 +516,7 @@ impl ActionLog {
                     buffer_range.start.to_point(buffer)..buffer_range.end.to_point(buffer);
                 let mut delta = 0i32;
 
-                tracked_buffer.unreviewed_changes.retain_mut(|edit| {
+                tracked_buffer.unreviewed_edits.retain_mut(|edit| {
                     edit.old.start = (edit.old.start as i32 + delta) as u32;
                     edit.old.end = (edit.old.end as i32 + delta) as u32;
 
@@ -607,7 +627,7 @@ impl ActionLog {
                     .project
                     .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx));
 
-                // Clear all tracked changes for this buffer and start over as if we just read it.
+                // Clear all tracked edits for this buffer and start over as if we just read it.
                 self.tracked_buffers.remove(&buffer);
                 self.buffer_read(buffer.clone(), cx);
                 cx.notify();
@@ -623,7 +643,7 @@ impl ActionLog {
                         .peekable();
 
                     let mut edits_to_revert = Vec::new();
-                    for edit in tracked_buffer.unreviewed_changes.edits() {
+                    for edit in tracked_buffer.unreviewed_edits.edits() {
                         let new_range = tracked_buffer
                             .snapshot
                             .anchor_before(Point::new(edit.new.start, 0))
@@ -675,7 +695,7 @@ impl ActionLog {
             .retain(|_buffer, tracked_buffer| match tracked_buffer.status {
                 TrackedBufferStatus::Deleted => false,
                 _ => {
-                    tracked_buffer.unreviewed_changes.clear();
+                    tracked_buffer.unreviewed_edits.clear();
                     tracked_buffer.diff_base = tracked_buffer.snapshot.as_rope().clone();
                     tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
                     true
@@ -684,11 +704,11 @@ impl ActionLog {
         cx.notify();
     }
 
-    /// Returns the set of buffers that contain changes that haven't been reviewed by the user.
+    /// Returns the set of buffers that contain edits that haven't been reviewed by the user.
     pub fn changed_buffers(&self, cx: &App) -> BTreeMap<Entity<Buffer>, Entity<BufferDiff>> {
         self.tracked_buffers
             .iter()
-            .filter(|(_, tracked)| tracked.has_changes(cx))
+            .filter(|(_, tracked)| tracked.has_edits(cx))
             .map(|(buffer, tracked)| (buffer.clone(), tracked.diff.clone()))
             .collect()
     }
@@ -709,7 +729,7 @@ impl ActionLog {
     }
 }
 
-fn apply_non_conflicting_changes(
+fn apply_non_conflicting_edits(
     patch: &Patch<u32>,
     edits: Vec<Edit<u32>>,
     old_text: &mut Rope,
@@ -808,11 +828,7 @@ fn point_to_row_edit(edit: Edit<Point>, old_text: &Rope, new_text: &Rope) -> Edi
             old: edit.old.start.row + 1..edit.old.end.row + 1,
             new: edit.new.start.row + 1..edit.new.end.row + 1,
         }
-    } else if edit.old.start.column == 0
-        && edit.old.end.column == 0
-        && edit.new.end.column == 0
-        && edit.old.end != old_text.max_point()
-    {
+    } else if edit.old.start.column == 0 && edit.old.end.column == 0 && edit.new.end.column == 0 {
         Edit {
             old: edit.old.start.row..edit.old.end.row,
             new: edit.new.start.row..edit.new.end.row,
@@ -840,7 +856,7 @@ enum TrackedBufferStatus {
 struct TrackedBuffer {
     buffer: Entity<Buffer>,
     diff_base: Rope,
-    unreviewed_changes: Patch<u32>,
+    unreviewed_edits: Patch<u32>,
     status: TrackedBufferStatus,
     version: clock::Global,
     diff: Entity<BufferDiff>,
@@ -852,7 +868,7 @@ struct TrackedBuffer {
 }
 
 impl TrackedBuffer {
-    fn has_changes(&self, cx: &App) -> bool {
+    fn has_edits(&self, cx: &App) -> bool {
         self.diff
             .read(cx)
             .hunks(&self.buffer.read(cx), cx)
@@ -873,8 +889,6 @@ pub struct ChangedBuffer {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-
     use super::*;
     use buffer_diff::DiffHunkStatusKind;
     use gpui::TestAppContext;
@@ -883,6 +897,7 @@ mod tests {
     use rand::prelude::*;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::env;
     use util::{RandomCharIter, path};
 
     #[ctor::ctor]
@@ -1897,15 +1912,15 @@ mod tests {
                         .unwrap();
                 }
                 _ => {
-                    let is_agent_change = rng.gen_bool(0.5);
-                    if is_agent_change {
+                    let is_agent_edit = rng.gen_bool(0.5);
+                    if is_agent_edit {
                         log::info!("agent edit");
                     } else {
                         log::info!("user edit");
                     }
                     cx.update(|cx| {
                         buffer.update(cx, |buffer, cx| buffer.randomly_edit(&mut rng, 1, cx));
-                        if is_agent_change {
+                        if is_agent_edit {
                             action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
                         }
                     });
@@ -1930,7 +1945,7 @@ mod tests {
                 let tracked_buffer = log.tracked_buffers.get(&buffer).unwrap();
                 let mut old_text = tracked_buffer.diff_base.clone();
                 let new_text = buffer.read(cx).as_rope();
-                for edit in tracked_buffer.unreviewed_changes.edits() {
+                for edit in tracked_buffer.unreviewed_edits.edits() {
                     let old_start = old_text.point_to_offset(Point::new(edit.new.start, 0));
                     let old_end = old_text.point_to_offset(cmp::min(
                         Point::new(edit.new.start + edit.old_len(), 0),
@@ -1946,173 +1961,375 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_accept_committed_changes() {
-        // Committed changes that match unreviewed changes
-        {
-            let agent_diff_base = Rope::from("line1\nline2\nline3\nline4\n");
-            let git_diff_base = Rope::from("line1\nmodified2\nline3\nmodified4\n");
-            let buffer_text = Rope::from("line1\nmodified2\nline3\nmodified4\n");
+    #[gpui::test]
+    async fn test_accept_committed_edits_matching(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
 
-            let old_unreviewed_changes = Patch::new(vec![
-                Edit {
-                    old: 1..2,
-                    new: 1..2,
-                },
-                Edit {
-                    old: 3..4,
-                    new: 3..4,
-                },
-            ]);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "file.txt": "line1\nline2\nline3\nline4\n",
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt".into(), "line1\nline2\nline3\nline4\n".into())],
+        );
+        cx.run_until_parked();
 
-            let (new_diff_base, new_unreviewed) = accept_committed_changes(
-                agent_diff_base,
-                git_diff_base,
-                buffer_text,
-                old_unreviewed_changes,
-            );
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
-            assert_eq!(
-                new_diff_base.to_string(),
-                "line1\nmodified2\nline3\nmodified4\n"
-            );
-            assert_eq!(new_unreviewed.edits(), &[]);
-        }
+        // Open and modify the buffer
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("project/file.txt", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
 
-        // Unreviewed changes that don't match committed changes
-        {
-            let agent_diff_base = Rope::from("line1\nline2\nline3\n");
-            let git_diff_base = Rope::from("line1\ncommitted2\nline3\n");
-            let buffer_text = Rope::from("line1\nunreviewed2\nline3\n");
-
-            let old_unreviewed_changes = Patch::new(vec![Edit {
-                old: 1..2,
-                new: 1..2,
-            }]);
-
-            let (new_diff_base, new_unreviewed) = accept_committed_changes(
-                agent_diff_base,
-                git_diff_base,
-                buffer_text,
-                old_unreviewed_changes,
-            );
-
-            // Diff base remains unchanged since the unreviewed change doesn't match the committed one
-            assert_eq!(new_diff_base.to_string(), "line1\nline2\nline3\n");
-            assert_eq!(
-                new_unreviewed.edits(),
-                &[Edit {
-                    old: 1..2,
-                    new: 1..2
-                }]
-            );
-        }
-
-        // Mix of matching and non-matching changes with row delta
-        {
-            let agent_diff_base = Rope::from("line1\nline2\nline3\nline4\nline5\n");
-            let git_diff_base = Rope::from("line1\nmodified2\nadded\nline3\nline4\nline5\n");
-            let buffer_text = Rope::from("line1\nmodified2\nadded\nline3\ndifferent4\nline5\n");
-
-            let old_unreviewed_changes = Patch::new(vec![
-                Edit {
-                    old: 1..2,
-                    new: 1..3, // line2 -> modified2\nadded
-                },
-                Edit {
-                    old: 3..4,
-                    new: 4..5, // line4 -> different4
-                },
-            ]);
-
-            let (new_diff_base, new_unreviewed) = accept_committed_changes(
-                agent_diff_base,
-                git_diff_base.clone(),
-                buffer_text,
-                old_unreviewed_changes,
-            );
-
-            // First change matches and is accepted, updating the diff base
-            // Second change doesn't match and remains unreviewed with adjusted row
-            assert_eq!(
-                new_diff_base.to_string(),
-                "line1\nmodified2\nadded\nline3\nline4\nline5\n"
-            );
-            assert_eq!(
-                new_unreviewed.edits(),
-                &[Edit {
-                    old: 4..5,
-                    new: 4..5
-                }]
-            );
-        }
-
-        // Deletion changes
-        {
-            let agent_diff_base = Rope::from("line1\nline2\nline3\nline4\n");
-            let git_diff_base = Rope::from("line1\nline3\nline4\n");
-            let buffer_text = Rope::from("line1\nline3\nline4\n");
-
-            let old_unreviewed_changes = Patch::new(vec![Edit {
-                old: 1..2,
-                new: 1..1, // line2 deleted
-            }]);
-
-            let (new_diff_base, new_unreviewed) = accept_committed_changes(
-                agent_diff_base,
-                git_diff_base,
-                buffer_text,
-                old_unreviewed_changes,
-            );
-
-            assert_eq!(new_diff_base.to_string(), "line1\nline3\nline4\n");
-            assert_eq!(new_unreviewed.edits(), &[]);
-        }
-
-        // Multiple unreviewed changes with only some committed
-        {
-            let agent_diff_base = Rope::from("a\nb\nc\nd\ne\nf\n");
-            let git_diff_base = Rope::from("a\nB\nc\nd\ne\nf\n");
-            let buffer_text = Rope::from("a\nB\nc\nD\ne\nF\n");
-
-            let old_unreviewed_changes = Patch::new(vec![
-                Edit {
-                    old: 1..2,
-                    new: 1..2, // b -> B
-                },
-                Edit {
-                    old: 3..4,
-                    new: 3..4, // d -> D
-                },
-                Edit {
-                    old: 5..6,
-                    new: 5..6, // f -> F
-                },
-            ]);
-
-            let (new_diff_base, new_unreviewed) = accept_committed_changes(
-                agent_diff_base,
-                git_diff_base,
-                buffer_text,
-                old_unreviewed_changes,
-            );
-
-            // Only the first change (b -> B) was committed
-            assert_eq!(new_diff_base.to_string(), "a\nB\nc\nd\ne\nf\n");
-            assert_eq!(
-                new_unreviewed.edits(),
-                &[
-                    Edit {
-                        old: 3..4,
-                        new: 3..4
-                    }, // d -> D
-                    Edit {
-                        old: 5..6,
-                        new: 5..6
-                    }, // f -> F
+        // Track the buffer to start monitoring edits
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit(
+                    [
+                        (Point::new(1, 0)..Point::new(1, 5), "modified2"),
+                        (Point::new(3, 0)..Point::new(3, 5), "modified4"),
+                    ],
+                    None,
+                    cx,
+                );
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(1, 0)..Point::new(2, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "line2\n".into()
+                    },
+                    HunkStatus {
+                        range: Point::new(3, 0)..Point::new(4, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "line4\n".into()
+                    }
                 ]
-            );
-        }
+            )]
+        );
+
+        // Simulate a git commit that matches the unreviewed edits
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                "file.txt".into(),
+                "line1\nmodified2\nline3\nmodified4\n".into(),
+            )],
+        );
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test]
+    async fn test_accept_committed_edits_non_matching(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "file.txt": "line1\nline2\nline3\n",
+            }),
+        )
+        .await;
+
+        // Set initial git HEAD
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt".into(), "line1\nline2\nline3\n".into())],
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("project/file.txt", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        // Track the buffer to start monitoring edits
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(6..11, "unreviewed2")], None, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // Simulate a git commit with a different edit
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt".into(), "line1\ncommitted2\nline3\n".into())],
+        );
+        cx.run_until_parked();
+
+        // Verify the unreviewed edit remains
+        let hunks = unreviewed_hunks(&action_log, cx);
+        assert_eq!(
+            hunks,
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(1, 0)..Point::new(2, 0),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "line2\n".to_string(),
+                }]
+            )]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_accept_committed_edits_mixed_with_row_delta(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "file.txt": "line1\nline2\nline3\nline4\nline5\n",
+            }),
+        )
+        .await;
+
+        // Set initial git HEAD
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt".into(), "line1\nline2\nline3\nline4\n".into())],
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("project/file.txt", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        // Track the buffer to start monitoring edits
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                // Replace line2 with modified2\nadded
+                buffer.edit([(6..11, "modified2\nadded")], None, cx);
+            });
+            buffer.update(cx, |buffer, cx| {
+                // Replace line4 with different4 (after the previous edit, line4 is now at a different position)
+                buffer.edit([(29..34, "different4")], None, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // Verify we have three unreviewed edits
+        // Simulate a git commit that matches only the first edit
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                "file.txt".into(),
+                "line1\nmodified2\nadded\nline3\nline4\nline5\n".into(),
+            )],
+        );
+        cx.run_until_parked();
+
+        // Verify the first edit was accepted and second remains with adjusted row
+        let hunks = unreviewed_hunks(&action_log, cx);
+        assert_eq!(
+            hunks,
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(4, 0)..Point::new(5, 0),
+                    diff_status: DiffHunkStatusKind::Modified,
+                    old_text: "line4\n".to_string(),
+                }]
+            )]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_accept_committed_edits_deletion(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "file.txt": "line1\nline2\nline3\nline4\n",
+            }),
+        )
+        .await;
+
+        // Set initial git HEAD
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                "file.txt".into(),
+                "line1\nline2\nline3\nline4\nline5\n".into(),
+            )],
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("project/file.txt", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        // Track the buffer to start monitoring edits
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(6..12, "")], None, cx);
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // Verify we have a deletion hunk
+        let hunks = unreviewed_hunks(&action_log, cx);
+        assert_eq!(
+            hunks,
+            vec![(
+                buffer.clone(),
+                vec![HunkStatus {
+                    range: Point::new(1, 0)..Point::new(1, 0),
+                    diff_status: DiffHunkStatusKind::Deleted,
+                    old_text: "line2\n".to_string(),
+                }]
+            )]
+        );
+
+        // Simulate a git commit with the same deletion
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt".into(), "line1\nline3\nline4\n".into())],
+        );
+        cx.run_until_parked();
+
+        // Verify the deletion was accepted (no unreviewed hunks)
+        // Verify the deletion was accepted
+        let hunks = unreviewed_hunks(&action_log, cx);
+        assert_eq!(hunks.len(), 0, "Deletion should have been accepted");
+    }
+
+    #[gpui::test]
+    async fn test_accept_committed_edits_partial_multiple(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "file.txt": "a\nb\nc\nd\ne\nf\n",
+            }),
+        )
+        .await;
+
+        // Set initial git HEAD
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt".into(), "a\nb\nc\nd\ne\nf\n".into())],
+        );
+        cx.run_until_parked();
+
+        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("project/file.txt", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path, cx))
+            .await
+            .unwrap();
+
+        // Track the buffer to start monitoring edits
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| {
+                buffer.edit([(2..3, "B")], None, cx); // b -> B
+                buffer.edit([(6..7, "D")], None, cx); // d -> D
+                buffer.edit([(10..11, "F")], None, cx); // f -> F
+            });
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        cx.run_until_parked();
+
+        // Simulate a git commit with only the first edit
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt".into(), "a\nB\nc\nd\ne\nf\n".into())],
+        );
+        cx.run_until_parked();
+
+        // Verify only the first edit was accepted
+        // Verify only the last two edits remain
+        let hunks = unreviewed_hunks(&action_log, cx);
+        assert_eq!(
+            hunks,
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(3, 0)..Point::new(4, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "d\n".to_string(),
+                    },
+                    HunkStatus {
+                        range: Point::new(5, 0)..Point::new(6, 0),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "f\n".to_string(),
+                    }
+                ]
+            )]
+        );
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
