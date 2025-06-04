@@ -169,6 +169,7 @@ impl MessageEditor {
                 Some(text_thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
+                ModelUsageContext::Thread(thread.clone()),
                 window,
                 cx,
             )
