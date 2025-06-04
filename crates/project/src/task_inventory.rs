@@ -262,18 +262,6 @@ impl Inventory {
 
         let (_, new) = self.used_and_current_resolved_tasks(task_contexts, cx);
 
-        let lang_tasks = new
-            .iter()
-            .filter(|(kind, _)| {
-                matches!(
-                    kind,
-                    TaskSourceKind::Lsp { .. } | TaskSourceKind::Language { .. }
-                )
-            })
-            .map(|(_, task)| task.resolved_label.clone())
-            .collect_vec();
-        dbg!(lang_tasks);
-
         if let Some(location) = task_contexts.location() {
             let file = location.buffer.read(cx).file();
             let language = location.buffer.read(cx).language();
@@ -286,13 +274,13 @@ impl Inventory {
                     language.and_then(|l| l.config().debuggers.first().map(SharedString::from))
                 });
             if let Some(adapter) = adapter {
-                for (kind, task) in new
-                    .into_iter()
-                    .filter(|(kind, _)| {
-                        add_current_language_tasks
-                            || !matches!(kind, TaskSourceKind::Language { .. })
-                    })
-                    .chain(lsp_tasks)
+                for (kind, task) in
+                    lsp_tasks
+                        .into_iter()
+                        .chain(new.into_iter().filter(|(kind, _)| {
+                            add_current_language_tasks
+                                || !matches!(kind, TaskSourceKind::Language { .. })
+                        }))
                 {
                     if let Some(scenario) =
                         DapRegistry::global(cx)
