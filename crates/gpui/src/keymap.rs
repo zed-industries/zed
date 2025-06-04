@@ -357,8 +357,9 @@ mod tests {
         let mut keymap = Keymap::default();
         keymap.add_bindings(bindings.clone());
 
-        let space = || Keystroke::parse("space").unwrap();
-        let w = || Keystroke::parse("w").unwrap();
+        let keyboard_mapper = TestKeyboardMapper::new();
+        let space = || Keystroke::parse("space", &keyboard_mapper).unwrap();
+        let w = || Keystroke::parse("w", &keyboard_mapper).unwrap();
 
         let space_w = [space(), w()];
         let space_w_w = [space(), w(), w()];
