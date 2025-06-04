@@ -437,13 +437,28 @@ pub fn into_google(
         content
             .into_iter()
             .flat_map(|content| match content {
-                language_model::MessageContent::Text(text)
-                | language_model::MessageContent::Thinking { text, .. } => {
+                language_model::MessageContent::Text(text) => {
                     if !text.is_empty() {
                         vec![Part::TextPart(google_ai::TextPart { text })]
                     } else {
                         vec![]
                     }
+                }
+                language_model::MessageContent::Thinking {
+                    text: _,
+                    signature: Some(signature),
+                } => {
+                    if !signature.is_empty() {
+                        vec![Part::ThoughtPart(google_ai::ThoughtPart {
+                            thought: true,
+                            thought_signature: signature,
+                        })]
+                    } else {
+                        vec![]
+                    }
+                }
+                language_model::MessageContent::Thinking { .. } => {
+                    vec![]
                 }
                 language_model::MessageContent::RedactedThinking(_) => vec![],
                 language_model::MessageContent::Image(image) => {
@@ -664,7 +679,12 @@ impl GoogleEventMapper {
                             )));
                         }
                         Part::FunctionResponsePart(_) => {}
-                        Part::ThoughtPart(_) => {}
+                        Part::ThoughtPart(part) => {
+                            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                                text: "(Encrypted thought)".to_string(), // TODO: Can we populate this from thought summaries?
+                                signature: Some(part.thought_signature),
+                            }));
+                        }
                     });
             }
         }
