@@ -13,9 +13,9 @@
     }
   },
   {
-    "context": "Editor && vim_mode == insert && !menu",
+    "context": "Editor && vim_mode == insert",
     "bindings": {
-      // "j k": "vim::SwitchToNormalMode"
+      // "j k": ["workspace::SendKeystrokes", "escape"]
     }
   }
 ]
