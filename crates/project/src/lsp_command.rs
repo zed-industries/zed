@@ -50,7 +50,7 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
     }
 }
 
-pub(crate) fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
+pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
     match lsp::Url::from_file_path(path) {
         Ok(url) => Ok(url),
         Err(()) => anyhow::bail!("Invalid file path provided to LSP request: {path:?}"),
@@ -3846,8 +3846,7 @@ impl LspCommand for GetDocumentDiagnostics {
 
         Ok(lsp::DocumentDiagnosticParams {
             text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path)
-                    .map_err(|_| anyhow::anyhow!("Invalid file path {path:?}"))?,
+                uri: file_path_to_lsp_url(path)?,
             },
             identifier,
             previous_result_id: None,
@@ -3870,8 +3869,7 @@ impl LspCommand for GetDocumentDiagnostics {
                 .and_then(|file| file.as_local())
                 .map(|file| {
                     let abs_path = file.abs_path(cx);
-                    lsp::Url::from_file_path(&abs_path)
-                        .map_err(|()| anyhow::anyhow!("Parsing path {abs_path:?} as an LSP url"))
+                    file_path_to_lsp_url(&abs_path)
                 })
                 .transpose()?
                 .with_context(|| format!("missing url on buffer {}", buffer.remote_id()))
