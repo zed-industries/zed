@@ -5,6 +5,7 @@ use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
 use settings::KeymapFile;
+use std::collections::HashSet;
 use std::io::{self, Read};
 use std::process;
 use std::sync::LazyLock;
@@ -44,6 +45,19 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum Error {
+    ActionNotFound { action_name: String },
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Error::ActionNotFound { action_name } => write!(f, "Action not found: {}", action_name),
+        }
+    }
+}
+
 fn handle_preprocessing() -> Result<()> {
     let mut stdin = io::stdin();
     let mut input = String::new();
@@ -51,13 +65,18 @@ fn handle_preprocessing() -> Result<()> {
 
     let (_ctx, mut book) = CmdPreprocessor::parse_input(input.as_bytes())?;
 
-    let keybindings_ok = template_and_validate_keybindings(&mut book);
-    let actions_ok = template_and_validate_actions(&mut book);
+    let mut errors = HashSet::<Error>::new();
 
-    if !keybindings_ok || !actions_ok {
-        return Err(anyhow::anyhow!(
-            "Some actions referenced in docs do not exist"
-        ));
+    template_and_validate_keybindings(&mut book, &mut errors);
+    template_and_validate_actions(&mut book, &mut errors);
+
+    if !errors.is_empty() {
+        const ANSI_RED: &'static str = "\x1b[31m";
+        const ANSI_RESET: &'static str = "\x1b[0m";
+        for error in &errors {
+            eprintln!("{ANSI_RED}ERROR{ANSI_RESET}: {}", error);
+        }
+        return Err(anyhow::anyhow!("Found {} errors in docs", errors.len()));
     }
 
     serde_json::to_writer(io::stdout(), &book)?;
@@ -77,17 +96,17 @@ fn handle_supports(sub_args: &ArgMatches) -> ! {
     }
 }
 
-fn template_and_validate_keybindings(book: &mut Book) -> bool {
+fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Error>) {
     let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
-    let mut ok = false;
 
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let action = caps[1].trim();
                 if find_action_by_name(action).is_none() {
-                    eprintln!("Action not found: {}", action);
-                    ok = false;
+                    errors.insert(Error::ActionNotFound {
+                        action_name: action.to_string(),
+                    });
                     return String::new();
                 }
                 let macos_binding = find_binding("macos", action).unwrap_or_default();
@@ -101,26 +120,25 @@ fn template_and_validate_keybindings(book: &mut Book) -> bool {
             })
             .into_owned()
     });
-    return ok;
 }
 
-fn template_and_validate_actions(book: &mut Book) -> bool {
+fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Error>) {
     let regex = Regex::new(r"\{#action (.*?)\}").unwrap();
-    let mut ok = true;
+
     for_each_chapter_mut(book, |chapter| {
         chapter.content = regex
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let name = caps[1].trim();
                 let Some(action) = find_action_by_name(name) else {
-                    eprintln!("Action not found: {}", name);
-                    ok = false;
+                    errors.insert(Error::ActionNotFound {
+                        action_name: name.to_string(),
+                    });
                     return String::new();
                 };
                 format!("<code class=\"hljs\">{}</code>", &action.human_name)
             })
             .into_owned()
     });
-    return ok;
 }
 
 fn find_action_by_name(name: &str) -> Option<&ActionDef> {
