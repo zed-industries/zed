@@ -1517,31 +1517,7 @@ impl ActiveThread {
     }
 
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
-        let images = cx
-            .read_from_clipboard()
-            .map(|item| {
-                item.into_entries()
-                    .filter_map(|entry| {
-                        if let ClipboardEntry::Image(image) = entry {
-                            Some(image)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        if images.is_empty() {
-            return;
-        }
-        cx.stop_propagation();
-
-        self.context_store.update(cx, |store, cx| {
-            for image in images {
-                store.add_image_instance(Arc::new(image), cx);
-            }
-        });
+        attach_pasted_images_as_context(&self.context_store, cx);
     }
 
     fn cancel_editing_message(
@@ -3649,6 +3625,38 @@ pub(crate) fn open_context(
 
         AgentContextHandle::Image(_) => {}
     }
+}
+
+pub(crate) fn attach_pasted_images_as_context(
+    context_store: &Entity<ContextStore>,
+    cx: &mut App,
+) -> bool {
+    let images = cx
+        .read_from_clipboard()
+        .map(|item| {
+            item.into_entries()
+                .filter_map(|entry| {
+                    if let ClipboardEntry::Image(image) = entry {
+                        Some(image)
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if images.is_empty() {
+        return false;
+    }
+    cx.stop_propagation();
+
+    context_store.update(cx, |store, cx| {
+        for image in images {
+            store.add_image_instance(Arc::new(image), cx);
+        }
+    });
+    true
 }
 
 fn open_editor_at_position(

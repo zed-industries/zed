@@ -13,6 +13,7 @@ use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::ErrorExt;
 use collections::VecDeque;
 use db::kvp::Dismissable;
+use editor::actions::Paste;
 use editor::display_map::EditorMargins;
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
@@ -99,6 +100,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         v_flex()
             .key_context("PromptEditor")
+            .capture_action(cx.listener(Self::paste))
             .bg(cx.theme().colors().editor_background)
             .block_mouse_except_scroll()
             .gap_0p5()
@@ -301,6 +303,10 @@ impl<T: 'static> PromptEditor<T> {
 
     pub fn prompt(&self, cx: &App) -> String {
         self.editor.read(cx).text(cx)
+    }
+
+    fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
+        crate::active_thread::attach_pasted_images_as_context(&self.context_store, cx);
     }
 
     fn toggle_rate_limit_notice(
