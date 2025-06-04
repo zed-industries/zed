@@ -31,7 +31,9 @@ use std::{
     any::type_name,
     borrow::Cow,
     cell::{Cell, Ref, RefCell},
-    cmp, fmt,
+    cmp,
+    f32::consts::E,
+    fmt,
     future::Future,
     io,
     iter::{self, FromIterator},
@@ -43,7 +45,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Cursor, SumTree, TreeMap};
+use sum_tree::{Bias, Cursor, Dimension, SumTree, TreeMap};
 use text::{
     BufferId, Edit, LineIndent, TextSummary,
     locator::Locator,
@@ -281,6 +283,8 @@ impl DiffState {
     }
 }
 
+// extend
+
 /// The contents of a [`MultiBuffer`] at a single point in time.
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
@@ -461,10 +465,15 @@ pub struct ExcerptSummary {
 
 #[derive(Debug, Clone)]
 pub struct DiffTransformSummary {
+    /// Carries summary of all the BufferContent transforms
     input: TextSummary,
+    /// Carries summary of all the BufferContent transforms plus all the DeletedHunk transforms
     output: TextSummary,
+    /// Secret third thing
+    original: TextSummary,
 }
 
+// position in a buffer -> position in the buffer in terms of last git state
 #[derive(Clone)]
 pub struct MultiBufferRows<'a> {
     point: Point,
@@ -507,9 +516,44 @@ pub struct ReversedMultiBufferBytes<'a> {
 }
 
 #[derive(Clone)]
+struct DiffDimension<D> {
+    output: OutputDimension<D>,
+    input: ExcerptDimension<D>,
+}
+
+impl<'a, D: TextDimension> sum_tree::Dimension<'a, DiffTransformSummary> for DiffDimension<D> {
+    fn zero(_: &()) -> Self {
+        Self {
+            output: OutputDimension::zero(&()),
+            input: <ExcerptDimension<D> as Dimension<'_, DiffTransformSummary>>::zero(&()),
+        }
+    }
+
+    fn add_summary(&mut self, summary: &'a DiffTransformSummary, cx: &()) {
+        self.output.add_summary(summary, cx);
+        self.input.add_summary(summary, cx);
+    }
+}
+
+// FIXME
+// impl<'a, D: TextDimension> sum_tree::Dimension<'a, ExcerptSummary> for DiffDimension<D> {
+//     fn zero(cx: &()) -> Self {
+//         Self {
+//             output: OutputDimension::zero(cx),
+//             input: <ExcerptDimension<D> as Dimension<'_, ExcerptSummary>>::zero(&()),
+//         }
+//     }
+
+//     fn add_summary(&mut self, summary: &'a ExcerptSummary, cx: &()) {
+//         self.output.add_summary(summary, cx);
+//         self.input.add_summary(summary, cx);
+//     }
+// }
+
+#[derive(Clone)]
 struct MultiBufferCursor<'a, D: TextDimension> {
     excerpts: Cursor<'a, Excerpt, ExcerptDimension<D>>,
-    diff_transforms: Cursor<'a, DiffTransform, (OutputDimension<D>, ExcerptDimension<D>)>,
+    diff_transforms: Cursor<'a, DiffTransform, DiffDimension<D>>,
     diffs: &'a TreeMap<BufferId, BufferDiffSnapshot>,
     cached_region: Option<MultiBufferRegion<'a, D>>,
 }
@@ -6362,6 +6406,16 @@ impl MultiBufferSnapshot {
             prev_transform = Some(item);
         }
     }
+
+    /// translates an anchor in this multibuffer into a corresponding anchor in the diff base buffer
+    /// for unchanged regions and deleted regions, this is exact (as they exist in the diff base)
+    /// for added regions, this snaps the position to the start of the addition
+    pub fn foo(&self, row: MultiBufferRow) -> BufferRow {
+        // construct a cursor
+        // seek the cursor to MultiBufferPoint(row, 0)
+        // read off the `OriginalDimension<Point>` from the cursor
+        todo!()
+    }
 }
 
 impl<'a, D> MultiBufferCursor<'a, D>
@@ -7131,13 +7185,22 @@ impl sum_tree::Item for DiffTransform {
 
     fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
         match self {
-            DiffTransform::BufferContent { summary, .. } => DiffTransformSummary {
+            DiffTransform::BufferContent {
+                summary,
+                inserted_hunk_info,
+            } => DiffTransformSummary {
                 input: *summary,
                 output: *summary,
+                original: if inserted_hunk_info.is_some() {
+                    TextSummary::default()
+                } else {
+                    *summary
+                },
             },
             DiffTransform::DeletedHunk { summary, .. } => DiffTransformSummary {
                 input: TextSummary::default(),
                 output: *summary,
+                original: *summary,
             },
         }
     }
@@ -7156,6 +7219,7 @@ impl sum_tree::Summary for DiffTransformSummary {
         DiffTransformSummary {
             input: TextSummary::default(),
             output: TextSummary::default(),
+            original: TextSummary::default(),
         }
     }
 
@@ -7268,6 +7332,9 @@ struct ExcerptDimension<T>(T);
 #[derive(Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
 struct OutputDimension<T>(T);
 
+#[derive(Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
+struct OriginalDimension<T>(T);
+
 impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptOffset {
     fn zero(_: &()) -> Self {
         ExcerptOffset::new(0)
@@ -7326,6 +7393,20 @@ impl<'a, D: TextDimension> sum_tree::Dimension<'a, DiffTransformSummary> for Out
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
         self.0.add_assign(&D::from_text_summary(&summary.output))
+    }
+}
+
+impl<'a, D: TextDimension> sum_tree::Dimension<'a, DiffTransformSummary> for OriginalDimension<D> {
+    fn zero(_: &<DiffTransformSummary as sum_tree::Summary>::Context) -> Self {
+        OriginalDimension(D::default())
+    }
+
+    fn add_summary(
+        &mut self,
+        summary: &'a DiffTransformSummary,
+        cx: &<DiffTransformSummary as sum_tree::Summary>::Context,
+    ) {
+        self.0.add_assign(&D::from_text_summary(&summary.original))
     }
 }
 
