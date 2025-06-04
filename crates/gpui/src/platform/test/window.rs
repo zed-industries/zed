@@ -1,10 +1,8 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GpuSpecs,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, Point, PromptButton, RequestFrameOptions, RequestFrameOptions, ScaledPixels,
-    ScaledPixels, Size, Size, TestPlatform, TestPlatform, TileId, TileId, WindowAppearance,
-    WindowAppearance, WindowBackgroundAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowBounds, WindowParams, WindowParams,
+    Point, PromptButton, RequestFrameOptions, ScaledPixels, Size, TestPlatform, TileId,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
