@@ -767,7 +767,6 @@ impl ImageContext {
             None => ImageStatus::Loading,
             Some(None) => ImageStatus::Error,
             Some(Some(_)) => {
-                // Check model support before marking as ready
                 if let Some(model) = model {
                     if !model.supports_images() {
                         ImageStatus::Warning

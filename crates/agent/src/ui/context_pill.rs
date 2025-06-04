@@ -188,10 +188,8 @@ impl RenderOnce for ContextPill {
                                         |label, delta| label.opacity(delta),
                                     )
                                     .into_any_element(),
-                                ContextStatus::Error { message } => element
-                                    .tooltip(ui::Tooltip::text(message.clone()))
-                                    .into_any_element(),
-                                ContextStatus::Warning { message } => element
+                                ContextStatus::Warning { message }
+                                | ContextStatus::Error { message } => element
                                     .tooltip(ui::Tooltip::text(message.clone()))
                                     .into_any_element(),
                             }),
@@ -633,7 +631,7 @@ impl AddedContext {
             ImageStatus::Warning => ContextStatus::Warning {
                 message: format!(
                     "{} doesn't support images",
-                    model.map(|m| m.name().0).unwrap_or("Model".into())
+                    model.map(|m| m.name().0).unwrap_or_else(|| "Model".into())
                 )
                 .into(),
             },
@@ -646,7 +644,7 @@ impl AddedContext {
             parent,
             tooltip: None,
             icon_path,
-            status: status,
+            status,
             render_hover: Some(Rc::new({
                 let image = context.original_image.clone();
                 move |_, cx| {
