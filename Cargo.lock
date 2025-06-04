@@ -8864,6 +8864,7 @@ dependencies = [
  "mistral",
  "ollama",
  "open_ai",
+ "open_router",
  "partial-json-fixer",
  "project",
  "proto",
@@ -10709,6 +10710,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "open_router"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+ "workspace-hack",
+]
+
+[[package]]
 name = "opener"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12099,6 +12113,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "uuid",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
@@ -17115,6 +17130,7 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
+ "indoc",
  "itertools 0.14.0",
  "libc",
  "log",
@@ -19692,7 +19708,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.190.0"
+version = "0.191.0"
 dependencies = [
  "activity_indicator",
  "agent",

@@ -12,14 +12,14 @@ use language_model::{
 };
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
-    OllamaToolCall, get_models, preload_model, show_model, stream_chat_completion,
+    OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonLike, Indicator, List, prelude::*};
 use util::ResultExt;
 
@@ -201,7 +201,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: BTreeMap<String, ollama::Model> = BTreeMap::default();
+        let mut models: HashMap<String, ollama::Model> = HashMap::new();
 
         // Add models from the Ollama API
         for model in self.state.read(cx).available_models.iter() {
@@ -228,7 +228,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             );
         }
 
-        models
+        let mut models = models
             .into_values()
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
@@ -238,16 +238,9 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     request_limiter: RateLimiter::new(4),
                 }) as Arc<dyn LanguageModel>
             })
-            .collect()
-    }
-
-    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
-        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-        let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
-        let id = model.id().0.to_string();
-        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
-            .detach_and_log_err(cx);
+            .collect::<Vec<_>>();
+        models.sort_by_key(|model| model.name());
+        models
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {

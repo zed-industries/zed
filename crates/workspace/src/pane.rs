@@ -25,7 +25,7 @@ use gpui::{
 use itertools::Itertools;
 use language::DiagnosticSeverity;
 use parking_lot::Mutex;
-use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, WorktreeId};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
@@ -400,6 +400,12 @@ impl EventEmitter<Event> for Pane {}
 pub enum Side {
     Left,
     Right,
+}
+
+#[derive(Copy, Clone)]
+enum PinOperation {
+    Pin,
+    Unpin,
 }
 
 impl Pane {
@@ -1921,24 +1927,56 @@ impl Pane {
                 })?
                 .await?;
             } else if can_save_as && is_singleton {
-                let abs_path = pane.update_in(cx, |pane, window, cx| {
+                let new_path = pane.update_in(cx, |pane, window, cx| {
                     pane.activate_item(item_ix, true, true, window, cx);
                     pane.workspace.update(cx, |workspace, cx| {
-                        workspace.prompt_for_new_path(window, cx)
+                        let lister = if workspace.project().read(cx).is_local() {
+                            DirectoryLister::Local(
+                                workspace.project().clone(),
+                                workspace.app_state().fs.clone(),
+                            )
+                        } else {
+                            DirectoryLister::Project(workspace.project().clone())
+                        };
+                        workspace.prompt_for_new_path(lister, window, cx)
                     })
                 })??;
-                if let Some(abs_path) = abs_path.await.ok().flatten() {
+                let Some(new_path) = new_path.await.ok().flatten().into_iter().flatten().next()
+                else {
+                    return Ok(false);
+                };
+
+                let project_path = pane
+                    .update(cx, |pane, cx| {
+                        pane.project
+                            .update(cx, |project, cx| {
+                                project.find_or_create_worktree(new_path, true, cx)
+                            })
+                            .ok()
+                    })
+                    .ok()
+                    .flatten();
+                let save_task = if let Some(project_path) = project_path {
+                    let (worktree, path) = project_path.await?;
+                    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
+                    let new_path = ProjectPath {
+                        worktree_id,
+                        path: path.into(),
+                    };
+
                     pane.update_in(cx, |pane, window, cx| {
-                        if let Some(item) = pane.item_for_path(abs_path.clone(), cx) {
+                        if let Some(item) = pane.item_for_path(new_path.clone(), cx) {
                             pane.remove_item(item.item_id(), false, false, window, cx);
                         }
 
-                        item.save_as(project, abs_path, window, cx)
+                        item.save_as(project, new_path, window, cx)
                     })?
-                    .await?;
                 } else {
                     return Ok(false);
-                }
+                };
+
+                save_task.await?;
+                return Ok(true);
             }
         }
 
@@ -2067,14 +2105,38 @@ impl Pane {
     }
 
     fn pin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_tab_pin_state(ix, PinOperation::Pin, window, cx);
+    }
+
+    fn unpin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.change_tab_pin_state(ix, PinOperation::Unpin, window, cx);
+    }
+
+    fn change_tab_pin_state(
+        &mut self,
+        ix: usize,
+        operation: PinOperation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         maybe!({
             let pane = cx.entity().clone();
-            let destination_index = self.pinned_tab_count.min(ix);
-            self.pinned_tab_count += 1;
-            let id = self.item_for_index(ix)?.item_id();
 
-            if self.is_active_preview_item(id) {
+            let destination_index = match operation {
+                PinOperation::Pin => self.pinned_tab_count.min(ix),
+                PinOperation::Unpin => self.pinned_tab_count.checked_sub(1)?,
+            };
+
+            let id = self.item_for_index(ix)?.item_id();
+            let should_activate = ix == self.active_item_index;
+
+            if matches!(operation, PinOperation::Pin) && self.is_active_preview_item(id) {
                 self.set_preview_item_id(None, cx);
+            }
+
+            match operation {
+                PinOperation::Pin => self.pinned_tab_count += 1,
+                PinOperation::Unpin => self.pinned_tab_count -= 1,
             }
 
             if ix == destination_index {
@@ -2083,37 +2145,26 @@ impl Pane {
                 self.workspace
                     .update(cx, |_, cx| {
                         cx.defer_in(window, move |_, window, cx| {
-                            move_item(&pane, &pane, id, destination_index, window, cx)
+                            move_item(
+                                &pane,
+                                &pane,
+                                id,
+                                destination_index,
+                                should_activate,
+                                window,
+                                cx,
+                            );
                         });
                     })
                     .ok()?;
             }
-            cx.emit(Event::ItemPinned);
 
-            Some(())
-        });
-    }
+            let event = match operation {
+                PinOperation::Pin => Event::ItemPinned,
+                PinOperation::Unpin => Event::ItemUnpinned,
+            };
 
-    fn unpin_tab_at(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        maybe!({
-            let pane = cx.entity().clone();
-            self.pinned_tab_count = self.pinned_tab_count.checked_sub(1)?;
-            let destination_index = self.pinned_tab_count;
-
-            let id = self.item_for_index(ix)?.item_id();
-
-            if ix == destination_index {
-                cx.notify()
-            } else {
-                self.workspace
-                    .update(cx, |_, cx| {
-                        cx.defer_in(window, move |_, window, cx| {
-                            move_item(&pane, &pane, id, destination_index, window, cx)
-                        });
-                    })
-                    .ok()?;
-            }
-            cx.emit(Event::ItemUnpinned);
+            cx.emit(event);
 
             Some(())
         });
@@ -2866,7 +2917,7 @@ impl Pane {
                             })
                         }
                     } else {
-                        move_item(&from_pane, &to_pane, item_id, ix, window, cx);
+                        move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
                     }
                     if to_pane == from_pane {
                         if let Some(old_index) = old_ix {
@@ -3974,13 +4025,13 @@ mod tests {
             let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
             pane.pin_tab_at(ix, window, cx);
         });
-        assert_item_labels(&pane, ["C!", "B*!", "A"], cx);
+        assert_item_labels(&pane, ["C*!", "B!", "A"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
             pane.pin_tab_at(ix, window, cx);
         });
-        assert_item_labels(&pane, ["C!", "B*!", "A!"], cx);
+        assert_item_labels(&pane, ["C*!", "B!", "A!"], cx);
     }
 
     #[gpui::test]
@@ -4127,6 +4178,151 @@ mod tests {
             pane.toggle_pin_tab(&TogglePinTab, window, cx);
         });
         assert_item_labels(&pane, ["B*", "A", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pinning_active_tab_without_position_change_maintains_focus(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        assert_item_labels(&pane, ["A*"], cx);
+
+        // Add B
+        add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        // Activate A again
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.activate_item(ix, true, true, window, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B"], cx);
+
+        // Pin A - remains active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A*!", "B"], cx);
+
+        // Unpin A - remain active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.unpin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A*", "B"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pinning_active_tab_with_position_change_maintains_focus(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A, B, C
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Pin C - moves to pinned area, remains active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C*!", "A", "B"], cx);
+
+        // Unpin C - moves after pinned area, remains active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.unpin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C*", "A", "B"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pinning_inactive_tab_without_position_change_preserves_existing_focus(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A, B
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        // Pin A - already in pinned area, B remains active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*"], cx);
+
+        // Unpin A - stays in place, B remains active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.unpin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_pinning_inactive_tab_with_position_change_preserves_existing_focus(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A, B, C
+        add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Activate B
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.activate_item(ix, true, true, window, cx);
+        });
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        // Pin C - moves to pinned area, B remains active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C!", "A", "B*"], cx);
+
+        // Unpin C - moves after pinned area, B remains active
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.unpin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C", "A", "B*"], cx);
     }
 
     #[gpui::test]

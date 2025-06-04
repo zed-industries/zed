@@ -11,6 +11,7 @@ use buffer_diff::{
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
+    GitHostingProviderRegistry,
     repository::RepoPath,
     status::{StatusCode, TrackedStatus},
 };
@@ -213,6 +214,71 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
+    });
+}
+
+#[gpui::test]
+async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        GitHostingProviderRegistry::default_global(cx);
+        git_hosting_providers::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let str_path = path!("/dir");
+    let path = Path::new(str_path);
+
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{
+                    "git_hosting_providers": [
+                        {
+                            "provider": "gitlab",
+                            "base_url": "https://google.com",
+                            "name": "foo"
+                        }
+                    ]
+                }"#
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (_worktree, _) =
+        project.read_with(cx, |project, cx| project.find_worktree(path, cx).unwrap());
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let provider = GitHostingProviderRegistry::global(cx);
+        assert!(
+            provider
+                .list_hosting_providers()
+                .into_iter()
+                .any(|provider| provider.name() == "foo")
+        );
+    });
+
+    fs.atomic_write(
+        Path::new(path!("/dir/.zed/settings.json")).to_owned(),
+        "{}".into(),
+    )
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        let provider = GitHostingProviderRegistry::global(cx);
+        assert!(
+            !provider
+                .list_hosting_providers()
+                .into_iter()
+                .any(|provider| provider.name() == "foo")
+        );
     });
 }
 

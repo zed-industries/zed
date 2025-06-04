@@ -219,10 +219,17 @@ struct BillingSubscriptionJson {
     id: BillingSubscriptionId,
     name: String,
     status: StripeSubscriptionStatus,
+    period: Option<BillingSubscriptionPeriodJson>,
     trial_end_at: Option<String>,
     cancel_at: Option<String>,
     /// Whether this subscription can be canceled.
     is_cancelable: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct BillingSubscriptionPeriodJson {
+    start_at: String,
+    end_at: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -254,6 +261,15 @@ async fn list_billing_subscriptions(
                     None => "Zed LLM Usage".to_string(),
                 },
                 status: subscription.stripe_subscription_status,
+                period: maybe!({
+                    let start_at = subscription.current_period_start_at()?;
+                    let end_at = subscription.current_period_end_at()?;
+
+                    Some(BillingSubscriptionPeriodJson {
+                        start_at: start_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+                        end_at: end_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+                    })
+                }),
                 trial_end_at: if subscription.kind == Some(SubscriptionKind::ZedProTrial) {
                     maybe!({
                         let end_at = subscription.stripe_current_period_end?;

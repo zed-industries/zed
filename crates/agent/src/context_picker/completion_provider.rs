@@ -926,8 +926,9 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         &self,
         buffer: &Entity<language::Buffer>,
         position: language::Anchor,
-        _: &str,
-        _: bool,
+        _text: &str,
+        _trigger_in_words: bool,
+        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);
