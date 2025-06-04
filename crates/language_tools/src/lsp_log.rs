@@ -3,8 +3,8 @@ use copilot::Copilot;
 use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
 use futures::{StreamExt, channel::mpsc};
 use gpui::{
-    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
+    AnyView, App, Context, Corner, Entity, EventEmitter, FocusHandle, Focusable, Global,
+    IntoElement, ParentElement, Render, Styled, Subscription, WeakEntity, Window, actions, div,
 };
 use itertools::Itertools;
 use language::{LanguageServerId, language_settings::SoftWrap};
@@ -204,19 +204,23 @@ pub(crate) struct LogMenuItem {
 
 actions!(dev, [OpenLanguageServerLogs]);
 
-pub fn init(cx: &mut App) -> Entity<LogStore> {
-    let log_store = cx.new(LogStore::new);
+pub(super) struct GlobalLogStore(pub Entity<LogStore>);
 
-    let subscription_log_store = log_store.clone();
+impl Global for GlobalLogStore {}
+
+pub fn init(cx: &mut App) {
+    let log_store = cx.new(LogStore::new);
+    cx.set_global(GlobalLogStore(log_store.clone()));
+
     cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         let project = workspace.project();
         if project.read(cx).is_local() || project.read(cx).is_via_ssh() {
-            subscription_log_store.update(cx, |store, cx| {
+            log_store.update(cx, |store, cx| {
                 store.add_project(project, cx);
             });
         }
 
-        let log_store = subscription_log_store.clone();
+        let log_store = log_store.clone();
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, window, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() || project.is_via_ssh() {
@@ -232,8 +236,6 @@ pub fn init(cx: &mut App) -> Entity<LogStore> {
         });
     })
     .detach();
-
-    log_store
 }
 
 impl LogStore {

@@ -20,7 +20,7 @@ use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelu
 use util::debug_panic;
 use workspace::{StatusItemView, Workspace};
 
-use crate::LogStore;
+use crate::{LogStore, lsp_log::GlobalLogStore};
 
 pub struct LspTool {
     lsp_picker: Entity<Picker<LspPickerDelegate>>,
@@ -194,13 +194,12 @@ impl LspPickerDelegate {
         cx: &mut Context<'_, Picker<Self>>,
     ) -> Div {
         let lsp_logs = self.lsp_logs.clone();
-        let has_logs = lsp_logs.update(cx, |lsp_logs, cx| {
+        let has_logs = lsp_logs.update(cx, |lsp_logs, _| {
             lsp_logs.get_language_server_state(*server_id).is_some()
         });
 
         h_flex()
             .gap_2()
-            .justify_between()
             .when(has_logs, |div| {
                 div.child(
                     IconButton::new("open-server-log", IconName::ListX)
@@ -494,8 +493,7 @@ impl PickerDelegate for LspPickerDelegate {
 
 impl LspTool {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // TODO kb does not work well, it's impossible to call for this action now
-        let lsp_logs = crate::lsp_log::init(cx);
+        let lsp_logs = cx.global::<GlobalLogStore>().0.clone();
         let lsp_store = workspace.project().read(cx).lsp_store();
         let lsp_store_subscription =
             cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
