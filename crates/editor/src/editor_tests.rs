@@ -21509,7 +21509,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        path!("/a"),
         json!({
             "first.rs": "fn main() { let a = 5; }",
             "second.rs": "// Test file",
@@ -21517,17 +21517,9 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
-
-    let worktree_id = workspace
-        .update(cx, |workspace, _window, cx| {
-            workspace.project().update(cx, |project, cx| {
-                project.worktrees(cx).next().unwrap().read(cx).id()
-            })
-        })
-        .unwrap();
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -21551,7 +21543,12 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
 
     let editor = workspace
         .update(cx, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "first.rs"), None, true, window, cx)
+            workspace.open_abs_path(
+                PathBuf::from(path!("/a/first.rs")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
         })
         .unwrap()
         .await
@@ -21564,14 +21561,14 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
             counter.fetch_add(1, atomic::Ordering::Release);
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/a/first.rs").unwrap()
+                lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
             );
             async move {
                 Ok(lsp::DocumentDiagnosticReportResult::Report(
                     lsp::DocumentDiagnosticReport::Full(lsp::RelatedFullDocumentDiagnosticReport {
                         related_documents: None,
                         full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
-                            items: vec![],
+                            items: Vec::new(),
                             result_id: None,
                         },
                     }),
