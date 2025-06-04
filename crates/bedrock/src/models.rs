@@ -253,7 +253,9 @@ impl Model {
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::ClaudeSonnet4
-            | Self::ClaudeOpus4 => 200_000,
+            | Self::ClaudeOpus4
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeOpus4Thinking => 200_000,
             Self::AmazonNovaPremier => 1_000_000,
             Self::PalmyraWriterX5 => 1_000_000,
             Self::PalmyraWriterX4 => 128_000,
