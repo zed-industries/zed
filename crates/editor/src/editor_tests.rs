@@ -5111,7 +5111,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
             Integer sit amet scelerisque nisi.
         "},
-        plaintext_language,
+        plaintext_language.clone(),
         &mut cx,
     );
 
@@ -5171,6 +5171,69 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             }
         "},
         language_with_doc_comments.clone(),
+        &mut cx,
+    );
+
+    assert_rewrap(
+        indoc! {"
+            «ˇone one one one one one one one one one one one one one one one one one one one one one one one one
+
+            two»
+
+            three
+
+            «ˇ\t
+
+            four four four four four four four four four four four four four four four four four four four four»
+
+            «ˇfive five five five five five five five five five five five five five five five five five five five
+            \t»
+            six six six six six six six six six six six six six six six six six six six six six six six six six
+        "},
+        indoc! {"
+            «ˇone one one one one one one one one one one one one one one one one one one one
+            one one one one one
+
+            two»
+
+            three
+
+            «ˇ\t
+
+            four four four four four four four four four four four four four four four four
+            four four four four»
+
+            «ˇfive five five five five five five five five five five five five five five five
+            five five five five
+            \t»
+            six six six six six six six six six six six six six six six six six six six six six six six six six
+        "},
+        plaintext_language.clone(),
+        &mut cx,
+    );
+
+    assert_rewrap(
+        indoc! {"
+            //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
+            //ˇ
+            //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
+            //ˇ short short short
+            int main(void) {
+                return 17;
+            }
+        "},
+        indoc! {"
+            //ˇ long long long long long long long long long long long long long long long
+            // long long long long long long long long long long long long long
+            //ˇ
+            //ˇ long long long long long long long long long long long long long long long
+            //ˇ long long long long long long long long long long long long long short short
+            // short
+            int main(void) {
+                return 17;
+            }
+        "},
+        language_with_c_comments,
         &mut cx,
     );
 
