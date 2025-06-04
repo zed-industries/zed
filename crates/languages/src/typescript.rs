@@ -174,7 +174,6 @@ impl ContextProvider for TypeScriptContextProvider {
                 TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
                 VariableName::RelativeFile.template_value(),
             ],
-            tags: vec!["ts-test".into(), "js-test".into(), "tsx-test".into()],
             cwd: Some(VariableName::WorktreeRoot.template_value()),
             ..TaskTemplate::default()
         });
