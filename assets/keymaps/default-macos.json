@@ -584,7 +584,7 @@
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
-      "alt-cmd-o": "projects::OpenRecent",
+      "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": false }],
       "ctrl-cmd-o": "projects::OpenRemote",
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true }],
       "alt-cmd-b": "branches::OpenRecent",
@@ -967,7 +967,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm"
+      "space": "menu::Confirm",
+      "cmd-up": "collab_panel::MoveChannelUp",
+      "cmd-down": "collab_panel::MoveChannelDown"
     }
   },
   {

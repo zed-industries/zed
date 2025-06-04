@@ -533,6 +533,9 @@
       "function": false
     }
   },
+  // Whether to resize all the panels in a dock when resizing the dock.
+  // Can be a combination of "left", "right" and "bottom".
+  "resize_all_panels_in_dock": ["left"],
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
@@ -1525,7 +1528,7 @@
       "allow_rewrap": "anywhere"
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
     },
     "SCSS": {
       "prettier": {

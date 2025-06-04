@@ -2624,6 +2624,7 @@ async fn test_git_diff_base_change(
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt".into(), committed_text.clone())],
+        "deadbeef",
     );
 
     // Create the buffer
@@ -2717,6 +2718,7 @@ async fn test_git_diff_base_change(
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt".into(), new_committed_text.clone())],
+        "deadbeef",
     );
 
     // Wait for buffer_local_a to receive it
@@ -3006,6 +3008,7 @@ async fn test_git_status_sync(
     client_a.fs().set_head_for_repo(
         path!("/dir/.git").as_ref(),
         &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
+        "deadbeef",
     );
     client_a.fs().set_index_for_repo(
         path!("/dir/.git").as_ref(),

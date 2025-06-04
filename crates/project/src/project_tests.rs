@@ -6499,6 +6499,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
             ("src/modification.rs".into(), committed_contents),
             ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
         ],
+        "deadbeef",
     );
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
@@ -6565,6 +6566,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
             ("src/modification.rs".into(), committed_contents.clone()),
             ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
         ],
+        "deadbeef",
     );
 
     // Buffer now has an unstaged hunk.
@@ -7011,6 +7013,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     fs.set_head_for_repo(
         "/dir/.git".as_ref(),
         &[("file.txt".into(), committed_contents.clone())],
+        "deadbeef",
     );
     fs.set_index_for_repo(
         "/dir/.git".as_ref(),
@@ -7207,6 +7210,7 @@ async fn test_staging_random_hunks(
     fs.set_head_for_repo(
         path!("/dir/.git").as_ref(),
         &[("file.txt".into(), committed_text.clone())],
+        "deadbeef",
     );
     fs.set_index_for_repo(
         path!("/dir/.git").as_ref(),
@@ -7318,6 +7322,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
         &[("src/main.rs".into(), committed_contents.clone())],
+        "deadbeef",
     );
     fs.set_index_for_repo(
         Path::new("/dir/.git"),

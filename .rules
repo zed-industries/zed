@@ -5,6 +5,12 @@
 * Prefer implementing functionality in existing files unless it is a new logical component. Avoid creating many small files.
 * Avoid using functions that panic like `unwrap()`, instead use mechanisms like `?` to propagate errors.
 * Be careful with operations like indexing which may panic if the indexes are out of bounds.
+* Never silently discard errors with `let _ =` on fallible operations. Always handle errors appropriately:
+  - Propagate errors with `?` when the calling function should handle them
+  - Use `.log_err()` or similar when you need to ignore errors but want visibility
+  - Use explicit error handling with `match` or `if let Err(...)` when you need custom logic
+  - Example: avoid `let _ = client.request(...).await?;` - use `client.request(...).await?;` instead
+* When implementing async operations that may fail, ensure errors propagate to the UI layer so users get meaningful feedback.
 * Never create files with `mod.rs` paths - prefer `src/some_module.rs` instead of `src/some_module/mod.rs`.
 
 # GPUI

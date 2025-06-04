@@ -3948,7 +3948,7 @@ impl BackgroundScanner {
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
             Ok(path) => SanitizedPath::from(path),
             Err(err) => {
-                log::error!("failed to canonicalize root path: {}", err);
+                log::error!("failed to canonicalize root path {root_path:?}: {err}");
                 return true;
             }
         };

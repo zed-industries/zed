@@ -18,11 +18,12 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     Action, AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context,
-    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
-    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
-    Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions,
-    anchored, deferred, div, impl_actions, point, px, size, transparent_white, uniform_list,
+    CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
+    div, impl_actions, point, px, size, transparent_white, uniform_list,
 };
 use indexmap::IndexMap;
 use language::DiagnosticSeverity;
@@ -109,6 +110,7 @@ pub struct ProjectPanel {
     // in case a user clicks to open a file.
     mouse_down: bool,
     hover_expand_task: Option<Task<()>>,
+    previous_drag_position: Option<Point<Pixels>>,
 }
 
 struct DragTargetEntry {
@@ -503,6 +505,7 @@ impl ProjectPanel {
                 scroll_handle,
                 mouse_down: false,
                 hover_expand_task: None,
+                previous_drag_position: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -3106,6 +3109,29 @@ impl ProjectPanel {
         .detach();
     }
 
+    fn refresh_drag_cursor_style(
+        &self,
+        modifiers: &Modifiers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(existing_cursor) = cx.active_drag_cursor_style() {
+            let new_cursor = if Self::is_copy_modifier_set(modifiers) {
+                CursorStyle::DragCopy
+            } else {
+                CursorStyle::PointingHand
+            };
+            if existing_cursor != new_cursor {
+                cx.set_active_drag_cursor_style(new_cursor, window);
+            }
+        }
+    }
+
+    fn is_copy_modifier_set(modifiers: &Modifiers) -> bool {
+        cfg!(target_os = "macos") && modifiers.alt
+            || cfg!(not(target_os = "macos")) && modifiers.control
+    }
+
     fn drag_onto(
         &mut self,
         selections: &DraggedSelection,
@@ -3114,9 +3140,7 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let should_copy = cfg!(target_os = "macos") && window.modifiers().alt
-            || cfg!(not(target_os = "macos")) && window.modifiers().control;
-        if should_copy {
+        if Self::is_copy_modifier_set(&window.modifiers()) {
             let _ = maybe!({
                 let project = self.project.read(cx);
                 let target_worktree = project.worktree_for_entry(target_entry_id, cx)?;
@@ -3731,18 +3755,18 @@ impl ProjectPanel {
         &self,
         target_entry: &Entry,
         target_worktree: &Worktree,
-        dragged_selection: &DraggedSelection,
+        drag_state: &DraggedSelection,
         cx: &Context<Self>,
     ) -> Option<ProjectEntryId> {
         let target_parent_path = target_entry.path.parent();
 
         // In case of single item drag, we do not highlight existing
         // directory which item belongs too
-        if dragged_selection.items().count() == 1 {
+        if drag_state.items().count() == 1 {
             let active_entry_path = self
                 .project
                 .read(cx)
-                .path_for_entry(dragged_selection.active_selection.entry_id, cx)?;
+                .path_for_entry(drag_state.active_selection.entry_id, cx)?;
 
             if let Some(active_parent_path) = active_entry_path.path.parent() {
                 // Do not highlight active entry parent
@@ -3962,11 +3986,11 @@ impl ProjectPanel {
                         return;
                     }
 
+                    let drag_state = event.drag(cx);
                     let Some((entry_id, highlight_entry_id)) = maybe!({
                         let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
                         let target_entry = target_worktree.entry_for_path(&path_for_dragged_selection)?;
-                        let dragged_selection = event.drag(cx);
-                        let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, dragged_selection, cx);
+                        let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, drag_state, cx);
                         Some((target_entry.id, highlight_entry_id))
                     }) else {
                         return;
@@ -3976,7 +4000,10 @@ impl ProjectPanel {
                         entry_id,
                         highlight_entry_id,
                     });
-                    this.marked_entries.clear();
+                    if drag_state.items().count() == 1 {
+                        this.marked_entries.clear();
+                        this.marked_entries.insert(drag_state.active_selection);
+                    }
                     this.hover_expand_task.take();
 
                     if !kind.is_dir()
@@ -4682,6 +4709,15 @@ impl Render for ProjectPanel {
                 window: &mut Window,
                 cx: &mut Context<ProjectPanel>,
             ) {
+                if let Some(previous_position) = this.previous_drag_position {
+                    // Refresh cursor only when an actual drag happens,
+                    // because modifiers are not updated when the cursor is not moved.
+                    if e.event.position != previous_position {
+                        this.refresh_drag_cursor_style(&e.event.modifiers, window, cx);
+                    }
+                }
+                this.previous_drag_position = Some(e.event.position);
+
                 if !e.bounds.contains(&e.event.position) {
                     this.drag_target_entry = None;
                     return;
@@ -4741,6 +4777,11 @@ impl Render for ProjectPanel {
                 .on_drag_move(cx.listener(handle_drag_move::<DraggedSelection>))
                 .size_full()
                 .relative()
+                .on_modifiers_changed(cx.listener(
+                    |this, event: &ModifiersChangedEvent, window, cx| {
+                        this.refresh_drag_cursor_style(&event.modifiers, window, cx);
+                    },
+                ))
                 .on_hover(cx.listener(|this, hovered, window, cx| {
                     if *hovered {
                         this.show_scrollbar = true;
