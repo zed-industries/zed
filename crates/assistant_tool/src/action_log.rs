@@ -1962,21 +1962,18 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_accept_committed_edits_comprehensive(cx: &mut gpui::TestAppContext) {
+    async fn test_keep_edits_on_commit(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        // Start with a simple 10-line file with one character per line
         fs.insert_tree(
-            "/project",
+            path!("/project"),
             json!({
                 ".git": {},
                 "file.txt": "a\nb\nc\nd\ne\nf\ng\nh\ni\nj",
             }),
         )
         .await;
-
-        // Set initial git HEAD (note: missing last line 'j' to test edge cases)
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
             &[("file.txt".into(), "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
@@ -1984,12 +1981,12 @@ mod tests {
         );
         cx.run_until_parked();
 
-        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
         let file_path = project
             .read_with(cx, |project, cx| {
-                project.find_project_path("project/file.txt", cx)
+                project.find_project_path(path!("/project/file.txt"), cx)
             })
             .unwrap();
         let buffer = project
@@ -2020,8 +2017,6 @@ mod tests {
             action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
         cx.run_until_parked();
-
-        // Verify all edits are unreviewed
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
