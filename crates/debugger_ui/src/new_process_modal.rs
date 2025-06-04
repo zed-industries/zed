@@ -19,6 +19,7 @@ use gpui::{
     InteractiveText, KeyContext, PromptButton, PromptLevel, Render, StyledText, Subscription,
     TextStyle, UnderlineStyle, WeakEntity,
 };
+use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::{Settings, initial_local_debug_tasks_content};
@@ -49,7 +50,7 @@ pub(super) struct NewProcessModal {
     mode: NewProcessMode,
     debug_picker: Entity<Picker<DebugDelegate>>,
     attach_mode: Entity<AttachMode>,
-    launch_mode: Entity<LaunchMode>,
+    launch_mode: Entity<ConfigureMode>,
     task_mode: TaskMode,
     debugger: Option<DebugAdapterName>,
     // save_scenario_state: Option<SaveScenarioState>,
@@ -97,13 +98,13 @@ impl NewProcessModal {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let attach_mode = AttachMode::new(None, workspace_handle.clone(), window, cx);
 
-                    let launch_picker = cx.new(|cx| {
+                    let debug_picker = cx.new(|cx| {
                         let delegate =
                             DebugDelegate::new(debug_panel.downgrade(), task_store.clone());
                         Picker::uniform_list(delegate, window, cx).modal(false)
                     });
 
-                    let configure_mode = LaunchMode::new(window, cx);
+                    let configure_mode = ConfigureMode::new(window, cx);
 
                     let task_overrides = Some(TaskOverrides { reveal_target });
 
@@ -122,7 +123,7 @@ impl NewProcessModal {
                     };
 
                     let _subscriptions = [
-                        cx.subscribe(&launch_picker, |_, _, _, cx| {
+                        cx.subscribe(&debug_picker, |_, _, _, cx| {
                             cx.emit(DismissEvent);
                         }),
                         cx.subscribe(
@@ -137,17 +138,67 @@ impl NewProcessModal {
                     ];
 
                     cx.spawn_in(window, {
-                        let launch_picker = launch_picker.downgrade();
+                        let debug_picker = debug_picker.downgrade();
                         let configure_mode = configure_mode.downgrade();
                         let task_modal = task_mode.task_modal.downgrade();
+                        let workspace = workspace_handle.clone();
 
                         async move |this, cx| {
                             let task_contexts = task_contexts.await;
                             let task_contexts = Arc::new(task_contexts);
-                            launch_picker
+                            let lsp_task_sources = task_contexts.lsp_task_sources.clone();
+                            let task_position = task_contexts.latest_selection;
+                            // Get LSP tasks and filter out based on language vs lsp preference
+                            let (lsp_tasks, prefer_lsp) =
+                                workspace.update(cx, |workspace, cx| {
+                                    let lsp_tasks = editor::lsp_tasks(
+                                        workspace.project().clone(),
+                                        &lsp_task_sources,
+                                        task_position,
+                                        cx,
+                                    );
+                                    let prefer_lsp = workspace
+                                        .active_item(cx)
+                                        .and_then(|item| item.downcast::<Editor>())
+                                        .map(|editor| {
+                                            editor
+                                                .read(cx)
+                                                .buffer()
+                                                .read(cx)
+                                                .language_settings(cx)
+                                                .tasks
+                                                .prefer_lsp
+                                        })
+                                        .unwrap_or(false);
+                                    (lsp_tasks, prefer_lsp)
+                                })?;
+
+                            let lsp_tasks = lsp_tasks.await;
+                            let add_current_language_tasks = !prefer_lsp || lsp_tasks.is_empty();
+
+                            // let tasks = task_store.update(cx, |task_store, cx| {
+                            //     task_store
+                            //         .task_inventory()
+                            //         .used_and_current_resolved_tasks()
+                            // });
+                            let lsp_tasks = lsp_tasks
+                                .into_iter()
+                                .flat_map(|(kind, tasks_with_locations)| {
+                                    tasks_with_locations
+                                        .into_iter()
+                                        .sorted_by_key(|(location, task)| {
+                                            (location.is_none(), task.resolved_label.clone())
+                                        })
+                                        .map(move |(_, task)| (kind.clone(), task))
+                                })
+                                .collect();
+
+                            debug_picker
                                 .update_in(cx, |picker, window, cx| {
                                     picker.delegate.task_contexts_loaded(
                                         task_contexts.clone(),
+                                        lsp_tasks,
+                                        add_current_language_tasks,
                                         languages,
                                         window,
                                         cx,
@@ -178,12 +229,14 @@ impl NewProcessModal {
                                 cx.notify();
                             })
                             .ok();
+
+                            anyhow::Ok(())
                         }
                     })
                     .detach();
 
                     Self {
-                        debug_picker: launch_picker,
+                        debug_picker,
                         attach_mode,
                         launch_mode: configure_mode,
                         task_mode,
@@ -820,14 +873,14 @@ impl RenderOnce for AttachMode {
 }
 
 #[derive(Clone)]
-pub(super) struct LaunchMode {
+pub(super) struct ConfigureMode {
     program: Entity<Editor>,
     cwd: Entity<Editor>,
     stop_on_entry: ToggleState,
     // save_to_debug_json: ToggleState,
 }
 
-impl LaunchMode {
+impl ConfigureMode {
     pub(super) fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
@@ -1070,18 +1123,25 @@ impl DebugDelegate {
     pub fn task_contexts_loaded(
         &mut self,
         task_contexts: Arc<TaskContexts>,
+        lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        add_current_language_tasks: bool,
         languages: Arc<LanguageRegistry>,
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
-        self.task_contexts = Some(task_contexts);
+        self.task_contexts = Some(task_contexts.clone());
 
         let (recent, scenarios) = self
             .task_store
             .update(cx, |task_store, cx| {
                 task_store.task_inventory().map(|inventory| {
                     inventory.update(cx, |inventory, cx| {
-                        inventory.list_debug_scenarios(self.task_contexts.as_ref().unwrap(), cx)
+                        inventory.list_debug_scenarios(
+                            &task_contexts,
+                            lsp_tasks,
+                            add_current_language_tasks,
+                            cx,
+                        )
                     })
                 })
             })

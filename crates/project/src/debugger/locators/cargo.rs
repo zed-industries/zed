@@ -47,12 +47,16 @@ impl DapLocator for CargoLocator {
         resolved_label: &str,
         adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
+        // dbg!(&build_config);
         if build_config.command != "cargo" {
+            dbg!("not cargo");
             return None;
         }
         let mut task_template = build_config.clone();
+        // dbg!(&task_template.args.first());
         let cargo_action = task_template.args.first_mut()?;
         if cargo_action == "check" || cargo_action == "clean" {
+            // dbg!("bad subcommand", &cargo_action);
             return None;
         }
 
