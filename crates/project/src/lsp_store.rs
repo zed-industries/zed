@@ -2306,7 +2306,7 @@ impl LocalLspStore {
                     });
                 (false, delegate, servers)
             });
-        let servers = servers
+        let servers_and_adapters = servers
             .into_iter()
             .filter_map(|server_node| {
                 if reused && server_node.server_id().is_none() {
@@ -2382,14 +2382,14 @@ impl LocalLspStore {
                     },
                 )?;
                 let server_state = self.language_servers.get(&server_id)?;
-                if let LanguageServerState::Running { server, .. } = server_state {
-                    Some(server.clone())
+                if let LanguageServerState::Running { server, adapter, .. } = server_state {
+                    Some((server.clone(), adapter.clone()))
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-        for server in servers {
+        for (server, adapter) in servers_and_adapters {
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_completion_triggers(
                     server.server_id(),
@@ -2407,47 +2407,26 @@ impl LocalLspStore {
                     cx,
                 );
             });
-        }
-        for adapter in self.languages.lsp_adapters(&language.name()) {
-            let servers = self
-                .language_server_ids
-                .get(&(worktree_id, adapter.name.clone()))
-                .map(|ids| {
-                    ids.iter().flat_map(|id| {
-                        self.language_servers.get(id).and_then(|server_state| {
-                            if let LanguageServerState::Running { server, .. } = server_state {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                });
-            let servers = match servers {
-                Some(server) => server,
-                None => continue,
+
+            let snapshot = LspBufferSnapshot {
+                version: 0,
+                snapshot: initial_snapshot.clone(),
             };
 
-            for server in servers {
-                let snapshot = LspBufferSnapshot {
-                    version: 0,
-                    snapshot: initial_snapshot.clone(),
-                };
-                self.buffer_snapshots
-                    .entry(buffer_id)
-                    .or_default()
-                    .entry(server.server_id())
-                    .or_insert_with(|| {
-                        server.register_buffer(
-                            uri.clone(),
-                            adapter.language_id(&language.name()),
-                            0,
-                            initial_snapshot.text(),
-                        );
+            self.buffer_snapshots
+                .entry(buffer_id)
+                .or_default()
+                .entry(server.server_id())
+                .or_insert_with(|| {
+                    server.register_buffer(
+                        uri.clone(),
+                        adapter.language_id(&language.name()),
+                        0,
+                        initial_snapshot.text(),
+                    );
 
-                        vec![snapshot]
-                    });
-            }
+                    vec![snapshot]
+                });
         }
     }
 
