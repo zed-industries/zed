@@ -3701,6 +3701,7 @@ fn get_tree_sexp(buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext) -> Stri
 }
 
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
+#[track_caller]
 fn assert_bracket_pairs(
     selection_text: &'static str,
     bracket_pair_texts: Vec<&'static str>,
