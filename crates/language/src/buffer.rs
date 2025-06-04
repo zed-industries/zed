@@ -3283,8 +3283,8 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
-        let mut next_chars = self.chars_at(start).peekable();
-        let mut prev_chars = self.reversed_chars_at(start).peekable();
+        let mut next_chars = self.chars_at(start).take(128).peekable();
+        let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
         let classifier = self.char_classifier_at(start);
         let word_kind = cmp::max(

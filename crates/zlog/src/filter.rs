@@ -39,9 +39,9 @@ pub static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_
 const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     ("zbus", log::LevelFilter::Off),
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    ("blade_graphics::hal::resource", log::LevelFilter::Off),
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
+    ("blade_graphics", log::LevelFilter::Off),
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
     ("naga::back::spv::writer", log::LevelFilter::Off),
 ];
 
@@ -166,14 +166,14 @@ fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
     return Some(scope);
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ScopeMap {
     entries: Vec<ScopeMapEntry>,
     modules: Vec<(String, log::LevelFilter)>,
     root_count: usize,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ScopeMapEntry {
     scope: String,
     enabled: Option<log::LevelFilter>,
@@ -341,26 +341,42 @@ impl ScopeMap {
     where
         S: AsRef<str>,
     {
-        let mut enabled = None;
-        let mut cur_range = &self.entries[0..self.root_count];
-        let mut depth = 0;
-
-        'search: while !cur_range.is_empty()
-            && depth < SCOPE_DEPTH_MAX
-            && scope[depth].as_ref() != ""
+        fn search<S>(map: &ScopeMap, scope: &[S; SCOPE_DEPTH_MAX]) -> Option<log::LevelFilter>
+        where
+            S: AsRef<str>,
         {
-            for entry in cur_range {
-                if entry.scope == scope[depth].as_ref() {
-                    enabled = entry.enabled.or(enabled);
-                    cur_range = &self.entries[entry.descendants.clone()];
-                    depth += 1;
-                    continue 'search;
+            let mut enabled = None;
+            let mut cur_range = &map.entries[0..map.root_count];
+            let mut depth = 0;
+            'search: while !cur_range.is_empty()
+                && depth < SCOPE_DEPTH_MAX
+                && scope[depth].as_ref() != ""
+            {
+                for entry in cur_range {
+                    if entry.scope == scope[depth].as_ref() {
+                        enabled = entry.enabled.or(enabled);
+                        cur_range = &map.entries[entry.descendants.clone()];
+                        depth += 1;
+                        continue 'search;
+                    }
                 }
+                break 'search;
             }
-            break 'search;
+            return enabled;
         }
 
+        let mut enabled = search(self, scope);
+
         if let Some(module_path) = module_path {
+            let scope_is_empty = scope[0].as_ref().is_empty();
+
+            if enabled.is_none() && scope_is_empty {
+                let crate_name = private::extract_crate_name_from_module_path(module_path);
+                let mut crate_name_scope = [""; SCOPE_DEPTH_MAX];
+                crate_name_scope[0] = crate_name;
+                enabled = search(self, &crate_name_scope);
+            }
+
             if !self.modules.is_empty() {
                 let crate_name = private::extract_crate_name_from_module_path(module_path);
                 let is_scope_just_crate_name =
@@ -388,6 +404,8 @@ impl ScopeMap {
 
 #[cfg(test)]
 mod tests {
+    use log::LevelFilter;
+
     use crate::private::scope_new;
 
     use super::*;
@@ -663,6 +681,7 @@ mod tests {
             ("p.q.r", log::LevelFilter::Info),  // Should be overridden by kv
             ("x.y.z", log::LevelFilter::Warn),  // Not overridden
             ("crate::module::default", log::LevelFilter::Error), // Module in default
+            ("crate::module::user", log::LevelFilter::Off), // Module disabled in default
         ];
 
         // Environment filters - these should override default but be overridden by kv
@@ -759,6 +778,22 @@ mod tests {
             "Default filters correctly limit log level for modules"
         );
 
+        assert_eq!(
+            map.is_enabled(&scope_new(&[""]), Some("crate::module::user"), Level::Error),
+            EnabledStatus::Disabled,
+            "Module turned off in default filters is not enabled"
+        );
+
+        assert_eq!(
+            map.is_enabled(
+                &scope_new(&["crate"]),
+                Some("crate::module::user"),
+                Level::Error
+            ),
+            EnabledStatus::Disabled,
+            "Module turned off in default filters is not enabled, even with crate name as scope"
+        );
+
         // Test non-conflicting but similar paths
 
         // Test that "a.b" and "a.b.c" don't conflict (different depth)
@@ -787,6 +822,19 @@ mod tests {
             ),
             EnabledStatus::NotConfigured,
             "Module crate::module::default::sub should not be affected by crate::module::default filter"
+        );
+    }
+
+    #[test]
+    fn default_filter_crate() {
+        let default_filters = &[("crate", LevelFilter::Off)];
+        let map = scope_map_from_all(&[], &env_config::parse("").unwrap(), default_filters);
+
+        use log::Level;
+        assert_eq!(
+            map.is_enabled(&scope_new(&[""]), Some("crate::submodule"), Level::Error),
+            EnabledStatus::Disabled,
+            "crate::submodule should be disabled by disabling `crate` filter"
         );
     }
 }
