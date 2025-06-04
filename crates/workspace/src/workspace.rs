@@ -7642,6 +7642,33 @@ pub fn ssh_workspace_position_from_db(
     })
 }
 
+pub fn with_active_or_new_workspace(
+    cx: &mut App,
+    f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + 'static,
+) {
+    match cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
+        Some(workspace) => {
+            cx.defer(move |cx| {
+                workspace
+                    .update(cx, |workspace, window, cx| f(workspace, window, cx))
+                    .log_err();
+            });
+        }
+        None => {
+            let app_state = AppState::global(cx);
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(
+                    OpenOptions::default(),
+                    app_state,
+                    cx,
+                    move |workspace, window, cx| f(workspace, window, cx),
+                )
+                .detach_and_log_err(cx);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{cell::RefCell, rc::Rc};
