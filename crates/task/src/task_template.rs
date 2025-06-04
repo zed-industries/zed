@@ -836,7 +836,7 @@ mod tests {
                 "start",
                 "$DEFINED_VAR",
                 "${ANOTHER_DEFINED}",
-                "${UNDEFINED_BRACES: 5}".into(),
+                "${UNDEFINED_BRACES: 5}",
                 "middle",
                 "${ZED_WORKTREE_ROOT}",
                 "$PATH",
