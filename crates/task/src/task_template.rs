@@ -335,7 +335,6 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
             if !default.is_empty() {
                 name.push_str(default);
             }
-
             return Ok(Some(name));
         } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
             bail!("Unknown variable name: {variable_name}");
