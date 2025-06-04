@@ -17129,6 +17129,7 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
+ "indoc",
  "itertools 0.14.0",
  "libc",
  "log",
