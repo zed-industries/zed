@@ -253,7 +253,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/project",
+            path!("/project"),
             json!({
                 "src": {
                     "main.rs": "fn main() {}",
@@ -383,7 +383,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/project",
+            path!("/project"),
             json!({
                 "empty_dir": {}
             }),
@@ -415,7 +415,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/project",
+            path!("/project"),
             json!({
                 "file.txt": "content"
             }),
@@ -475,7 +475,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/project",
+            path!("/project"),
             json!({
                 "normal_dir": {
                     "file1.txt": "content",
@@ -546,14 +546,8 @@ mod tests {
         let content = result.content.as_str().unwrap();
 
         // Should include normal directories
-        assert!(
-            content.contains("project/normal_dir"),
-            "Should list normal_dir"
-        );
-        assert!(
-            content.contains("project/visible_dir"),
-            "Should list visible_dir"
-        );
+        assert!(content.contains("normal_dir"), "Should list normal_dir");
+        assert!(content.contains("visible_dir"), "Should list visible_dir");
 
         // Should NOT include excluded or private files
         assert!(
@@ -652,7 +646,7 @@ mod tests {
 
         // Create first worktree with its own private files
         fs.insert_tree(
-            "/worktree1",
+            path!("/worktree1"),
             json!({
                 ".zed": {
                     "settings.json": r#"{
@@ -675,7 +669,7 @@ mod tests {
 
         // Create second worktree with different private files
         fs.insert_tree(
-            "/worktree2",
+            path!("/worktree2"),
             json!({
                 ".zed": {
                     "settings.json": r#"{

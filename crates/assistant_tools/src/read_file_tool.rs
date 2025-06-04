@@ -298,7 +298,7 @@ mod test {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/root", json!({})).await;
+        fs.insert_tree(path!("/root"), json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
@@ -332,7 +332,7 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "small_file.txt": "This is a small file content"
             }),
@@ -371,7 +371,7 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "large_file.rs": (0..1000).map(|i| format!("struct Test{} {{\n    a: u32,\n    b: usize,\n}}", i)).collect::<Vec<_>>().join("\n")
             }),
@@ -462,7 +462,7 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "multiline.txt": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
             }),
@@ -503,7 +503,7 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "multiline.txt": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
             }),
@@ -642,7 +642,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/",
+            path!("/"),
             json!({
                 "project_root": {
                     "allowed_file.txt": "This file is in the project",
@@ -908,9 +908,9 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
 
-        // Create first worktree with its own private files
+        // Create first worktree with its own private_files setting
         fs.insert_tree(
-            "/worktree1",
+            path!("/worktree1"),
             json!({
                 "src": {
                     "main.rs": "fn main() { println!(\"Hello from worktree1\"); }",
@@ -931,9 +931,9 @@ mod test {
         )
         .await;
 
-        // Create second worktree with different private files
+        // Create second worktree with different private_files setting
         fs.insert_tree(
-            "/worktree2",
+            path!("/worktree2"),
             json!({
                 "lib": {
                     "public.js": "export function greet() { return 'Hello from worktree2'; }",

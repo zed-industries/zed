@@ -326,7 +326,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             serde_json::json!({
                 "src": {
                     "main.rs": "fn main() {\n    println!(\"Hello, world!\");\n}",
@@ -414,7 +414,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             serde_json::json!({
                 "case_test.txt": "This file has UPPERCASE and lowercase text.\nUPPERCASE patterns should match only with case_sensitive: true",
             }),
@@ -495,7 +495,7 @@ mod tests {
 
         // Create test file with syntax structures
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             serde_json::json!({
                 "test_syntax.rs": r#"
                     fn top_level_function() {
@@ -824,7 +824,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/",
+            path!("/"),
             json!({
                 "project_root": {
                     "allowed_file.rs": "fn main() { println!(\"This file is in the project\"); }",
@@ -1108,9 +1108,9 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
 
-        // Create first worktree with its own private_files setting
+        // Create first worktree with its own private files
         fs.insert_tree(
-            "/worktree1",
+            path!("/worktree1"),
             json!({
                 ".zed": {
                     "settings.json": r#"{
@@ -1131,9 +1131,9 @@ mod tests {
         )
         .await;
 
-        // Create second worktree with different private_files setting
+        // Create second worktree with different private files
         fs.insert_tree(
-            "/worktree2",
+            path!("/worktree2"),
             json!({
                 ".zed": {
                     "settings.json": r#"{
