@@ -38,6 +38,10 @@ impl Tool for DeletePathTool {
         AgentSettings::get_global(cx).confirm_file_deletions
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./delete_path_tool/description.md").into()
     }

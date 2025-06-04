@@ -11,7 +11,7 @@ pub struct StreamingFuzzyMatcher {
     snapshot: TextBufferSnapshot,
     query_lines: Vec<String>,
     incomplete_line: String,
-    best_match: Option<Range<usize>>,
+    best_matches: Vec<Range<usize>>,
     matrix: SearchMatrix,
 }
 
@@ -22,7 +22,7 @@ impl StreamingFuzzyMatcher {
             snapshot,
             query_lines: Vec::new(),
             incomplete_line: String::new(),
-            best_match: None,
+            best_matches: Vec::new(),
             matrix: SearchMatrix::new(buffer_line_count + 1),
         }
     }
@@ -55,31 +55,41 @@ impl StreamingFuzzyMatcher {
 
             self.incomplete_line.replace_range(..last_pos + 1, "");
 
-            self.best_match = self.resolve_location_fuzzy();
-        }
+            self.best_matches = self.resolve_location_fuzzy();
 
-        self.best_match.clone()
+            if let Some(first_match) = self.best_matches.first() {
+                Some(first_match.clone())
+            } else {
+                None
+            }
+        } else {
+            if let Some(first_match) = self.best_matches.first() {
+                Some(first_match.clone())
+            } else {
+                None
+            }
+        }
     }
 
-    /// Finish processing and return the final best match.
+    /// Finish processing and return the final best match(es).
     ///
     /// This processes any remaining incomplete line before returning the final
     /// match result.
-    pub fn finish(&mut self) -> Option<Range<usize>> {
+    pub fn finish(&mut self) -> Vec<Range<usize>> {
         // Process any remaining incomplete line
         if !self.incomplete_line.is_empty() {
             self.query_lines.push(self.incomplete_line.clone());
-            self.best_match = self.resolve_location_fuzzy();
+            self.incomplete_line.clear();
+            self.best_matches = self.resolve_location_fuzzy();
         }
-
-        self.best_match.clone()
+        self.best_matches.clone()
     }
 
-    fn resolve_location_fuzzy(&mut self) -> Option<Range<usize>> {
+    fn resolve_location_fuzzy(&mut self) -> Vec<Range<usize>> {
         let new_query_line_count = self.query_lines.len();
         let old_query_line_count = self.matrix.rows.saturating_sub(1);
         if new_query_line_count == old_query_line_count {
-            return None;
+            return Vec::new();
         }
 
         self.matrix.resize_rows(new_query_line_count + 1);
@@ -132,53 +142,61 @@ impl StreamingFuzzyMatcher {
             }
         }
 
-        // Traceback to find the best match
+        // Find all matches with the best cost
         let buffer_line_count = self.snapshot.max_point().row as usize + 1;
-        let mut buffer_row_end = buffer_line_count as u32;
         let mut best_cost = u32::MAX;
+        let mut matches_with_best_cost = Vec::new();
+
         for col in 1..=buffer_line_count {
             let cost = self.matrix.get(new_query_line_count, col).cost;
             if cost < best_cost {
                 best_cost = cost;
-                buffer_row_end = col as u32;
+                matches_with_best_cost.clear();
+                matches_with_best_cost.push(col as u32);
+            } else if cost == best_cost {
+                matches_with_best_cost.push(col as u32);
             }
         }
 
-        let mut matched_lines = 0;
-        let mut query_row = new_query_line_count;
-        let mut buffer_row_start = buffer_row_end;
-        while query_row > 0 && buffer_row_start > 0 {
-            let current = self.matrix.get(query_row, buffer_row_start as usize);
-            match current.direction {
-                SearchDirection::Diagonal => {
-                    query_row -= 1;
-                    buffer_row_start -= 1;
-                    matched_lines += 1;
+        // Find ranges for the matches
+        let mut valid_matches = Vec::new();
+        for &buffer_row_end in &matches_with_best_cost {
+            let mut matched_lines = 0;
+            let mut query_row = new_query_line_count;
+            let mut buffer_row_start = buffer_row_end;
+            while query_row > 0 && buffer_row_start > 0 {
+                let current = self.matrix.get(query_row, buffer_row_start as usize);
+                match current.direction {
+                    SearchDirection::Diagonal => {
+                        query_row -= 1;
+                        buffer_row_start -= 1;
+                        matched_lines += 1;
+                    }
+                    SearchDirection::Up => {
+                        query_row -= 1;
+                    }
+                    SearchDirection::Left => {
+                        buffer_row_start -= 1;
+                    }
                 }
-                SearchDirection::Up => {
-                    query_row -= 1;
-                }
-                SearchDirection::Left => {
-                    buffer_row_start -= 1;
-                }
+            }
+
+            let matched_buffer_row_count = buffer_row_end - buffer_row_start;
+            let matched_ratio = matched_lines as f32
+                / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
+            if matched_ratio >= 0.8 {
+                let buffer_start_ix = self
+                    .snapshot
+                    .point_to_offset(Point::new(buffer_row_start, 0));
+                let buffer_end_ix = self.snapshot.point_to_offset(Point::new(
+                    buffer_row_end - 1,
+                    self.snapshot.line_len(buffer_row_end - 1),
+                ));
+                valid_matches.push((buffer_row_start, buffer_start_ix..buffer_end_ix));
             }
         }
 
-        let matched_buffer_row_count = buffer_row_end - buffer_row_start;
-        let matched_ratio = matched_lines as f32
-            / (matched_buffer_row_count as f32).max(new_query_line_count as f32);
-        if matched_ratio >= 0.8 {
-            let buffer_start_ix = self
-                .snapshot
-                .point_to_offset(Point::new(buffer_row_start, 0));
-            let buffer_end_ix = self.snapshot.point_to_offset(Point::new(
-                buffer_row_end - 1,
-                self.snapshot.line_len(buffer_row_end - 1),
-            ));
-            Some(buffer_start_ix..buffer_end_ix)
-        } else {
-            None
-        }
+        valid_matches.into_iter().map(|(_, range)| range).collect()
     }
 }
 
@@ -638,28 +656,35 @@ mod tests {
             matcher.push(chunk);
         }
 
-        let result = matcher.finish();
+        let actual_ranges = matcher.finish();
 
         // If no expected ranges, we expect no match
         if expected_ranges.is_empty() {
-            assert_eq!(
-                result, None,
+            assert!(
+                actual_ranges.is_empty(),
                 "Expected no match for query: {:?}, but found: {:?}",
-                query, result
+                query,
+                actual_ranges
             );
         } else {
-            let mut actual_ranges = Vec::new();
-            if let Some(range) = result {
-                actual_ranges.push(range);
-            }
-
             let text_with_actual_range = generate_marked_text(&text, &actual_ranges, false);
             pretty_assertions::assert_eq!(
                 text_with_actual_range,
                 text_with_expected_range,
-                "Query: {:?}, Chunks: {:?}",
+                indoc! {"
+                    Query: {:?}
+                    Chunks: {:?}
+                    Expected marked text: {}
+                    Actual marked text: {}
+                    Expected ranges: {:?}
+                    Actual ranges: {:?}"
+                },
                 query,
-                chunks
+                chunks,
+                text_with_expected_range,
+                text_with_actual_range,
+                expected_ranges,
+                actual_ranges
             );
         }
     }
@@ -687,8 +712,11 @@ mod tests {
 
     fn finish(mut finder: StreamingFuzzyMatcher) -> Option<String> {
         let snapshot = finder.snapshot.clone();
-        finder
-            .finish()
-            .map(|range| snapshot.text_for_range(range).collect::<String>())
+        let matches = finder.finish();
+        if let Some(range) = matches.first() {
+            Some(snapshot.text_for_range(range.clone()).collect::<String>())
+        } else {
+            None
+        }
     }
 }
