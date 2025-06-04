@@ -1333,12 +1333,17 @@ impl PickerDelegate for DebugDelegate {
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
         let indicator = if matches!(task_kind, Some(TaskSourceKind::Lsp { .. })) {
             Some(Indicator::icon(
-                Icon::new(IconName::BoltFilled).color(Color::Muted),
+                Icon::new(IconName::BoltFilled)
+                    .color(Color::Muted)
+                    .size(IconSize::Small),
             ))
         } else {
             None
         };
-        let icon = icon.map(|icon| IconWithIndicator::new(icon, indicator));
+        let icon = icon.map(|icon| {
+            IconWithIndicator::new(icon, indicator)
+                .indicator_border_color(Some(cx.theme().colors().border_transparent))
+        });
 
         Some(
             ListItem::new(SharedString::from(format!("debug-scenario-selection-{ix}")))
