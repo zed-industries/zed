@@ -1,6 +1,5 @@
-**CI in the Era of AI: From Unit Tests to Stochastic Evals**
+# CI in the Era of AI: From Unit Tests to Stochastic Evals
 
-How we evolved our testing philosophy when language models entered the picture
+## Evolving Zed's testing philosophy to embrace LLMs
 
-Nathan Sobo  
-Zed Industries
+### Nathan Sobo – Co-founder of Zed
