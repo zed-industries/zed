@@ -212,7 +212,7 @@ impl ConflictSet {
                 && theirs_start.is_some()
             {
                 let theirs_end = line_pos;
-                let conflict_end = line_end + 1;
+                let conflict_end = (line_end + 1).min(buffer.len());
 
                 let range = buffer.anchor_after(conflict_start.unwrap())
                     ..buffer.anchor_before(conflict_end);
