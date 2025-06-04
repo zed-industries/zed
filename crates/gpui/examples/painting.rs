@@ -4,8 +4,8 @@ use gpui::{
     div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
 
-const DEFAULT_WINDOW_WIDTH: Pixels = px(800.0);
-const DEFAULT_WINDOW_HEIGHT: Pixels = px(600.0);
+const DEFAULT_WINDOW_WIDTH: Pixels = px(1024.0);
+const DEFAULT_WINDOW_HEIGHT: Pixels = px(768.0);
 
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
