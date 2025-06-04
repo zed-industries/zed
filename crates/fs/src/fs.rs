@@ -597,7 +597,9 @@ impl Fs for RealFs {
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
-        Ok(smol::fs::canonicalize(path).await?)
+        Ok(smol::fs::canonicalize(path)
+            .await
+            .with_context(|| format!("canonicalizing {path:?}"))?)
     }
 
     async fn is_file(&self, path: &Path) -> bool {

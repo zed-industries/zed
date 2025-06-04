@@ -194,6 +194,7 @@ pub enum ContextMenuOrigin {
 
 pub struct CompletionsMenu {
     pub id: CompletionId,
+    pub source: CompletionsMenuSource,
     sort_completions: bool,
     pub initial_position: Anchor,
     pub initial_query: Option<Arc<String>>,
@@ -208,7 +209,6 @@ pub struct CompletionsMenu {
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
     show_completion_documentation: bool,
-    pub(super) ignore_completion_provider: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
     markdown_cache: Rc<RefCell<VecDeque<(MarkdownCacheKey, Entity<Markdown>)>>>,
     language_registry: Option<Arc<LanguageRegistry>>,
@@ -227,6 +227,13 @@ enum MarkdownCacheKey {
     },
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompletionsMenuSource {
+    Normal,
+    SnippetChoices,
+    Words,
+}
+
 // TODO: There should really be a wrapper around fuzzy match tasks that does this.
 impl Drop for CompletionsMenu {
     fn drop(&mut self) {
@@ -237,9 +244,9 @@ impl Drop for CompletionsMenu {
 impl CompletionsMenu {
     pub fn new(
         id: CompletionId,
+        source: CompletionsMenuSource,
         sort_completions: bool,
         show_completion_documentation: bool,
-        ignore_completion_provider: bool,
         initial_position: Anchor,
         initial_query: Option<Arc<String>>,
         is_incomplete: bool,
@@ -258,13 +265,13 @@ impl CompletionsMenu {
 
         let completions_menu = Self {
             id,
+            source,
             sort_completions,
             initial_position,
             initial_query,
             is_incomplete,
             buffer,
             show_completion_documentation,
-            ignore_completion_provider,
             completions: RefCell::new(completions).into(),
             match_candidates,
             entries: Rc::new(RefCell::new(Box::new([]))),
@@ -328,6 +335,7 @@ impl CompletionsMenu {
             .collect();
         Self {
             id,
+            source: CompletionsMenuSource::SnippetChoices,
             sort_completions,
             initial_position: selection.start,
             initial_query: None,
@@ -342,7 +350,6 @@ impl CompletionsMenu {
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,
-            ignore_completion_provider: false,
             last_rendered_range: RefCell::new(None).into(),
             markdown_cache: RefCell::new(VecDeque::new()).into(),
             language_registry: None,

@@ -21227,6 +21227,7 @@ fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     point..point
 }
 
+#[track_caller]
 fn assert_selection_ranges(marked_text: &str, editor: &mut Editor, cx: &mut Context<Editor>) {
     let (text, ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), text);
