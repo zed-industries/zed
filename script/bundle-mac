@@ -203,17 +203,24 @@ function prepare_binaries() {
         version="$version-$(git rev-parse --short HEAD)"
     fi
 
+    # Create version tag based on channel
+    version_tag="v${version}"
+    if [ "$channel" == "preview" ]; then
+        version_tag="v${version}-pre"
+    fi
+
     echo "Removing existing gzipped dSYMs for $architecture"
     rm -f target/${architecture}/${target_dir}/Zed.dwarf.gz
 
     echo "Gzipping dSYMs for $architecture"
     gzip -f target/${architecture}/${target_dir}/Zed.dwarf
 
-    echo "Uploading dSYMs${architecture} for $architecture to by-uuid/${uuid}.dwarf.gz"
+    echo "Uploading dSYMs${architecture} for $architecture to by-uuid/${uuid}.dwarf.gz with version tag ${version_tag}"
     upload_to_blob_store_public \
         "zed-debug-symbols" \
         target/${architecture}/${target_dir}/Zed.dwarf.gz \
-        "by-uuid/${uuid}.dwarf.gz"
+        "by-uuid/${uuid}.dwarf.gz" \
+        "X-Zed-Version: ${version_tag}"
 
     cp target/${architecture}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
