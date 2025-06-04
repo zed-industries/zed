@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::BTreeMap;
-use futures::{StreamExt, channel::mpsc};
+use futures::{FutureExt, StreamExt, channel::mpsc};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task, WeakEntity};
 use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
@@ -105,6 +105,7 @@ impl ActionLog {
                 }
                 TrackedBuffer {
                     buffer: buffer.clone(),
+                    git_diff: None,
                     diff_base,
                     unreviewed_changes,
                     snapshot: text_snapshot.clone(),
@@ -191,103 +192,248 @@ impl ActionLog {
         mut diff_update: mpsc::UnboundedReceiver<(ChangeAuthor, text::BufferSnapshot)>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
-        while let Some((author, buffer_snapshot)) = diff_update.next().await {
-            let (rebase, diff, language, language_registry) =
-                this.read_with(cx, |this, cx| {
-                    let tracked_buffer = this
-                        .tracked_buffers
-                        .get(&buffer)
-                        .context("buffer not tracked")?;
+        let (repo_updated_tx, mut repo_updated_rx) = async_watch::channel(());
+        let git_store = this.read_with(cx, |this, cx| this.project.read(cx).git_store().clone())?;
+        let _repo_subscription = cx.update(|cx| {
+            cx.subscribe(&git_store, move |_, _, _| {
+                repo_updated_tx.send(()).ok();
+            })
+        })?;
+        let mut old_head = git_store.read_with(cx, |store, cx| {
+            store
+                .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+                .and_then(|(repo, _)| repo.read(cx).head_commit.clone())
+        })?;
 
-                    let rebase = cx.background_spawn({
-                        let mut base_text = tracked_buffer.diff_base.clone();
-                        let old_snapshot = tracked_buffer.snapshot.clone();
-                        let new_snapshot = buffer_snapshot.clone();
-                        let unreviewed_changes = tracked_buffer.unreviewed_changes.clone();
-                        async move {
-                            let edits = diff_snapshots(&old_snapshot, &new_snapshot);
-                            if let ChangeAuthor::User = author {
-                                apply_non_conflicting_edits(
-                                    &unreviewed_changes,
-                                    edits,
-                                    &mut base_text,
-                                    new_snapshot.as_rope(),
-                                );
-                            }
-                            (Arc::new(base_text.to_string()), base_text)
-                        }
-                    });
+        loop {
+            futures::select_biased! {
+                diff_update = diff_update.next() => {
+                    if let Some((author, buffer_snapshot)) = diff_update {
+                        Self::track_changes(&this, &buffer, author, buffer_snapshot, cx).await?;
+                    } else {
+                        break;
+                    }
+                }
+                _ = repo_updated_rx.changed().fuse() => {
+                    let new_head = git_store.read_with(cx, |store, cx| {
+                        store
+                            .repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
+                            .and_then(|(repo, _)| repo.read(cx).head_commit.clone())
+                    })?;
 
-                    anyhow::Ok((
-                        rebase,
-                        tracked_buffer.diff.clone(),
-                        tracked_buffer.buffer.read(cx).language().cloned(),
-                        tracked_buffer.buffer.read(cx).language_registry(),
-                    ))
-                })??;
-
-            let (new_base_text, new_diff_base) = rebase.await;
-            let diff_snapshot = BufferDiff::update_diff(
-                diff.clone(),
-                buffer_snapshot.clone(),
-                Some(new_base_text),
-                true,
-                false,
-                language,
-                language_registry,
-                cx,
-            )
-            .await;
-
-            let mut unreviewed_changes = Patch::default();
-            if let Ok(diff_snapshot) = diff_snapshot {
-                unreviewed_changes = cx
-                    .background_spawn({
-                        let diff_snapshot = diff_snapshot.clone();
-                        let buffer_snapshot = buffer_snapshot.clone();
-                        let new_diff_base = new_diff_base.clone();
-                        async move {
-                            let mut unreviewed_changes = Patch::default();
-                            for hunk in diff_snapshot.hunks_intersecting_range(
-                                Anchor::MIN..Anchor::MAX,
-                                &buffer_snapshot,
-                            ) {
-                                let old_range = new_diff_base
-                                    .offset_to_point(hunk.diff_base_byte_range.start)
-                                    ..new_diff_base.offset_to_point(hunk.diff_base_byte_range.end);
-                                let new_range = hunk.range.start..hunk.range.end;
-                                unreviewed_changes.push(point_to_row_edit(
-                                    Edit {
-                                        old: old_range,
-                                        new: new_range,
-                                    },
-                                    &new_diff_base,
-                                    &buffer_snapshot.as_rope(),
-                                ));
-                            }
-                            unreviewed_changes
-                        }
-                    })
-                    .await;
-
-                diff.update(cx, |diff, cx| {
-                    diff.set_snapshot(diff_snapshot, &buffer_snapshot, cx)
-                })?;
+                    if new_head != old_head {
+                        old_head = new_head;
+                        Self::accept_committed_changes(&this, &buffer, cx).await?;
+                    }
+                }
             }
-            this.update(cx, |this, cx| {
-                let tracked_buffer = this
-                    .tracked_buffers
-                    .get_mut(&buffer)
-                    .context("buffer not tracked")?;
-                tracked_buffer.diff_base = new_diff_base;
-                tracked_buffer.snapshot = buffer_snapshot;
-                tracked_buffer.unreviewed_changes = unreviewed_changes;
-                cx.notify();
-                anyhow::Ok(())
-            })??;
         }
 
         Ok(())
+    }
+
+    async fn track_changes(
+        this: &WeakEntity<ActionLog>,
+        buffer: &Entity<Buffer>,
+        author: ChangeAuthor,
+        buffer_snapshot: text::BufferSnapshot,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let (rebase, diff, language, language_registry) = this.read_with(cx, |this, cx| {
+            let tracked_buffer = this
+                .tracked_buffers
+                .get(buffer)
+                .context("buffer not tracked")?;
+
+            let rebase = cx.background_spawn({
+                let mut base_text = tracked_buffer.diff_base.clone();
+                let old_snapshot = tracked_buffer.snapshot.clone();
+                let new_snapshot = buffer_snapshot.clone();
+                let unreviewed_changes = tracked_buffer.unreviewed_changes.clone();
+                async move {
+                    let edits = diff_snapshots(&old_snapshot, &new_snapshot);
+                    if let ChangeAuthor::User = author {
+                        apply_non_conflicting_changes(
+                            &unreviewed_changes,
+                            edits,
+                            &mut base_text,
+                            new_snapshot.as_rope(),
+                        );
+                    }
+                    (Arc::new(base_text.to_string()), base_text)
+                }
+            });
+
+            anyhow::Ok((
+                rebase,
+                tracked_buffer.diff.clone(),
+                tracked_buffer.buffer.read(cx).language().cloned(),
+                tracked_buffer.buffer.read(cx).language_registry(),
+            ))
+        })??;
+        let (new_base_text, new_diff_base) = rebase.await;
+        let diff_snapshot = BufferDiff::update_diff(
+            diff.clone(),
+            buffer_snapshot.clone(),
+            Some(new_base_text),
+            true,
+            false,
+            language,
+            language_registry,
+            cx,
+        )
+        .await;
+        let mut unreviewed_changes = Patch::default();
+        if let Ok(diff_snapshot) = diff_snapshot {
+            unreviewed_changes = cx
+                .background_spawn({
+                    let diff_snapshot = diff_snapshot.clone();
+                    let buffer_snapshot = buffer_snapshot.clone();
+                    let new_diff_base = new_diff_base.clone();
+                    async move {
+                        let mut unreviewed_changes = Patch::default();
+                        for hunk in diff_snapshot
+                            .hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer_snapshot)
+                        {
+                            let old_range = new_diff_base
+                                .offset_to_point(hunk.diff_base_byte_range.start)
+                                ..new_diff_base.offset_to_point(hunk.diff_base_byte_range.end);
+                            let new_range = hunk.range.start..hunk.range.end;
+                            unreviewed_changes.push(point_to_row_edit(
+                                Edit {
+                                    old: old_range,
+                                    new: new_range,
+                                },
+                                &new_diff_base,
+                                &buffer_snapshot.as_rope(),
+                            ));
+                        }
+                        unreviewed_changes
+                    }
+                })
+                .await;
+
+            diff.update(cx, |diff, cx| {
+                diff.set_snapshot(diff_snapshot, &buffer_snapshot, cx)
+            })?;
+        }
+        this.update(cx, |this, cx| {
+            let tracked_buffer = this
+                .tracked_buffers
+                .get_mut(buffer)
+                .context("buffer not tracked")?;
+            tracked_buffer.diff_base = new_diff_base;
+            tracked_buffer.snapshot = buffer_snapshot;
+            tracked_buffer.unreviewed_changes = unreviewed_changes;
+            cx.notify();
+            anyhow::Ok(())
+        })??;
+        Ok(())
+    }
+
+    async fn accept_committed_changes(
+        this: &WeakEntity<ActionLog>,
+        buffer: &Entity<Buffer>,
+        cx: &mut AsyncApp,
+    ) -> Result<()> {
+        let Ok(git_diff) = this
+            .update(cx, |this, cx| {
+                this.project.update(cx, |project, cx| {
+                    project.open_uncommitted_diff(buffer.clone(), cx)
+                })
+            })?
+            .await
+        else {
+            return Ok(());
+        };
+
+        let (new_diff_base, new_unreviewed_changes) = this
+            .read_with(cx, |this, cx| {
+                let tracked_buffer = this
+                    .tracked_buffers
+                    .get(buffer)
+                    .context("buffer not tracked")?;
+                let old_unreviewed_changes = tracked_buffer.unreviewed_changes.clone();
+                let agent_diff_base = tracked_buffer.diff_base.clone();
+                let git_diff_base = git_diff.read(cx).base_text().as_rope().clone();
+                let buffer_text = tracked_buffer.snapshot.as_rope().clone();
+                anyhow::Ok(cx.background_spawn(async move {
+                    let mut old_unreviewed_changes = old_unreviewed_changes.into_iter().peekable();
+                    let committed_changes = language::line_diff(
+                        &agent_diff_base.to_string(),
+                        &git_diff_base.to_string(),
+                    )
+                    .into_iter()
+                    .map(|(old, new)| Edit { old, new });
+
+                    let mut new_agent_diff_base = agent_diff_base.clone();
+                    let mut row_delta = 0i32;
+                    let mut unreviewed_changes = Patch::default();
+                    for committed in committed_changes {
+                        while let Some(unreviewed) = old_unreviewed_changes.peek() {
+                            if committed.old == unreviewed.old {
+                                let unreviewed_new =
+                                    buffer_text.slice_rows(unreviewed.new.clone()).to_string();
+                                let committed_new =
+                                    git_diff_base.slice_rows(committed.new.clone()).to_string();
+                                if unreviewed_new == committed_new {
+                                    let old_byte_start =
+                                        new_agent_diff_base.point_to_offset(Point::new(
+                                            (unreviewed.old.start as i32 + row_delta) as u32,
+                                            0,
+                                        ));
+                                    let old_byte_end =
+                                        new_agent_diff_base.point_to_offset(cmp::min(
+                                            Point::new(
+                                                (unreviewed.old.end as i32 + row_delta) as u32,
+                                                0,
+                                            ),
+                                            new_agent_diff_base.max_point(),
+                                        ));
+                                    new_agent_diff_base
+                                        .replace(old_byte_start..old_byte_end, &unreviewed_new);
+
+                                    row_delta +=
+                                        unreviewed.new_len() as i32 - unreviewed.old_len() as i32;
+                                    old_unreviewed_changes.next();
+                                    continue;
+                                }
+                            } else if unreviewed.old.start >= committed.old.end {
+                                break;
+                            }
+
+                            unreviewed_changes.push(Edit {
+                                old: (unreviewed.old.start as i32 + row_delta) as u32
+                                    ..(unreviewed.old.end as i32 + row_delta) as u32,
+                                new: unreviewed.new.clone(),
+                            });
+                            old_unreviewed_changes.next().unwrap();
+                        }
+                    }
+
+                    for unreviewed in old_unreviewed_changes {
+                        unreviewed_changes.push(Edit {
+                            old: (unreviewed.old.start as i32 + row_delta) as u32
+                                ..(unreviewed.old.end as i32 + row_delta) as u32,
+                            new: unreviewed.new.clone(),
+                        });
+                    }
+
+                    (new_agent_diff_base, unreviewed_changes)
+                }))
+            })??
+            .await;
+
+        this.update(cx, |this, cx| {
+            let tracked_buffer = this
+                .tracked_buffers
+                .get_mut(buffer)
+                .context("buffer not tracked")?;
+            tracked_buffer.diff_base = new_diff_base;
+            tracked_buffer.unreviewed_changes = new_unreviewed_changes;
+            cx.notify();
+            anyhow::Ok(())
+        })?
     }
 
     /// Track a buffer as read, so we can notify the model about user edits.
@@ -563,7 +709,7 @@ impl ActionLog {
     }
 }
 
-fn apply_non_conflicting_edits(
+fn apply_non_conflicting_changes(
     patch: &Patch<u32>,
     edits: Vec<Edit<u32>>,
     old_text: &mut Rope,
@@ -1797,6 +1943,175 @@ mod tests {
                 }
                 pretty_assertions::assert_eq!(old_text.to_string(), new_text.to_string());
             })
+        }
+    }
+
+    #[test]
+    fn test_accept_committed_changes() {
+        // Committed changes that match unreviewed changes
+        {
+            let agent_diff_base = Rope::from("line1\nline2\nline3\nline4\n");
+            let git_diff_base = Rope::from("line1\nmodified2\nline3\nmodified4\n");
+            let buffer_text = Rope::from("line1\nmodified2\nline3\nmodified4\n");
+
+            let old_unreviewed_changes = Patch::new(vec![
+                Edit {
+                    old: 1..2,
+                    new: 1..2,
+                },
+                Edit {
+                    old: 3..4,
+                    new: 3..4,
+                },
+            ]);
+
+            let (new_diff_base, new_unreviewed) = accept_committed_changes(
+                agent_diff_base,
+                git_diff_base,
+                buffer_text,
+                old_unreviewed_changes,
+            );
+
+            assert_eq!(
+                new_diff_base.to_string(),
+                "line1\nmodified2\nline3\nmodified4\n"
+            );
+            assert_eq!(new_unreviewed.edits(), &[]);
+        }
+
+        // Unreviewed changes that don't match committed changes
+        {
+            let agent_diff_base = Rope::from("line1\nline2\nline3\n");
+            let git_diff_base = Rope::from("line1\ncommitted2\nline3\n");
+            let buffer_text = Rope::from("line1\nunreviewed2\nline3\n");
+
+            let old_unreviewed_changes = Patch::new(vec![Edit {
+                old: 1..2,
+                new: 1..2,
+            }]);
+
+            let (new_diff_base, new_unreviewed) = accept_committed_changes(
+                agent_diff_base,
+                git_diff_base,
+                buffer_text,
+                old_unreviewed_changes,
+            );
+
+            // Diff base remains unchanged since the unreviewed change doesn't match the committed one
+            assert_eq!(new_diff_base.to_string(), "line1\nline2\nline3\n");
+            assert_eq!(
+                new_unreviewed.edits(),
+                &[Edit {
+                    old: 1..2,
+                    new: 1..2
+                }]
+            );
+        }
+
+        // Mix of matching and non-matching changes with row delta
+        {
+            let agent_diff_base = Rope::from("line1\nline2\nline3\nline4\nline5\n");
+            let git_diff_base = Rope::from("line1\nmodified2\nadded\nline3\nline4\nline5\n");
+            let buffer_text = Rope::from("line1\nmodified2\nadded\nline3\ndifferent4\nline5\n");
+
+            let old_unreviewed_changes = Patch::new(vec![
+                Edit {
+                    old: 1..2,
+                    new: 1..3, // line2 -> modified2\nadded
+                },
+                Edit {
+                    old: 3..4,
+                    new: 4..5, // line4 -> different4
+                },
+            ]);
+
+            let (new_diff_base, new_unreviewed) = accept_committed_changes(
+                agent_diff_base,
+                git_diff_base.clone(),
+                buffer_text,
+                old_unreviewed_changes,
+            );
+
+            // First change matches and is accepted, updating the diff base
+            // Second change doesn't match and remains unreviewed with adjusted row
+            assert_eq!(
+                new_diff_base.to_string(),
+                "line1\nmodified2\nadded\nline3\nline4\nline5\n"
+            );
+            assert_eq!(
+                new_unreviewed.edits(),
+                &[Edit {
+                    old: 4..5,
+                    new: 4..5
+                }]
+            );
+        }
+
+        // Deletion changes
+        {
+            let agent_diff_base = Rope::from("line1\nline2\nline3\nline4\n");
+            let git_diff_base = Rope::from("line1\nline3\nline4\n");
+            let buffer_text = Rope::from("line1\nline3\nline4\n");
+
+            let old_unreviewed_changes = Patch::new(vec![Edit {
+                old: 1..2,
+                new: 1..1, // line2 deleted
+            }]);
+
+            let (new_diff_base, new_unreviewed) = accept_committed_changes(
+                agent_diff_base,
+                git_diff_base,
+                buffer_text,
+                old_unreviewed_changes,
+            );
+
+            assert_eq!(new_diff_base.to_string(), "line1\nline3\nline4\n");
+            assert_eq!(new_unreviewed.edits(), &[]);
+        }
+
+        // Multiple unreviewed changes with only some committed
+        {
+            let agent_diff_base = Rope::from("a\nb\nc\nd\ne\nf\n");
+            let git_diff_base = Rope::from("a\nB\nc\nd\ne\nf\n");
+            let buffer_text = Rope::from("a\nB\nc\nD\ne\nF\n");
+
+            let old_unreviewed_changes = Patch::new(vec![
+                Edit {
+                    old: 1..2,
+                    new: 1..2, // b -> B
+                },
+                Edit {
+                    old: 3..4,
+                    new: 3..4, // d -> D
+                },
+                Edit {
+                    old: 5..6,
+                    new: 5..6, // f -> F
+                },
+            ]);
+
+            let (new_diff_base, new_unreviewed) = accept_committed_changes(
+                agent_diff_base,
+                git_diff_base,
+                buffer_text,
+                old_unreviewed_changes,
+            );
+
+            // Only the first change (b -> B) was committed
+            assert_eq!(new_diff_base.to_string(), "a\nB\nc\nd\ne\nf\n");
+            assert_eq!(
+                new_unreviewed.edits(),
+                &[
+                    Edit {
+                        old: 3..4,
+                        new: 3..4
+                    }, // d -> D
+                    Edit {
+                        old: 5..6,
+                        new: 5..6
+                    }, // f -> F
+                ]
+            );
         }
     }
 
