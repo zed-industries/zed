@@ -22,7 +22,7 @@ ctor.workspace = true
 foreign-types = "0.5"
 metal.workspace = true
 core-video.workspace = true
-objc = "0.2"
+objc.workspace = true
 
 [build-dependencies]
 bindgen = "0.71"

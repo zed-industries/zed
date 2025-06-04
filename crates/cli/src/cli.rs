@@ -16,6 +16,7 @@ pub enum CliRequest {
         wait: bool,
         open_new_workspace: Option<bool>,
         env: Option<HashMap<String, String>>,
+        user_data_dir: Option<String>,
     },
 }
 

@@ -3,7 +3,7 @@ use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::Utc;
 use client::{ProxySettings, telemetry};
-use dap::DapRegistry;
+
 use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
@@ -11,7 +11,7 @@ use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, 
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
 use gpui_tokio::Tokio;
-use http_client::{Uri, read_proxy_from_env};
+use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
@@ -257,7 +257,7 @@ fn start_server(
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
 ) -> Arc<ChannelClient> {
-    // This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
+    // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
     let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
@@ -333,7 +333,7 @@ fn start_server(
                             break;
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
-                            log::error!("failed to send message to application: {:?}. exiting.", error);
+                            log::error!("failed to send message to application: {error:?}. exiting.");
                             return Err(anyhow!(error));
                         }
                     }
@@ -390,8 +390,7 @@ fn init_paths() -> anyhow::Result<()> {
     ]
     .iter()
     {
-        std::fs::create_dir_all(path)
-            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
+        std::fs::create_dir_all(path).with_context(|| format!("creating directory {path:?}"))?;
     }
     Ok(())
 }
@@ -428,7 +427,7 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::Application::headless().run(move |cx| {
         settings::init(cx);
-        let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
+        let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
 
@@ -441,6 +440,7 @@ pub fn execute_run(
 
         GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
         git_hosting_providers::init(cx);
+        dap_adapters::init(cx);
 
         extension::init(cx);
         let extension_host_proxy = ExtensionHostProxy::global(cx);
@@ -467,12 +467,11 @@ pub fn execute_run(
                 )
             };
 
-            let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
+            let node_runtime = NodeRuntime::new(http_client.clone(), None, node_settings_rx);
 
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
             let languages = Arc::new(languages);
-            let debug_adapters = DapRegistry::default().into();
 
             HeadlessProject::new(
                 HeadlessAppState {
@@ -481,7 +480,6 @@ pub fn execute_run(
                     http_client,
                     node_runtime,
                     languages,
-                    debug_adapters,
                     extension_host_proxy,
                 },
                 cx,
@@ -543,7 +541,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     if is_reconnecting {
         if !server_running {
             log::error!("attempted to reconnect, but no server running");
-            return Err(anyhow!(ProxyLaunchError::ServerNotRunning));
+            anyhow::bail!(ProxyLaunchError::ServerNotRunning);
         }
     } else {
         if let Some(pid) = server_pid {
@@ -574,18 +572,19 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
-            match stream.read(&mut stderr_buffer).await {
-                Ok(0) => {
+            match stream
+                .read(&mut stderr_buffer)
+                .await
+                .context("reading stderr")?
+            {
+                0 => {
                     let error =
                         std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "stderr closed");
                     Err(anyhow!(error))?;
                 }
-                Ok(n) => {
+                n => {
                     stderr.write_all(&mut stderr_buffer[..n]).await?;
                     stderr.flush().await?;
-                }
-                Err(error) => {
-                    Err(anyhow!("error reading stderr: {error:?}"))?;
                 }
             }
         }
@@ -797,7 +796,7 @@ fn initialize_settings(
         let settings = &ProjectSettings::get_global(cx).node;
         log::info!("Got new node settings: {:?}", settings);
         let options = NodeBinaryOptions {
-            allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+            allow_path_lookup: !settings.ignore_system_version,
             // TODO: Implement this setting
             allow_binary_download: true,
             use_paths: settings.path.as_ref().map(|node_path| {
@@ -854,13 +853,13 @@ pub fn handle_settings_file_changes(
     .detach();
 }
 
-fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Uri> {
+fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
     let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
     let proxy_url = proxy_str
         .as_ref()
         .and_then(|input: &String| {
             input
-                .parse::<Uri>()
+                .parse::<Url>()
                 .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
                 .ok()
         })
@@ -869,7 +868,7 @@ fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Uri> {
 }
 
 fn daemonize() -> Result<ControlFlow<()>> {
-    match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
+    match fork::fork().map_err(|e| anyhow!("failed to call fork with error code {e}"))? {
         fork::Fork::Parent(_) => {
             return Ok(ControlFlow::Break(()));
         }

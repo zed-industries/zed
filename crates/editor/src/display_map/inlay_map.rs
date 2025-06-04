@@ -37,7 +37,7 @@ enum Transform {
 
 #[derive(Debug, Clone)]
 pub struct Inlay {
-    pub(crate) id: InlayId,
+    pub id: InlayId,
     pub position: Anchor,
     pub text: text::Rope,
 }
@@ -61,6 +61,14 @@ impl Inlay {
     pub fn inline_completion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
             id: InlayId::InlineCompletion(id),
+            position,
+            text: text.into(),
+        }
+    }
+
+    pub fn debugger_hint<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+        Self {
+            id: InlayId::DebuggerValue(id),
             position,
             text: text.into(),
         }
@@ -310,6 +318,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                         })
                     }
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
+                    InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
                 };
                 let next_inlay_highlight_endpoint;
                 let offset_in_inlay = self.output_offset - self.transforms.start().0;
@@ -350,6 +359,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 Chunk {
                     text: chunk,
                     highlight_style,
+                    is_inlay: true,
                     ..Default::default()
                 }
             }
@@ -511,6 +521,9 @@ impl InlayMap {
                 };
 
                 for inlay in &self.inlays[start_ix..] {
+                    if !inlay.position.is_valid(&token_snapshot.buffer) {
+                        continue;
+                    }
                     let buffer_offset = inlay.position.to_offset(&token_snapshot.buffer);
                     if buffer_offset > buffer_edit.new.end.0 {
                         break;
@@ -523,9 +536,7 @@ impl InlayMap {
                         token_snapshot.text_summary_for_range(prefix_start..prefix_end),
                     );
 
-                    if inlay.position.is_valid(&token_snapshot.buffer) {
-                        new_transforms.push(Transform::Inlay(inlay.clone()), &());
-                    }
+                    new_transforms.push(Transform::Inlay(inlay.clone()), &());
                 }
 
                 // Apply the rest of the edit.

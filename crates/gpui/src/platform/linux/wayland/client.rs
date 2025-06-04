@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 use calloop::{
     EventLoop, LoopHandle,
     timer::{TimeoutAction, Timer},
@@ -14,7 +15,7 @@ use calloop::{
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
-
+use futures::channel::oneshot;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
@@ -65,14 +66,16 @@ use wayland_protocols_plasma::blur::client::{org_kde_kwin_blur, org_kde_kwin_blu
 use xkbcommon::xkb::ffi::XKB_KEYMAP_FORMAT_TEXT_V1;
 use xkbcommon::xkb::{self, KEYMAP_COMPILE_NO_FLAGS, Keycode};
 
-use super::display::WaylandDisplay;
-use super::window::{ImeInput, WaylandWindowStatePtr};
+use super::{
+    display::WaylandDisplay,
+    window::{ImeInput, WaylandWindowStatePtr},
+};
 
 use crate::platform::linux::{
     LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
     reveal_path_internal,
     wayland::{
-        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
+        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
         serial::{SerialKind, SerialTracker},
         window::WaylandWindow,
@@ -82,10 +85,11 @@ use crate::platform::linux::{
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
-    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
-    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, SCROLL_LINES,
-    ScaledPixels, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+    FileDropEvent, ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon,
+    LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
+    PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScreenCaptureSource,
+    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
 };
 
 /// Used to convert evdev scancode to xkb scancode
@@ -585,9 +589,9 @@ impl WaylandClient {
 }
 
 impl LinuxClient for WaylandClient {
-    fn keyboard_layout(&self) -> String {
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
-        if let Some(keymap_state) = &state.keymap_state {
+        let id = if let Some(keymap_state) = &state.keymap_state {
             let layout_idx = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
             keymap_state
                 .get_keymap()
@@ -595,7 +599,8 @@ impl LinuxClient for WaylandClient {
                 .to_string()
         } else {
             "unknown".to_string()
-        }
+        };
+        Box::new(LinuxKeyboardLayout::new(id))
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
@@ -631,6 +636,24 @@ impl LinuxClient for WaylandClient {
 
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>> {
         None
+    }
+
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+        // TODO: Get screen capture working on wayland. Be sure to try window resizing as that may
+        // be tricky.
+        //
+        // start_scap_default_target_source()
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx
+            .send(Err(anyhow!("Wayland screen capture not yet implemented.")))
+            .ok();
+        sources_rx
     }
 
     fn open_window(
@@ -681,7 +704,7 @@ impl LinuxClient for WaylandClient {
                 let scale = focused_window.primary_output_scale();
                 state
                     .cursor
-                    .set_icon(&wl_pointer, serial, &style.to_icon_name(), scale);
+                    .set_icon(&wl_pointer, serial, style.to_icon_name(), scale);
             }
         }
     }
@@ -755,8 +778,10 @@ impl LinuxClient for WaylandClient {
             state.clipboard.set_primary(item);
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = primary_selection_manager.create_source(&state.globals.qh, ());
+            for mime_type in TEXT_MIME_TYPES {
+                data_source.offer(mime_type.to_string());
+            }
             data_source.offer(state.clipboard.self_mime());
-            data_source.offer(TEXT_MIME_TYPE.to_string());
             primary_selection.set_selection(Some(&data_source), serial);
         }
     }
@@ -773,8 +798,10 @@ impl LinuxClient for WaylandClient {
             state.clipboard.set(item);
             let serial = state.serial_tracker.get(SerialKind::KeyPress);
             let data_source = data_device_manager.create_data_source(&state.globals.qh, ());
+            for mime_type in TEXT_MIME_TYPES {
+                data_source.offer(mime_type.to_string());
+            }
             data_source.offer(state.clipboard.self_mime());
-            data_source.offer(TEXT_MIME_TYPE.to_string());
             data_device.set_selection(Some(&data_source), serial);
         }
     }
@@ -1478,16 +1505,19 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         state.enter_token = None;
                     }
                     if let Some(style) = state.cursor_style {
-                        if let Some(cursor_shape_device) = &state.cursor_shape_device {
+                        if let CursorStyle::None = style {
+                            let wl_pointer = state
+                                .wl_pointer
+                                .clone()
+                                .expect("window is focused by pointer");
+                            wl_pointer.set_cursor(serial, None, 0, 0);
+                        } else if let Some(cursor_shape_device) = &state.cursor_shape_device {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
                             let scale = window.primary_output_scale();
-                            state.cursor.set_icon(
-                                &wl_pointer,
-                                serial,
-                                &style.to_icon_name(),
-                                scale,
-                            );
+                            state
+                                .cursor
+                                .set_icon(&wl_pointer, serial, style.to_icon_name(), scale);
                         }
                     }
                     drop(state);

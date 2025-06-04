@@ -5,7 +5,7 @@ use gpui::Hsla;
 ///
 /// Can be used as either an icon alongside a label, like in [`Button`](crate::Button),
 /// or as a standalone icon, like in [`IconButton`](crate::IconButton).
-#[derive(IntoElement)]
+#[derive(IntoElement, RegisterComponent)]
 pub(super) struct ButtonIcon {
     icon: IconName,
     size: IconSize,
@@ -39,7 +39,6 @@ impl ButtonIcon {
         if let Some(size) = size.into() {
             self.size = size;
         }
-
         self
     }
 
@@ -47,7 +46,6 @@ impl ButtonIcon {
         if let Some(color) = color.into() {
             self.color = color;
         }
-
         self
     }
 
@@ -118,5 +116,84 @@ impl RenderOnce for ButtonIcon {
                 .into_any_element(),
             None => icon.into_any_element(),
         }
+    }
+}
+
+impl Component for ButtonIcon {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn name() -> &'static str {
+        "ButtonIcon"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some("An icon component specifically designed for use within buttons.")
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Usage",
+                        vec![
+                            single_example(
+                                "Default",
+                                ButtonIcon::new(IconName::Star).into_any_element(),
+                            ),
+                            single_example(
+                                "Custom Size",
+                                ButtonIcon::new(IconName::Star)
+                                    .size(IconSize::Medium)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Custom Color",
+                                ButtonIcon::new(IconName::Star)
+                                    .color(Color::Accent)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "States",
+                        vec![
+                            single_example(
+                                "Selected",
+                                ButtonIcon::new(IconName::Star)
+                                    .toggle_state(true)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Disabled",
+                                ButtonIcon::new(IconName::Star)
+                                    .disabled(true)
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "With Indicator",
+                        vec![
+                            single_example(
+                                "Default Indicator",
+                                ButtonIcon::new(IconName::Star)
+                                    .indicator(Indicator::dot())
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Custom Indicator",
+                                ButtonIcon::new(IconName::Star)
+                                    .indicator(Indicator::dot().color(Color::Error))
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

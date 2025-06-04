@@ -1,11 +1,15 @@
 pub mod arc_cow;
+pub mod archive;
 pub mod command;
 pub mod fs;
 pub mod markdown;
 pub mod paths;
 pub mod serde;
+pub mod shell_env;
+pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
+pub mod time;
 
 use anyhow::Result;
 use futures::Future;
@@ -23,9 +27,6 @@ use std::{
     time::Instant,
 };
 use unicase::UniCase;
-
-#[cfg(unix)]
-use anyhow::{Context as _, anyhow};
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -145,6 +146,66 @@ pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
     }
 }
 
+/// Truncates the string at a character boundary, such that the result is less than `max_bytes` in
+/// length.
+pub fn truncate_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            return &s[..i];
+        }
+    }
+
+    ""
+}
+
+/// Takes a prefix of complete lines which fit within the byte limit. If the first line is longer
+/// than the limit, truncates at a character boundary.
+pub fn truncate_lines_to_byte_limit(s: &str, max_bytes: usize) -> &str {
+    if s.len() < max_bytes {
+        return s;
+    }
+
+    for i in (0..max_bytes).rev() {
+        if s.is_char_boundary(i) {
+            if s.as_bytes()[i] == b'\n' {
+                // Since the i-th character is \n, valid to slice at i + 1.
+                return &s[..i + 1];
+            }
+        }
+    }
+
+    truncate_to_byte_limit(s, max_bytes)
+}
+
+#[test]
+fn test_truncate_lines_to_byte_limit() {
+    let text = "Line 1\nLine 2\nLine 3\nLine 4";
+
+    // Limit that includes all lines
+    assert_eq!(truncate_lines_to_byte_limit(text, 100), text);
+
+    // Exactly the first line
+    assert_eq!(truncate_lines_to_byte_limit(text, 7), "Line 1\n");
+
+    // Limit between lines
+    assert_eq!(truncate_lines_to_byte_limit(text, 13), "Line 1\n");
+    assert_eq!(truncate_lines_to_byte_limit(text, 20), "Line 1\nLine 2\n");
+
+    // Limit before first newline
+    assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
+
+    // Test with non-ASCII characters
+    let text_utf8 = "Line 1\nLíne 2\nLine 3";
+    assert_eq!(
+        truncate_lines_to_byte_limit(text_utf8, 15),
+        "Line 1\nLíne 2\n"
+    );
+}
+
 pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
     *value += T::from(1);
@@ -197,7 +258,7 @@ where
 }
 
 #[cfg(unix)]
-pub fn load_shell_from_passwd() -> Result<()> {
+fn load_shell_from_passwd() -> Result<()> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
         n => n as usize,
@@ -247,79 +308,68 @@ pub fn load_shell_from_passwd() -> Result<()> {
 
 #[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
-    let marker = "ZED_LOGIN_SHELL_START";
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
+    load_shell_from_passwd().log_err();
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
     // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    let shell_cmd_prefix = std::env::var_os("HOME")
-        .and_then(|home| home.into_string().ok())
-        .map(|home| format!("cd '{home}';"));
+    for (name, value) in shell_env::capture(Some(paths::home_dir()))? {
+        unsafe { env::set_var(&name, &value) };
+    }
 
-    // The `exit 0` is the result of hours of debugging, trying to find out
-    // why running this command here, without `exit 0`, would mess
-    // up signal process for our process so that `ctrl-c` doesn't work
-    // anymore.
-    // We still don't know why `$SHELL -l -i -c '/usr/bin/env -0'`  would
-    // do that, but it does, and `exit 0` helps.
-    let shell_cmd = format!(
-        "{}printf '%s' {marker}; /usr/bin/env; exit 0;",
-        shell_cmd_prefix.as_deref().unwrap_or("")
+    log::info!(
+        "set environment variables from shell:{}, path:{}",
+        std::env::var("SHELL").unwrap_or_default(),
+        std::env::var("PATH").unwrap_or_default(),
     );
-
-    let output = std::process::Command::new(&shell)
-        .args(["-l", "-i", "-c", &shell_cmd])
-        .output()
-        .context("failed to spawn login shell to source login environment variables")?;
-    if !output.status.success() {
-        Err(anyhow!("login shell exited with error"))?;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    if let Some(env_output_start) = stdout.find(marker) {
-        let env_output = &stdout[env_output_start + marker.len()..];
-
-        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
-
-        log::info!(
-            "set environment variables from shell:{}, path:{}",
-            shell,
-            env::var("PATH").unwrap_or_default(),
-        );
-    }
 
     Ok(())
 }
 
-/// Parse the result of calling `usr/bin/env` with no arguments
-pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
-    let mut current_key: Option<String> = None;
-    let mut current_value: Option<String> = None;
+/// Configures the process to start a new session, to prevent interactive shells from taking control
+/// of the terminal.
+///
+/// For more details: https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
+pub fn set_pre_exec_to_start_new_session(
+    command: &mut std::process::Command,
+) -> &mut std::process::Command {
+    // safety: code in pre_exec should be signal safe.
+    // https://man7.org/linux/man-pages/man7/signal-safety.7.html
+    #[cfg(not(target_os = "windows"))]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    };
+    command
+}
 
-    for line in env.split_terminator('\n') {
-        if let Some(separator_index) = line.find('=') {
-            if !line[..separator_index].is_empty() {
-                if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
-                    f(key, value)
+pub fn merge_json_lenient_value_into(
+    source: serde_json_lenient::Value,
+    target: &mut serde_json_lenient::Value,
+) {
+    match (source, target) {
+        (serde_json_lenient::Value::Object(source), serde_json_lenient::Value::Object(target)) => {
+            for (key, value) in source {
+                if let Some(target) = target.get_mut(&key) {
+                    merge_json_lenient_value_into(value, target);
+                } else {
+                    target.insert(key, value);
                 }
-                current_key = Some(line[..separator_index].to_string());
-                current_value = Some(line[separator_index + 1..].to_string());
-                continue;
-            };
+            }
         }
-        if let Some(value) = current_value.as_mut() {
-            value.push('\n');
-            value.push_str(line);
+
+        (serde_json_lenient::Value::Array(source), serde_json_lenient::Value::Array(target)) => {
+            for value in source {
+                target.push(value);
+            }
         }
-    }
-    if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
-        f(key, value)
+
+        (source, target) => *target = source,
     }
 }
 
@@ -387,7 +437,7 @@ pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
     }
 }
 
-pub fn iterate_expanded_and_wrapped_usize_range(
+pub fn expanded_and_wrapped_usize_range(
     range: Range<usize>,
     additional_before: usize,
     additional_after: usize,
@@ -416,8 +466,45 @@ pub fn iterate_expanded_and_wrapped_usize_range(
     }
 }
 
+/// Yields `[i, i + 1, i - 1, i + 2, ..]`, each modulo `wrap_length` and bounded by
+/// `additional_before` and `additional_after`. If the wrapping causes overlap, duplicates are not
+/// emitted. If wrap_length is 0, nothing is yielded.
+pub fn wrapped_usize_outward_from(
+    start: usize,
+    additional_before: usize,
+    additional_after: usize,
+    wrap_length: usize,
+) -> impl Iterator<Item = usize> {
+    let mut count = 0;
+    let mut after_offset = 1;
+    let mut before_offset = 1;
+
+    std::iter::from_fn(move || {
+        count += 1;
+        if count > wrap_length {
+            None
+        } else if count == 1 {
+            Some(start % wrap_length)
+        } else if after_offset <= additional_after && after_offset <= before_offset {
+            let value = (start + after_offset) % wrap_length;
+            after_offset += 1;
+            Some(value)
+        } else if before_offset <= additional_before {
+            let value = (start + wrap_length - before_offset) % wrap_length;
+            before_offset += 1;
+            Some(value)
+        } else if after_offset <= additional_after {
+            let value = (start + after_offset) % wrap_length;
+            after_offset += 1;
+            Some(value)
+        } else {
+            None
+        }
+    })
+}
+
 #[cfg(target_os = "windows")]
-pub fn retrieve_system_shell() -> String {
+pub fn get_windows_system_shell() -> String {
     use std::path::PathBuf;
 
     fn find_pwsh_in_programfiles(find_alternate: bool, find_preview: bool) -> Option<PathBuf> {
@@ -930,8 +1017,65 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
     prev_end == s.len()
 }
 
+/// Similar to `str::split`, but also provides byte-offset ranges of the results. Unlike
+/// `str::split`, this is not generic on pattern types and does not return an `Iterator`.
+pub fn split_str_with_ranges(s: &str, pat: impl Fn(char) -> bool) -> Vec<(Range<usize>, &str)> {
+    let mut result = Vec::new();
+    let mut start = 0;
+
+    for (i, ch) in s.char_indices() {
+        if pat(ch) {
+            if i > start {
+                result.push((start..i, &s[start..i]));
+            }
+            start = i + ch.len_utf8();
+        }
+    }
+
+    if s.len() > start {
+        result.push((start..s.len(), &s[start..s.len()]));
+    }
+
+    result
+}
+
 pub fn default<D: Default>() -> D {
     Default::default()
+}
+
+pub fn get_system_shell() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        get_windows_system_shell()
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+    }
+}
+
+#[derive(Debug)]
+pub enum ConnectionResult<O> {
+    Timeout,
+    ConnectionReset,
+    Result(anyhow::Result<O>),
+}
+
+impl<O> ConnectionResult<O> {
+    pub fn into_response(self) -> anyhow::Result<O> {
+        match self {
+            ConnectionResult::Timeout => anyhow::bail!("Request timed out"),
+            ConnectionResult::ConnectionReset => anyhow::bail!("Server reset the connection"),
+            ConnectionResult::Result(r) => r,
+        }
+    }
+}
+
+impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
+    fn from(result: anyhow::Result<O>) -> Self {
+        ConnectionResult::Result(result)
+    }
 }
 
 #[cfg(test)]
@@ -1122,46 +1266,101 @@ Line 3"#
     }
 
     #[test]
-    fn test_iterate_expanded_and_wrapped_usize_range() {
+    fn test_expanded_and_wrapped_usize_range() {
         // Neither wrap
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 1, 1, 8).collect::<Vec<usize>>(),
             (1..5).collect::<Vec<usize>>()
         );
         // Start wraps
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 3, 1, 8).collect::<Vec<usize>>(),
             ((0..5).chain(7..8)).collect::<Vec<usize>>()
         );
         // Start wraps all the way around
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 5, 1, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // Start wraps all the way around and past 0
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(2..4, 10, 1, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // End wraps
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 4, 8).collect::<Vec<usize>>(),
             (0..1).chain(2..8).collect::<Vec<usize>>()
         );
         // End wraps all the way around
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 5, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // End wraps all the way around and past the end
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 1, 10, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
         // Both start and end wrap
         assert_eq!(
-            iterate_expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
+            expanded_and_wrapped_usize_range(3..5, 4, 4, 8).collect::<Vec<usize>>(),
             (0..8).collect::<Vec<usize>>()
         );
+    }
+
+    #[test]
+    fn test_wrapped_usize_outward_from() {
+        // No wrapping
+        assert_eq!(
+            wrapped_usize_outward_from(4, 2, 2, 10).collect::<Vec<usize>>(),
+            vec![4, 5, 3, 6, 2]
+        );
+        // Wrapping at end
+        assert_eq!(
+            wrapped_usize_outward_from(8, 2, 3, 10).collect::<Vec<usize>>(),
+            vec![8, 9, 7, 0, 6, 1]
+        );
+        // Wrapping at start
+        assert_eq!(
+            wrapped_usize_outward_from(1, 3, 2, 10).collect::<Vec<usize>>(),
+            vec![1, 2, 0, 3, 9, 8]
+        );
+        // All values wrap around
+        assert_eq!(
+            wrapped_usize_outward_from(5, 10, 10, 8).collect::<Vec<usize>>(),
+            vec![5, 6, 4, 7, 3, 0, 2, 1]
+        );
+        // None before / after
+        assert_eq!(
+            wrapped_usize_outward_from(3, 0, 0, 8).collect::<Vec<usize>>(),
+            vec![3]
+        );
+        // Starting point already wrapped
+        assert_eq!(
+            wrapped_usize_outward_from(15, 2, 2, 10).collect::<Vec<usize>>(),
+            vec![5, 6, 4, 7, 3]
+        );
+        // wrap_length of 0
+        assert_eq!(
+            wrapped_usize_outward_from(4, 2, 2, 0).collect::<Vec<usize>>(),
+            Vec::<usize>::new()
+        );
+    }
+
+    #[test]
+    fn test_split_with_ranges() {
+        let input = "hi";
+        let result = split_str_with_ranges(input, |c| c == ' ');
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], (0..2, "hi"));
+
+        let input = "héllo🦀world";
+        let result = split_str_with_ranges(input, |c| c == '🦀');
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
+        assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
     }
 }

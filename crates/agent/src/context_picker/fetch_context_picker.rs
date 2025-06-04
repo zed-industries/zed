@@ -11,7 +11,7 @@ use picker::{Picker, PickerDelegate};
 use ui::{Context, ListItem, Window, prelude::*};
 use workspace::Workspace;
 
-use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 
 pub struct FetchContextPicker {
@@ -23,16 +23,10 @@ impl FetchContextPicker {
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = FetchContextPickerDelegate::new(
-            context_picker,
-            workspace,
-            context_store,
-            confirm_behavior,
-        );
+        let delegate = FetchContextPickerDelegate::new(context_picker, workspace, context_store);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
@@ -62,7 +56,6 @@ pub struct FetchContextPickerDelegate {
     context_picker: WeakEntity<ContextPicker>,
     workspace: WeakEntity<Workspace>,
     context_store: WeakEntity<ContextStore>,
-    confirm_behavior: ConfirmBehavior,
     url: String,
 }
 
@@ -71,13 +64,11 @@ impl FetchContextPickerDelegate {
         context_picker: WeakEntity<ContextPicker>,
         workspace: WeakEntity<Workspace>,
         context_store: WeakEntity<ContextStore>,
-        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         FetchContextPickerDelegate {
             context_picker,
             workspace,
             context_store,
-            confirm_behavior,
             url: String::new(),
         }
     }
@@ -202,27 +193,17 @@ impl PickerDelegate for FetchContextPickerDelegate {
             return;
         };
 
-        let http_client = workspace.read(cx).client().http_client().clone();
+        let http_client = workspace.read(cx).client().http_client();
         let url = self.url.clone();
-        let confirm_behavior = self.confirm_behavior;
         cx.spawn_in(window, async move |this, cx| {
             let text = cx
                 .background_spawn(fetch_url_content(http_client, url.clone()))
                 .await?;
 
-            this.update_in(cx, |this, window, cx| {
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, _cx| {
-                        context_store.add_fetched_url(url, text);
-                    })?;
-
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
-                }
-
-                anyhow::Ok(())
+            this.update(cx, |this, cx| {
+                this.delegate.context_store.update(cx, |context_store, cx| {
+                    context_store.add_fetched_url(url, text, cx)
+                })
             })??;
 
             anyhow::Ok(())
@@ -246,7 +227,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
-            context_store.read(cx).includes_url(&self.url).is_some()
+            context_store.read(cx).includes_url(&self.url)
         });
 
         Some(

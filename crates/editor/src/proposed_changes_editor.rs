@@ -285,8 +285,8 @@ impl Item for ProposedChangesEditor {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some(self.title.clone())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        self.title.clone()
     }
 
     fn as_searchable(&self, _: &Entity<Self>) -> Option<Box<dyn SearchableItemHandle>> {
@@ -355,7 +355,7 @@ impl Item for ProposedChangesEditor {
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<gpui::Result<()>> {
+    ) -> Task<anyhow::Result<()>> {
         self.editor.update(cx, |editor, cx| {
             Item::save(editor, format, project, window, cx)
         })
@@ -475,6 +475,15 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         self.0.semantic_tokens_full(buffer, range, cx)
     }
 
+    fn inline_values(
+        &self,
+        _: Entity<Buffer>,
+        _: Range<text::Anchor>,
+        _: &mut App,
+    ) -> Option<Task<anyhow::Result<Vec<project::InlayHint>>>> {
+        None
+    }
+
     fn resolve_inlay_hint(
         &self,
         hint: project::InlayHint,
@@ -507,7 +516,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         buffer: &Entity<Buffer>,
         position: text::Anchor,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Vec<project::DocumentHighlight>>>> {
+    ) -> Option<Task<anyhow::Result<Vec<project::DocumentHighlight>>>> {
         let buffer = self.to_base(&buffer, &[position], cx)?;
         self.0.document_highlights(&buffer, position, cx)
     }
@@ -518,7 +527,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         position: text::Anchor,
         kind: crate::GotoDefinitionKind,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Vec<project::LocationLink>>>> {
+    ) -> Option<Task<anyhow::Result<Vec<project::LocationLink>>>> {
         let buffer = self.to_base(&buffer, &[position], cx)?;
         self.0.definitions(&buffer, position, kind, cx)
     }
@@ -528,7 +537,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         _: &Entity<Buffer>,
         _: text::Anchor,
         _: &mut App,
-    ) -> Option<Task<gpui::Result<Option<Range<text::Anchor>>>>> {
+    ) -> Option<Task<anyhow::Result<Option<Range<text::Anchor>>>>> {
         None
     }
 
@@ -538,7 +547,7 @@ impl SemanticsProvider for BranchBufferSemanticsProvider {
         _: text::Anchor,
         _: String,
         _: &mut App,
-    ) -> Option<Task<gpui::Result<project::ProjectTransaction>>> {
+    ) -> Option<Task<anyhow::Result<project::ProjectTransaction>>> {
         None
     }
 }

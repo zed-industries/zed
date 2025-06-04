@@ -11,7 +11,7 @@ use ui::{
 
 use crate::{Item, Workspace};
 
-actions!(debug, [OpenThemePreview]);
+actions!(dev, [OpenThemePreview]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
@@ -80,9 +80,9 @@ impl Item for ThemePreview {
 
     fn to_item_events(_: &Self::Event, _: impl FnMut(crate::item::ItemEvent)) {}
 
-    fn tab_content_text(&self, window: &Window, cx: &App) -> Option<SharedString> {
+    fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
         let name = cx.theme().name.clone();
-        Some(format!("{} Preview", name).into())
+        format!("{} Preview", name).into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

@@ -6,7 +6,7 @@ use gpui::{
 };
 use itertools::Itertools;
 
-#[derive(Debug, IntoElement, Clone)]
+#[derive(Debug, IntoElement, Clone, RegisterComponent)]
 pub struct KeyBinding {
     /// A keybinding consists of a key and a set of modifier keys.
     /// More then one keybinding produces a chord.
@@ -378,12 +378,7 @@ pub fn text_for_keystroke(keystroke: &Keystroke, cx: &App) -> String {
 /// Returns a textual representation of the given [`Keystroke`].
 fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode: bool) -> String {
     let mut text = String::new();
-
-    let delimiter = match (platform_style, vim_mode) {
-        (PlatformStyle::Mac, false) => '-',
-        (PlatformStyle::Linux | PlatformStyle::Windows, false) => '-',
-        (_, true) => '-',
-    };
+    let delimiter = '-';
 
     if keystroke.modifiers.function {
         match vim_mode {
@@ -447,6 +442,93 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
     }
 
     text
+}
+
+impl Component for KeyBinding {
+    fn scope() -> ComponentScope {
+        ComponentScope::Typography
+    }
+
+    fn name() -> &'static str {
+        "KeyBinding"
+    }
+
+    fn description() -> Option<&'static str> {
+        Some(
+            "A component that displays a key binding, supporting different platform styles and vim mode.",
+        )
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic Usage",
+                        vec![
+                            single_example(
+                                "Default",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Mac Style",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("cmd-s", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .platform_style(PlatformStyle::Mac)
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Windows Style",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .platform_style(PlatformStyle::Windows)
+                                .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Vim Mode",
+                        vec![single_example(
+                            "Vim Mode Enabled",
+                            KeyBinding::new(gpui::KeyBinding::new("dd", gpui::NoAction, None), cx)
+                                .vim_mode(true)
+                                .into_any_element(),
+                        )],
+                    ),
+                    example_group_with_title(
+                        "Complex Bindings",
+                        vec![
+                            single_example(
+                                "Multiple Keys",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("ctrl-k ctrl-b", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "With Shift",
+                                KeyBinding::new(
+                                    gpui::KeyBinding::new("shift-cmd-p", gpui::NoAction, None),
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
+    }
 }
 
 #[cfg(test)]

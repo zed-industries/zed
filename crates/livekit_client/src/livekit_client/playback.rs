@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
@@ -336,7 +336,7 @@ pub(crate) async fn capture_local_video_track(
     .await?;
 
     let capture_stream = capture_source
-        .stream({
+        .stream(cx.foreground_executor(), {
             let track_source = track_source.clone();
             Box::new(move |frame| {
                 if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
@@ -365,14 +365,14 @@ fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamCon
     if input {
         device = cpal::default_host()
             .default_input_device()
-            .ok_or_else(|| anyhow!("no audio input device available"))?;
+            .context("no audio input device available")?;
         config = device
             .default_input_config()
             .context("failed to get default input config")?;
     } else {
         device = cpal::default_host()
             .default_output_device()
-            .ok_or_else(|| anyhow!("no audio output device available"))?;
+            .context("no audio output device available")?;
         config = device
             .default_output_config()
             .context("failed to get default output config")?;
@@ -493,10 +493,7 @@ fn create_buffer_pool(
     ]);
 
     pixel_buffer_pool::CVPixelBufferPool::new(None, Some(&buffer_attributes)).map_err(|cv_return| {
-        anyhow!(
-            "failed to create pixel buffer pool: CVReturn({})",
-            cv_return
-        )
+        anyhow::anyhow!("failed to create pixel buffer pool: CVReturn({cv_return})",)
     })
 }
 
@@ -620,7 +617,49 @@ fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn video_frame_buffer_to_webrtc(frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
+    use libwebrtc::native::yuv_helper::argb_to_nv12;
+    use livekit::webrtc::prelude::NV12Buffer;
+    match frame.0 {
+        scap::frame::Frame::BGRx(frame) => {
+            let mut buffer = NV12Buffer::new(frame.width as u32, frame.height as u32);
+            let (stride_y, stride_uv) = buffer.strides();
+            let (data_y, data_uv) = buffer.data_mut();
+            argb_to_nv12(
+                &frame.data,
+                frame.width as u32 * 4,
+                data_y,
+                stride_y,
+                data_uv,
+                stride_uv,
+                frame.width,
+                frame.height,
+            );
+            Some(buffer)
+        }
+        scap::frame::Frame::YUVFrame(yuvframe) => {
+            let mut buffer = NV12Buffer::with_strides(
+                yuvframe.width as u32,
+                yuvframe.height as u32,
+                yuvframe.luminance_stride as u32,
+                yuvframe.chrominance_stride as u32,
+            );
+            let (luminance, chrominance) = buffer.data_mut();
+            luminance.copy_from_slice(yuvframe.luminance_bytes.as_slice());
+            chrominance.copy_from_slice(yuvframe.chrominance_bytes.as_slice());
+            Some(buffer)
+        }
+        _ => {
+            log::error!(
+                "Expected BGRx or YUV frame from scap screen capture but got some other format."
+            );
+            None
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef<dyn VideoBuffer>> {
     None as Option<Box<dyn VideoBuffer>>
 }
@@ -665,7 +704,7 @@ mod macos {
     }
 
     impl super::DeviceChangeListenerApi for CoreAudioDefaultDeviceChangeListener {
-        fn new(input: bool) -> gpui::Result<Self> {
+        fn new(input: bool) -> anyhow::Result<Self> {
             let (tx, rx) = futures::channel::mpsc::unbounded();
 
             let callback = Box::new(PropertyListenerCallbackWrapper(Box::new(move || {

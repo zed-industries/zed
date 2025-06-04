@@ -1,8 +1,11 @@
 use std::time::{Duration, Instant};
 
-use crate::{AnyElement, App, Element, ElementId, GlobalElementId, IntoElement, Window};
+use crate::{
+    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,
+};
 
 pub use easing::*;
+use smallvec::SmallVec;
 
 /// An animation that can be applied to an element.
 pub struct Animation {
@@ -56,8 +59,26 @@ pub trait AnimationExt {
         AnimationElement {
             id: id.into(),
             element: Some(self),
+            animator: Box::new(move |this, _, value| animator(this, value)),
+            animations: smallvec::smallvec![animation],
+        }
+    }
+
+    /// Render this component or element with a chain of animations
+    fn with_animations(
+        self,
+        id: impl Into<ElementId>,
+        animations: Vec<Animation>,
+        animator: impl Fn(Self, usize, f32) -> Self + 'static,
+    ) -> AnimationElement<Self>
+    where
+        Self: Sized,
+    {
+        AnimationElement {
+            id: id.into(),
+            element: Some(self),
             animator: Box::new(animator),
-            animation,
+            animations: animations.into(),
         }
     }
 }
@@ -68,8 +89,8 @@ impl<E> AnimationExt for E {}
 pub struct AnimationElement<E> {
     id: ElementId,
     element: Option<E>,
-    animation: Animation,
-    animator: Box<dyn Fn(E, f32) -> E + 'static>,
+    animations: SmallVec<[Animation; 1]>,
+    animator: Box<dyn Fn(E, usize, f32) -> E + 'static>,
 }
 
 impl<E> AnimationElement<E> {
@@ -91,6 +112,7 @@ impl<E: IntoElement + 'static> IntoElement for AnimationElement<E> {
 
 struct AnimationState {
     start: Instant,
+    animation_ix: usize,
 }
 
 impl<E: IntoElement + 'static> Element for AnimationElement<E> {
@@ -101,29 +123,42 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         Some(self.id.clone())
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(global_id.unwrap(), |state, window| {
-            let state = state.unwrap_or_else(|| AnimationState {
+            let mut state = state.unwrap_or_else(|| AnimationState {
                 start: Instant::now(),
+                animation_ix: 0,
             });
-            let mut delta =
-                state.start.elapsed().as_secs_f32() / self.animation.duration.as_secs_f32();
+            let animation_ix = state.animation_ix;
+
+            let mut delta = state.start.elapsed().as_secs_f32()
+                / self.animations[animation_ix].duration.as_secs_f32();
 
             let mut done = false;
             if delta > 1.0 {
-                if self.animation.oneshot {
-                    done = true;
+                if self.animations[animation_ix].oneshot {
+                    if animation_ix >= self.animations.len() - 1 {
+                        done = true;
+                    } else {
+                        state.start = Instant::now();
+                        state.animation_ix += 1;
+                    }
                     delta = 1.0;
                 } else {
                     delta %= 1.0;
                 }
             }
-            let delta = (self.animation.easing)(delta);
+            let delta = (self.animations[animation_ix].easing)(delta);
 
             debug_assert!(
                 (0.0..=1.0).contains(&delta),
@@ -131,7 +166,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             );
 
             let element = self.element.take().expect("should only be called once");
-            let mut element = (self.animator)(element, delta).into_any_element();
+            let mut element = (self.animator)(element, animation_ix, delta).into_any_element();
 
             if !done {
                 window.request_animation_frame();
@@ -144,6 +179,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -155,6 +191,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,

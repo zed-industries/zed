@@ -18,7 +18,8 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 [dependencies]
 anyhow.workspace = true
 async-recursion = "0.3"
-async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
+async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
+base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
 collections.workspace = true
@@ -26,8 +27,10 @@ credentials_provider.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
+gpui_tokio.workspace = true
 http_client.workspace = true
 http_client_tls.workspace = true
+httparse = "1.10"
 log.workspace = true
 paths.workspace = true
 parking_lot.workspace = true
@@ -51,6 +54,7 @@ url.workspace = true
 util.workspace = true
 worktree.workspace = true
 telemetry.workspace = true
+tokio.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
@@ -67,4 +71,10 @@ windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa.workspace = true
-async-native-tls = { version = "0.5.0", features = ["vendored"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tokio-native-tls = "0.3"
+
+[target.'cfg(not(any(target_os = "windows", target_os = "macos")))'.dependencies]
+rustls-pki-types = "1.12"
+tokio-rustls = { version = "0.26", features = ["tls12", "ring"], default-features = false }

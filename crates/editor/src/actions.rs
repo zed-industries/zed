@@ -3,6 +3,7 @@ use super::*;
 use gpui::{action_as, action_with_deprecated_aliases, actions};
 use schemars::JsonSchema;
 use util::serde::default_true;
+
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelectNext {
@@ -73,10 +74,20 @@ pub struct SelectToEndOfLine {
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToggleCodeActions {
-    // Display row from which the action was deployed.
+    // Source from which the action was deployed.
     #[serde(default)]
     #[serde(skip)]
-    pub deployed_from_indicator: Option<DisplayRow>,
+    pub deployed_from: Option<CodeActionSource>,
+    // Run first available task if there is only one.
+    #[serde(default)]
+    #[serde(skip)]
+    pub quick_launch: bool,
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub enum CodeActionSource {
+    Indicator(DisplayRow),
+    QuickActionBar,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -107,20 +118,6 @@ pub struct ToggleComments {
     pub advance_downwards: bool,
     #[serde(default)]
     pub ignore_indent: bool,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FoldAt {
-    #[serde(skip)]
-    pub buffer_row: MultiBufferRow,
-}
-
-#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct UnfoldAt {
-    #[serde(skip)]
-    pub buffer_row: MultiBufferRow,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -225,7 +222,6 @@ impl_actions!(
         ExpandExcerpts,
         ExpandExcerptsDown,
         ExpandExcerptsUp,
-        FoldAt,
         HandleInput,
         MoveDownByLines,
         MovePageDown,
@@ -243,7 +239,6 @@ impl_actions!(
         ShowCompletions,
         ToggleCodeActions,
         ToggleComments,
-        UnfoldAt,
         FoldAtLevel,
     ]
 );
@@ -260,8 +255,12 @@ actions!(
         ApplyDiffHunk,
         Backspace,
         Cancel,
+        CancelFlycheck,
         CancelLanguageServerWork,
+        ClearFlycheck,
         ConfirmRename,
+        ConfirmCompletionInsert,
+        ConfirmCompletionReplace,
         ContextMenuFirst,
         ContextMenuLast,
         ContextMenuNext,
@@ -296,6 +295,8 @@ actions!(
         DuplicateSelection,
         ExpandMacroRecursively,
         FindAllReferences,
+        FindNextMatch,
+        FindPreviousMatch,
         Fold,
         FoldAll,
         FoldFunctionBodies,
@@ -314,6 +315,9 @@ actions!(
         GoToPreviousHunk,
         GoToImplementation,
         GoToImplementationSplit,
+        GoToNextChange,
+        GoToParentModule,
+        GoToPreviousChange,
         GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
@@ -376,6 +380,7 @@ actions!(
         RevertFile,
         ReloadFile,
         Rewrap,
+        RunFlycheck,
         ScrollCursorBottom,
         ScrollCursorCenter,
         ScrollCursorCenterTopBottom,
@@ -417,18 +422,24 @@ actions!(
         Tab,
         Backtab,
         ToggleBreakpoint,
+        ToggleCase,
         DisableBreakpoint,
         EnableBreakpoint,
         EditLogBreakpoint,
+        DebuggerRunToCursor,
+        DebuggerEvaluateSelectedText,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         OpenGitBlameCommit,
+        ToggleDiagnostics,
         ToggleIndentGuides,
         ToggleSemanticTokens,
         ToggleInlayHints,
+        ToggleInlineValues,
         ToggleInlineDiagnostics,
         ToggleEditPrediction,
         ToggleLineNumbers,
+        ToggleMinimap,
         SwapSelectionEnds,
         SetMark,
         ToggleRelativeLineNumbers,

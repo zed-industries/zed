@@ -15,6 +15,7 @@ pub struct EventRequestBody {
     pub session_id: Option<String>,
     pub metrics_id: Option<String>,
     /// True for Zed staff, otherwise false
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_staff: Option<bool>,
     /// Zed version number
     pub app_version: String,

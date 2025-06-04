@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::Context;
 use collections::HashMap;
 use futures::{
     Future, FutureExt as _,
@@ -10,7 +10,7 @@ use proto::{
     error::ErrorExt as _,
 };
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     sync::{Arc, Weak},
 };
 
@@ -190,7 +190,7 @@ impl AnyProtoClient {
         let response = self.0.request(envelope, T::NAME);
         async move {
             T::Response::from_envelope(response.await?)
-                .ok_or_else(|| anyhow!("received response of the wrong type"))
+                .context("received response of the wrong type")
         }
     }
 
@@ -250,8 +250,7 @@ impl AnyProtoClient {
         let message_type_id = TypeId::of::<M>();
         let entity_type_id = TypeId::of::<E>();
         let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
-            envelope
-                .as_any()
+            (envelope as &dyn Any)
                 .downcast_ref::<TypedEnvelope<M>>()
                 .unwrap()
                 .payload
@@ -296,8 +295,7 @@ impl AnyProtoClient {
         let message_type_id = TypeId::of::<M>();
         let entity_type_id = TypeId::of::<E>();
         let entity_id_extractor = |envelope: &dyn AnyTypedEnvelope| {
-            envelope
-                .as_any()
+            (envelope as &dyn Any)
                 .downcast_ref::<TypedEnvelope<M>>()
                 .unwrap()
                 .payload

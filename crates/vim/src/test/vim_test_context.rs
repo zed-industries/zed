@@ -1,10 +1,12 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, Entity, SemanticVersion, UpdateGlobal};
+use gpui::{Context, Entity, SemanticVersion, UpdateGlobal, actions};
 use search::{BufferSearchBar, project_search::ProjectSearchBar};
 
 use crate::{state::Operator, *};
+
+actions!(agent, [Chat]);
 
 pub struct VimTestContext {
     cx: EditorLspTestContext,
@@ -140,6 +142,10 @@ impl VimTestContext {
 
     pub fn mode(&mut self) -> Mode {
         self.update_editor(|editor, _, cx| editor.addon::<VimAddon>().unwrap().entity.read(cx).mode)
+    }
+
+    pub fn forced_motion(&mut self) -> bool {
+        self.update_editor(|_, _, cx| cx.global::<VimGlobals>().forced_motion)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {

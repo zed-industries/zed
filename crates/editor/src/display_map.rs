@@ -33,7 +33,7 @@ use crate::{
 };
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
-    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, EditorMargins, RenderBlock,
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
@@ -49,12 +49,13 @@ pub use invisibles::{is_invisible, replacement};
 use language::{
     OffsetUtf16, Point, Subscription as BufferSubscription, language_settings::language_settings,
 };
-use lsp::DiagnosticSeverity;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    RowInfo, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, MultiBuffer, MultiBufferPoint, MultiBufferRow,
+    MultiBufferSnapshot, RowInfo, ToOffset, ToPoint,
 };
+use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
+
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -115,6 +116,7 @@ pub struct DisplayMap {
     pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
+    pub(crate) diagnostics_max_severity: DiagnosticSeverity,
 }
 
 impl DisplayMap {
@@ -126,6 +128,7 @@ impl DisplayMap {
         buffer_header_height: u32,
         excerpt_header_height: u32,
         fold_placeholder: FoldPlaceholder,
+        diagnostics_max_severity: DiagnosticSeverity,
         cx: &mut Context<Self>,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
@@ -153,6 +156,7 @@ impl DisplayMap {
             block_map,
             crease_map,
             fold_placeholder,
+            diagnostics_max_severity,
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
@@ -181,6 +185,7 @@ impl DisplayMap {
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
+            diagnostics_max_severity: self.diagnostics_max_severity,
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
             inlay_highlights: self.inlay_highlights.clone(),
@@ -269,6 +274,7 @@ impl DisplayMap {
                         height: Some(height),
                         style,
                         priority,
+                        render_in_minimap: true,
                     }
                 }),
         );
@@ -407,7 +413,7 @@ impl DisplayMap {
         &mut self,
         crease_ids: impl IntoIterator<Item = CreaseId>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Vec<(CreaseId, Range<Anchor>)> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         self.crease_map.remove(crease_ids, &snapshot)
     }
@@ -631,6 +637,21 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
+    pub fn remove_inlays_for_excerpts(&mut self, excerpts_removed: &[ExcerptId]) {
+        let to_remove = self
+            .inlay_map
+            .current_inlays()
+            .filter_map(|inlay| {
+                if excerpts_removed.contains(&inlay.position.excerpt_id) {
+                    Some(inlay.id)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.inlay_map.splice(&to_remove, Vec::new());
+    }
+
     fn tab_size(buffer: &Entity<MultiBuffer>, cx: &App) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
@@ -674,6 +695,7 @@ pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
+    pub is_inlay: bool,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -687,6 +709,7 @@ impl<'a> HighlightedChunk<'a> {
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
+        let is_inlay = self.is_inlay;
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -702,6 +725,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -728,6 +752,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -751,6 +776,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -763,6 +789,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
+                    is_inlay,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -786,6 +813,7 @@ pub struct DisplaySnapshot {
     inlay_highlights: InlayHighlights,
     clip_at_line_ends: bool,
     masked: bool,
+    diagnostics_max_severity: DiagnosticSeverity,
     pub(crate) fold_placeholder: FoldPlaceholder,
 }
 
@@ -855,10 +883,14 @@ impl DisplaySnapshot {
     // used by line_mode selections and tries to match vim behavior
     pub fn expand_to_line(&self, range: Range<Point>) -> Range<Point> {
         let new_start = MultiBufferPoint::new(range.start.row, 0);
-        let new_end = MultiBufferPoint::new(
-            range.end.row,
-            self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
-        );
+        let new_end = if range.end.column > 0 {
+            MultiBufferPoint::new(
+                range.end.row,
+                self.buffer_snapshot.line_len(MultiBufferRow(range.end.row)),
+            )
+        } else {
+            range.end
+        };
 
         new_start..new_end
     }
@@ -999,13 +1031,18 @@ impl DisplaySnapshot {
 
             let mut diagnostic_highlight = HighlightStyle::default();
 
-            if chunk.is_unnecessary {
-                diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
-            }
-
-            if let Some(severity) = chunk.diagnostic_severity {
-                // Omit underlines for HINT/INFO diagnostics on 'unnecessary' code.
-                if severity <= DiagnosticSeverity::WARNING || !chunk.is_unnecessary {
+            if let Some(severity) = chunk.diagnostic_severity.filter(|severity| {
+                self.diagnostics_max_severity
+                    .into_lsp()
+                    .map_or(false, |max_severity| severity <= &max_severity)
+            }) {
+                if chunk.is_unnecessary {
+                    diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
+                }
+                if chunk.underline
+                    && editor_style.show_underlines
+                    && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
+                {
                     let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
                     diagnostic_highlight.underline = Some(UnderlineStyle {
                         color: Some(diagnostic_color),
@@ -1025,6 +1062,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style: highlight_style,
                 is_tab: chunk.is_tab,
+                is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
@@ -1070,9 +1108,7 @@ impl DisplaySnapshot {
         }
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system
-            .layout_line(&line, font_size, &runs)
-            .expect("we expect the font to be loaded because it's rendered by the editor")
+        text_system.layout_line(&line, font_size, &runs)
     }
 
     pub fn x_for_display_point(
@@ -1598,6 +1634,7 @@ pub mod tests {
                 buffer_start_excerpt_header_height,
                 excerpt_header_height,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -1667,6 +1704,7 @@ pub mod tests {
                                         height: Some(height),
                                         render: Arc::new(|_| div().into_any()),
                                         priority,
+                                        render_in_minimap: true,
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1815,7 +1853,6 @@ pub mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
     #[gpui::test(retries = 5)]
     async fn test_soft_wraps(cx: &mut gpui::TestAppContext) {
         cx.background_executor
@@ -1833,7 +1870,7 @@ pub mod tests {
                 editor.update(cx, |editor, _cx| editor.text_layout_details(window));
 
             let font_size = px(12.0);
-            let wrap_width = Some(px(64.));
+            let wrap_width = Some(px(96.));
 
             let text = "one two three four five\nsix seven eight";
             let buffer = MultiBuffer::build_simple(text, cx);
@@ -1846,6 +1883,7 @@ pub mod tests {
                     1,
                     1,
                     FoldPlaceholder::test(),
+                    DiagnosticSeverity::Warning,
                     cx,
                 )
             });
@@ -1955,6 +1993,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2016,6 +2055,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2030,6 +2070,7 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2108,6 +2149,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2208,6 +2250,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2225,6 +2268,7 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
+                        render_in_minimap: true,
                     },
                     BlockProperties {
                         placement: BlockPlacement::Below(
@@ -2234,6 +2278,7 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
+                        render_in_minimap: true,
                     },
                 ],
                 cx,
@@ -2287,7 +2332,7 @@ pub mod tests {
                     [DiagnosticEntry {
                         range: PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
                         diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
+                            severity: lsp::DiagnosticSeverity::ERROR,
                             group_id: 1,
                             message: "hi".into(),
                             ..Default::default()
@@ -2311,6 +2356,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2339,13 +2385,14 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             )
         });
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        let mut chunks = Vec::<(String, Option<DiagnosticSeverity>, Rgba)>::new();
+        let mut chunks = Vec::<(String, Option<lsp::DiagnosticSeverity>, Rgba)>::new();
         for chunk in snapshot.chunks(DisplayRow(0)..DisplayRow(5), true, Default::default()) {
             let color = chunk
                 .highlight_style
@@ -2366,11 +2413,11 @@ pub mod tests {
             [
                 (
                     "struct A {\n    b: usize;\n".into(),
-                    Some(DiagnosticSeverity::ERROR),
+                    Some(lsp::DiagnosticSeverity::ERROR),
                     black
                 ),
                 ("\n".into(), None, black),
-                ("}".into(), Some(DiagnosticSeverity::ERROR), black),
+                ("}".into(), Some(lsp::DiagnosticSeverity::ERROR), black),
                 ("\nconst c: ".into(), None, black),
                 ("usize".into(), None, red),
                 (" = ".into(), None, black),
@@ -2398,6 +2445,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2413,6 +2461,7 @@ pub mod tests {
                     style: BlockStyle::Fixed,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
+                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2484,8 +2533,6 @@ pub mod tests {
         }
     }
 
-    // todo(linux) fails due to pixel differences in text rendering
-    #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
         cx.background_executor
@@ -2540,6 +2587,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2547,7 +2595,9 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
-                ("oute\nr".to_string(), Some(Hsla::blue())),
+                ("oute".to_string(), Some(Hsla::blue())),
+                ("\n".to_string(), None),
+                ("r".to_string(), Some(Hsla::blue())),
                 ("() \n{}\n\n".to_string(), None),
             ]
         );
@@ -2570,8 +2620,11 @@ pub mod tests {
             [
                 ("out".to_string(), Some(Hsla::blue())),
                 ("⋯\n".to_string(), None),
-                ("  \nfn ".to_string(), Some(Hsla::red())),
-                ("i\n".to_string(), Some(Hsla::blue()))
+                ("  ".to_string(), Some(Hsla::red())),
+                ("\n".to_string(), None),
+                ("fn ".to_string(), Some(Hsla::red())),
+                ("i".to_string(), Some(Hsla::blue())),
+                ("\n".to_string(), None)
             ]
         );
     }
@@ -2622,6 +2675,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2746,6 +2800,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             );
             let snapshot = map.buffer.read(cx).snapshot(cx);
@@ -2783,6 +2838,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -2858,6 +2914,7 @@ pub mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });

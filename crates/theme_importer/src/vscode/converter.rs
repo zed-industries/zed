@@ -169,9 +169,14 @@ impl VsCodeThemeConverter {
                 .scrollbar_slider
                 .hover_background
                 .clone(),
+            scrollbar_thumb_active_background: vscode_colors
+                .scrollbar_slider
+                .active_background
+                .clone(),
             scrollbar_thumb_border: vscode_scrollbar_slider_background.clone(),
             scrollbar_track_background: vscode_editor_background.clone(),
             scrollbar_track_border: vscode_colors.editor_overview_ruler.border.clone(),
+            minimap_thumb_background: vscode_colors.minimap_slider.background.clone(),
             editor_foreground: vscode_editor_foreground
                 .clone()
                 .or(vscode_token_colors_foreground.clone()),
