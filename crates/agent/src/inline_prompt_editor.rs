@@ -1,4 +1,4 @@
-use crate::agent_model_selector::{AgentModelSelector, ModelType};
+use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context::ContextCreasesAddon;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
@@ -7,7 +7,7 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::{extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::{TextThreadStore, ThreadStore};
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
+use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 use crate::{RemoveAllContext, ToggleContextPicker};
 use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::ErrorExt;
@@ -930,7 +930,7 @@ impl PromptEditor<BufferCodegen> {
                     fs,
                     model_selector_menu_handle,
                     prompt_editor.focus_handle(cx),
-                    ModelType::InlineAssistant,
+                    ModelUsageContext::InlineAssistant,
                     window,
                     cx,
                 )
@@ -1101,7 +1101,7 @@ impl PromptEditor<TerminalCodegen> {
                     fs,
                     model_selector_menu_handle.clone(),
                     prompt_editor.focus_handle(cx),
-                    ModelType::InlineAssistant,
+                    ModelUsageContext::InlineAssistant,
                     window,
                     cx,
                 )
