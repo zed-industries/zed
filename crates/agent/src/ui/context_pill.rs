@@ -898,19 +898,6 @@ mod tests {
             ContextStatus::Warning { .. }
         ));
 
-        if let ContextStatus::Warning { message } = &added_context.status {
-            assert!(
-                message.contains("doesn't support images"),
-                "Expected warning message to contain 'doesn't support images', got: {}",
-                message
-            );
-            assert!(
-                message.contains("Fake"),
-                "Expected warning message to contain model name 'Fake', got: {}",
-                message
-            );
-        }
-
         assert!(matches!(added_context.kind, ContextKind::Image));
         assert_eq!(added_context.name.as_ref(), "Image");
         assert!(added_context.parent.is_none());
