@@ -133,7 +133,6 @@ use project::{
         },
         session::{Session, SessionEvent},
     },
-    lsp_command::file_path_to_lsp_url,
     project_settings::DiagnosticSeverity,
 };
 
@@ -20899,19 +20898,8 @@ impl SemanticsProvider for Entity<Project> {
                                 },
                                 DiagnosticSourceKind::Pulled,
                                 disk_based_sources,
-                                |buffer, old_diagnostic, cx| match old_diagnostic.source_kind {
-                                    DiagnosticSourceKind::Pulled => {
-                                        let Some(file) = buffer.file().and_then(|f| f.as_local())
-                                        else {
-                                            return false;
-                                        };
-                                        let Ok(buffer_uri) =
-                                            file_path_to_lsp_url(&file.abs_path(cx))
-                                        else {
-                                            return false;
-                                        };
-                                        buffer_uri != uri
-                                    }
+                                |old_diagnostic, _| match old_diagnostic.source_kind {
+                                    DiagnosticSourceKind::Pulled => false,
                                     DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
                                         true
                                     }

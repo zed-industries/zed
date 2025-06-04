@@ -482,7 +482,7 @@ impl LocalLspStore {
                                 params,
                                 DiagnosticSourceKind::Pushed,
                                 &adapter.disk_based_diagnostic_sources,
-                                |_, diagnostic, cx| match diagnostic.source_kind {
+                                |diagnostic, cx| match diagnostic.source_kind {
                                     DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
                                         adapter.retain_old_diagnostic(diagnostic, cx)
                                     }
@@ -6601,17 +6601,10 @@ impl LspStore {
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        self.merge_diagnostic_entries(
-            server_id,
-            abs_path,
-            version,
-            diagnostics,
-            |_, _, _| false,
-            cx,
-        )
+        self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_, _| false, cx)
     }
 
-    pub fn merge_diagnostic_entries<F: Fn(&Buffer, &Diagnostic, &App) -> bool + Clone>(
+    pub fn merge_diagnostic_entries<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
@@ -6644,16 +6637,14 @@ impl LspStore {
                     .get_diagnostics(server_id)
                     .into_iter()
                     .flat_map(|diag| {
-                        diag.iter()
-                            .filter(|v| filter(buffer, &v.diagnostic, cx))
-                            .map(|v| {
-                                let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
-                                let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
-                                DiagnosticEntry {
-                                    range: start..end,
-                                    diagnostic: v.diagnostic.clone(),
-                                }
-                            })
+                        diag.iter().filter(|v| filter(&v.diagnostic, cx)).map(|v| {
+                            let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
+                            let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
+                            DiagnosticEntry {
+                                range: start..end,
+                                diagnostic: v.diagnostic.clone(),
+                            }
+                        })
                     }),
             );
 
@@ -8889,12 +8880,12 @@ impl LspStore {
             params,
             source_kind,
             disk_based_sources,
-            |_, _, _| false,
+            |_, _| false,
             cx,
         )
     }
 
-    pub fn merge_diagnostics<F: Fn(&Buffer, &Diagnostic, &App) -> bool + Clone>(
+    pub fn merge_diagnostics<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,

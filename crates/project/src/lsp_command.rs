@@ -50,7 +50,7 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
     }
 }
 
-pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
+fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
     match lsp::Url::from_file_path(path) {
         Ok(url) => Ok(url),
         Err(()) => anyhow::bail!("Invalid file path provided to LSP request: {path:?}"),
