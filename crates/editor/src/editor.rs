@@ -10919,7 +10919,6 @@ impl Editor {
         let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
         for (language_settings, language_scope, range) in ranges {
-            dbg!(&range);
             let mut start_row = range.start.row;
             let mut end_row = range.end.row;
 
