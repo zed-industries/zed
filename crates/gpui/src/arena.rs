@@ -20,16 +20,15 @@ impl Drop for ArenaElement {
     }
 }
 
-pub struct Arena {
+struct Chunk {
     start: *mut u8,
     end: *mut u8,
     offset: *mut u8,
-    elements: Vec<ArenaElement>,
-    valid: Rc<Cell<bool>>,
+    size_in_bytes: usize,
 }
 
-impl Arena {
-    pub fn new(size_in_bytes: usize) -> Self {
+impl Chunk {
+    fn new(size_in_bytes: usize) -> Self {
         unsafe {
             let layout = alloc::Layout::from_size_align(size_in_bytes, 1).unwrap();
             let start = alloc::alloc(layout);
@@ -38,25 +37,68 @@ impl Arena {
                 start,
                 end,
                 offset: start,
-                elements: Vec::new(),
-                valid: Rc::new(Cell::new(true)),
+                size_in_bytes,
             }
         }
     }
 
+    fn allocate(&mut self, layout: alloc::Layout) -> Option<*mut u8> {
+        unsafe {
+            let aligned = self.offset.add(self.offset.align_offset(layout.align()));
+            let next = aligned.add(layout.size());
+
+            if next <= self.end {
+                self.offset = next;
+                Some(aligned)
+            } else {
+                None
+            }
+        }
+    }
+
+    fn reset(&mut self) {
+        self.offset = self.start;
+    }
+}
+
+pub struct Arena {
+    chunks: Vec<Chunk>,
+    elements: Vec<ArenaElement>,
+    valid: Rc<Cell<bool>>,
+    current_chunk: usize,
+    chunk_size: usize,
+}
+
+impl Arena {
+    pub fn new(chunk_size: usize) -> Self {
+        Self {
+            chunks: vec![Chunk::new(chunk_size)],
+            elements: Vec::new(),
+            valid: Rc::new(Cell::new(true)),
+            current_chunk: 0,
+            chunk_size,
+        }
+    }
+
     pub fn len(&self) -> usize {
-        self.offset as usize - self.start as usize
+        self.chunks
+            .iter()
+            .map(|c| unsafe { c.offset.offset_from(c.start) as usize })
+            .sum()
     }
 
     pub fn capacity(&self) -> usize {
-        self.end as usize - self.start as usize
+        self.chunks.iter().map(|c| c.size_in_bytes).sum()
     }
 
     pub fn clear(&mut self) {
         self.valid.set(false);
         self.valid = Rc::new(Cell::new(true));
         self.elements.clear();
-        self.offset = self.start;
+        self.current_chunk = 0;
+        for chunk in &mut self.chunks {
+            chunk.reset()
+        }
     }
 
     #[inline(always)]
@@ -79,23 +121,40 @@ impl Arena {
 
         unsafe {
             let layout = alloc::Layout::new::<T>();
-            let offset = self.offset.add(self.offset.align_offset(layout.align()));
-            let next_offset = offset.add(layout.size());
-            assert!(next_offset <= self.end, "not enough space in Arena");
+            let mut current_chunk = self.chunks.get_mut(self.current_chunk).unwrap();
+            let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
+                ptr
+            } else if self.current_chunk + 1 < self.chunks.len() {
+                self.current_chunk += 1;
+                self.chunks
+                    .get_mut(self.current_chunk)
+                    .unwrap()
+                    .allocate(layout)
+                    .unwrap()
+            } else {
+                let chunk_size = self.chunk_size.max(layout.size().next_power_of_two());
+                self.chunks.push(Chunk::new(chunk_size));
+                self.current_chunk += 1;
+                let ptr = self.chunks.last_mut().unwrap().allocate(layout).unwrap();
+                log::info!(
+                    "elevated element arena capacity to: {} with total usage: {}.",
+                    self.capacity(),
+                    self.len()
+                );
 
-            let result = ArenaBox {
-                ptr: offset.cast(),
-                valid: self.valid.clone(),
+                ptr
             };
 
-            inner_writer(result.ptr, f);
+            inner_writer(ptr.cast(), f);
             self.elements.push(ArenaElement {
-                value: offset,
+                value: ptr,
                 drop: drop::<T>,
             });
-            self.offset = next_offset;
 
-            result
+            ArenaBox {
+                ptr: ptr.cast(),
+                valid: self.valid.clone(),
+            }
         }
     }
 }
@@ -103,6 +162,14 @@ impl Arena {
 impl Drop for Arena {
     fn drop(&mut self) {
         self.clear();
+        for chunk in &mut self.chunks {
+            unsafe {
+                alloc::dealloc(
+                    chunk.start,
+                    alloc::Layout::from_size_align(chunk.size_in_bytes, 1).unwrap(),
+                );
+            }
+        }
     }
 }
 
@@ -215,13 +282,17 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "not enough space in Arena")]
-    fn test_arena_overflow() {
-        let mut arena = Arena::new(16);
+    fn test_arena_grow() {
+        let mut arena = Arena::new(8);
         arena.alloc(|| 1u64);
         arena.alloc(|| 2u64);
-        // This should panic.
-        arena.alloc(|| 3u64);
+
+        assert_eq!(arena.capacity(), 16);
+
+        arena.alloc(|| 3u32);
+        arena.alloc(|| 4u32);
+
+        assert_eq!(arena.capacity(), 24);
     }
 
     #[test]
