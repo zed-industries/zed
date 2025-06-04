@@ -1,12 +1,13 @@
 use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
-use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
+use std::{any::type_name, borrow::Cow, env, mem, pin::Pin, task::Poll, time::Duration};
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::{AsyncRead, TryStreamExt as _};
 use http_client::{RedirectPolicy, Url, http};
 use regex::Regex;
+use reqwest::header::AUTHORIZATION;
 use reqwest::{
     header::{HeaderMap, HeaderValue},
     redirect,
@@ -17,10 +18,20 @@ const DEFAULT_CAPACITY: usize = 4096;
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 static REDACT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"key=[^&]+").unwrap());
 
+fn is_github_domain(host: &str) -> bool {
+    host == "api.github.com"
+        || host == "github.com"
+        || host == "avatars.githubusercontent.com"
+        || host == "raw.githubusercontent.com"
+        || host == "uploads.github.com"
+        || host == "gist.github.com"
+}
+
 pub struct ReqwestClient {
     client: reqwest::Client,
     proxy: Option<Url>,
     handle: tokio::runtime::Handle,
+    github_token: Option<String>,
 }
 
 impl ReqwestClient {
@@ -91,10 +102,15 @@ impl From<reqwest::Client> for ReqwestClient {
 
             runtime.handle().clone()
         });
+        let github_token = env::var("GITHUB_TOKEN").ok();
+        if github_token.is_some() {
+            log::info!("GitHub token detected, will use authenticated requests for GitHub API");
+        }
         Self {
             client,
             handle,
             proxy: None,
+            github_token,
         }
     }
 }
@@ -222,7 +238,26 @@ impl http_client::HttpClient for ReqwestClient {
         'static,
         anyhow::Result<http_client::Response<http_client::AsyncBody>>,
     > {
-        let (parts, body) = req.into_parts();
+        let (mut parts, body) = req.into_parts();
+
+        // Add GitHub token for GitHub API requests, if available and not already present.
+        // This increases the rate limit for requests to GitHub urls, which we hit often.
+        if let (Some(token), Some(host)) = (&self.github_token, parts.uri.host()) {
+            // Copilot expects oauth tokens, not personal tokens, so use that if already provided.
+            if !parts.headers.contains_key(AUTHORIZATION) && is_github_domain(host) {
+                match HeaderValue::from_str(&format!("Bearer {}", token)) {
+                    Ok(header_value) => {
+                        parts.headers.insert(AUTHORIZATION, header_value);
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Invalid GITHUB_TOKEN format, skipping authentication: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
 
         let mut request = self.client.request(parts.method, parts.uri.to_string());
         request = request.headers(parts.headers);
@@ -270,7 +305,7 @@ impl http_client::HttpClient for ReqwestClient {
 mod tests {
     use http_client::{HttpClient, Url};
 
-    use crate::ReqwestClient;
+    use crate::{ReqwestClient, is_github_domain};
 
     #[test]
     fn test_proxy_uri() {
@@ -310,5 +345,20 @@ mod tests {
             client.proxy.is_none(),
             "An invalid proxy URL should add no proxy to the client!"
         )
+    }
+
+    #[test]
+    fn test_github_domain_detection() {
+        assert!(is_github_domain("api.github.com"));
+        assert!(is_github_domain("github.com"));
+        assert!(is_github_domain("avatars.githubusercontent.com"));
+        assert!(is_github_domain("raw.githubusercontent.com"));
+        assert!(is_github_domain("uploads.github.com"));
+        assert!(is_github_domain("gist.github.com"));
+
+        assert!(!is_github_domain("codeload.githubusercontent.com"));
+        assert!(!is_github_domain("example.com"));
+        assert!(!is_github_domain("gitlab.com"));
+        assert!(!is_github_domain("api.gitlab.com"));
     }
 }
