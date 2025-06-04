@@ -4788,7 +4788,7 @@ impl Component for PanelRepoFooter {
 #[cfg(test)]
 mod tests {
     use git::status::StatusCode;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, VisualTestContext};
     use project::{FakeFs, WorktreeSettings};
     use serde_json::json;
     use settings::SettingsStore;
@@ -4852,8 +4852,9 @@ mod tests {
 
         let project =
             Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
         cx.read(|cx| {
             project
@@ -4870,10 +4871,7 @@ mod tests {
 
         cx.executor().run_until_parked();
 
-        let app_state = workspace.read_with(cx, |workspace, _| workspace.app_state().clone());
-        let panel = cx.new_window_entity(|window, cx| {
-            GitPanel::new(workspace.clone(), project.clone(), app_state, window, cx)
-        });
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
 
         let handle = cx.update_window_entity(&panel, |panel, _, _| {
             std::mem::replace(&mut panel.update_visible_entries_task, Task::ready(()))
