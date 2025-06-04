@@ -513,8 +513,8 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     assert_eq!(
         result
-            .unwrap()
             .into_iter()
+            .flat_map(|response| response.completions)
             .map(|c| c.label.text)
             .collect::<Vec<_>>(),
         vec!["boop".to_string()]

@@ -33,7 +33,7 @@ use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
-use zed_actions::{OpenBrowser, OpenZedUrl};
+use zed_actions::OpenBrowser;
 use zed_llm_client::UsageLimit;
 use zeta::RateCompletions;
 
@@ -735,13 +735,8 @@ impl InlineCompletionButton {
                         move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
                     )
                     .when(usage.over_limit(), |menu| -> ContextMenu {
-                        menu.entry("Subscribe to increase your limit", None, |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
+                        menu.entry("Subscribe to increase your limit", None, |_window, cx| {
+                            cx.open_url(&zed_urls::account_url(cx))
                         })
                     })
                     .separator();
@@ -763,26 +758,12 @@ impl InlineCompletionButton {
                                 )
                                 .into_any_element()
                         },
-                        |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
-                        },
+                        |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
                     )
                     .entry(
                         "You need to upgrade to Zed Pro or contact us.",
                         None,
-                        |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
-                        },
+                        |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
                     )
                     .separator();
             } else if self.user_store.read(cx).has_overdue_invoices() {
@@ -803,25 +784,15 @@ impl InlineCompletionButton {
                                 )
                                 .into_any_element()
                         },
-                        |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
+                        |_window, cx| {
+                            cx.open_url(&zed_urls::account_url(cx))
                         },
                     )
                     .entry(
                         "Check your payment status or contact us at billing-support@zed.dev to continue using this feature.",
                         None,
-                        |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
+                        |_window, cx| {
+                            cx.open_url(&zed_urls::account_url(cx))
                         },
                     )
                     .separator();

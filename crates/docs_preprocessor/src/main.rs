@@ -125,13 +125,43 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
     // Find the binding in reverse order, as the last binding takes precedence.
     keymap.sections().rev().find_map(|section| {
         section.bindings().rev().find_map(|(keystroke, a)| {
-            if a.to_string() == action {
+            if name_for_action(a.to_string()) == action {
                 Some(keystroke.to_string())
             } else {
                 None
             }
         })
     })
+}
+
+/// Removes any configurable options from the stringified action if existing,
+/// ensuring that only the actual action name is returned. If the action consists
+/// only of a string and nothing else, the string is returned as-is.
+///
+/// Example:
+///
+/// This will return the action name unmodified.
+///
+/// ```
+/// let action_as_str = "assistant::Assist";
+/// let action_name = name_for_action(action_as_str);
+/// assert_eq!(action_name, "assistant::Assist");
+/// ```
+///
+/// This will return the action name with any trailing options removed.
+///
+///
+/// ```
+/// let action_as_str = "\"editor::ToggleComments\", {\"advance_downwards\":false}";
+/// let action_name = name_for_action(action_as_str);
+/// assert_eq!(action_name, "editor::ToggleComments");
+/// ```
+fn name_for_action(action_as_str: String) -> String {
+    action_as_str
+        .split(",")
+        .next()
+        .map(|name| name.trim_matches('"').to_string())
+        .unwrap_or(action_as_str)
 }
 
 fn load_keymap(asset_path: &str) -> Result<KeymapFile> {

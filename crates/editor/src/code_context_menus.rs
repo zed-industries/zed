@@ -1,11 +1,11 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
-    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, div, px, uniform_list,
+    Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px, uniform_list,
 };
-use gpui::{AsyncWindowContext, WeakEntity};
-use language::Buffer;
+use itertools::Itertools;
 use language::CodeLabel;
+use language::{Buffer, LanguageName, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
@@ -15,6 +15,9 @@ use project::{CodeAction, Completion, TaskSourceKind};
 use task::DebugScenario;
 use task::TaskContext;
 
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     cell::RefCell,
     cmp::{Reverse, min},
@@ -40,6 +43,20 @@ pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
 pub const MENU_ASIDE_MIN_WIDTH: Pixels = px(260.);
 pub const MENU_ASIDE_MAX_WIDTH: Pixels = px(500.);
+
+// Constants for the markdown cache. The purpose of this cache is to reduce flickering due to
+// documentation not yet being parsed.
+//
+// The size of the cache is set to 16, which is roughly 3 times more than the number of items
+// fetched around the current selection. This way documentation is more often ready for render when
+// revisiting previous entries, such as when pressing backspace.
+const MARKDOWN_CACHE_MAX_SIZE: usize = 16;
+const MARKDOWN_CACHE_BEFORE_ITEMS: usize = 2;
+const MARKDOWN_CACHE_AFTER_ITEMS: usize = 2;
+
+// Number of items beyond the visible items to resolve documentation.
+const RESOLVE_BEFORE_ITEMS: usize = 4;
+const RESOLVE_AFTER_ITEMS: usize = 4;
 
 pub enum CodeContextMenu {
     Completions(CompletionsMenu),
@@ -148,13 +165,12 @@ impl CodeContextMenu {
 
     pub fn render_aside(
         &mut self,
-        editor: &Editor,
         max_size: Size<Pixels>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         match self {
-            CodeContextMenu::Completions(menu) => menu.render_aside(editor, max_size, window, cx),
+            CodeContextMenu::Completions(menu) => menu.render_aside(max_size, window, cx),
             CodeContextMenu::CodeActions(_) => None,
         }
     }
@@ -162,7 +178,7 @@ impl CodeContextMenu {
     pub fn focused(&self, window: &mut Window, cx: &mut Context<Editor>) -> bool {
         match self {
             CodeContextMenu::Completions(completions_menu) => completions_menu
-                .markdown_element
+                .get_or_create_entry_markdown(completions_menu.selected_item, cx)
                 .as_ref()
                 .is_some_and(|markdown| markdown.focus_handle(cx).contains_focused(window, cx)),
             CodeContextMenu::CodeActions(_) => false,
@@ -176,35 +192,70 @@ pub enum ContextMenuOrigin {
     QuickActionBar,
 }
 
-#[derive(Clone, Debug)]
 pub struct CompletionsMenu {
     pub id: CompletionId,
+    pub source: CompletionsMenuSource,
     sort_completions: bool,
     pub initial_position: Anchor,
+    pub initial_query: Option<Arc<String>>,
+    pub is_incomplete: bool,
     pub buffer: Entity<Buffer>,
     pub completions: Rc<RefCell<Box<[Completion]>>>,
-    match_candidates: Rc<[StringMatchCandidate]>,
-    pub entries: Rc<RefCell<Vec<StringMatch>>>,
+    match_candidates: Arc<[StringMatchCandidate]>,
+    pub entries: Rc<RefCell<Box<[StringMatch]>>>,
     pub selected_item: usize,
+    filter_task: Task<()>,
+    cancel_filter: Arc<AtomicBool>,
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
     show_completion_documentation: bool,
-    pub(super) ignore_completion_provider: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
-    markdown_element: Option<Entity<Markdown>>,
+    markdown_cache: Rc<RefCell<VecDeque<(MarkdownCacheKey, Entity<Markdown>)>>>,
+    language_registry: Option<Arc<LanguageRegistry>>,
+    language: Option<LanguageName>,
     snippet_sort_order: SnippetSortOrder,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum MarkdownCacheKey {
+    ForCandidate {
+        candidate_id: usize,
+    },
+    ForCompletionMatch {
+        new_text: String,
+        markdown_source: SharedString,
+    },
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CompletionsMenuSource {
+    Normal,
+    SnippetChoices,
+    Words,
+}
+
+// TODO: There should really be a wrapper around fuzzy match tasks that does this.
+impl Drop for CompletionsMenu {
+    fn drop(&mut self) {
+        self.cancel_filter.store(true, Ordering::Relaxed);
+    }
 }
 
 impl CompletionsMenu {
     pub fn new(
         id: CompletionId,
+        source: CompletionsMenuSource,
         sort_completions: bool,
         show_completion_documentation: bool,
-        ignore_completion_provider: bool,
         initial_position: Anchor,
+        initial_query: Option<Arc<String>>,
+        is_incomplete: bool,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
         snippet_sort_order: SnippetSortOrder,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        language: Option<LanguageName>,
+        cx: &mut Context<Editor>,
     ) -> Self {
         let match_candidates = completions
             .iter()
@@ -212,23 +263,33 @@ impl CompletionsMenu {
             .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
             .collect();
 
-        Self {
+        let completions_menu = Self {
             id,
+            source,
             sort_completions,
             initial_position,
+            initial_query,
+            is_incomplete,
             buffer,
             show_completion_documentation,
-            ignore_completion_provider,
             completions: RefCell::new(completions).into(),
             match_candidates,
-            entries: RefCell::new(Vec::new()).into(),
+            entries: Rc::new(RefCell::new(Box::new([]))),
             selected_item: 0,
+            filter_task: Task::ready(()),
+            cancel_filter: Arc::new(AtomicBool::new(false)),
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
-            markdown_element: None,
+            markdown_cache: RefCell::new(VecDeque::new()).into(),
+            language_registry,
+            language,
             snippet_sort_order,
-        }
+        };
+
+        completions_menu.start_markdown_parse_for_nearby_entries(cx);
+
+        completions_menu
     }
 
     pub fn new_snippet_choices(
@@ -271,22 +332,28 @@ impl CompletionsMenu {
                 positions: vec![],
                 string: completion.clone(),
             })
-            .collect::<Vec<_>>();
+            .collect();
         Self {
             id,
+            source: CompletionsMenuSource::SnippetChoices,
             sort_completions,
             initial_position: selection.start,
+            initial_query: None,
+            is_incomplete: false,
             buffer,
             completions: RefCell::new(completions).into(),
             match_candidates,
             entries: RefCell::new(entries).into(),
             selected_item: 0,
+            filter_task: Task::ready(()),
+            cancel_filter: Arc::new(AtomicBool::new(false)),
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,
-            ignore_completion_provider: false,
             last_rendered_range: RefCell::new(None).into(),
-            markdown_element: None,
+            markdown_cache: RefCell::new(VecDeque::new()).into(),
+            language_registry: None,
+            language: None,
             snippet_sort_order,
         }
     }
@@ -356,13 +423,7 @@ impl CompletionsMenu {
     ) {
         if self.selected_item != match_index {
             self.selected_item = match_index;
-            self.scroll_handle
-                .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-            self.resolve_visible_completions(provider, cx);
-            if let Some(provider) = provider {
-                self.handle_selection_changed(provider, window, cx);
-            }
-            cx.notify();
+            self.handle_selection_changed(provider, window, cx);
         }
     }
 
@@ -383,18 +444,25 @@ impl CompletionsMenu {
     }
 
     fn handle_selection_changed(
-        &self,
-        provider: &dyn CompletionProvider,
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
         window: &mut Window,
-        cx: &mut App,
+        cx: &mut Context<Editor>,
     ) {
-        let entries = self.entries.borrow();
-        let entry = if self.selected_item < entries.len() {
-            Some(&entries[self.selected_item])
-        } else {
-            None
-        };
-        provider.selection_changed(entry, window, cx);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+        if let Some(provider) = provider {
+            let entries = self.entries.borrow();
+            let entry = if self.selected_item < entries.len() {
+                Some(&entries[self.selected_item])
+            } else {
+                None
+            };
+            provider.selection_changed(entry, window, cx);
+        }
+        self.resolve_visible_completions(provider, cx);
+        self.start_markdown_parse_for_nearby_entries(cx);
+        cx.notify();
     }
 
     pub fn resolve_visible_completions(
@@ -409,6 +477,19 @@ impl CompletionsMenu {
             return;
         };
 
+        let entries = self.entries.borrow();
+        if entries.is_empty() {
+            return;
+        }
+        if self.selected_item >= entries.len() {
+            log::error!(
+                "bug: completion selected_item >= entries.len(): {} >= {}",
+                self.selected_item,
+                entries.len()
+            );
+            self.selected_item = entries.len() - 1;
+        }
+
         // Attempt to resolve completions for every item that will be displayed. This matters
         // because single line documentation may be displayed inline with the completion.
         //
@@ -420,7 +501,6 @@ impl CompletionsMenu {
         let visible_count = last_rendered_range
             .clone()
             .map_or(APPROXIMATE_VISIBLE_COUNT, |range| range.count());
-        let entries = self.entries.borrow();
         let entry_range = if self.selected_item == 0 {
             0..min(visible_count, entries.len())
         } else if self.selected_item == entries.len() - 1 {
@@ -433,11 +513,10 @@ impl CompletionsMenu {
 
         // Expand the range to resolve more completions than are predicted to be visible, to reduce
         // jank on navigation.
-        const EXTRA_TO_RESOLVE: usize = 4;
-        let entry_indices = util::iterate_expanded_and_wrapped_usize_range(
+        let entry_indices = util::expanded_and_wrapped_usize_range(
             entry_range.clone(),
-            EXTRA_TO_RESOLVE,
-            EXTRA_TO_RESOLVE,
+            RESOLVE_BEFORE_ITEMS,
+            RESOLVE_AFTER_ITEMS,
             entries.len(),
         );
 
@@ -467,12 +546,158 @@ impl CompletionsMenu {
             cx,
         );
 
+        let completion_id = self.id;
         cx.spawn(async move |editor, cx| {
             if let Some(true) = resolve_task.await.log_err() {
-                editor.update(cx, |_, cx| cx.notify()).ok();
+                editor
+                    .update(cx, |editor, cx| {
+                        // `resolve_completions` modified state affecting display.
+                        cx.notify();
+                        editor.with_completions_menu_matching_id(completion_id, |menu| {
+                            if let Some(menu) = menu {
+                                menu.start_markdown_parse_for_nearby_entries(cx)
+                            }
+                        });
+                    })
+                    .ok();
             }
         })
         .detach();
+    }
+
+    fn start_markdown_parse_for_nearby_entries(&self, cx: &mut Context<Editor>) {
+        // Enqueue parse tasks of nearer items first.
+        //
+        // TODO: This means that the nearer items will actually be further back in the cache, which
+        // is not ideal. In practice this is fine because `get_or_create_markdown` moves the current
+        // selection to the front (when `is_render = true`).
+        let entry_indices = util::wrapped_usize_outward_from(
+            self.selected_item,
+            MARKDOWN_CACHE_BEFORE_ITEMS,
+            MARKDOWN_CACHE_AFTER_ITEMS,
+            self.entries.borrow().len(),
+        );
+
+        for index in entry_indices {
+            self.get_or_create_entry_markdown(index, cx);
+        }
+    }
+
+    fn get_or_create_entry_markdown(
+        &self,
+        index: usize,
+        cx: &mut Context<Editor>,
+    ) -> Option<Entity<Markdown>> {
+        let entries = self.entries.borrow();
+        if index >= entries.len() {
+            return None;
+        }
+        let candidate_id = entries[index].candidate_id;
+        let completions = self.completions.borrow();
+        match &completions[candidate_id].documentation {
+            Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => self
+                .get_or_create_markdown(candidate_id, Some(source), false, &completions, cx)
+                .map(|(_, markdown)| markdown),
+            Some(_) => None,
+            _ => None,
+        }
+    }
+
+    fn get_or_create_markdown(
+        &self,
+        candidate_id: usize,
+        source: Option<&SharedString>,
+        is_render: bool,
+        completions: &[Completion],
+        cx: &mut Context<Editor>,
+    ) -> Option<(bool, Entity<Markdown>)> {
+        let mut markdown_cache = self.markdown_cache.borrow_mut();
+
+        let mut has_completion_match_cache_entry = false;
+        let mut matching_entry = markdown_cache.iter().find_position(|(key, _)| match key {
+            MarkdownCacheKey::ForCandidate { candidate_id: id } => *id == candidate_id,
+            MarkdownCacheKey::ForCompletionMatch { .. } => {
+                has_completion_match_cache_entry = true;
+                false
+            }
+        });
+
+        if has_completion_match_cache_entry && matching_entry.is_none() {
+            if let Some(source) = source {
+                matching_entry = markdown_cache.iter().find_position(|(key, _)| {
+                    matches!(key, MarkdownCacheKey::ForCompletionMatch { markdown_source, .. }
+                                if markdown_source == source)
+                });
+            } else {
+                // Heuristic guess that documentation can be reused when new_text matches. This is
+                // to mitigate documentation flicker while typing. If this is wrong, then resolution
+                // should cause the correct documentation to be displayed soon.
+                let completion = &completions[candidate_id];
+                matching_entry = markdown_cache.iter().find_position(|(key, _)| {
+                    matches!(key, MarkdownCacheKey::ForCompletionMatch { new_text, .. }
+                                if new_text == &completion.new_text)
+                });
+            }
+        }
+
+        if let Some((cache_index, (key, markdown))) = matching_entry {
+            let markdown = markdown.clone();
+
+            // Since the markdown source matches, the key can now be ForCandidate.
+            if source.is_some() && matches!(key, MarkdownCacheKey::ForCompletionMatch { .. }) {
+                markdown_cache[cache_index].0 = MarkdownCacheKey::ForCandidate { candidate_id };
+            }
+
+            if is_render && cache_index != 0 {
+                // Move the current selection's cache entry to the front.
+                markdown_cache.rotate_right(1);
+                let cache_len = markdown_cache.len();
+                markdown_cache.swap(0, (cache_index + 1) % cache_len);
+            }
+
+            let is_parsing = markdown.update(cx, |markdown, cx| {
+                if let Some(source) = source {
+                    // `reset` is called as it's possible for documentation to change due to resolve
+                    // requests. It does nothing if `source` is unchanged.
+                    markdown.reset(source.clone(), cx);
+                }
+                markdown.is_parsing()
+            });
+            return Some((is_parsing, markdown));
+        }
+
+        let Some(source) = source else {
+            // Can't create markdown as there is no source.
+            return None;
+        };
+
+        if markdown_cache.len() < MARKDOWN_CACHE_MAX_SIZE {
+            let markdown = cx.new(|cx| {
+                Markdown::new(
+                    source.clone(),
+                    self.language_registry.clone(),
+                    self.language.clone(),
+                    cx,
+                )
+            });
+            // Handles redraw when the markdown is done parsing. The current render is for a
+            // deferred draw, and so without this did not redraw when `markdown` notified.
+            cx.observe(&markdown, |_, _, cx| cx.notify()).detach();
+            markdown_cache.push_front((
+                MarkdownCacheKey::ForCandidate { candidate_id },
+                markdown.clone(),
+            ));
+            Some((true, markdown))
+        } else {
+            debug_assert_eq!(markdown_cache.capacity(), MARKDOWN_CACHE_MAX_SIZE);
+            // Moves the last cache entry to the start. The ring buffer is full, so this does no
+            // copying and just shifts indexes.
+            markdown_cache.rotate_right(1);
+            markdown_cache[0].0 = MarkdownCacheKey::ForCandidate { candidate_id };
+            let markdown = &markdown_cache[0].1;
+            markdown.update(cx, |markdown, cx| markdown.reset(source.clone(), cx));
+            Some((true, markdown.clone()))
+        }
     }
 
     pub fn visible(&self) -> bool {
@@ -625,7 +850,6 @@ impl CompletionsMenu {
 
     fn render_aside(
         &mut self,
-        editor: &Editor,
         max_size: Size<Pixels>,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -635,48 +859,46 @@ impl CompletionsMenu {
         }
 
         let mat = &self.entries.borrow()[self.selected_item];
-        let multiline_docs = match self.completions.borrow_mut()[mat.candidate_id]
-            .documentation
-            .as_ref()?
-        {
-            CompletionDocumentation::MultiLinePlainText(text) => div().child(text.clone()),
-            CompletionDocumentation::SingleLineAndMultiLinePlainText {
+        let completions = self.completions.borrow_mut();
+        let multiline_docs = match completions[mat.candidate_id].documentation.as_ref() {
+            Some(CompletionDocumentation::MultiLinePlainText(text)) => div().child(text.clone()),
+            Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
                 plain_text: Some(text),
                 ..
-            } => div().child(text.clone()),
-            CompletionDocumentation::MultiLineMarkdown(parsed) if !parsed.is_empty() => {
-                let markdown = self.markdown_element.get_or_insert_with(|| {
-                    cx.new(|cx| {
-                        let languages = editor
-                            .workspace
-                            .as_ref()
-                            .and_then(|(workspace, _)| workspace.upgrade())
-                            .map(|workspace| workspace.read(cx).app_state().languages.clone());
-                        let language = editor
-                            .language_at(self.initial_position, cx)
-                            .map(|l| l.name().to_proto());
-                        Markdown::new(SharedString::default(), languages, language, cx)
-                    })
-                });
-                markdown.update(cx, |markdown, cx| {
-                    markdown.reset(parsed.clone(), cx);
-                });
-                div().child(
-                    MarkdownElement::new(markdown.clone(), hover_markdown_style(window, cx))
-                        .code_block_renderer(markdown::CodeBlockRenderer::Default {
-                            copy_button: false,
-                            copy_button_on_hover: false,
-                            border: false,
-                        })
-                        .on_url_click(open_markdown_url),
-                )
+            }) => div().child(text.clone()),
+            Some(CompletionDocumentation::MultiLineMarkdown(source)) if !source.is_empty() => {
+                let Some((false, markdown)) = self.get_or_create_markdown(
+                    mat.candidate_id,
+                    Some(source),
+                    true,
+                    &completions,
+                    cx,
+                ) else {
+                    return None;
+                };
+                Self::render_markdown(markdown, window, cx)
             }
-            CompletionDocumentation::MultiLineMarkdown(_) => return None,
-            CompletionDocumentation::SingleLine(_) => return None,
-            CompletionDocumentation::Undocumented => return None,
-            CompletionDocumentation::SingleLineAndMultiLinePlainText {
-                plain_text: None, ..
-            } => {
+            None => {
+                // Handle the case where documentation hasn't yet been resolved but there's a
+                // `new_text` match in the cache.
+                //
+                // TODO: It's inconsistent that documentation caching based on matching `new_text`
+                // only works for markdown. Consider generally caching the results of resolving
+                // completions.
+                let Some((false, markdown)) =
+                    self.get_or_create_markdown(mat.candidate_id, None, true, &completions, cx)
+                else {
+                    return None;
+                };
+                Self::render_markdown(markdown, window, cx)
+            }
+            Some(CompletionDocumentation::MultiLineMarkdown(_)) => return None,
+            Some(CompletionDocumentation::SingleLine(_)) => return None,
+            Some(CompletionDocumentation::Undocumented) => return None,
+            Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                plain_text: None,
+                ..
+            }) => {
                 return None;
             }
         };
@@ -694,6 +916,177 @@ impl CompletionsMenu {
                 )
                 .into_any_element(),
         )
+    }
+
+    fn render_markdown(
+        markdown: Entity<Markdown>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Div {
+        div().child(
+            MarkdownElement::new(markdown, hover_markdown_style(window, cx))
+                .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                    copy_button: false,
+                    copy_button_on_hover: false,
+                    border: false,
+                })
+                .on_url_click(open_markdown_url),
+        )
+    }
+
+    pub fn filter(
+        &mut self,
+        query: Option<Arc<String>>,
+        provider: Option<Rc<dyn CompletionProvider>>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.cancel_filter.store(true, Ordering::Relaxed);
+        if let Some(query) = query {
+            self.cancel_filter = Arc::new(AtomicBool::new(false));
+            let matches = self.do_async_filtering(query, cx);
+            let id = self.id;
+            self.filter_task = cx.spawn_in(window, async move |editor, cx| {
+                let matches = matches.await;
+                editor
+                    .update_in(cx, |editor, window, cx| {
+                        editor.with_completions_menu_matching_id(id, |this| {
+                            if let Some(this) = this {
+                                this.set_filter_results(matches, provider, window, cx);
+                            }
+                        });
+                    })
+                    .ok();
+            });
+        } else {
+            self.filter_task = Task::ready(());
+            let matches = self.unfiltered_matches();
+            self.set_filter_results(matches, provider, window, cx);
+        }
+    }
+
+    pub fn do_async_filtering(
+        &self,
+        query: Arc<String>,
+        cx: &Context<Editor>,
+    ) -> Task<Vec<StringMatch>> {
+        let matches_task = cx.background_spawn({
+            let query = query.clone();
+            let match_candidates = self.match_candidates.clone();
+            let cancel_filter = self.cancel_filter.clone();
+            let background_executor = cx.background_executor().clone();
+            async move {
+                fuzzy::match_strings(
+                    &match_candidates,
+                    &query,
+                    query.chars().any(|c| c.is_uppercase()),
+                    100,
+                    &cancel_filter,
+                    background_executor,
+                )
+                .await
+            }
+        });
+
+        let completions = self.completions.clone();
+        let sort_completions = self.sort_completions;
+        let snippet_sort_order = self.snippet_sort_order;
+        cx.foreground_executor().spawn(async move {
+            let mut matches = matches_task.await;
+
+            if sort_completions {
+                matches = Self::sort_string_matches(
+                    matches,
+                    Some(&query),
+                    snippet_sort_order,
+                    completions.borrow().as_ref(),
+                );
+            }
+
+            matches
+        })
+    }
+
+    /// Like `do_async_filtering` but there is no filter query, so no need to spawn tasks.
+    pub fn unfiltered_matches(&self) -> Vec<StringMatch> {
+        let mut matches = self
+            .match_candidates
+            .iter()
+            .enumerate()
+            .map(|(candidate_id, candidate)| StringMatch {
+                candidate_id,
+                score: Default::default(),
+                positions: Default::default(),
+                string: candidate.string.clone(),
+            })
+            .collect();
+
+        if self.sort_completions {
+            matches = Self::sort_string_matches(
+                matches,
+                None,
+                self.snippet_sort_order,
+                self.completions.borrow().as_ref(),
+            );
+        }
+
+        matches
+    }
+
+    pub fn set_filter_results(
+        &mut self,
+        matches: Vec<StringMatch>,
+        provider: Option<Rc<dyn CompletionProvider>>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        *self.entries.borrow_mut() = matches.into_boxed_slice();
+        self.selected_item = 0;
+        self.handle_selection_changed(provider.as_deref(), window, cx);
+    }
+
+    fn sort_string_matches(
+        matches: Vec<StringMatch>,
+        query: Option<&str>,
+        snippet_sort_order: SnippetSortOrder,
+        completions: &[Completion],
+    ) -> Vec<StringMatch> {
+        let mut sortable_items: Vec<SortableMatch<'_>> = matches
+            .into_iter()
+            .map(|string_match| {
+                let completion = &completions[string_match.candidate_id];
+
+                let is_snippet = matches!(
+                    &completion.source,
+                    CompletionSource::Lsp { lsp_completion, .. }
+                    if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
+                );
+
+                let sort_text =
+                    if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
+                        lsp_completion.sort_text.as_deref()
+                    } else {
+                        None
+                    };
+
+                let (sort_kind, sort_label) = completion.sort_key();
+
+                SortableMatch {
+                    string_match,
+                    is_snippet,
+                    sort_text,
+                    sort_kind,
+                    sort_label,
+                }
+            })
+            .collect();
+
+        Self::sort_matches(&mut sortable_items, query, snippet_sort_order);
+
+        sortable_items
+            .into_iter()
+            .map(|sortable| sortable.string_match)
+            .collect()
     }
 
     pub fn sort_matches(
@@ -729,6 +1122,7 @@ impl CompletionsMenu {
         let fuzzy_bracket_threshold = max_score * (3.0 / 5.0);
 
         let query_start_lower = query
+            .as_ref()
             .and_then(|q| q.chars().next())
             .and_then(|c| c.to_lowercase().next());
 
@@ -762,6 +1156,7 @@ impl CompletionsMenu {
                 };
                 let sort_mixed_case_prefix_length = Reverse(
                     query
+                        .as_ref()
                         .map(|q| {
                             q.chars()
                                 .zip(mat.string_match.string.chars())
@@ -792,103 +1187,32 @@ impl CompletionsMenu {
         });
     }
 
-    pub async fn filter(
-        &mut self,
-        query: Option<&str>,
-        provider: Option<Rc<dyn CompletionProvider>>,
-        editor: WeakEntity<Editor>,
-        cx: &mut AsyncWindowContext,
-    ) {
-        let mut matches = if let Some(query) = query {
-            fuzzy::match_strings(
-                &self.match_candidates,
-                query,
-                query.chars().any(|c| c.is_uppercase()),
-                100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            )
-            .await
-        } else {
-            self.match_candidates
-                .iter()
-                .enumerate()
-                .map(|(candidate_id, candidate)| StringMatch {
-                    candidate_id,
-                    score: Default::default(),
-                    positions: Default::default(),
-                    string: candidate.string.clone(),
-                })
-                .collect()
-        };
+    pub fn preserve_markdown_cache(&mut self, prev_menu: CompletionsMenu) {
+        self.markdown_cache = prev_menu.markdown_cache.clone();
 
-        if self.sort_completions {
-            let completions = self.completions.borrow();
-
-            let mut sortable_items: Vec<SortableMatch<'_>> = matches
-                .into_iter()
-                .map(|string_match| {
-                    let completion = &completions[string_match.candidate_id];
-
-                    let is_snippet = matches!(
-                        &completion.source,
-                        CompletionSource::Lsp { lsp_completion, .. }
-                        if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
-                    );
-
-                    let sort_text =
-                        if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source {
-                            lsp_completion.sort_text.as_deref()
-                        } else {
-                            None
-                        };
-
-                    let (sort_kind, sort_label) = completion.sort_key();
-
-                    SortableMatch {
-                        string_match,
-                        is_snippet,
-                        sort_text,
-                        sort_kind,
-                        sort_label,
-                    }
-                })
-                .collect();
-
-            Self::sort_matches(&mut sortable_items, query, self.snippet_sort_order);
-
-            matches = sortable_items
-                .into_iter()
-                .map(|sortable| sortable.string_match)
-                .collect();
-        }
-
-        *self.entries.borrow_mut() = matches;
-        self.selected_item = 0;
-        // This keeps the display consistent when y_flipped.
-        self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
-
-        if let Some(provider) = provider {
-            cx.update(|window, cx| {
-                // Since this is async, it's possible the menu has been closed and possibly even
-                // another opened. `provider.selection_changed` should not be called in this case.
-                let this_menu_still_active = editor
-                    .read_with(cx, |editor, _cx| {
-                        if let Some(CodeContextMenu::Completions(completions_menu)) =
-                            editor.context_menu.borrow().as_ref()
-                        {
-                            completions_menu.id == self.id
-                        } else {
-                            false
+        // Convert ForCandidate cache keys to ForCompletionMatch keys.
+        let prev_completions = prev_menu.completions.borrow();
+        self.markdown_cache
+            .borrow_mut()
+            .retain_mut(|(key, _markdown)| match key {
+                MarkdownCacheKey::ForCompletionMatch { .. } => true,
+                MarkdownCacheKey::ForCandidate { candidate_id } => {
+                    if let Some(completion) = prev_completions.get(*candidate_id) {
+                        match &completion.documentation {
+                            Some(CompletionDocumentation::MultiLineMarkdown(source)) => {
+                                *key = MarkdownCacheKey::ForCompletionMatch {
+                                    new_text: completion.new_text.clone(),
+                                    markdown_source: source.clone(),
+                                };
+                                true
+                            }
+                            _ => false,
                         }
-                    })
-                    .unwrap_or(false);
-                if this_menu_still_active {
-                    self.handle_selection_changed(&*provider, window, cx);
+                    } else {
+                        false
+                    }
                 }
-            })
-            .ok();
-        }
+            });
     }
 }
 

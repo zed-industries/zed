@@ -152,7 +152,7 @@ impl HistoryStore {
                     let entries = join_all(entries)
                         .await
                         .into_iter()
-                        .filter_map(|result| result.log_err())
+                        .filter_map(|result| result.log_with_level(log::Level::Debug))
                         .collect::<VecDeque<_>>();
 
                     this.update(cx, |this, _| {

@@ -22,21 +22,30 @@ Zed supports a variety of debug adapters for different programming languages:
 
 - PHP (xdebug): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
 
-- Ruby (rdbg): Provides debugging capabilities for Ruby applications
-
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
+
+Additionally, Ruby support (via rdbg) is being actively worked on.
 
 ## Getting Started
 
-For basic debugging you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or clicking the plus icon at the top right of the debug panel.
+For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
 
-For more advanced use cases you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
+For more advanced use cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
 
-You can then use the `New Session Modal` to select a configuration then start debugging.
+You can then use the `New Session Modal` to select a configuration and start debugging.
 
-### Configuration
+### Launching & Attaching
 
-While configuration fields are debug adapter dependent, most adapters support the following fields.
+Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
+Which one you choose depends on what you are trying to achieve.
+
+When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program. Running unit tests or a debug build of your application is a good use case for launching.
+
+Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because e.g. the bug is not reproducible outside of a production environment or some other circumstances.
+
+## Configuration
+
+While configuration fields are debug adapter-dependent, most adapters support the following fields:
 
 ```json
 [
@@ -58,31 +67,243 @@ While configuration fields are debug adapter dependent, most adapters support th
 ]
 ```
 
-#### Task Variables
+All configuration fields support task variables. See [Tasks Variables](./tasks.md#variables)
 
-All configuration fields support task variables. See [Tasks](./tasks.md)
+### Build tasks
+
+Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
+
+```json
+[
+  {
+    "label": "Build Binary",
+    "adapter": "CodeLLDB",
+    "program": "path_to_program",
+    "request": "launch",
+    "build": {
+      "command": "make",
+      "args": ["build", "-j8"]
+    }
+  }
+]
+```
+
+Build tasks can also refer to the existing tasks by unsubstituted label:
+
+```json
+[
+  {
+    "label": "Build Binary",
+    "adapter": "CodeLLDB",
+    "program": "path_to_program",
+    "request": "launch",
+    "build": "my build task" // Or "my build task for $ZED_FILE"
+  }
+]
+```
+
+### Automatic scenario creation
+
+Given a Zed task, Zed can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
+Automatic scenario creation is currently supported for Rust, Go and Python. Javascript/TypeScript support being worked on.
+
+### Example Configurations
+
+#### JavaScript
+
+##### Debug Active File
+
+```json
+[
+  {
+    "label": "Debug with node",
+    "adapter": "JavaScript",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "console": "integratedTerminal",
+    "type": "pwa-node"
+  }
+]
+```
+
+##### Attach debugger to a server running in web browser (`npx serve`)
+
+Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
+
+```json
+[
+  {
+    "label": "Inspect ",
+    "adapter": "JavaScript",
+    "type": "pwa-chrome",
+    "request": "launch",
+    "url": "http://localhost:5500", // Fill your URL here.
+    "program": "$ZED_FILE",
+    "webRoot": "${ZED_WORKTREE_ROOT}"
+  }
+]
+```
+
+#### Python
+
+##### Debug Active File
+
+```json
+[
+  {
+    "label": "Python Active File",
+    "adapter": "Debugpy",
+    "program": "$ZED_FILE",
+    "request": "launch"
+  }
+]
+```
+
+##### Flask App
+
+For a common Flask Application with a file structure similar to the following:
+
+```
+.venv/
+app/
+  init.py
+  main.py
+  routes.py
+templates/
+  index.html
+static/
+  style.css
+requirements.txt
+```
+
+the following configuration can be used:
+
+```json
+[
+  {
+    "label": "Python: Flask",
+    "adapter": "Debugpy",
+    "request": "launch",
+    "module": "app",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "FLASK_APP": "app",
+      "FLASK_DEBUG": "1"
+    },
+    "args": [
+      "run",
+      "--reload", // Enables Flask reloader that watches for file changes
+      "--debugger" // Enables Flask debugger
+    ],
+    "autoReload": {
+      "enable": true
+    },
+    "jinja": true,
+    "justMyCode": true
+  }
+]
+```
+
+#### Rust/C++/C
+
+##### Using pre-built binary
+
+```json
+[
+  {
+    "label": "Debug native binary",
+    "program": "$ZED_WORKTREE_ROOT/build/binary",
+    "request": "launch",
+    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+  }
+]
+```
+
+##### Build binary then debug
+
+```json
+[
+  {
+    "label": "Build & Debug native binary",
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
+    "request": "launch",
+    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
+  }
+]
+```
+
+#### TypeScript
+
+##### Attach debugger to a server running in web browser (`npx serve`)
+
+Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
+
+```json
+[
+  {
+    "label": "Launch Chromee (TypeScript)",
+    "adapter": "JavaScript",
+    "type": "pwa-chrome",
+    "request": "launch",
+    "url": "http://localhost:5500",
+    "program": "$ZED_FILE",
+    "webRoot": "${ZED_WORKTREE_ROOT}",
+    "sourceMaps": true,
+    "build": {
+      "command": "npx",
+      "args": ["tsc"]
+    }
+  }
+]
+```
 
 ## Breakpoints
 
-Zed currently supports these types of breakpoints
+To set a breakpoint, simply click next to the line number in the editor gutter.
+Breakpoints can be tweaked depending on your needs; to access additional options of a given breakpoint, right-click on the breakpoint icon in the gutter and select the desired option.
+At present, you can:
 
-- Standard Breakpoints: Stop at the breakpoint when it's hit
-- Log Breakpoints: Output a log message instead of stopping at the breakpoint when it's hit
-- Conditional Breakpoints: Stop at the breakpoint when it's hit if the condition is met
-- Hit Breakpoints: Stop at the breakpoint when it's hit a certain number of times
+- Add a log to a breakpoint, which will output a log message whenever that breakpoint is hit.
+- Make the breakpoint conditional, which will only stop at the breakpoint when the condition is met. The syntax for conditions is adapter-specific.
+- Add a hit count to a breakpoint, which will only stop at the breakpoint after it's hit a certain number of times.
+- Disable a breakpoint, which will prevent it from being hit while leaving it visible in the gutter.
 
-Standard breakpoints can be toggled by left clicking on the editor gutter or using the Toggle Breakpoint action. Right clicking on a breakpoint or on a code runner symbol brings up the breakpoint context menu. This has options for toggling breakpoints and editing log breakpoints.
+Some debug adapters (e.g. CodeLLDB and JavaScript) will also _verify_ whether your breakpoints can be hit; breakpoints that cannot be hit are surfaced more prominently in the UI.
 
-Other kinds of breakpoints can be toggled/edited by right clicking on the breakpoint icon in the gutter and selecting the desired option.
+All breakpoints enabled for a given project are also listed in "Breakpoints" item in your debugging session UI. From "Breakpoints" item in your UI you can also manage exception breakpoints.
+The debug adapter will then stop whenever an exception of a given kind occurs. Which exception types are supported depends on the debug adapter.
 
 ## Settings
 
+- `dock`: Determines the position of the debug panel in the UI.
 - `stepping_granularity`: Determines the stepping granularity.
 - `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
 - `button`: Whether to show the debug button in the status bar.
 - `timeout`: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
-- `log_dap_communications`: Whether to log messages between active debug adapters and Zed
-- `format_dap_log_messages`: Whether to format dap messages in when adding them to debug adapter logger
+- `log_dap_communications`: Whether to log messages between active debug adapters and Zed.
+- `format_dap_log_messages`: Whether to format DAP messages when adding them to the debug adapter logger.
+
+### Dock
+
+- Description: The position of the debug panel in the UI.
+- Default: `bottom`
+- Setting: debugger.dock
+
+**Options**
+
+1. `left` - The debug panel will be docked to the left side of the UI.
+2. `right` - The debug panel will be docked to the right side of the UI.
+3. `bottom` - The debug panel will be docked to the bottom of the UI.
+
+```json
+"debugger": {
+  "dock": "bottom"
+},
+```
 
 ### Stepping granularity
 
@@ -163,7 +384,7 @@ Other kinds of breakpoints can be toggled/edited by right clicking on the breakp
 ### Timeout
 
 - Description: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
-- Default: 2000ms
+- Default: 2000
 - Setting: debugger.timeout
 
 **Options**
@@ -198,7 +419,7 @@ Other kinds of breakpoints can be toggled/edited by right clicking on the breakp
 
 ### Format Dap Log Messages
 
-- Description: Whether to format dap messages in when adding them to debug adapter logger. (Used for DAP development)
+- Description: Whether to format DAP messages when adding them to the debug adapter logger. (Used for DAP development)
 - Default: false
 - Setting: debugger.format_dap_log_messages
 
@@ -218,8 +439,5 @@ Other kinds of breakpoints can be toggled/edited by right clicking on the breakp
 
 The Debugger supports the following theme options:
 
-    /// Color used to accent some of the debugger's elements
-    /// Only accents breakpoint & breakpoint related symbols right now
-
-**debugger.accent**: Color used to accent breakpoint & breakpoint related symbols
+**debugger.accent**: Color used to accent breakpoint & breakpoint-related symbols
 **editor.debugger_active_line.background**: Background color of active debug line

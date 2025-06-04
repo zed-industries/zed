@@ -972,6 +972,7 @@ impl ChannelStore {
                                     .log_err();
 
                                 if let Some(operations) = operations {
+                                    channel_buffer.connected(cx);
                                     let client = this.client.clone();
                                     cx.background_spawn(async move {
                                         let operations = operations.await;
@@ -1012,8 +1013,8 @@ impl ChannelStore {
 
                 if let Some(this) = this.upgrade() {
                     this.update(cx, |this, cx| {
-                        for (_, buffer) in this.opened_buffers.drain() {
-                            if let OpenEntityHandle::Open(buffer) = buffer {
+                        for (_, buffer) in &this.opened_buffers {
+                            if let OpenEntityHandle::Open(buffer) = &buffer {
                                 if let Some(buffer) = buffer.upgrade() {
                                     buffer.update(cx, |buffer, cx| buffer.disconnect(cx));
                                 }
