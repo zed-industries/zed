@@ -55,7 +55,6 @@ impl StreamingFuzzyMatcher {
 
             self.incomplete_line.replace_range(..last_pos + 1, "");
 
-            // Update best matches based on the result
             self.best_matches = self.resolve_location_fuzzy();
 
             if let Some(first_match) = self.best_matches.first() {
@@ -64,7 +63,6 @@ impl StreamingFuzzyMatcher {
                 None
             }
         } else {
-            // No complete lines yet, return the current best match if any
             if let Some(first_match) = self.best_matches.first() {
                 Some(first_match.clone())
             } else {
@@ -82,7 +80,6 @@ impl StreamingFuzzyMatcher {
         if !self.incomplete_line.is_empty() {
             self.query_lines.push(self.incomplete_line.clone());
             self.incomplete_line.clear();
-            // Only update best_matches if we added a new line
             self.best_matches = self.resolve_location_fuzzy();
         }
         self.best_matches.clone()
@@ -161,7 +158,7 @@ impl StreamingFuzzyMatcher {
             }
         }
 
-        // Process all matches to find their ranges
+        // Find ranges for the matches
         let mut valid_matches = Vec::new();
         for &buffer_row_end in &matches_with_best_cost {
             let mut matched_lines = 0;
@@ -670,13 +667,18 @@ mod tests {
                 actual_ranges
             );
         } else {
-            // The new `finish` directly returns Vec<Range<usize>>
-            // `generate_marked_text` expects a slice of ranges.
             let text_with_actual_range = generate_marked_text(&text, &actual_ranges, false);
             pretty_assertions::assert_eq!(
                 text_with_actual_range,
                 text_with_expected_range,
-                "Query: {:?}, Chunks: {:?}\nExpected marked text: {}\nActual marked text: {}\nExpected ranges: {:?}\nActual ranges: {:?}",
+                indoc! {"
+                    Query: {:?}
+                    Chunks: {:?}
+                    Expected marked text: {}
+                    Actual marked text: {}
+                    Expected ranges: {:?}
+                    Actual ranges: {:?}"
+                },
                 query,
                 chunks,
                 text_with_expected_range,
@@ -710,9 +712,8 @@ mod tests {
 
     fn finish(mut finder: StreamingFuzzyMatcher) -> Option<String> {
         let snapshot = finder.snapshot.clone();
-        let matches = finder.finish(); // This is Vec<Range<usize>>
+        let matches = finder.finish();
         if let Some(range) = matches.first() {
-            // Return text of the first match, similar to old SingleMatch behavior
             Some(snapshot.text_for_range(range.clone()).collect::<String>())
         } else {
             None

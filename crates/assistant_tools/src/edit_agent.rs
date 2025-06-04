@@ -440,19 +440,22 @@ impl EditAgent {
             }
 
             let matches = matcher.finish();
-            if matches.is_empty() {
-                old_range_tx.send(None)?;
-                return Ok((edit_events, Vec::new()));
-            }
 
-            let line_indent = LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
             let old_range = if matches.len() == 1 {
                 matches.first()
             } else {
+                // No matches or multiple ambiguous matches
                 None
             };
             old_range_tx.send(old_range.cloned())?;
 
+            let line_indent = LineIndent::from_iter(
+                matcher
+                    .query_lines()
+                    .first()
+                    .unwrap_or(&String::new())
+                    .chars(),
+            );
             let resolved_old_texts = matches
                 .into_iter()
                 .map(|range| ResolvedOldText {
