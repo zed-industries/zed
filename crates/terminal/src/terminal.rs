@@ -44,7 +44,7 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
-use terminal_hyperlinks::HyperlinkFinder;
+use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use util::{paths::home_dir, truncate_and_trailoff};
@@ -478,7 +478,7 @@ impl TerminalBuilder {
             next_link_id: 0,
             selection_phase: SelectionPhase::Ended,
             // hovered_word: false,
-            hyperlink_finder: HyperlinkFinder::new(),
+            hyperlink_regex_searches: RegexSearches::new(),
             vi_mode_enabled: false,
             is_ssh_terminal,
             python_venv_directory,
@@ -636,7 +636,7 @@ pub struct Terminal {
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
-    hyperlink_finder: HyperlinkFinder,
+    hyperlink_regex_searches: RegexSearches,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
     is_ssh_terminal: bool,
@@ -903,7 +903,11 @@ impl Terminal {
                 )
                 .grid_clamp(term, Boundary::Grid);
 
-                match self.hyperlink_finder.find_from_grid_point(term, point) {
+                match terminal_hyperlinks::find_from_grid_point(
+                    term,
+                    point,
+                    &mut self.hyperlink_regex_searches,
+                ) {
                     Some((maybe_url_or_path, is_url, url_match)) => {
                         let target = if is_url {
                             MaybeNavigationTarget::Url(maybe_url_or_path.clone())
