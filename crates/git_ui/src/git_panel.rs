@@ -27,11 +27,12 @@ use git::status::StageStatus;
 use git::{Amend, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::{
-    Action, Animation, AnimationExt as _, Axis, ClickEvent, Corner, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, Point,
-    PromptLevel, ScrollStrategy, Subscription, Task, Transformation, UniformListScrollHandle,
-    WeakEntity, actions, anchored, deferred, percentage, uniform_list,
+    Action, Animation, AnimationExt as _, AsyncWindowContext, Axis, ClickEvent, Corner,
+    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
+    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy, Subscription, Task,
+    Transformation, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, percentage,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -63,7 +64,7 @@ use ui::{
     Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt, maybe};
-use workspace::AppState;
+
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -390,144 +391,148 @@ pub(crate) fn commit_message_editor(
 }
 
 impl GitPanel {
-    pub fn new(
-        workspace: Entity<Workspace>,
-        project: Entity<Project>,
-        app_state: Arc<AppState>,
+    fn new(
+        workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+        cx: &mut Context<Workspace>,
+    ) -> Entity<Self> {
+        let project = workspace.project().clone();
+        let app_state = workspace.app_state().clone();
         let fs = app_state.fs.clone();
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
-        let workspace = workspace.downgrade();
 
-        let focus_handle = cx.focus_handle();
-        cx.on_focus(&focus_handle, window, Self::focus_in).detach();
-        cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-            this.hide_scrollbars(window, cx);
-        })
-        .detach();
+        let git_panel = cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+            cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+                this.hide_scrollbars(window, cx);
+            })
+            .detach();
 
-        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-        cx.observe_global::<SettingsStore>(move |this, cx| {
-            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            if is_sort_by_path != was_sort_by_path {
-                this.update_visible_entries(cx);
-            }
-            was_sort_by_path = is_sort_by_path
-        })
-        .detach();
+            let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+            cx.observe_global::<SettingsStore>(move |this, cx| {
+                let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+                if is_sort_by_path != was_sort_by_path {
+                    this.update_visible_entries(cx);
+                }
+                was_sort_by_path = is_sort_by_path
+            })
+            .detach();
 
-        // just to let us render a placeholder editor.
-        // Once the active git repo is set, this buffer will be replaced.
-        let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
-        let commit_editor = cx.new(|cx| {
-            commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
+            // just to let us render a placeholder editor.
+            // Once the active git repo is set, this buffer will be replaced.
+            let temporary_buffer = cx.new(|cx| Buffer::local("", cx));
+            let commit_editor = cx.new(|cx| {
+                commit_message_editor(temporary_buffer, None, project.clone(), true, window, cx)
+            });
+
+            commit_editor.update(cx, |editor, cx| {
+                editor.clear(window, cx);
+            });
+
+            let scroll_handle = UniformListScrollHandle::new();
+
+            let vertical_scrollbar = ScrollbarProperties {
+                axis: Axis::Vertical,
+                state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
+                show_scrollbar: false,
+                show_track: false,
+                auto_hide: false,
+                hide_task: None,
+            };
+
+            let horizontal_scrollbar = ScrollbarProperties {
+                axis: Axis::Horizontal,
+                state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
+                show_scrollbar: false,
+                show_track: false,
+                auto_hide: false,
+                hide_task: None,
+            };
+
+            let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
+            let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
+                if assistant_enabled != AgentSettings::get_global(cx).enabled {
+                    assistant_enabled = AgentSettings::get_global(cx).enabled;
+                    cx.notify();
+                }
+            });
+
+            cx.subscribe_in(
+                &git_store,
+                window,
+                move |this, _git_store, event, window, cx| match event {
+                    GitStoreEvent::ActiveRepositoryChanged(_) => {
+                        this.active_repository = this.project.read(cx).active_repository(cx);
+                        this.schedule_update(true, window, cx);
+                    }
+                    GitStoreEvent::RepositoryUpdated(
+                        _,
+                        RepositoryEvent::Updated { full_scan },
+                        true,
+                    ) => {
+                        this.schedule_update(*full_scan, window, cx);
+                    }
+
+                    GitStoreEvent::RepositoryAdded(_) | GitStoreEvent::RepositoryRemoved(_) => {
+                        this.schedule_update(false, window, cx);
+                    }
+                    GitStoreEvent::IndexWriteError(error) => {
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.show_error(error, cx);
+                            })
+                            .ok();
+                    }
+                    GitStoreEvent::RepositoryUpdated(_, _, _) => {}
+                    GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
+                },
+            )
+            .detach();
+
+            let mut this = Self {
+                active_repository,
+                commit_editor,
+                conflicted_count: 0,
+                conflicted_staged_count: 0,
+                current_modifiers: window.modifiers(),
+                add_coauthors: true,
+                generate_commit_message_task: None,
+                entries: Vec::new(),
+                focus_handle: cx.focus_handle(),
+                fs,
+                new_count: 0,
+                new_staged_count: 0,
+                pending: Vec::new(),
+                pending_commit: None,
+                amend_pending: false,
+                pending_serialization: Task::ready(None),
+                single_staged_entry: None,
+                single_tracked_entry: None,
+                project,
+                scroll_handle,
+                max_width_item_index: None,
+                selected_entry: None,
+                marked_entries: Vec::new(),
+                tracked_count: 0,
+                tracked_staged_count: 0,
+                update_visible_entries_task: Task::ready(()),
+                width: None,
+                show_placeholders: false,
+                context_menu: None,
+                workspace: workspace.weak_handle(),
+                modal_open: false,
+                entry_count: 0,
+                horizontal_scrollbar,
+                vertical_scrollbar,
+                _settings_subscription,
+            };
+
+            this.schedule_update(false, window, cx);
+            this
         });
 
-        commit_editor.update(cx, |editor, cx| {
-            editor.clear(window, cx);
-        });
-
-        let scroll_handle = UniformListScrollHandle::new();
-
-        cx.subscribe_in(
-            &git_store,
-            window,
-            move |this, git_store, event, window, cx| match event {
-                GitStoreEvent::ActiveRepositoryChanged(_) => {
-                    this.active_repository = git_store.read(cx).active_repository();
-                    this.schedule_update(true, window, cx);
-                }
-                GitStoreEvent::RepositoryUpdated(
-                    _,
-                    RepositoryEvent::Updated { full_scan },
-                    true,
-                ) => {
-                    this.schedule_update(*full_scan, window, cx);
-                }
-
-                GitStoreEvent::RepositoryAdded(_) | GitStoreEvent::RepositoryRemoved(_) => {
-                    this.schedule_update(false, window, cx);
-                }
-                GitStoreEvent::IndexWriteError(error) => {
-                    this.workspace
-                        .update(cx, |workspace, cx| {
-                            workspace.show_error(error, cx);
-                        })
-                        .ok();
-                }
-                GitStoreEvent::RepositoryUpdated(_, _, _) => {}
-                GitStoreEvent::JobsUpdated | GitStoreEvent::ConflictsUpdated => {}
-            },
-        )
-        .detach();
-
-        let vertical_scrollbar = ScrollbarProperties {
-            axis: Axis::Vertical,
-            state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
-            show_scrollbar: false,
-            show_track: false,
-            auto_hide: false,
-            hide_task: None,
-        };
-
-        let horizontal_scrollbar = ScrollbarProperties {
-            axis: Axis::Horizontal,
-            state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
-            show_scrollbar: false,
-            show_track: false,
-            auto_hide: false,
-            hide_task: None,
-        };
-
-        let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
-        let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-            if assistant_enabled != AgentSettings::get_global(cx).enabled {
-                assistant_enabled = AgentSettings::get_global(cx).enabled;
-                cx.notify();
-            }
-        });
-
-        let mut git_panel = Self {
-            active_repository,
-            commit_editor,
-            conflicted_count: 0,
-            conflicted_staged_count: 0,
-            current_modifiers: window.modifiers(),
-            add_coauthors: true,
-            generate_commit_message_task: None,
-            entries: Vec::new(),
-            focus_handle: cx.focus_handle(),
-            fs,
-            new_count: 0,
-            new_staged_count: 0,
-            pending: Vec::new(),
-            pending_commit: None,
-            amend_pending: false,
-            pending_serialization: Task::ready(None),
-            single_staged_entry: None,
-            single_tracked_entry: None,
-            project,
-            scroll_handle,
-            max_width_item_index: None,
-            selected_entry: None,
-            marked_entries: Vec::new(),
-            tracked_count: 0,
-            tracked_staged_count: 0,
-            update_visible_entries_task: Task::ready(()),
-            width: None,
-            show_placeholders: false,
-            context_menu: None,
-            workspace,
-            modal_open: false,
-            entry_count: 0,
-            horizontal_scrollbar,
-            vertical_scrollbar,
-            _settings_subscription,
-        };
-        git_panel.schedule_update(false, window, cx);
         git_panel
     }
 
@@ -4045,6 +4050,32 @@ impl GitPanel {
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
         self.amend_pending = value;
         cx.notify();
+    }
+
+    pub async fn load(
+        workspace: WeakEntity<Workspace>,
+        mut cx: AsyncWindowContext,
+    ) -> anyhow::Result<Entity<Self>> {
+        let serialized_panel = cx
+            .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&GIT_PANEL_KEY) })
+            .await
+            .context("loading git panel")
+            .log_err()
+            .flatten()
+            .and_then(|panel| serde_json::from_str::<SerializedGitPanel>(&panel).log_err());
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            let panel = GitPanel::new(workspace, window, cx);
+
+            if let Some(serialized_panel) = serialized_panel {
+                panel.update(cx, |panel, cx| {
+                    panel.width = serialized_panel.width;
+                    cx.notify();
+                })
+            }
+
+            panel
+        })
     }
 }
 

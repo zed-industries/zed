@@ -380,6 +380,7 @@ fn initialize_panels(
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let chat_panel =
@@ -393,12 +394,14 @@ fn initialize_panels(
             project_panel,
             outline_panel,
             terminal_panel,
+            git_panel,
             channels_panel,
             chat_panel,
             notification_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
+            git_panel,
             terminal_panel,
             channels_panel,
             chat_panel,
@@ -409,6 +412,7 @@ fn initialize_panels(
             workspace.add_panel(project_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
+            workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
@@ -426,12 +430,6 @@ fn initialize_panels(
                 )
                 .detach()
             });
-
-            let entity = cx.entity();
-            let project = workspace.project().clone();
-            let app_state = workspace.app_state().clone();
-            let git_panel = cx.new(|cx| GitPanel::new(entity, project, app_state, window, cx));
-            workspace.add_panel(git_panel, window, cx);
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
