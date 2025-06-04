@@ -124,13 +124,11 @@ impl Arena {
             let mut current_chunk = self.chunks.get_mut(self.current_chunk).unwrap();
             let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
                 ptr
-            } else if self.current_chunk + 1 < self.chunks.len() {
+            } else if self.current_chunk + 1 < self.chunks.len()
+                && self.chunks[self.current_chunk + 1].size_in_bytes > layout.size()
+            {
                 self.current_chunk += 1;
-                self.chunks
-                    .get_mut(self.current_chunk)
-                    .unwrap()
-                    .allocate(layout)
-                    .unwrap()
+                self.chunks[self.current_chunk].allocate(layout).unwrap()
             } else {
                 let chunk_size = self.chunk_size.max(layout.size().next_power_of_two());
                 self.chunks.push(Chunk::new(chunk_size));
