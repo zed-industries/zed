@@ -110,6 +110,7 @@ pub struct ProjectPanel {
     // in case a user clicks to open a file.
     mouse_down: bool,
     hover_expand_task: Option<Task<()>>,
+    previous_drag_position: Option<Point<Pixels>>,
 }
 
 struct DragTargetEntry {
@@ -504,6 +505,7 @@ impl ProjectPanel {
                 scroll_handle,
                 mouse_down: false,
                 hover_expand_task: None,
+                previous_drag_position: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -4705,6 +4707,15 @@ impl Render for ProjectPanel {
                 window: &mut Window,
                 cx: &mut Context<ProjectPanel>,
             ) {
+                if let Some(previous_position) = this.previous_drag_position {
+                    // Refresh cursor only when an actual drag happens,
+                    // because modifiers are not updated when the cursor is not moved.
+                    if e.event.position != previous_position {
+                        this.refresh_drag_cursor_style(&e.event.modifiers, window, cx);
+                    }
+                }
+                this.previous_drag_position = Some(e.event.position);
+
                 if !e.bounds.contains(&e.event.position) {
                     this.drag_target_entry = None;
                     return;
