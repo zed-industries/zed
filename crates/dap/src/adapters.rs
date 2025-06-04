@@ -333,24 +333,6 @@ pub async fn download_adapter_from_github(
     Ok(version_path)
 }
 
-pub async fn fetch_latest_adapter_version_from_github(
-    github_repo: GithubRepo,
-    delegate: &dyn DapDelegate,
-) -> Result<AdapterVersion> {
-    let release = latest_github_release(
-        &format!("{}/{}", github_repo.repo_owner, github_repo.repo_name),
-        false,
-        false,
-        delegate.http_client(),
-    )
-    .await?;
-
-    Ok(AdapterVersion {
-        tag_name: release.tag_name,
-        url: release.zipball_url,
-    })
-}
-
 #[async_trait(?Send)]
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;

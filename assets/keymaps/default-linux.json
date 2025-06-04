@@ -31,8 +31,6 @@
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
       "f4": "debugger::Start",
-      "alt-f4": "debugger::RerunLastSession",
-      "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::Restart",
       "f6": "debugger::Pause",
@@ -280,7 +278,9 @@
       "enter": "agent::Chat",
       "ctrl-enter": "agent::ChatWithFollow",
       "ctrl-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff"
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "ctrl-shift-y": "agent::KeepAll",
+      "ctrl-shift-n": "agent::RejectAll"
     }
   },
   {
@@ -583,11 +583,24 @@
       "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn",
-      "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
+      "alt-shift-r": ["task::Spawn", { "reveal_target": "center" }],
       // also possible to spawn tasks by name:
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
+      "f5": "debugger::RerunLastSession"
+    }
+  },
+  {
+    "context": "Workspace && debugger_running",
+    "bindings": {
+      "f5": "zed::NoAction"
+    }
+  },
+  {
+    "context": "Workspace && debugger_stopped",
+    "bindings": {
+      "f5": "debugger::Continue"
     }
   },
   {
@@ -873,7 +886,8 @@
     "context": "DebugPanel",
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",
-      "ctrl-i": "debugger::ToggleSessionPicker"
+      "ctrl-i": "debugger::ToggleSessionPicker",
+      "shift-alt-escape": "debugger::ToggleExpandItem"
     }
   },
   {
@@ -926,6 +940,13 @@
     "context": "ChannelModal > Picker > Editor",
     "bindings": {
       "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "FileFinder",
+    "bindings": {
+      "ctrl-shift-a": "file_finder::ToggleSplitMenu",
+      "ctrl-shift-i": "file_finder::ToggleFilterMenu"
     }
   },
   {

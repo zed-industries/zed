@@ -46,6 +46,10 @@ impl Tool for MovePathTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./move_path_tool/description.md").into()
     }

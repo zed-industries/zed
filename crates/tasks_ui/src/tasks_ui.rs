@@ -80,7 +80,14 @@ pub fn init(cx: &mut App) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, None, window, cx).detach();
+                        spawn_task_or_modal(
+                            workspace,
+                            &Spawn::ViaModal {
+                                reveal_target: None,
+                            },
+                            window,
+                            cx,
+                        );
                     };
                 });
         },
