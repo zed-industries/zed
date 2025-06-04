@@ -264,13 +264,17 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
-    let mut no_longer_punctuation = false;
+    let mut is_first_iteration = true;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        // Make alt-left skip punctuation on Mac OS to respect the Mac behaviour. For example: hello.| goes to |hello.
-        if !no_longer_punctuation && classifier.is_punctuation(right) {
-            no_longer_punctuation = true;
+        // Make alt-left skip punctuation on Mac OS to respect Mac VSCode behaviour. For example: hello.| goes to |hello.
+        if is_first_iteration
+            && classifier.is_punctuation(right)
+            && !classifier.is_punctuation(left)
+        {
+            is_first_iteration = false;
             return false;
         }
+        is_first_iteration = false;
 
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
@@ -312,13 +316,17 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
-    let mut no_longer_punctuation = false;
+    let mut is_first_iteration = true;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         // Make alt-right skip punctuation on Mac OS to respect the Mac behaviour. For example: |.hello goes to .hello|
-        if !no_longer_punctuation && classifier.is_punctuation(left) {
-            no_longer_punctuation = true;
+        if is_first_iteration
+            && classifier.is_punctuation(left)
+            && !classifier.is_punctuation(right)
+        {
+            is_first_iteration = false;
             return false;
         }
+        is_first_iteration = false;
 
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
             || right == '\n'
