@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(their_text, "This is their version in a nested conflict\n");
     }
 
-    #[gpui::test]
+    #[test]
     fn test_conflict_markers_at_eof() {
         let test_content = r#"
             <<<<<<< ours
