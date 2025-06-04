@@ -5223,11 +5223,11 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             }
         "},
         indoc! {"
-            // long long long long long long long long long long long long long long long
+            //ˇ long long long long long long long long long long long long long long long
             // long long long long long long long long long long long long long
-            //
-            // long long long long long long long long long long long long long long long
-            // long long long long long long long long long long long long long short short
+            //ˇ
+            //ˇ long long long long long long long long long long long long long long long
+            //ˇ long long long long long long long long long long long long long short short
             // short
             int main(void) {
                 return 17;
