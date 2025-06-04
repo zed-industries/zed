@@ -449,7 +449,7 @@ pub fn vscode_settings_file() -> &'static PathBuf {
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        LOGS_DIR.get_or_init(|| config_dir().join(rel_path))
+        LOGS_DIR.get_or_init(|| home_dir().join(".config").join(rel_path))
     }
 }
 
@@ -476,7 +476,7 @@ pub fn vscode_shortcuts_file() -> &'static PathBuf {
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        RESULT.get_or_init(|| config_dir().join(rel_path))
+        RESULT.get_or_init(|| home_dir().join(".config").join(rel_path))
     }
 }
 
