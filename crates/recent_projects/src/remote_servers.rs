@@ -50,7 +50,6 @@ use workspace::{
     open_ssh_project_with_existing_connection,
 };
 
-use crate::OpenRemote;
 use crate::ssh_config::parse_ssh_config_hosts;
 use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
@@ -362,22 +361,6 @@ impl Mode {
     }
 }
 impl RemoteServerProjects {
-    pub fn register(
-        workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        _: &mut Context<Workspace>,
-    ) {
-        workspace.register_action(|workspace, action: &OpenRemote, window, cx| {
-            if action.from_existing_connection {
-                cx.propagate();
-                return;
-            }
-            let handle = cx.entity().downgrade();
-            let fs = workspace.project().read(cx).fs().clone();
-            workspace.toggle_modal(window, cx, |window, cx| Self::new(fs, window, cx, handle))
-        });
-    }
-
     pub fn open(workspace: Entity<Workspace>, window: &mut Window, cx: &mut App) {
         workspace.update(cx, |workspace, cx| {
             let handle = cx.entity().downgrade();
