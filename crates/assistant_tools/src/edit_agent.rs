@@ -449,7 +449,7 @@ impl EditAgent {
             };
             old_range_tx.send(old_range.cloned())?;
 
-            let line_indent = LineIndent::from_iter(
+            let indent = LineIndent::from_iter(
                 matcher
                     .query_lines()
                     .first()
@@ -458,10 +458,7 @@ impl EditAgent {
             );
             let resolved_old_texts = matches
                 .into_iter()
-                .map(|range| ResolvedOldText {
-                    range,
-                    indent: line_indent.clone(),
-                })
+                .map(|range| ResolvedOldText { range, indent })
                 .collect::<Vec<_>>();
 
             Ok((edit_events, resolved_old_texts))
