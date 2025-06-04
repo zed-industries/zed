@@ -1962,28 +1962,31 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_accept_committed_edits_matching(cx: &mut gpui::TestAppContext) {
+    async fn test_accept_committed_edits_comprehensive(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
+        // Start with a simple 10-line file with one character per line
         fs.insert_tree(
             "/project",
             json!({
                 ".git": {},
-                "file.txt": "line1\nline2\nline3\nline4\n",
+                "file.txt": "a\nb\nc\nd\ne\nf\ng\nh\ni\nj",
             }),
         )
         .await;
+
+        // Set initial git HEAD (note: missing last line 'j' to test edge cases)
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "line1\nline2\nline3\nline4\n".into())],
+            &[("file.txt".into(), "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
+            "0000000",
         );
         cx.run_until_parked();
 
         let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
 
-        // Open and modify the buffer
         let file_path = project
             .read_with(cx, |project, cx| {
                 project.find_project_path("project/file.txt", cx)
@@ -1994,14 +1997,21 @@ mod tests {
             .await
             .unwrap();
 
-        // Track the buffer to start monitoring edits
         cx.update(|cx| {
             action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
             buffer.update(cx, |buffer, cx| {
                 buffer.edit(
                     [
-                        (Point::new(1, 0)..Point::new(1, 5), "modified2"),
-                        (Point::new(3, 0)..Point::new(3, 5), "modified4"),
+                        // Edit at the very start: a -> A
+                        (Point::new(0, 0)..Point::new(0, 1), "A"),
+                        // Deletion in the middle: remove lines d and e
+                        (Point::new(3, 0)..Point::new(5, 0), ""),
+                        // Modification: g -> GGG
+                        (Point::new(6, 0)..Point::new(6, 1), "GGG"),
+                        // Addition: insert new line after h
+                        (Point::new(7, 1)..Point::new(7, 1), "\nNEW"),
+                        // Edit the very last character: j -> J
+                        (Point::new(9, 0)..Point::new(9, 1), "J"),
                     ],
                     None,
                     cx,
@@ -2010,326 +2020,115 @@ mod tests {
             action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
         });
         cx.run_until_parked();
+
+        // Verify all edits are unreviewed
         assert_eq!(
             unreviewed_hunks(&action_log, cx),
             vec![(
                 buffer.clone(),
                 vec![
                     HunkStatus {
-                        range: Point::new(1, 0)..Point::new(2, 0),
+                        range: Point::new(0, 0)..Point::new(1, 0),
                         diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "line2\n".into()
+                        old_text: "a\n".into()
                     },
                     HunkStatus {
-                        range: Point::new(3, 0)..Point::new(4, 0),
+                        range: Point::new(3, 0)..Point::new(3, 0),
+                        diff_status: DiffHunkStatusKind::Deleted,
+                        old_text: "d\ne\n".into()
+                    },
+                    HunkStatus {
+                        range: Point::new(4, 0)..Point::new(5, 0),
                         diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "line4\n".into()
+                        old_text: "g\n".into()
+                    },
+                    HunkStatus {
+                        range: Point::new(6, 0)..Point::new(7, 0),
+                        diff_status: DiffHunkStatusKind::Added,
+                        old_text: "".into()
+                    },
+                    HunkStatus {
+                        range: Point::new(8, 0)..Point::new(8, 1),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "j".into()
                     }
                 ]
             )]
         );
 
-        // Simulate a git commit that matches the unreviewed edits
+        // Simulate a git commit that matches some edits but not others:
+        // - Accepts the first edit (a -> A)
+        // - Accepts the deletion (remove d and e)
+        // - Makes a different change to g (g -> G instead of GGG)
+        // - Ignores the NEW line addition
+        // - Ignores the last line edit (j stays as j)
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[(
-                "file.txt".into(),
-                "line1\nmodified2\nline3\nmodified4\n".into(),
-            )],
+            &[("file.txt".into(), "A\nb\nc\nf\nG\nh\ni\nj".into())],
+            "0000001",
         );
         cx.run_until_parked();
-        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
-    }
-
-    #[gpui::test]
-    async fn test_accept_committed_edits_non_matching(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "file.txt": "line1\nline2\nline3\n",
-            }),
-        )
-        .await;
-
-        // Set initial git HEAD
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "line1\nline2\nline3\n".into())],
-        );
-        cx.run_until_parked();
-
-        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        let file_path = project
-            .read_with(cx, |project, cx| {
-                project.find_project_path("project/file.txt", cx)
-            })
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-
-        // Track the buffer to start monitoring edits
-        cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
-            buffer.update(cx, |buffer, cx| {
-                buffer.edit([(6..11, "unreviewed2")], None, cx);
-            });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
-        cx.run_until_parked();
-
-        // Simulate a git commit with a different edit
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "line1\ncommitted2\nline3\n".into())],
-        );
-        cx.run_until_parked();
-
-        // Verify the unreviewed edit remains
-        let hunks = unreviewed_hunks(&action_log, cx);
         assert_eq!(
-            hunks,
-            vec![(
-                buffer.clone(),
-                vec![HunkStatus {
-                    range: Point::new(1, 0)..Point::new(2, 0),
-                    diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "line2\n".to_string(),
-                }]
-            )]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_accept_committed_edits_mixed_with_row_delta(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "file.txt": "line1\nline2\nline3\nline4\nline5\n",
-            }),
-        )
-        .await;
-
-        // Set initial git HEAD
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "line1\nline2\nline3\nline4\n".into())],
-        );
-        cx.run_until_parked();
-
-        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        let file_path = project
-            .read_with(cx, |project, cx| {
-                project.find_project_path("project/file.txt", cx)
-            })
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-
-        // Track the buffer to start monitoring edits
-        cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
-            buffer.update(cx, |buffer, cx| {
-                // Replace line2 with modified2\nadded
-                buffer.edit([(6..11, "modified2\nadded")], None, cx);
-            });
-            buffer.update(cx, |buffer, cx| {
-                // Replace line4 with different4 (after the previous edit, line4 is now at a different position)
-                buffer.edit([(29..34, "different4")], None, cx);
-            });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
-        cx.run_until_parked();
-
-        // Verify we have three unreviewed edits
-        // Simulate a git commit that matches only the first edit
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[(
-                "file.txt".into(),
-                "line1\nmodified2\nadded\nline3\nline4\nline5\n".into(),
-            )],
-        );
-        cx.run_until_parked();
-
-        // Verify the first edit was accepted and second remains with adjusted row
-        let hunks = unreviewed_hunks(&action_log, cx);
-        assert_eq!(
-            hunks,
-            vec![(
-                buffer.clone(),
-                vec![HunkStatus {
-                    range: Point::new(4, 0)..Point::new(5, 0),
-                    diff_status: DiffHunkStatusKind::Modified,
-                    old_text: "line4\n".to_string(),
-                }]
-            )]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_accept_committed_edits_deletion(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "file.txt": "line1\nline2\nline3\nline4\n",
-            }),
-        )
-        .await;
-
-        // Set initial git HEAD
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[(
-                "file.txt".into(),
-                "line1\nline2\nline3\nline4\nline5\n".into(),
-            )],
-        );
-        cx.run_until_parked();
-
-        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        let file_path = project
-            .read_with(cx, |project, cx| {
-                project.find_project_path("project/file.txt", cx)
-            })
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-
-        // Track the buffer to start monitoring edits
-        cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
-            buffer.update(cx, |buffer, cx| {
-                buffer.edit([(6..12, "")], None, cx);
-            });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
-        cx.run_until_parked();
-
-        // Verify we have a deletion hunk
-        let hunks = unreviewed_hunks(&action_log, cx);
-        assert_eq!(
-            hunks,
-            vec![(
-                buffer.clone(),
-                vec![HunkStatus {
-                    range: Point::new(1, 0)..Point::new(1, 0),
-                    diff_status: DiffHunkStatusKind::Deleted,
-                    old_text: "line2\n".to_string(),
-                }]
-            )]
-        );
-
-        // Simulate a git commit with the same deletion
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "line1\nline3\nline4\n".into())],
-        );
-        cx.run_until_parked();
-
-        // Verify the deletion was accepted (no unreviewed hunks)
-        // Verify the deletion was accepted
-        let hunks = unreviewed_hunks(&action_log, cx);
-        assert_eq!(hunks.len(), 0, "Deletion should have been accepted");
-    }
-
-    #[gpui::test]
-    async fn test_accept_committed_edits_partial_multiple(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        fs.insert_tree(
-            "/project",
-            json!({
-                ".git": {},
-                "file.txt": "a\nb\nc\nd\ne\nf\n",
-            }),
-        )
-        .await;
-
-        // Set initial git HEAD
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "a\nb\nc\nd\ne\nf\n".into())],
-        );
-        cx.run_until_parked();
-
-        let project = Project::test(fs.clone(), ["/project".as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        let file_path = project
-            .read_with(cx, |project, cx| {
-                project.find_project_path("project/file.txt", cx)
-            })
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-
-        // Track the buffer to start monitoring edits
-        cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.buffer_read(buffer.clone(), cx));
-            buffer.update(cx, |buffer, cx| {
-                buffer.edit([(2..3, "B")], None, cx); // b -> B
-                buffer.edit([(6..7, "D")], None, cx); // d -> D
-                buffer.edit([(10..11, "F")], None, cx); // f -> F
-            });
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
-        cx.run_until_parked();
-
-        // Simulate a git commit with only the first edit
-        fs.set_head_for_repo(
-            path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "a\nB\nc\nd\ne\nf\n".into())],
-        );
-        cx.run_until_parked();
-
-        // Verify only the first edit was accepted
-        // Verify only the last two edits remain
-        let hunks = unreviewed_hunks(&action_log, cx);
-        assert_eq!(
-            hunks,
+            unreviewed_hunks(&action_log, cx),
             vec![(
                 buffer.clone(),
                 vec![
                     HunkStatus {
-                        range: Point::new(3, 0)..Point::new(4, 0),
+                        range: Point::new(4, 0)..Point::new(5, 0),
                         diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "d\n".to_string(),
+                        old_text: "g\n".into()
                     },
                     HunkStatus {
-                        range: Point::new(5, 0)..Point::new(6, 0),
+                        range: Point::new(6, 0)..Point::new(7, 0),
+                        diff_status: DiffHunkStatusKind::Added,
+                        old_text: "".into()
+                    },
+                    HunkStatus {
+                        range: Point::new(8, 0)..Point::new(8, 1),
                         diff_status: DiffHunkStatusKind::Modified,
-                        old_text: "f\n".to_string(),
+                        old_text: "j".into()
                     }
                 ]
             )]
         );
+
+        // Make another commit that accepts the NEW line but with different content
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[(
+                "file.txt".into(),
+                "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into(),
+            )],
+            "0000002",
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            unreviewed_hunks(&action_log, cx),
+            vec![(
+                buffer.clone(),
+                vec![
+                    HunkStatus {
+                        range: Point::new(6, 0)..Point::new(7, 0),
+                        diff_status: DiffHunkStatusKind::Added,
+                        old_text: "".into()
+                    },
+                    HunkStatus {
+                        range: Point::new(8, 0)..Point::new(8, 1),
+                        diff_status: DiffHunkStatusKind::Modified,
+                        old_text: "j".into()
+                    }
+                ]
+            )]
+        );
+
+        // Final commit that accepts all remaining edits
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("file.txt".into(), "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
+            "0000003",
+        );
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
