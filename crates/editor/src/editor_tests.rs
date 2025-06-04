@@ -5212,6 +5212,31 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
+    assert_rewrap(
+        indoc! {"
+            //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
+            //ˇ
+            //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
+            //ˇ short short short
+            int main(void) {
+                return 17;
+            }
+        "},
+        indoc! {"
+            // long long long long long long long long long long long long long long long
+            // long long long long long long long long long long long long long
+            //
+            // long long long long long long long long long long long long long long long
+            // long long long long long long long long long long long long long short short
+            // short
+            int main(void) {
+                return 17;
+            }
+        "},
+        language_with_c_comments,
+        &mut cx,
+    );
+
     #[track_caller]
     fn assert_rewrap(
         unwrapped_text: &str,
