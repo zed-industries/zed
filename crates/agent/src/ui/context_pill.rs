@@ -90,32 +90,12 @@ impl ContextPill {
 
     pub fn icon(&self) -> Icon {
         match self {
-            Self::Added {
-                context:
-                    AddedContext {
-                        kind: ContextKind::Image,
-                        status: ContextStatus::Warning { .. },
-                        ..
-                    },
-                ..
-            } => Icon::new(IconName::Warning).color(Color::Warning),
             Self::Suggested {
                 icon_path: Some(icon_path),
                 ..
-            }
-            | Self::Added {
-                context:
-                    AddedContext {
-                        icon_path: Some(icon_path),
-                        ..
-                    },
-                ..
             } => Icon::from_path(icon_path),
-            Self::Suggested { kind, .. }
-            | Self::Added {
-                context: AddedContext { kind, .. },
-                ..
-            } => Icon::new(kind.icon()),
+            Self::Suggested { kind, .. } => Icon::new(kind.icon()),
+            Self::Added { context, .. } => context.icon(),
         }
     }
 }
@@ -302,6 +282,19 @@ pub struct AddedContext {
 }
 
 impl AddedContext {
+    pub fn icon(&self) -> Icon {
+        match &self.status {
+            ContextStatus::Warning { .. } => Icon::new(IconName::Warning).color(Color::Warning),
+            ContextStatus::Error { .. } => Icon::new(IconName::XCircle).color(Color::Error),
+            _ => {
+                if let Some(icon_path) = &self.icon_path {
+                    Icon::from_path(icon_path)
+                } else {
+                    Icon::new(self.kind.icon())
+                }
+            }
+        }
+    }
     /// Creates an `AddedContext` by retrieving relevant details of `AgentContext`. This returns a
     /// `None` if `DirectoryContext` or `RulesContext` no longer exist.
     ///
@@ -630,19 +623,21 @@ impl AddedContext {
             ("Image".into(), None, None)
         };
 
-        let status = match context.status() {
+        let status = match context.status(model) {
             ImageStatus::Loading => ContextStatus::Loading {
                 message: "Loading…".into(),
             },
             ImageStatus::Error => ContextStatus::Error {
                 message: "Failed to load image".into(),
             },
-            ImageStatus::Ready => match model {
-                Some(model) if !model.supports_images() => ContextStatus::Warning {
-                    message: format!("{} doesn't support images", model.name().0).into(),
-                },
-                _ => ContextStatus::Ready,
+            ImageStatus::Warning => ContextStatus::Warning {
+                message: format!(
+                    "{} doesn't support images",
+                    model.map(|m| m.name().0).unwrap_or("Model".into())
+                )
+                .into(),
             },
+            ImageStatus::Ready => ContextStatus::Ready,
         };
 
         AddedContext {

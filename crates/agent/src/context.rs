@@ -745,6 +745,7 @@ pub struct ImageContext {
 pub enum ImageStatus {
     Loading,
     Error,
+    Warning,
     Ready,
 }
 
@@ -761,11 +762,22 @@ impl ImageContext {
         self.image_task.clone().now_or_never().flatten()
     }
 
-    pub fn status(&self) -> ImageStatus {
+    pub fn status(&self, model: Option<&Arc<dyn language_model::LanguageModel>>) -> ImageStatus {
         match self.image_task.clone().now_or_never() {
             None => ImageStatus::Loading,
             Some(None) => ImageStatus::Error,
-            Some(Some(_)) => ImageStatus::Ready,
+            Some(Some(_)) => {
+                // Check model support before marking as ready
+                if let Some(model) = model {
+                    if !model.supports_images() {
+                        ImageStatus::Warning
+                    } else {
+                        ImageStatus::Ready
+                    }
+                } else {
+                    ImageStatus::Ready
+                }
+            }
         }
     }
 
