@@ -38,22 +38,11 @@ Extensions that provide language servers may also provide default settings for t
 ```json
 {
   "active_pane_modifiers": {
-    "magnification": 1.0,
     "border_size": 0.0,
     "inactive_opacity": 1.0
   }
 }
 ```
-
-### Magnification
-
-- Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `magnification`
-- Default: `1.0`
-
-**Options**
-
-`float` values
 
 ### Border size
 
@@ -388,6 +377,20 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 **Options**
 
 `"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
+
+## Close on File Delete
+
+- Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
+- Setting: `close_on_file_delete`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
+
+Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Confirm Quit
 
@@ -1753,42 +1756,6 @@ Example:
 }
 ```
 
-### Hunk Style
-
-- Description: What styling we should use for the diff hunks.
-- Setting: `hunk_style`
-- Default:
-
-```json
-{
-  "git": {
-    "hunk_style": "staged_hollow"
-  }
-}
-```
-
-**Options**
-
-1. Show the staged hunks faded out and with a border:
-
-```json
-{
-  "git": {
-    "hunk_style": "staged_hollow"
-  }
-}
-```
-
-2. Show unstaged hunks faded out and with a border:
-
-```json
-{
-  "git": {
-    "hunk_style": "unstaged_hollow"
-  }
-}
-```
-
 **Options**
 
 1. Disable inline git blame:
@@ -1838,6 +1805,42 @@ Example:
       "enabled": true,
       "min_column": 80
     }
+  }
+}
+```
+
+### Hunk Style
+
+- Description: What styling we should use for the diff hunks.
+- Setting: `hunk_style`
+- Default:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+**Options**
+
+1. Show the staged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+2. Show unstaged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "unstaged_hollow"
   }
 }
 ```
@@ -3286,10 +3289,6 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "default_height": 320,
   "default_view": "thread",
   "default_model": {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4"
-  },
-  "editor_model": {
     "provider": "zed.dev",
     "model": "claude-sonnet-4"
   },

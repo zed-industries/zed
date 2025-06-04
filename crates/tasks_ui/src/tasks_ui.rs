@@ -1,16 +1,15 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use collections::HashMap;
 use editor::Editor;
 use gpui::{App, AppContext as _, Context, Entity, Task, Window};
-use modal::TaskOverrides;
 use project::{Location, TaskContexts, TaskSourceKind, Worktree};
 use task::{RevealTarget, TaskContext, TaskId, TaskTemplate, TaskVariables, VariableName};
 use workspace::Workspace;
 
 mod modal;
 
-pub use modal::{Rerun, ShowAttachModal, Spawn, TasksModal};
+pub use modal::{Rerun, ShowAttachModal, Spawn, TaskOverrides, TasksModal};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -81,7 +80,14 @@ pub fn init(cx: &mut App) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, None, window, cx).detach();
+                        spawn_task_or_modal(
+                            workspace,
+                            &Spawn::ViaModal {
+                                reveal_target: None,
+                            },
+                            window,
+                            cx,
+                        );
                     };
                 });
         },
@@ -95,6 +101,11 @@ fn spawn_task_or_modal(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
+    if let Some(provider) = workspace.debugger_provider() {
+        provider.spawn_task_or_modal(workspace, action, window, cx);
+        return;
+    }
+
     match action {
         Spawn::ByName {
             task_name,
@@ -143,7 +154,7 @@ pub fn toggle_modal(
     if can_open_modal {
         let task_contexts = task_contexts(workspace, window, cx);
         cx.spawn_in(window, async move |workspace, cx| {
-            let task_contexts = task_contexts.await;
+            let task_contexts = Arc::new(task_contexts.await);
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
@@ -153,6 +164,7 @@ pub fn toggle_modal(
                             reveal_target.map(|target| TaskOverrides {
                                 reveal_target: Some(target),
                             }),
+                            true,
                             workspace_handle,
                             window,
                             cx,
@@ -166,7 +178,7 @@ pub fn toggle_modal(
     }
 }
 
-fn spawn_tasks_filtered<F>(
+pub fn spawn_tasks_filtered<F>(
     mut predicate: F,
     overrides: Option<TaskOverrides>,
     window: &mut Window,

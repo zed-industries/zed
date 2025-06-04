@@ -699,7 +699,7 @@ fn render_diff_hunk_controls(
         .rounded_b_md()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .stop_mouse_events_except_scroll()
+        .block_mouse_except_scroll()
         .shadow_md()
         .children(vec![
             Button::new(("reject", row as u64), "Reject")
@@ -1086,7 +1086,7 @@ impl Render for AgentDiffToolbar {
                     .child(vertical_divider())
                     .when_some(editor.read(cx).workspace(), |this, _workspace| {
                         this.child(
-                            IconButton::new("review", IconName::ListCollapse)
+                            IconButton::new("review", IconName::ListTodo)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Review All Files",
@@ -1116,8 +1116,13 @@ impl Render for AgentDiffToolbar {
                     return Empty.into_any();
                 };
 
-                let is_generating = agent_diff.read(cx).thread.read(cx).is_generating();
-                if is_generating {
+                let has_pending_edit_tool_use = agent_diff
+                    .read(cx)
+                    .thread
+                    .read(cx)
+                    .has_pending_edit_tool_uses();
+
+                if has_pending_edit_tool_use {
                     return div().px_2().child(spinner_icon).into_any();
                 }
 
@@ -1372,6 +1377,7 @@ impl AgentDiff {
             | ThreadEvent::ToolFinished { .. }
             | ThreadEvent::CheckpointChanged
             | ThreadEvent::ToolConfirmationNeeded
+            | ThreadEvent::ToolUseLimitReached
             | ThreadEvent::CancelEditing => {}
         }
     }
@@ -1464,7 +1470,10 @@ impl AgentDiff {
         if !AgentSettings::get_global(cx).single_file_review {
             for (editor, _) in self.reviewing_editors.drain() {
                 editor
-                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .update(cx, |editor, cx| {
+                        editor.end_temporary_diff_override(cx);
+                        editor.unregister_addon::<EditorAgentDiffAddon>();
+                    })
                     .ok();
             }
             return;
@@ -1503,7 +1512,7 @@ impl AgentDiff {
                     multibuffer.add_diff(diff_handle.clone(), cx);
                 });
 
-                let new_state = if thread.read(cx).is_generating() {
+                let new_state = if thread.read(cx).has_pending_edit_tool_uses() {
                     EditorState::Generating
                 } else {
                     EditorState::Reviewing
@@ -1560,7 +1569,10 @@ impl AgentDiff {
 
             if in_workspace {
                 editor
-                    .update(cx, |editor, cx| editor.end_temporary_diff_override(cx))
+                    .update(cx, |editor, cx| {
+                        editor.end_temporary_diff_override(cx);
+                        editor.unregister_addon::<EditorAgentDiffAddon>();
+                    })
                     .ok();
                 self.reviewing_editors.remove(&editor);
             }

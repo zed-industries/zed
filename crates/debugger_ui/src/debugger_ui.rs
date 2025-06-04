@@ -3,18 +3,19 @@ use debugger_panel::{DebugPanel, ToggleFocus};
 use editor::Editor;
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
 use gpui::{App, EntityInputHandler, actions};
-use new_session_modal::NewSessionModal;
+use new_process_modal::{NewProcessModal, NewProcessMode};
 use project::debugger::{self, breakpoint_store::SourceBreakpoint};
 use session::DebugSession;
 use settings::Settings;
 use stack_trace_view::StackTraceView;
+use tasks_ui::{Spawn, TaskOverrides};
 use util::maybe;
 use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 
 pub mod attach_modal;
 pub mod debugger_panel;
 mod dropdown_menus;
-mod new_session_modal;
+mod new_process_modal;
 mod persistence;
 pub(crate) mod session;
 mod stack_trace_view;
@@ -48,6 +49,7 @@ actions!(
         ToggleThreadPicker,
         ToggleSessionPicker,
         RerunLastSession,
+        ToggleExpandItem,
     ]
 );
 
@@ -62,6 +64,7 @@ pub fn init(cx: &mut App) {
 
         cx.when_flag_enabled::<DebuggerFeatureFlag>(window, |workspace, _, _| {
             workspace
+                .register_action(spawn_task_or_modal)
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
                     workspace.toggle_panel_focus::<DebugPanel>(window, cx);
                 })
@@ -208,7 +211,7 @@ pub fn init(cx: &mut App) {
                     },
                 )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
-                    NewSessionModal::show(workspace, window, cx);
+                    NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
                 })
                 .register_action(
                     |workspace: &mut Workspace, _: &RerunLastSession, window, cx| {
@@ -308,4 +311,49 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
+}
+
+fn spawn_task_or_modal(
+    workspace: &mut Workspace,
+    action: &Spawn,
+    window: &mut ui::Window,
+    cx: &mut ui::Context<Workspace>,
+) {
+    match action {
+        Spawn::ByName {
+            task_name,
+            reveal_target,
+        } => {
+            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
+                reveal_target: Some(reveal_target),
+            });
+            let name = task_name.clone();
+            tasks_ui::spawn_tasks_filtered(
+                move |(_, task)| task.label.eq(&name),
+                overrides,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx)
+        }
+        Spawn::ByTag {
+            task_tag,
+            reveal_target,
+        } => {
+            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
+                reveal_target: Some(reveal_target),
+            });
+            let tag = task_tag.clone();
+            tasks_ui::spawn_tasks_filtered(
+                move |(_, task)| task.tags.contains(&tag),
+                overrides,
+                window,
+                cx,
+            )
+            .detach_and_log_err(cx)
+        }
+        Spawn::ViaModal { reveal_target } => {
+            NewProcessModal::show(workspace, window, NewProcessMode::Task, *reveal_target, cx);
+        }
+    }
 }

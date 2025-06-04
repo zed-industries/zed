@@ -5,6 +5,7 @@ use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
 use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
+use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
@@ -432,6 +433,16 @@ impl Server {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
                 tracing::info!("cleanup timeout expired, retrieving stale rooms");
+
+                app_state
+                    .db
+                    .delete_stale_channel_chat_participants(
+                        &app_state.config.zed_environment,
+                        server_id,
+                    )
+                    .await
+                    .trace_err();
+
                 if let Some((room_ids, channel_ids)) = app_state
                     .db
                     .stale_server_resource_ids(&app_state.config.zed_environment, server_id)
@@ -552,6 +563,21 @@ impl Server {
                         }
                     }
                 }
+
+                app_state
+                    .db
+                    .delete_stale_channel_chat_participants(
+                        &app_state.config.zed_environment,
+                        server_id,
+                    )
+                    .await
+                    .trace_err();
+
+                app_state
+                    .db
+                    .clear_old_worktree_entries(server_id)
+                    .await
+                    .trace_err();
 
                 app_state
                     .db
@@ -4033,32 +4059,26 @@ async fn get_llm_api_token(
         .as_ref()
         .context("failed to retrieve Stripe billing object")?;
 
-    let billing_customer =
-        if let Some(billing_customer) = db.get_billing_customer_by_user_id(user.id).await? {
-            billing_customer
-        } else {
-            let customer_id = stripe_billing
-                .find_or_create_customer_by_email(user.email_address.as_deref())
-                .await?
-                .try_into()?;
+    let billing_customer = if let Some(billing_customer) =
+        db.get_billing_customer_by_user_id(user.id).await?
+    {
+        billing_customer
+    } else {
+        let customer_id = stripe_billing
+            .find_or_create_customer_by_email(user.email_address.as_deref())
+            .await?;
 
-            find_or_create_billing_customer(
-                &session.app_state,
-                &stripe_client,
-                stripe::Expandable::Id(customer_id),
-            )
+        find_or_create_billing_customer(&session.app_state, stripe_client.as_ref(), &customer_id)
             .await?
             .context("billing customer not found")?
-        };
+    };
 
     let billing_subscription =
         if let Some(billing_subscription) = db.get_active_billing_subscription(user.id).await? {
             billing_subscription
         } else {
-            let stripe_customer_id = billing_customer
-                .stripe_customer_id
-                .parse::<stripe::CustomerId>()
-                .context("failed to parse Stripe customer ID from database")?;
+            let stripe_customer_id =
+                StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
 
             let stripe_subscription = stripe_billing
                 .subscribe_to_zed_free(stripe_customer_id)

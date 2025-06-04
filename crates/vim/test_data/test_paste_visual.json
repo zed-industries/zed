@@ -41,3 +41,11 @@
 {"Key":"p"}
 {"Get":{"state":"ˇfox jumps over\nthe lazy dog","mode":"Normal"}}
 {"ReadRegister":{"name":"\"","value":"The quick brown\n"}}
+{"Put":{"state":"ˇThe quick brown\nfox jumps over\nthe lazy dog"}}
+{"Key":"y"}
+{"Key":"y"}
+{"Key":"shift-v"}
+{"Key":"j"}
+{"Key":"$"}
+{"Key":"p"}
+{"Get":{"state":"ˇThe quick brown\nthe lazy dog","mode":"Normal"}}

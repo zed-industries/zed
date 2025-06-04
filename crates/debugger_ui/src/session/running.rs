@@ -8,7 +8,8 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    new_session_modal::resolve_path,
+    ToggleExpandItem,
+    new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
 };
 
@@ -173,6 +174,10 @@ impl Item for SubView {
         self.kind.to_shared_string()
     }
 
+    fn tab_tooltip_text(&self, _: &App) -> Option<SharedString> {
+        Some(self.kind.tab_tooltip())
+    }
+
     fn tab_content(
         &self,
         params: workspace::item::TabContentParams,
@@ -281,6 +286,7 @@ pub(crate) fn new_debugger_pane(
                                 &new_pane,
                                 item_id_to_move,
                                 new_pane.read(cx).active_item_index(),
+                                true,
                                 window,
                                 cx,
                             );
@@ -343,6 +349,7 @@ pub(crate) fn new_debugger_pane(
                 false
             }
         })));
+        pane.set_can_toggle_zoom(false, cx);
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane.set_should_display_tab_bar(|_, _| true);
@@ -399,6 +406,9 @@ pub(crate) fn new_debugger_pane(
                                     .p_1()
                                     .rounded_md()
                                     .cursor_pointer()
+                                    .when_some(item.tab_tooltip_text(cx), |this, tooltip| {
+                                        this.tooltip(Tooltip::text(tooltip))
+                                    })
                                     .map(|this| {
                                         let theme = cx.theme();
                                         if selected {
@@ -465,17 +475,19 @@ pub(crate) fn new_debugger_pane(
                                     },
                                 )
                                 .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |pane, _, window, cx| {
-                                    pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
+                                .on_click(cx.listener(move |pane, _, _, cx| {
+                                    let is_zoomed = pane.is_zoomed();
+                                    pane.set_zoomed(!is_zoomed, cx);
+                                    cx.notify();
                                 }))
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |window, cx| {
                                         let zoomed_text =
-                                            if zoomed { "Zoom Out" } else { "Zoom In" };
+                                            if zoomed { "Minimize" } else { "Expand" };
                                         Tooltip::for_action_in(
                                             zoomed_text,
-                                            &workspace::ToggleZoom,
+                                            &ToggleExpandItem,
                                             &focus_handle,
                                             window,
                                             cx,
@@ -559,7 +571,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn relativlize_paths(
+    pub(crate) fn relativize_paths(
         key: Option<&str>,
         config: &mut serde_json::Value,
         context: &TaskContext,
@@ -567,12 +579,12 @@ impl RunningState {
         match config {
             serde_json::Value::Object(obj) => {
                 obj.iter_mut()
-                    .for_each(|(key, value)| Self::relativlize_paths(Some(key), value, context));
+                    .for_each(|(key, value)| Self::relativize_paths(Some(key), value, context));
             }
             serde_json::Value::Array(array) => {
                 array
                     .iter_mut()
-                    .for_each(|value| Self::relativlize_paths(None, value, context));
+                    .for_each(|value| Self::relativize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
                 // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
@@ -799,13 +811,13 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
-            Self::relativlize_paths(None, &mut config, &task_context);
+            Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             let request_type = dap_registry
                 .adapter(&adapter)
                 .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                .and_then(|adapter| adapter.validate_config(&config));
+                .and_then(|adapter| adapter.request_kind(&config));
 
             let config_is_valid = request_type.is_ok();
 
@@ -874,7 +886,6 @@ impl RunningState {
                     args,
                     ..task.resolved.clone()
                 };
-
                 let terminal = project
                     .update_in(cx, |project, window, cx| {
                         project.create_terminal(
@@ -891,7 +902,6 @@ impl RunningState {
                         weak_workspace,
                         None,
                         weak_project,
-                        false,
                         window,
                         cx,
                     )
@@ -919,6 +929,12 @@ impl RunningState {
             };
 
             if config_is_valid {
+                // Ok(DebugTaskDefinition {
+                //     label,
+                //     adapter: DebugAdapterName(adapter),
+                //     config,
+                //     tcp_connection,
+                // })
             } else if let Some((task, locator_name)) = build_output {
                 let locator_name =
                     locator_name.context("Could not find a valid locator for a build task")?;
@@ -937,12 +953,15 @@ impl RunningState {
 
                 let scenario = dap_registry
                     .adapter(&adapter)
-                    .context(format!("{}: is not a valid adapter name", &adapter))
+                    .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
                     .map(|adapter| adapter.config_from_zed_format(zed_config))??;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
-                anyhow::bail!("No request or build provided");
+                let Err(e) = request_type else {
+                    unreachable!();
+                };
+                anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
             };
 
             Ok(DebugTaskDefinition {
@@ -1036,15 +1055,7 @@ impl RunningState {
             let terminal = terminal_task.await?;
 
             let terminal_view = cx.new_window_entity(|window, cx| {
-                TerminalView::new(
-                    terminal.clone(),
-                    workspace,
-                    None,
-                    weak_project,
-                    false,
-                    window,
-                    cx,
-                )
+                TerminalView::new(terminal.clone(), workspace, None, weak_project, window, cx)
             })?;
 
             running.update_in(cx, |running, window, cx| {
@@ -1244,18 +1255,6 @@ impl RunningState {
             }
             Event::Focus => {
                 this.active_pane = source_pane.clone();
-            }
-            Event::ZoomIn => {
-                source_pane.update(cx, |pane, cx| {
-                    pane.set_zoomed(true, cx);
-                });
-                cx.notify();
-            }
-            Event::ZoomOut => {
-                source_pane.update(cx, |pane, cx| {
-                    pane.set_zoomed(false, cx);
-                });
-                cx.notify();
             }
             _ => {}
         }

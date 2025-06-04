@@ -42,13 +42,13 @@ use git::{
 use gpui::{
     Action, Along, AnyElement, App, AppContext, AvailableSpace, Axis as ScrollbarAxis, BorderStyle,
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
-    Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox, Hsla,
-    InteractiveElement, IntoElement, IsZero, Keystroke, Length, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta,
-    ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
-    Style, Styled, TextRun, TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill,
-    linear_color_stop, linear_gradient, outline, point, px, quad, relative, size, solid_background,
-    transparent_black,
+    Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
+    HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, Keystroke, Length,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
+    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
+    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
+    quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::language_settings::{
@@ -682,7 +682,7 @@ impl EditorElement {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
-                    reset: false,
+                    reset: true,
                     goal_column: point_for_position.exact_unclipped.column(),
                 },
                 window,
@@ -1620,7 +1620,7 @@ impl EditorElement {
         );
 
         let layout = ScrollbarLayout::for_minimap(
-            window.insert_hitbox(minimap_bounds, false),
+            window.insert_hitbox(minimap_bounds, HitboxBehavior::Normal),
             visible_editor_lines,
             total_editor_lines,
             minimap_line_height,
@@ -1791,7 +1791,7 @@ impl EditorElement {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
                     let hunk_bounds =
                         Self::diff_hunk_bounds(snapshot, line_height, gutter_hitbox.bounds, hunk);
-                    *hitbox = Some(window.insert_hitbox(hunk_bounds, true));
+                    *hitbox = Some(window.insert_hitbox(hunk_bounds, HitboxBehavior::BlockMouse));
                 }
             }
         }
@@ -2883,7 +2883,7 @@ impl EditorElement {
                 let hitbox = line_origin.map(|line_origin| {
                     window.insert_hitbox(
                         Bounds::new(line_origin, size(shaped_line.width, line_height)),
-                        false,
+                        HitboxBehavior::Normal,
                     )
                 });
                 #[cfg(test)]
@@ -6371,7 +6371,7 @@ impl EditorElement {
                     }
                 };
 
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     delta = delta.coalesce(event.delta);
                     editor.update(cx, |editor, cx| {
                         let position_map: &PositionMap = &position_map;
@@ -7651,15 +7651,17 @@ impl Element for EditorElement {
                         .map(|(guide, active)| (self.column_pixels(*guide, window, cx), *active))
                         .collect::<SmallVec<[_; 2]>>();
 
-                    let hitbox = window.insert_hitbox(bounds, false);
-                    let gutter_hitbox =
-                        window.insert_hitbox(gutter_bounds(bounds, gutter_dimensions), false);
+                    let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
+                    let gutter_hitbox = window.insert_hitbox(
+                        gutter_bounds(bounds, gutter_dimensions),
+                        HitboxBehavior::Normal,
+                    );
                     let text_hitbox = window.insert_hitbox(
                         Bounds {
                             origin: gutter_hitbox.top_right(),
                             size: size(text_width, bounds.size.height),
                         },
-                        false,
+                        HitboxBehavior::Normal,
                     );
 
                     let content_origin = text_hitbox.origin + content_offset;
@@ -8880,7 +8882,7 @@ impl EditorScrollbars {
                 })
                 .map(|(viewport_size, scroll_range)| {
                     ScrollbarLayout::new(
-                        window.insert_hitbox(scrollbar_bounds_for(axis), false),
+                        window.insert_hitbox(scrollbar_bounds_for(axis), HitboxBehavior::Normal),
                         viewport_size,
                         scroll_range,
                         glyph_grid_cell.along(axis),
