@@ -11,7 +11,6 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::Buffer;
-use language_model::LanguageModelRegistry;
 use project::ProjectItem;
 use ui::{PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::Workspace;
@@ -24,7 +23,7 @@ use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::ui::{AddedContext, ContextPill};
 use crate::{
     AcceptSuggestedContext, AgentPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
-    RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
+    ModelUsageContext, RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
 };
 
 pub struct ContextStrip {
@@ -38,6 +37,7 @@ pub struct ContextStrip {
     _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
     children_bounds: Option<Vec<Bounds<Pixels>>>,
+    model_usage_context: ModelUsageContext,
 }
 
 impl ContextStrip {
@@ -48,6 +48,7 @@ impl ContextStrip {
         text_thread_store: Option<WeakEntity<TextThreadStore>>,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
+        model_usage_context: ModelUsageContext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -82,6 +83,7 @@ impl ContextStrip {
             _subscriptions: subscriptions,
             focused_index: None,
             children_bounds: None,
+            model_usage_context,
         }
     }
 
@@ -100,10 +102,7 @@ impl ContextStrip {
                 .and_then(|thread_store| thread_store.upgrade())
                 .and_then(|thread_store| thread_store.read(cx).prompt_store().as_ref());
 
-            let current_model = LanguageModelRegistry::global(cx)
-                .read(cx)
-                .default_model()
-                .map(|configured_model| configured_model.model);
+            let current_model = self.model_usage_context.language_model(cx);
 
             self.context_store
                 .read(cx)

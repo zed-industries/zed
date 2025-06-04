@@ -36,7 +36,7 @@ use fs::Fs;
 use gpui::{App, Entity, actions, impl_actions};
 use language::LanguageRegistry;
 use language_model::{
-    ConfiguredModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
+    ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
@@ -131,6 +131,11 @@ impl ModelUsageContext {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }
         }
+    }
+
+    pub fn language_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        self.configured_model(cx)
+            .map(|configured_model| configured_model.model)
     }
 }
 

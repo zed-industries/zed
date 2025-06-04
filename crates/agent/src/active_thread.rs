@@ -1,4 +1,3 @@
-use crate::AgentPanel;
 use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
@@ -13,6 +12,7 @@ use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
+use crate::{AgentPanel, ModelUsageContext};
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use anyhow::Context as _;
 use assistant_tool::ToolUseStatus;
@@ -1348,6 +1348,7 @@ impl ActiveThread {
                 Some(self.text_thread_store.downgrade()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
+                ModelUsageContext::Thread(self.thread.clone()),
                 window,
                 cx,
             )

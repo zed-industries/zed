@@ -912,6 +912,7 @@ impl PromptEditor<BufferCodegen> {
                 text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
+                ModelUsageContext::InlineAssistant,
                 window,
                 cx,
             )
@@ -1083,6 +1084,7 @@ impl PromptEditor<TerminalCodegen> {
                 text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
+                ModelUsageContext::InlineAssistant,
                 window,
                 cx,
             )
