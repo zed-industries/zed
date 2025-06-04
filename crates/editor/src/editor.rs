@@ -18633,13 +18633,11 @@ impl Editor {
                         }
 
                         if let Some(buffer) = edited_buffer {
-                            let buffer_id = buffer.read(cx).remote_id();
-                            if !self.registered_buffers.contains_key(&buffer_id) {
-                                self.registered_buffers.insert(
-                                    buffer_id,
-                                    project.register_buffer_with_language_servers(&buffer, cx),
-                                );
-                            }
+                            self.registered_buffers
+                                .entry(buffer.read(cx).remote_id())
+                                .or_insert_with(|| {
+                                    project.register_buffer_with_language_servers(&buffer, cx)
+                                });
                         }
                     });
                 }
