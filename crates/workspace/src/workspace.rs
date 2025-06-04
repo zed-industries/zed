@@ -899,9 +899,10 @@ pub enum OpenVisible {
 type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
+        DirectoryLister,
         &mut Window,
         &mut Context<Workspace>,
-    ) -> oneshot::Receiver<Option<ProjectPath>>,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
 type PromptForOpenPath = Box<
@@ -1874,25 +1875,25 @@ impl Workspace {
             let (tx, rx) = oneshot::channel();
             let abs_path = cx.prompt_for_paths(path_prompt_options);
 
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn_in(window, async move |workspace, cx| {
                 let Ok(result) = abs_path.await else {
                     return Ok(());
                 };
 
                 match result {
                     Ok(result) => {
-                        tx.send(result).log_err();
+                        tx.send(result).ok();
                     }
                     Err(err) => {
-                        let rx = this.update_in(cx, |this, window, cx| {
-                            this.show_portal_error(err.to_string(), cx);
-                            let prompt = this.on_prompt_for_open_path.take().unwrap();
-                            let rx = prompt(this, lister, window, cx);
-                            this.on_prompt_for_open_path = Some(prompt);
+                        let rx = workspace.update_in(cx, |workspace, window, cx| {
+                            workspace.show_portal_error(err.to_string(), cx);
+                            let prompt = workspace.on_prompt_for_open_path.take().unwrap();
+                            let rx = prompt(workspace, lister, window, cx);
+                            workspace.on_prompt_for_open_path = Some(prompt);
                             rx
                         })?;
                         if let Ok(path) = rx.await {
-                            tx.send(path).log_err();
+                            tx.send(path).ok();
                         }
                     }
                 };
@@ -1906,77 +1907,58 @@ impl Workspace {
 
     pub fn prompt_for_new_path(
         &mut self,
+        lister: DirectoryLister,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<Option<ProjectPath>> {
-        if (self.project.read(cx).is_via_collab() || self.project.read(cx).is_via_ssh())
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        if self.project.read(cx).is_via_collab()
+            || self.project.read(cx).is_via_ssh()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, window, cx);
+            let rx = prompt(self, lister, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
             return rx;
         }
 
         let (tx, rx) = oneshot::channel();
-        cx.spawn_in(window, async move |this, cx| {
-            let abs_path = this.update(cx, |this, cx| {
-                let mut relative_to = this
+        cx.spawn_in(window, async move |workspace, cx| {
+            let abs_path = workspace.update(cx, |workspace, cx| {
+                let relative_to = workspace
                     .most_recent_active_path(cx)
-                    .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-                if relative_to.is_none() {
-                    let project = this.project.read(cx);
-                    relative_to = project
-                        .visible_worktrees(cx)
-                        .filter_map(|worktree| {
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                    .or_else(|| {
+                        let project = workspace.project.read(cx);
+                        project.visible_worktrees(cx).find_map(|worktree| {
                             Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
                         })
-                        .next()
-                };
-
-                cx.prompt_for_new_path(&relative_to.unwrap_or_else(|| PathBuf::from("")))
+                    })
+                    .or_else(std::env::home_dir)
+                    .unwrap_or_else(|| PathBuf::from(""));
+                cx.prompt_for_new_path(&relative_to)
             })?;
             let abs_path = match abs_path.await? {
                 Ok(path) => path,
                 Err(err) => {
-                    let rx = this.update_in(cx, |this, window, cx| {
-                        this.show_portal_error(err.to_string(), cx);
+                    let rx = workspace.update_in(cx, |workspace, window, cx| {
+                        workspace.show_portal_error(err.to_string(), cx);
 
-                        let prompt = this.on_prompt_for_new_path.take().unwrap();
-                        let rx = prompt(this, window, cx);
-                        this.on_prompt_for_new_path = Some(prompt);
+                        let prompt = workspace.on_prompt_for_new_path.take().unwrap();
+                        let rx = prompt(workspace, lister, window, cx);
+                        workspace.on_prompt_for_new_path = Some(prompt);
                         rx
                     })?;
                     if let Ok(path) = rx.await {
-                        tx.send(path).log_err();
+                        tx.send(path).ok();
                     }
                     return anyhow::Ok(());
                 }
             };
 
-            let project_path = abs_path.and_then(|abs_path| {
-                this.update(cx, |this, cx| {
-                    this.project.update(cx, |project, cx| {
-                        project.find_or_create_worktree(abs_path, true, cx)
-                    })
-                })
-                .ok()
-            });
-
-            if let Some(project_path) = project_path {
-                let (worktree, path) = project_path.await?;
-                let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
-                tx.send(Some(ProjectPath {
-                    worktree_id,
-                    path: path.into(),
-                }))
-                .ok();
-            } else {
-                tx.send(None).ok();
-            }
+            tx.send(abs_path.map(|path| vec![path])).ok();
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         rx
     }
@@ -3838,7 +3820,7 @@ impl Workspace {
         };
 
         let new_pane = self.add_pane(window, cx);
-        move_item(&from, &new_pane, item_id_to_move, 0, window, cx);
+        move_item(&from, &new_pane, item_id_to_move, 0, true, window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -7533,6 +7515,7 @@ pub fn move_item(
     destination: &Entity<Pane>,
     item_id_to_move: EntityId,
     destination_index: usize,
+    activate: bool,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -7556,8 +7539,18 @@ pub fn move_item(
 
     // This automatically removes duplicate items in the pane
     destination.update(cx, |destination, cx| {
-        destination.add_item(item_handle, true, true, Some(destination_index), window, cx);
-        window.focus(&destination.focus_handle(cx))
+        destination.add_item_inner(
+            item_handle,
+            activate,
+            activate,
+            activate,
+            Some(destination_index),
+            window,
+            cx,
+        );
+        if activate {
+            window.focus(&destination.focus_handle(cx))
+        }
     });
 }
 
@@ -9220,6 +9213,332 @@ mod tests {
         assert!(
             cx.has_pending_prompt(),
             "With one dirty item from the multi buffer not being in the pane, a save prompt should be shown"
+        );
+    }
+
+    /// Tests that when `close_on_file_delete` is enabled, files are automatically
+    /// closed when they are deleted from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_enabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_disk_deletion setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a test item that simulates a file
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Verify the item is in the pane
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 1);
+        });
+
+        // Simulate file deletion by setting the item's deleted state
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow the close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item was automatically closed
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                0,
+                "Item should be automatically closed when file is deleted"
+            );
+        });
+    }
+
+    /// Tests that when `close_on_file_delete` is disabled (default), files remain
+    /// open with a strikethrough when they are deleted from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_disabled(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Ensure close_on_disk_deletion is disabled (default)
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(false);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a test item that simulates a file
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Verify the item is in the pane
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(pane.items().count(), 1);
+        });
+
+        // Simulate file deletion
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow any potential close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item remains open (with strikethrough)
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Item should remain open when close_on_disk_deletion is disabled"
+            );
+        });
+
+        // Verify the item shows as deleted
+        item.read_with(cx, |item, _| {
+            assert!(
+                item.has_deleted_file,
+                "Item should be marked as having deleted file"
+            );
+        });
+    }
+
+    /// Tests that dirty files are not automatically closed when deleted from disk,
+    /// even when `close_on_file_delete` is enabled. This ensures users don't lose
+    /// unsaved changes without being prompted.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_with_dirty_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_file_delete setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create a dirty test item
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_label("test.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test.txt", cx)])
+        });
+
+        // Add item to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Simulate file deletion
+        item.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        cx.run_until_parked();
+        item.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+
+        // Allow any potential close operation to complete
+        cx.run_until_parked();
+
+        // Verify the item remains open (dirty files are not auto-closed)
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Dirty items should not be automatically closed even when file is deleted"
+            );
+        });
+
+        // Verify the item is marked as deleted and still dirty
+        item.read_with(cx, |item, _| {
+            assert!(
+                item.has_deleted_file,
+                "Item should be marked as having deleted file"
+            );
+            assert!(item.is_dirty, "Item should still be dirty");
+        });
+    }
+
+    /// Tests that navigation history is cleaned up when files are auto-closed
+    /// due to deletion from disk.
+    #[gpui::test]
+    async fn test_close_on_disk_deletion_cleans_navigation_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Enable the close_on_file_delete setting
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.close_on_file_delete = Some(true);
+            });
+        });
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Create test items
+        let item1 = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test1.txt")
+                .with_project_items(&[TestProjectItem::new(1, "test1.txt", cx)])
+        });
+        let item1_id = item1.item_id();
+
+        let item2 = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_label("test2.txt")
+                .with_project_items(&[TestProjectItem::new(2, "test2.txt", cx)])
+        });
+
+        // Add items to workspace
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item1.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+            workspace.add_item(
+                pane.clone(),
+                Box::new(item2.clone()),
+                None,
+                false,
+                false,
+                window,
+                cx,
+            );
+        });
+
+        // Activate item1 to ensure it gets navigation entries
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(0, true, true, window, cx);
+        });
+
+        // Switch to item2 and back to create navigation history
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(0, true, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Simulate file deletion for item1
+        item1.update(cx, |item, _| {
+            item.set_has_deleted_file(true);
+        });
+
+        // Emit UpdateTab event to trigger the close behavior
+        item1.update(cx, |_, cx| {
+            cx.emit(ItemEvent::UpdateTab);
+        });
+        cx.run_until_parked();
+
+        // Verify item1 was closed
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.items().count(),
+                1,
+                "Should have 1 item remaining after auto-close"
+            );
+        });
+
+        // Check navigation history after close
+        let has_item = pane.read_with(cx, |pane, cx| {
+            let mut has_item = false;
+            pane.nav_history().for_each_entry(cx, |entry, _| {
+                if entry.item.id() == item1_id {
+                    has_item = true;
+                }
+            });
+            has_item
+        });
+
+        assert!(
+            !has_item,
+            "Navigation history should not contain closed item entries"
         );
     }
 

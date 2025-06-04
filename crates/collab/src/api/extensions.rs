@@ -66,7 +66,7 @@ async fn get_extensions(
             params.filter.as_deref(),
             provides_filter.as_ref(),
             params.max_schema_version,
-            500,
+            1_000,
         )
         .await?;
 

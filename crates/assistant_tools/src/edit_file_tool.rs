@@ -2,6 +2,7 @@ use crate::{
     Templates,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
     schema::json_schema_for,
+    ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
@@ -13,7 +14,7 @@ use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
 use futures::StreamExt;
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, AsyncApp, Entity, Task,
-    TextStyleRefinement, WeakEntity, pulsating_between,
+    TextStyleRefinement, WeakEntity, pulsating_between, px,
 };
 use indoc::formatdoc;
 use language::{
@@ -126,6 +127,10 @@ impl Tool for EditFileTool {
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         false
+    }
+
+    fn may_perform_edits(&self) -> bool {
+        true
     }
 
     fn description(&self) -> String {
@@ -884,29 +889,7 @@ impl ToolCard for EditFileToolCard {
             (element.into_any_element(), line_height)
         });
 
-        let (full_height_icon, full_height_tooltip_label) = if self.full_height_expanded {
-            (IconName::ChevronUp, "Collapse Code Block")
-        } else {
-            (IconName::ChevronDown, "Expand Code Block")
-        };
-
-        let gradient_overlay =
-            div()
-                .absolute()
-                .bottom_0()
-                .left_0()
-                .w_full()
-                .h_2_5()
-                .bg(gpui::linear_gradient(
-                    0.,
-                    gpui::linear_color_stop(cx.theme().colors().editor_background, 0.),
-                    gpui::linear_color_stop(cx.theme().colors().editor_background.opacity(0.), 1.),
-                ));
-
         let border_color = cx.theme().colors().border.opacity(0.6);
-
-        const DEFAULT_COLLAPSED_LINES: u32 = 10;
-        let is_collapsible = self.total_lines.unwrap_or(0) > DEFAULT_COLLAPSED_LINES;
 
         let waiting_for_diff = {
             let styles = [
@@ -992,48 +975,34 @@ impl ToolCard for EditFileToolCard {
                 card.child(waiting_for_diff)
             })
             .when(self.preview_expanded && !self.is_loading(), |card| {
+                let editor_view = v_flex()
+                    .relative()
+                    .h_full()
+                    .when(!self.full_height_expanded, |editor_container| {
+                        editor_container.max_h(px(COLLAPSED_LINES as f32 * editor_line_height.0))
+                    })
+                    .overflow_hidden()
+                    .border_t_1()
+                    .border_color(border_color)
+                    .bg(cx.theme().colors().editor_background)
+                    .child(editor);
+
                 card.child(
-                    v_flex()
-                        .relative()
-                        .h_full()
-                        .when(!self.full_height_expanded, |editor_container| {
-                            editor_container
-                                .max_h(DEFAULT_COLLAPSED_LINES as f32 * editor_line_height)
-                        })
-                        .overflow_hidden()
-                        .border_t_1()
-                        .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(editor)
-                        .when(
-                            !self.full_height_expanded && is_collapsible,
-                            |editor_container| editor_container.child(gradient_overlay),
-                        ),
+                    ToolOutputPreview::new(editor_view.into_any_element(), self.editor.entity_id())
+                        .with_total_lines(self.total_lines.unwrap_or(0) as usize)
+                        .toggle_state(self.full_height_expanded)
+                        .with_collapsed_fade()
+                        .on_toggle({
+                            let this = cx.entity().downgrade();
+                            move |is_expanded, _window, cx| {
+                                if let Some(this) = this.upgrade() {
+                                    this.update(cx, |this, _cx| {
+                                        this.full_height_expanded = is_expanded;
+                                    });
+                                }
+                            }
+                        }),
                 )
-                .when(is_collapsible, |card| {
-                    card.child(
-                        h_flex()
-                            .id(("expand-button", self.editor.entity_id()))
-                            .flex_none()
-                            .cursor_pointer()
-                            .h_5()
-                            .justify_center()
-                            .border_t_1()
-                            .rounded_b_md()
-                            .border_color(border_color)
-                            .bg(cx.theme().colors().editor_background)
-                            .hover(|style| style.bg(cx.theme().colors().element_hover.opacity(0.1)))
-                            .child(
-                                Icon::new(full_height_icon)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .tooltip(Tooltip::text(full_height_tooltip_label))
-                            .on_click(cx.listener(move |this, _event, _window, _cx| {
-                                this.full_height_expanded = !this.full_height_expanded;
-                            })),
-                    )
-                })
             })
     }
 }

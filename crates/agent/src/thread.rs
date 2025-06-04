@@ -871,7 +871,16 @@ impl Thread {
         self.tool_use
             .pending_tool_uses()
             .iter()
-            .all(|tool_use| tool_use.status.is_error())
+            .all(|pending_tool_use| pending_tool_use.status.is_error())
+    }
+
+    /// Returns whether any pending tool uses may perform edits
+    pub fn has_pending_edit_tool_uses(&self) -> bool {
+        self.tool_use
+            .pending_tool_uses()
+            .iter()
+            .filter(|pending_tool_use| !pending_tool_use.status.is_error())
+            .any(|pending_tool_use| pending_tool_use.may_perform_edits)
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
@@ -1023,6 +1032,7 @@ impl Thread {
         id: MessageId,
         new_role: Role,
         new_segments: Vec<MessageSegment>,
+        creases: Vec<MessageCrease>,
         loaded_context: Option<LoadedContext>,
         checkpoint: Option<GitStoreCheckpoint>,
         cx: &mut Context<Self>,
@@ -1032,6 +1042,7 @@ impl Thread {
         };
         message.role = new_role;
         message.segments = new_segments;
+        message.creases = creases;
         if let Some(context) = loaded_context {
             message.loaded_context = context;
         }
