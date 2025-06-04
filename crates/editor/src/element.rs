@@ -2224,7 +2224,7 @@ impl EditorElement {
             editor
                 .inline_blame_popover
                 .as_ref()
-                .map_or(false, |state| *state.keyboard_grace.borrow())
+                .map_or(false, |state| state.keyboard_grace)
         });
 
         self.editor.update(cx, |editor, cx| {

@@ -906,7 +906,7 @@ struct InlineBlamePopover {
     hide_task: Option<Task<()>>,
     popover_bounds: Option<Bounds<Pixels>>,
     popover_state: InlineBlamePopoverState,
-    keyboard_grace: Rc<RefCell<bool>>,
+    keyboard_grace: bool,
 }
 
 /// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
@@ -6236,7 +6236,7 @@ impl Editor {
                     commit_message: details,
                     markdown,
                 },
-                keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                keyboard_grace: ignore_timeout,
             });
         }
     }
