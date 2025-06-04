@@ -864,15 +864,30 @@ pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
 
 /// An LSP diagnostics associated with a certain language server.
 #[derive(Clone, Debug, Default)]
-pub struct LspPullDiagnostics {
-    /// The id of the language server that produced diagnostics.
-    ///
-    /// The absence of the server id means default response, not containing any diagnostics.
-    pub server_id: Option<LanguageServerId>,
-    /// URI of the resource,
-    pub uri: Option<lsp::Url>,
-    /// The diagnostics produced by this language server.
-    pub diagnostics: Vec<lsp::Diagnostic>,
+pub enum LspPullDiagnostics {
+    #[default]
+    Default,
+    Response {
+        /// The id of the language server that produced diagnostics.
+        server_id: LanguageServerId,
+        /// URI of the resource,
+        uri: lsp::Url,
+        /// The diagnostics produced by this language server.
+        diagnostics: PulledDiagnostics,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum PulledDiagnostics {
+    Unchanged {
+        /// An ID the current pulled batch for this file.
+        /// If given, can be used to query workspace diagnostics partially.
+        result_id: String,
+    },
+    Changed {
+        result_id: Option<String>,
+        diagnostics: Vec<lsp::Diagnostic>,
+    },
 }
 
 impl Project {

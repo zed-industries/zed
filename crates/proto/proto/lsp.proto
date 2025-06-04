@@ -793,9 +793,15 @@ message GetDocumentDiagnostics {
 }
 
 message GetDocumentDiagnosticsResponse {
-    optional uint64 server_id = 1;
+    repeated PulledDiagnostics pulled_diagnostics = 1;
+}
+
+message PulledDiagnostics {
+    uint64 server_id = 1;
     string uri = 2;
-    repeated LspDiagnostic diagnostics = 3;
+    optional string result_id = 3;
+    bool changed = 4;
+    repeated LspDiagnostic diagnostics = 5;
 }
 
 message RefreshDocumentsDiagnostics {

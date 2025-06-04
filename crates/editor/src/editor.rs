@@ -125,7 +125,7 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, ProjectPath,
+    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -20876,7 +20876,12 @@ impl SemanticsProvider for Entity<Project> {
             project.update(cx, |project, cx| {
                 project.lsp_store().update(cx, |lsp_store, cx| {
                     for diagnostics_set in diagnostics {
-                        let Some(server_id) = diagnostics_set.server_id else {
+                        let LspPullDiagnostics::Response {
+                            server_id,
+                            uri,
+                            diagnostics: project::PulledDiagnostics::Changed { diagnostics, .. },
+                        } = diagnostics_set
+                        else {
                             continue;
                         };
 
@@ -20885,22 +20890,18 @@ impl SemanticsProvider for Entity<Project> {
                             .as_ref()
                             .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
                             .unwrap_or(&[]);
-                        let Some(uri) = diagnostics_set.uri.clone() else {
-                            continue;
-                        };
                         lsp_store
                             .merge_diagnostics(
                                 server_id,
                                 lsp::PublishDiagnosticsParams {
                                     uri,
-                                    diagnostics: diagnostics_set.diagnostics.clone(),
+                                    diagnostics,
                                     version: None,
                                 },
                                 DiagnosticSourceKind::Pulled,
                                 disk_based_sources,
                                 |old_diagnostic, cx| {
                                     // TODO(vs) this will overwrite the pushed diagnostics
-                                    // TODO(vs) need to track responses' unchanged and partial
                                     false
                                 },
                                 cx,

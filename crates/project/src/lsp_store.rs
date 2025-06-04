@@ -4,7 +4,8 @@ pub mod rust_analyzer_ext;
 
 use crate::{
     CodeAction, Completion, CompletionResponse, CompletionSource, CoreCompletion, Hover, InlayHint,
-    LspAction, LspPullDiagnostics, ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    LspAction, LspPullDiagnostics, ProjectItem, ProjectPath, ProjectTransaction, ResolveState,
+    Symbol, ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -5759,6 +5760,7 @@ impl LspStore {
                     .into_iter()
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
+                    .flatten()
                     .collect())
             })
         } else {
@@ -5768,7 +5770,7 @@ impl LspStore {
                 GetDocumentDiagnostics {},
                 cx,
             );
-            cx.spawn(async move |_, _| Ok(all_actions_task.await.into_iter().collect()))
+            cx.spawn(async move |_, _| Ok(all_actions_task.await.into_iter().flatten().collect()))
         }
     }
 
