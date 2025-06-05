@@ -3,10 +3,12 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
 use http_client::{HttpClient, Url};
+use log::Level;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
+use std::fmt::Display;
 use std::{
     env::{self, consts},
     ffi::OsString,
@@ -63,46 +65,131 @@ impl NodeRuntime {
         })))
     }
 
-    async fn instance(&self) -> Result<Box<dyn NodeRuntimeTrait>> {
+    async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
         let mut state = self.0.lock().await;
 
-        while state.options.borrow().is_none() {
-            state.options.changed().await?;
-        }
-        let options = state.options.borrow().clone().unwrap();
+        let options = loop {
+            match state.options.borrow().as_ref() {
+                Some(options) => break options.clone(),
+                None => {}
+            }
+            match state.options.changed().await {
+                Ok(()) => {}
+                // failure case not cached
+                Err(err) => {
+                    return Box::new(UnavailableNodeRuntime {
+                        error_message: err.to_string().into(),
+                    });
+                }
+            }
+        };
+
         if state.last_options.as_ref() != Some(&options) {
             state.instance.take();
         }
         if let Some(instance) = state.instance.as_ref() {
-            return Ok(instance.boxed_clone());
+            return instance.boxed_clone();
         }
 
         if let Some((node, npm)) = options.use_paths.as_ref() {
-            let instance = SystemNodeRuntime::new(node.clone(), npm.clone()).await?;
+            let instance = match SystemNodeRuntime::new(node.clone(), npm.clone()).await {
+                Ok(instance) => instance,
+                Err(err) => {
+                    // failure case not cached, since it's cheap to check again
+                    return Box::new(UnavailableNodeRuntime {
+                        error_message: format!(
+                            "failure checking Node.js from `node.path` in settings ({}): {:?}",
+                            node.display(),
+                            err
+                        )
+                        .into(),
+                    });
+                }
+            };
             state.instance = Some(instance.boxed_clone());
-            return Ok(instance);
+            state.last_options = Some(options);
+            return instance;
         }
 
-        if options.allow_path_lookup {
+        let system_node_error = if options.allow_path_lookup {
             state.shell_env_loaded.clone().await.ok();
-            if let Some(instance) = SystemNodeRuntime::detect().await {
-                state.instance = Some(instance.boxed_clone());
-                return Ok(instance);
+            match SystemNodeRuntime::detect().await {
+                Ok(instance) => {
+                    state.instance = Some(instance.boxed_clone());
+                    state.last_options = Some(options);
+                    return instance;
+                }
+                Err(err) => Some(err),
             }
-        }
+        } else {
+            None
+        };
 
         let instance = if options.allow_binary_download {
-            ManagedNodeRuntime::install_if_needed(&state.http).await?
+            let (log_level, why_using_managed) = match system_node_error {
+                Some(err @ DetectError::Other(_)) => (Level::Warn, err.to_string()),
+                Some(err @ DetectError::NotInPath(_)) => (Level::Info, err.to_string()),
+                None => (
+                    Level::Info,
+                    "`node.ignore_system_version` is `true` in settings".to_string(),
+                ),
+            };
+            match ManagedNodeRuntime::install_if_needed(&state.http).await {
+                Ok(instance) => {
+                    log::log!(
+                        log_level,
+                        "using Zed managed Node.js since {}",
+                        why_using_managed
+                    );
+                    instance
+                }
+                Err(err) => {
+                    // failure case is cached, since downloading + installing may be expensive. The
+                    // downside of this is that it may fail due to an intermittent network issue.
+                    //
+                    // TODO: Have `install_if_needed` indicate which failure cases are retryable
+                    // and/or have shared tracking of when internet is available.
+                    Box::new(UnavailableNodeRuntime {
+                        error_message: format!(
+                            "failure while downloading and/or installing Zed managed Node.js, \
+                            restart Zed to retry: {}",
+                            err
+                        )
+                        .into(),
+                    })
+                }
+            }
+        } else if let Some(system_node_error) = system_node_error {
+            // failure case not cached, since it's cheap to check again
+            //
+            // TODO: When support is added for setting `options.allow_binary_download`, update this
+            // error message.
+            return Box::new(UnavailableNodeRuntime {
+                error_message: format!(
+                    "failure while checking system Node.js from PATH: {}",
+                    system_node_error
+                )
+                .into(),
+            });
         } else {
-            Box::new(UnavailableNodeRuntime)
+            // failure case is cached because it will always happen with these options
+            //
+            // TODO: When support is added for setting `options.allow_binary_download`, update this
+            // error message.
+            Box::new(UnavailableNodeRuntime {
+                error_message: "`node` settings do not allow any way to use Node.js"
+                    .to_string()
+                    .into(),
+            })
         };
 
         state.instance = Some(instance.boxed_clone());
-        return Ok(instance);
+        state.last_options = Some(options);
+        return instance;
     }
 
     pub async fn binary_path(&self) -> Result<PathBuf> {
-        self.instance().await?.binary_path()
+        self.instance().await.binary_path()
     }
 
     pub async fn run_npm_subcommand(
@@ -113,7 +200,7 @@ impl NodeRuntime {
     ) -> Result<Output> {
         let http = self.0.lock().await.http.clone();
         self.instance()
-            .await?
+            .await
             .run_npm_subcommand(Some(directory), http.proxy(), subcommand, args)
             .await
     }
@@ -124,7 +211,7 @@ impl NodeRuntime {
         name: &str,
     ) -> Result<Option<String>> {
         self.instance()
-            .await?
+            .await
             .npm_package_installed_version(local_package_directory, name)
             .await
     }
@@ -133,7 +220,7 @@ impl NodeRuntime {
         let http = self.0.lock().await.http.clone();
         let output = self
             .instance()
-            .await?
+            .await
             .run_npm_subcommand(
                 None,
                 http.proxy(),
@@ -520,10 +607,28 @@ impl SystemNodeRuntime {
         Ok(Box::new(this))
     }
 
-    async fn detect() -> Option<Box<dyn NodeRuntimeTrait>> {
-        let node = which::which("node").ok()?;
-        let npm = which::which("npm").ok()?;
-        Self::new(node, npm).await.log_err()
+    async fn detect() -> std::result::Result<Box<dyn NodeRuntimeTrait>, DetectError> {
+        let node = which::which("node").map_err(DetectError::NotInPath)?;
+        let npm = which::which("npm").map_err(DetectError::NotInPath)?;
+        Self::new(node, npm).await.map_err(DetectError::Other)
+    }
+}
+
+enum DetectError {
+    NotInPath(which::Error),
+    Other(anyhow::Error),
+}
+
+impl Display for DetectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DetectError::NotInPath(err) => {
+                write!(f, "system Node.js wasn't found on PATH: {}", err)
+            }
+            DetectError::Other(err) => {
+                write!(f, "checking system Node.js failed with error: {}", err)
+            }
+        }
     }
 }
 
@@ -603,15 +708,18 @@ pub async fn read_package_installed_version(
     Ok(Some(package_json.version))
 }
 
-pub struct UnavailableNodeRuntime;
+#[derive(Clone)]
+pub struct UnavailableNodeRuntime {
+    error_message: Arc<String>,
+}
 
 #[async_trait::async_trait]
 impl NodeRuntimeTrait for UnavailableNodeRuntime {
     fn boxed_clone(&self) -> Box<dyn NodeRuntimeTrait> {
-        Box::new(UnavailableNodeRuntime)
+        Box::new(self.clone())
     }
     fn binary_path(&self) -> Result<PathBuf> {
-        bail!("binary_path: no node runtime available")
+        bail!("{}", self.error_message)
     }
 
     async fn run_npm_subcommand(
@@ -621,7 +729,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _: &str,
         _: &[&str],
     ) -> anyhow::Result<Output> {
-        bail!("run_npm_subcommand: no node runtime available")
+        bail!("{}", self.error_message)
     }
 
     async fn npm_package_installed_version(
@@ -629,7 +737,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _local_package_directory: &Path,
         _: &str,
     ) -> Result<Option<String>> {
-        bail!("npm_package_installed_version: no node runtime available")
+        bail!("{}", self.error_message)
     }
 }
 
