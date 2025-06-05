@@ -1373,9 +1373,28 @@ impl Buffer {
     /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
+        let mut is_first = true;
+        let snapshot = self.snapshot();
         self.syntax_map
             .lock()
             .layers_for_range(offset..offset, &self.text, false)
+            .filter(|layer| {
+                let any_sub_ranges_contain_range =
+                    layer.included_sub_ranges.iter().any(|sub_range| {
+                        let is_before_start = sub_range
+                            .end
+                            .cmp(&self.anchor_before(offset), &snapshot)
+                            .is_lt();
+                        let is_after_end = sub_range
+                            .start
+                            .cmp(&self.anchor_after(offset), &snapshot)
+                            .is_gt();
+                        !is_before_start && !is_after_end
+                    });
+                let result = any_sub_ranges_contain_range || is_first;
+                is_first = false;
+                return result;
+            })
             .last()
             .map(|info| info.language.clone())
             .or_else(|| self.language.clone())

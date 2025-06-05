@@ -123,6 +123,7 @@ impl SyntaxLayerContent {
 pub struct SyntaxLayer<'a> {
     /// The language for this layer.
     pub language: &'a Arc<Language>,
+    pub included_sub_ranges: &'a [Range<Anchor>],
     pub(crate) depth: usize,
     tree: &'a Tree,
     pub(crate) offset: (usize, tree_sitter::Point),
@@ -795,6 +796,7 @@ impl SyntaxSnapshot {
             [SyntaxLayer {
                 language,
                 tree,
+                included_sub_ranges: &[], // todo! fix
                 depth: 0,
                 offset: (0, tree_sitter::Point::new(0, 0)),
             }]
@@ -876,7 +878,6 @@ impl SyntaxSnapshot {
         });
 
         cursor.next(buffer);
-        let mut is_first = true;
         iter::from_fn(move || {
             while let Some(layer) = cursor.item() {
                 let mut info = None;
@@ -888,18 +889,11 @@ impl SyntaxSnapshot {
                 {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
-                    let any_sub_ranges_contain_range =
-                        included_sub_ranges.iter().any(|sub_range| {
-                            let is_before_start = sub_range.end.cmp(&start, buffer).is_lt();
-                            let is_after_end = sub_range.start.cmp(&end, buffer).is_gt();
-                            !is_before_start && !is_after_end
-                        });
-                    if (any_sub_ranges_contain_range || is_first)
-                        && (include_hidden || !language.config.hidden)
-                    {
+                    if (include_hidden || !language.config.hidden) {
                         info = Some(SyntaxLayer {
                             tree,
                             language,
+                            included_sub_ranges,
                             depth: layer.depth,
                             offset: (layer_start_offset, layer_start_point),
                         });
@@ -907,7 +901,6 @@ impl SyntaxSnapshot {
                 }
                 cursor.next(buffer);
                 if info.is_some() {
-                    is_first = false;
                     return info;
                 }
             }
