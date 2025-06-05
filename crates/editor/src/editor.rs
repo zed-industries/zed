@@ -1313,8 +1313,13 @@ struct RowHighlight {
 
 #[derive(Clone, Debug)]
 struct AddSelectionsState {
+    groups: Vec<AddSelectionsGroup>,
+}
+
+#[derive(Clone, Debug)]
+struct AddSelectionsGroup {
     above: bool,
-    stacks: Vec<Vec<usize>>,
+    stack: Vec<usize>,
 }
 
 #[derive(Clone)]
@@ -12707,15 +12712,15 @@ impl Editor {
         let mut state = {
             let unprocessed_selections = match self.add_selections_state.as_ref() {
                 Some(state) => {
-                    let stack_ids: HashSet<_> = state
-                        .stacks
+                    let all_group_ids: HashSet<_> = state
+                        .groups
                         .iter()
-                        .map(|stack| stack.iter())
+                        .map(|group| group.stack.iter())
                         .flatten()
                         .collect();
                     selections
                         .iter()
-                        .filter(|s| !stack_ids.contains(&s.id))
+                        .filter(|s| !all_group_ids.contains(&s.id))
                         .cloned()
                         .collect()
                 }
@@ -12729,7 +12734,7 @@ impl Editor {
                     .contains(&s.id)
             });
 
-            let mut stacks = Vec::new();
+            let mut groups = Vec::new();
             for selection in unprocessed_selections {
                 let range = selection.display_range(&display_map).sorted();
                 let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
@@ -12751,94 +12756,91 @@ impl Editor {
                 if above {
                     stack.reverse();
                 }
-                stacks.push(stack);
+                groups.push(AddSelectionsGroup { above, stack });
             }
 
             match self.add_selections_state.take() {
                 Some(state) => AddSelectionsState {
-                    above: state.above,
-                    stacks: [state.stacks, stacks].concat(),
+                    groups: [state.groups, groups].concat(),
                 },
-                None => AddSelectionsState { above, stacks },
+                None => AddSelectionsState { groups },
             }
         };
 
-        let mut last_added_selections = Vec::new();
-        for stack in state.stacks.iter() {
-            // we make sure any stack can't be empty at end
-            debug_assert!(!stack.is_empty());
-            last_added_selections.push(*stack.last().unwrap());
-        }
-
         let mut new_selections = Vec::new();
-        if above == state.above {
-            let end_row = if above {
-                DisplayRow(0)
-            } else {
-                display_map.max_point().row()
-            };
 
-            'outer: for selection in selections {
-                if let Some(stack_index) = last_added_selections
-                    .iter()
-                    .position(|&x| x == selection.id)
-                {
-                    let range = selection.display_range(&display_map).sorted();
-                    debug_assert_eq!(range.start.row(), range.end.row());
-                    let mut row = range.start.row();
-                    let positions =
-                        if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
-                            px(start)..px(end)
-                        } else {
-                            let start_x =
-                                display_map.x_for_display_point(range.start, &text_layout_details);
-                            let end_x =
-                                display_map.x_for_display_point(range.end, &text_layout_details);
-                            start_x.min(end_x)..start_x.max(end_x)
-                        };
+        let end_row = if above {
+            DisplayRow(0)
+        } else {
+            display_map.max_point().row()
+        };
 
-                    while row != end_row {
-                        if above {
-                            row.0 -= 1;
-                        } else {
-                            row.0 += 1;
-                        }
-
-                        if let Some(new_selection) = self.selections.build_columnar_selection(
-                            &display_map,
-                            row,
-                            &positions,
-                            selection.reversed,
-                            &text_layout_details,
-                        ) {
-                            debug_assert!(stack_index < state.stacks.len());
-                            state.stacks[stack_index].push(new_selection.id);
-                            if above {
-                                new_selections.push(new_selection);
-                                new_selections.push(selection);
+        'outer: for selection in selections {
+            for group in state.groups.iter_mut() {
+                if above == group.above {
+                    debug_assert!(!group.stack.is_empty());
+                    let last_added_selection = *group.stack.last().unwrap();
+                    if last_added_selection == selection.id {
+                        let range = selection.display_range(&display_map).sorted();
+                        debug_assert_eq!(range.start.row(), range.end.row());
+                        let mut row = range.start.row();
+                        let positions =
+                            if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
+                                px(start)..px(end)
                             } else {
-                                new_selections.push(selection);
-                                new_selections.push(new_selection);
+                                let start_x = display_map
+                                    .x_for_display_point(range.start, &text_layout_details);
+                                let end_x = display_map
+                                    .x_for_display_point(range.end, &text_layout_details);
+                                start_x.min(end_x)..start_x.max(end_x)
+                            };
+
+                        while row != end_row {
+                            if above {
+                                row.0 -= 1;
+                            } else {
+                                row.0 += 1;
                             }
 
-                            continue 'outer;
+                            if let Some(new_selection) = self.selections.build_columnar_selection(
+                                &display_map,
+                                row,
+                                &positions,
+                                selection.reversed,
+                                &text_layout_details,
+                            ) {
+                                group.stack.push(new_selection.id);
+                                if above {
+                                    new_selections.push(new_selection);
+                                    new_selections.push(selection);
+                                } else {
+                                    new_selections.push(selection);
+                                    new_selections.push(new_selection);
+                                }
+
+                                continue 'outer;
+                            }
                         }
                     }
                 }
-
-                new_selections.push(selection);
             }
-        } else {
-            new_selections = selections;
-            new_selections.retain(|s| {
-                if let Some(stack_index) = last_added_selections.iter().position(|&x| x == s.id) {
-                    debug_assert!(stack_index < state.stacks.len());
-                    state.stacks[stack_index].pop();
-                    false
-                } else {
-                    true
-                }
-            });
+
+            new_selections.push(selection);
+        }
+
+        for group in state.groups.iter_mut() {
+            if above != group.above {
+                debug_assert!(!group.stack.is_empty());
+                let last_added_selection = *group.stack.last().unwrap();
+                new_selections.retain(|s| {
+                    if s.id == last_added_selection {
+                        group.stack.pop();
+                        false
+                    } else {
+                        true
+                    }
+                });
+            }
         }
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -12851,15 +12853,15 @@ impl Editor {
             .iter()
             .map(|s| s.id)
             .collect();
-        state.stacks.retain_mut(|stack| {
+        state.groups.retain_mut(|group| {
             // selections might get merged above so we remove invalid items from stacks
-            stack.retain(|id| new_selection_ids.contains(id));
+            group.stack.retain(|id| new_selection_ids.contains(id));
 
             // single selection in stack can be treated as initial state
-            stack.len() > 1
+            group.stack.len() > 1
         });
 
-        if !state.stacks.is_empty() {
+        if !state.groups.is_empty() {
             self.add_selections_state = Some(state);
         }
     }
