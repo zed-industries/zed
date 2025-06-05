@@ -462,7 +462,7 @@ pub fn into_mistral(
                 if let Some(next_msg) = messages_iter.peek() {
                     if matches!(next_msg, mistral::RequestMessage::User { .. }) {
                         fixed_messages.push(mistral::RequestMessage::Assistant {
-                            content: Some("Continue.".to_string()),
+                            content: Some(" ".to_string()),
                             tool_calls: Vec::new(),
                         });
                     }
