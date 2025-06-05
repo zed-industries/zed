@@ -29,10 +29,6 @@ jobs:
   unit_evals:
     timeout-minutes: 60
     name: Run unit evals
-    needs: [job_spec]
-    if: |
-      github.repository_owner == 'zed-industries' &&
-      needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
