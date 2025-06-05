@@ -208,21 +208,23 @@ impl FileContextHandle {
 
                     if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
                         if let Some(outline) = snapshot.outline(None) {
-                            let items = outline
-                                .items
-                                .into_iter()
-                                .map(|item| item.to_point(&snapshot));
+                            if outline.items.len() > 0 {
+                                let items = outline
+                                    .items
+                                    .into_iter()
+                                    .map(|item| item.to_point(&snapshot));
 
-                            if let Ok(outline_text) =
-                                outline::render_outline(items, None, 0, usize::MAX).await
-                            {
-                                let context = AgentContext::File(FileContext {
-                                    handle: self,
-                                    full_path,
-                                    text: outline_text.into(),
-                                    is_outline: true,
-                                });
-                                return Some((context, vec![buffer]));
+                                if let Ok(outline_text) =
+                                    outline::render_outline(items, None, 0, usize::MAX).await
+                                {
+                                    let context = AgentContext::File(FileContext {
+                                        handle: self,
+                                        full_path,
+                                        text: outline_text.into(),
+                                        is_outline: true,
+                                    });
+                                    return Some((context, vec![buffer]));
+                                }
                             }
                         }
                     }
