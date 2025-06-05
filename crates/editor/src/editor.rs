@@ -2722,7 +2722,7 @@ impl Editor {
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        if self.selections.count() == 1 && self.selections.newest_adjusted(cx).is_empty() {
+        if self.selections.count() == 1 {
             self.add_selections_state = None;
         }
         self.select_next_state = None;
@@ -12775,51 +12775,57 @@ impl Editor {
             display_map.max_point().row()
         };
 
+        let last_selections: Vec<_> = state
+            .groups
+            .iter()
+            .map(|group| {
+                debug_assert!(!group.stack.is_empty());
+                *group.stack.last().unwrap()
+            })
+            .collect();
+
         'outer: for selection in selections {
-            for group in state.groups.iter_mut() {
-                if above == group.above {
-                    debug_assert!(!group.stack.is_empty());
-                    let last_added_selection = *group.stack.last().unwrap();
-                    if last_added_selection == selection.id {
-                        let range = selection.display_range(&display_map).sorted();
-                        debug_assert_eq!(range.start.row(), range.end.row());
-                        let mut row = range.start.row();
-                        let positions =
-                            if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
-                                px(start)..px(end)
-                            } else {
-                                let start_x = display_map
-                                    .x_for_display_point(range.start, &text_layout_details);
-                                let end_x = display_map
-                                    .x_for_display_point(range.end, &text_layout_details);
-                                start_x.min(end_x)..start_x.max(end_x)
-                            };
+            for (group, last_added_in_group) in state.groups.iter_mut().zip(last_selections.iter())
+            {
+                if above == group.above && last_added_in_group == &selection.id {
+                    let range = selection.display_range(&display_map).sorted();
+                    debug_assert_eq!(range.start.row(), range.end.row());
+                    let mut row = range.start.row();
+                    let positions =
+                        if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
+                            px(start)..px(end)
+                        } else {
+                            let start_x =
+                                display_map.x_for_display_point(range.start, &text_layout_details);
+                            let end_x =
+                                display_map.x_for_display_point(range.end, &text_layout_details);
+                            start_x.min(end_x)..start_x.max(end_x)
+                        };
 
-                        while row != end_row {
+                    while row != end_row {
+                        if above {
+                            row.0 -= 1;
+                        } else {
+                            row.0 += 1;
+                        }
+
+                        if let Some(new_selection) = self.selections.build_columnar_selection(
+                            &display_map,
+                            row,
+                            &positions,
+                            selection.reversed,
+                            &text_layout_details,
+                        ) {
+                            group.stack.push(new_selection.id);
                             if above {
-                                row.0 -= 1;
+                                new_selections.push(new_selection);
+                                new_selections.push(selection);
                             } else {
-                                row.0 += 1;
+                                new_selections.push(selection);
+                                new_selections.push(new_selection);
                             }
 
-                            if let Some(new_selection) = self.selections.build_columnar_selection(
-                                &display_map,
-                                row,
-                                &positions,
-                                selection.reversed,
-                                &text_layout_details,
-                            ) {
-                                group.stack.push(new_selection.id);
-                                if above {
-                                    new_selections.push(new_selection);
-                                    new_selections.push(selection);
-                                } else {
-                                    new_selections.push(selection);
-                                    new_selections.push(new_selection);
-                                }
-
-                                continue 'outer;
-                            }
+                            continue 'outer;
                         }
                     }
                 }
@@ -12828,20 +12834,18 @@ impl Editor {
             new_selections.push(selection);
         }
 
-        for group in state.groups.iter_mut() {
-            if above != group.above {
-                debug_assert!(!group.stack.is_empty());
-                let last_added_selection = *group.stack.last().unwrap();
-                new_selections.retain(|s| {
-                    if s.id == last_added_selection {
-                        group.stack.pop();
-                        false
-                    } else {
-                        true
-                    }
-                });
+        new_selections.retain(|selection| {
+            let mut retain = true;
+            for (group, last_added_in_group) in state.groups.iter_mut().zip(last_selections.iter())
+            {
+                if above != group.above && last_added_in_group == &selection.id {
+                    group.stack.pop();
+                    retain = false;
+                    break;
+                }
             }
-        }
+            retain
+        });
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select(new_selections);
