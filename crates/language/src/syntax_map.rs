@@ -722,8 +722,8 @@ impl SyntaxSnapshot {
                     let included_sub_ranges = included_ranges
                         .into_iter()
                         .map(|r| {
-                            text.anchor_before(Point::from_ts_point(r.start_point))
-                                ..text.anchor_after(Point::from_ts_point(r.end_point))
+                            text.anchor_before(r.start_byte + step_start_byte)
+                                ..text.anchor_after(r.end_byte + step_start_byte)
                         })
                         .collect();
                     SyntaxLayerContent::Parsed {
@@ -889,7 +889,7 @@ impl SyntaxSnapshot {
                 {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
-                    if (include_hidden || !language.config.hidden) {
+                    if include_hidden || !language.config.hidden {
                         info = Some(SyntaxLayer {
                             tree,
                             language,
