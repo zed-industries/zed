@@ -34,14 +34,7 @@ pub(crate) fn handle_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> LRESULT {
-    if msg != WM_PAINT {
-        println!("==> MSG: {}", msg);
-    }
     let handled = match msg {
-        WM_IME_NOTIFY => {
-            println!("WM_IME_NOTIFY: wparam: {}", wparam.0);
-            None
-        }
         WM_ACTIVATE => handle_activate_msg(handle, wparam, state_ptr),
         WM_CREATE => handle_create_msg(handle, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
@@ -356,6 +349,7 @@ fn handle_syskeydown_msg(
             is_held: lparam.0 & (0x1 << 30) > 0,
         })
     })?;
+    println!("WM_SYSKEYDOWN: wparam: {:#?}", input);
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
 
@@ -401,11 +395,7 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let is_composing = with_input_handler(&state_ptr, |input_handler| {
-        input_handler.marked_text_range()
-    })
-    .flatten()
-    .is_some();
+    println!("WM_KEYDOWN");
     let mut lock = state_ptr.state.borrow_mut();
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
@@ -415,8 +405,14 @@ fn handle_keydown_msg(
     }) else {
         return Some(1);
     };
+    drop(lock);
 
-    println!("WM_KEYDOWN is_composing: {}", is_composing);
+    let is_composing = with_input_handler(&state_ptr, |input_handler| {
+        input_handler.marked_text_range()
+    })
+    .flatten()
+    .is_some();
+    println!("    WM_KEYDOWN is_composing: {}", is_composing);
     if is_composing {
         unsafe {
             let msg = MSG {
@@ -432,17 +428,15 @@ fn handle_keydown_msg(
         return Some(0);
     }
 
-    let Some(mut func) = lock.callbacks.input.take() else {
+    let Some(mut func) = state_ptr.state.borrow_mut().callbacks.input.take() else {
         return Some(1);
     };
-    drop(lock);
 
     let handled = !func(input).propagate;
 
-    let mut lock = state_ptr.state.borrow_mut();
-    lock.callbacks.input = Some(func);
+    state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-    println!("WM_KEYDOWN handled: {}", handled);
+    println!("    WM_KEYDOWN handled: {}", handled);
     if handled {
         Some(0)
     } else {
@@ -467,12 +461,14 @@ fn handle_keyup_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    println!("WM_KEYUP");
     let mut lock = state_ptr.state.borrow_mut();
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     }) else {
         return Some(1);
     };
+    println!("    KeyUp: {:#?}", input);
 
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
@@ -1269,11 +1265,6 @@ where
     let mut modifiers = current_modifiers();
 
     match virtual_key {
-        VK_PROCESSKEY => {
-            let vkey = unsafe { ImmGetVirtualKey(handle) };
-            let keystroke = parse_normal_key(VIRTUAL_KEY(vkey as u16), lparam, modifiers)?;
-            Some(f(keystroke))
-        }
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
             if state
                 .last_reported_modifiers
@@ -1287,6 +1278,11 @@ where
             }))
         }
         vkey => {
+            let vkey = if vkey == VK_PROCESSKEY {
+                VIRTUAL_KEY(unsafe { ImmGetVirtualKey(handle) } as u16)
+            } else {
+                vkey
+            };
             let keystroke = parse_normal_key(vkey, lparam, modifiers)?;
             Some(f(keystroke))
         }
@@ -1352,7 +1348,6 @@ fn parse_normal_key(
     let mut key_char = None;
     let key = parse_immutable(vkey).or_else(|| {
         let scan_code = lparam.hiword() & 0xFF;
-        println!("Scan: {}", scan_code);
         key_char = generate_key_char(
             vkey,
             scan_code as u32,
