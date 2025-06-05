@@ -6,8 +6,7 @@ use std::borrow::Cow;
 /// Capture all environment variables from the login shell.
 #[cfg(unix)]
 pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
-    use command_fds::{CommandFdExt, FdMapping};
-    use std::{io::Read, os::unix::process::CommandExt};
+    use std::os::unix::process::CommandExt;
 
     let shell_path = std::env::var("SHELL").map(std::path::PathBuf::from)?;
     let shell_name = shell_path.file_name().and_then(std::ffi::OsStr::to_str);
@@ -28,12 +27,14 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
         _ => "",
     });
 
-    let (mut env_reader, env_writer) = std::io::pipe()?;
     command_string.push_str("sh -c 'export -p' >&3;");
-    command.fd_mappings(vec![FdMapping {
-        parent_fd: env_writer.into(),
-        child_fd: 3,
-    }])?;
+    unsafe {
+        command.pre_exec(|| {
+            libc::dup2(1, 3);
+            libc::dup2(2, 1);
+            Ok(())
+        });
+    }
 
     // For csh/tcsh, the login shell option is set by passing `-` as
     // the 0th argument instead of using `-l`.
@@ -45,20 +46,16 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
 
     command.args(["-i", "-c", &command_string]);
 
-    let process_output = super::set_pre_exec_to_start_new_session(&mut command).output()?;
+    let output = super::set_pre_exec_to_start_new_session(&mut command).output()?;
     anyhow::ensure!(
-        process_output.status.success(),
-        "login shell exited with {}. stdout: {:?}, stderr: {:?}",
-        process_output.status,
-        String::from_utf8_lossy(&process_output.stdout),
-        String::from_utf8_lossy(&process_output.stderr),
+        output.status.success(),
+        "login shell exited with {}: {:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
     );
 
-    drop(command);
-    let mut env_output = String::new();
-    env_reader.read_to_string(&mut env_output)?;
-
-    parse(&env_output)
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse(&stdout)
         .filter_map(|entry| match entry {
             Ok((name, value)) => Some(Ok((name.into(), value?.into()))),
             Err(err) => Some(Err(err)),

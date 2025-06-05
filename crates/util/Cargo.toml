@@ -43,7 +43,6 @@ workspace-hack.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
-command-fds = "0.3.1"
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"

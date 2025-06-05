@@ -3169,16 +3169,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "command-fds"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2ec1052629a80c28594777d1252efc8a6b005d13f9edfd8c3fc0f44d5b32489a"
-dependencies = [
- "nix 0.30.1",
- "thiserror 2.0.12",
-]
-
-[[package]]
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
@@ -10142,18 +10132,6 @@ dependencies = [
  "cfg_aliases 0.2.1",
  "libc",
  "memoffset",
-]
-
-[[package]]
-name = "nix"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
-dependencies = [
- "bitflags 2.9.0",
- "cfg-if",
- "cfg_aliases 0.2.1",
- "libc",
 ]
 
 [[package]]
@@ -17146,7 +17124,6 @@ dependencies = [
  "async-fs",
  "async_zip",
  "collections",
- "command-fds",
  "dirs 4.0.0",
  "dunce",
  "futures 0.3.31",
