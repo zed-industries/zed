@@ -265,6 +265,8 @@ actions!(
         ContextMenuLast,
         ContextMenuNext,
         ContextMenuPrevious,
+        ConvertIndentationToSpaces,
+        ConvertIndentationToTabs,
         ConvertToKebabCase,
         ConvertToLowerCamelCase,
         ConvertToLowerCase,
