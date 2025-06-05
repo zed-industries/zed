@@ -2842,8 +2842,21 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 .unwrap()
                 + 1
         );
+        let reference_ranges = cx.update(|cx| {
+            reference
+                .excerpts
+                .iter()
+                .map(|excerpt| {
+                    (
+                        excerpt.id,
+                        excerpt.range.to_offset(&excerpt.buffer.read(cx).snapshot()),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        });
         for i in 0..snapshot.len() {
-            snapshot.innermost_enclosing_bracket_ranges(i..i, None);
+            let excerpt = snapshot.excerpt_containing(i..i).unwrap();
+            assert_eq!(excerpt.buffer_range(), reference_ranges[&excerpt.id()]);
         }
 
         assert_consistent_line_numbers(&snapshot);
