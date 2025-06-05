@@ -6211,7 +6211,7 @@ impl MultiBufferSnapshot {
         cursor.seek_to_start_of_current_excerpt();
         let region = cursor.region()?;
         let offset = region.range.start;
-        let buffer_offset = region.buffer_range.start;
+        let buffer_offset = start_excerpt.buffer_start_offset();
         let excerpt_offset = cursor.excerpts.start().clone();
         Some(MultiBufferExcerpt {
             diff_transforms: cursor.diff_transforms,
