@@ -1383,6 +1383,8 @@ impl ProjectPanel {
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if cx.stop_active_drag(window) {
+            self.drag_target_entry.take();
+            self.hover_expand_task.take();
             return;
         }
 
@@ -3755,18 +3757,18 @@ impl ProjectPanel {
         &self,
         target_entry: &Entry,
         target_worktree: &Worktree,
-        dragged_selection: &DraggedSelection,
+        drag_state: &DraggedSelection,
         cx: &Context<Self>,
     ) -> Option<ProjectEntryId> {
         let target_parent_path = target_entry.path.parent();
 
         // In case of single item drag, we do not highlight existing
         // directory which item belongs too
-        if dragged_selection.items().count() == 1 {
+        if drag_state.items().count() == 1 {
             let active_entry_path = self
                 .project
                 .read(cx)
-                .path_for_entry(dragged_selection.active_selection.entry_id, cx)?;
+                .path_for_entry(drag_state.active_selection.entry_id, cx)?;
 
             if let Some(active_parent_path) = active_entry_path.path.parent() {
                 // Do not highlight active entry parent
@@ -3986,11 +3988,11 @@ impl ProjectPanel {
                         return;
                     }
 
+                    let drag_state = event.drag(cx);
                     let Some((entry_id, highlight_entry_id)) = maybe!({
                         let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
                         let target_entry = target_worktree.entry_for_path(&path_for_dragged_selection)?;
-                        let dragged_selection = event.drag(cx);
-                        let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, dragged_selection, cx);
+                        let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, drag_state, cx);
                         Some((target_entry.id, highlight_entry_id))
                     }) else {
                         return;
@@ -4000,7 +4002,10 @@ impl ProjectPanel {
                         entry_id,
                         highlight_entry_id,
                     });
-                    this.marked_entries.clear();
+                    if drag_state.items().count() == 1 {
+                        this.marked_entries.clear();
+                        this.marked_entries.insert(drag_state.active_selection);
+                    }
                     this.hover_expand_task.take();
 
                     if !kind.is_dir()

@@ -109,6 +109,7 @@ impl EditorTestContext {
         }
     }
 
+    #[track_caller]
     pub fn new_multibuffer<const COUNT: usize>(
         cx: &mut gpui::TestAppContext,
         excerpts: [&str; COUNT],
@@ -303,6 +304,7 @@ impl EditorTestContext {
         fs.set_head_for_repo(
             &Self::root_path().join(".git"),
             &[(path.into(), diff_base.to_string())],
+            "deadbeef",
         );
         self.cx.run_until_parked();
     }
@@ -351,6 +353,7 @@ impl EditorTestContext {
     /// editor state was needed to cause the failure.
     ///
     /// See the `util::test::marked_text_ranges` function for more information.
+    #[track_caller]
     pub fn set_state(&mut self, marked_text: &str) -> ContextHandle {
         let state_context = self.add_assertion_context(format!(
             "Initial Editor State: \"{}\"",
@@ -367,6 +370,7 @@ impl EditorTestContext {
     }
 
     /// Only change the editor's selections
+    #[track_caller]
     pub fn set_selections_state(&mut self, marked_text: &str) -> ContextHandle {
         let state_context = self.add_assertion_context(format!(
             "Initial Editor State: \"{}\"",
