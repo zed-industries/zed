@@ -12703,19 +12703,38 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections.all::<Point>(cx);
         let text_layout_details = self.text_layout_details(window);
-        let mut state = self.add_selections_state.take().unwrap_or_else(|| {
-            let existing_selections = selections.clone();
 
-            selections.clear();
+        let mut state = {
+            let unprocessed_selections = match self.add_selections_state.as_ref() {
+                Some(state) => {
+                    let stack_ids: HashSet<_> = state
+                        .stacks
+                        .iter()
+                        .map(|stack| stack.iter())
+                        .flatten()
+                        .collect();
+                    selections
+                        .iter()
+                        .filter(|s| !stack_ids.contains(&s.id))
+                        .cloned()
+                        .collect()
+                }
+                None => selections.clone(),
+            };
+
+            selections.retain(|s| {
+                !unprocessed_selections
+                    .iter()
+                    .map(|unprocess_s| unprocess_s.id)
+                    .contains(&s.id)
+            });
 
             let mut stacks = Vec::new();
-            for selection in existing_selections {
+            for selection in unprocessed_selections {
                 let range = selection.display_range(&display_map).sorted();
-
                 let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
                 let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
                 let positions = start_x.min(end_x)..start_x.max(end_x);
-
                 let mut stack = Vec::new();
                 for row in range.start.row().0..=range.end.row().0 {
                     if let Some(selection) = self.selections.build_columnar_selection(
@@ -12729,20 +12748,24 @@ impl Editor {
                         selections.push(selection);
                     }
                 }
-
                 if above {
                     stack.reverse();
                 }
-
                 stacks.push(stack);
             }
 
-            AddSelectionsState { above, stacks }
-        });
+            match self.add_selections_state.take() {
+                Some(state) => AddSelectionsState {
+                    above: state.above,
+                    stacks: [state.stacks, stacks].concat(),
+                },
+                None => AddSelectionsState { above, stacks },
+            }
+        };
 
         let mut last_added_selections = Vec::new();
         for stack in state.stacks.iter() {
-            // We make sure any stack can't be empty at end
+            // we make sure any stack can't be empty at end
             debug_assert!(!stack.is_empty());
             last_added_selections.push(*stack.last().unwrap());
         }
@@ -12788,8 +12811,6 @@ impl Editor {
                             selection.reversed,
                             &text_layout_details,
                         ) {
-                            // We know a non-empty stack exists for this selection,
-                            // because the last_added_selections was built from it.
                             debug_assert!(stack_index < state.stacks.len());
                             state.stacks[stack_index].push(new_selection.id);
                             if above {
@@ -12811,8 +12832,6 @@ impl Editor {
             new_selections = selections;
             new_selections.retain(|s| {
                 if let Some(stack_index) = last_added_selections.iter().position(|&x| x == s.id) {
-                    // We know a non-empty stack exists for this selection,
-                    // because the last_added_selections was built from it.
                     debug_assert!(stack_index < state.stacks.len());
                     state.stacks[stack_index].pop();
                     false
@@ -12826,20 +12845,17 @@ impl Editor {
             s.select(new_selections);
         });
 
-        let selection_ids: HashSet<_> = self
+        let new_selection_ids: HashSet<_> = self
             .selections
             .all::<Point>(cx)
             .iter()
             .map(|s| s.id)
             .collect();
         state.stacks.retain_mut(|stack| {
-            // Selections might get merged above so we remove invalid
-            // items from stacks, but keeping order of items the same so that
-            // they still can be extended correctly
-            stack.retain(|id| selection_ids.contains(id));
+            // selections might get merged above so we remove invalid items from stacks
+            stack.retain(|id| new_selection_ids.contains(id));
 
-            // Single selection in stack can be treated as
-            // initial state of selection
+            // single selection in stack can be treated as initial state
             stack.len() > 1
         });
 
