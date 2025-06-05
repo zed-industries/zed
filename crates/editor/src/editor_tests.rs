@@ -6368,6 +6368,30 @@ async fn test_add_selection_above_below_multi_cursor(cx: &mut TestAppContext) {
            line four"#
     ));
 
+    cx.update_editor(|editor, window, cx| {
+        editor.undo_selection(&Default::default(), window, cx);
+    });
+
+    // test undo
+    cx.assert_editor_state(indoc!(
+        r#"line onˇe
+           liˇne twˇo
+           line three
+           line four"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.redo_selection(&Default::default(), window, cx);
+    });
+
+    // test redo
+    cx.assert_editor_state(indoc!(
+        r#"liˇne onˇe
+           liˇne two
+           line three
+           line four"#
+    ));
+
     cx.set_state(indoc!(
         r#"abcd
            ef«ghˇ»
@@ -6416,6 +6440,30 @@ async fn test_add_selection_above_below_multi_cursor(cx: &mut TestAppContext) {
     });
 
     // test multiple cursor groups maintain independent direction - first shrinks down, second expands below
+    cx.assert_editor_state(indoc!(
+        r#"abcd
+           ef«ghˇ»
+           ij«klˇ»
+           «mˇ»nop"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.undo_selection(&Default::default(), window, cx);
+    });
+
+    // test undo
+    cx.assert_editor_state(indoc!(
+        r#"abcd
+           ef«ghˇ»
+           «iˇ»jkl
+           «mˇ»nop"#
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.redo_selection(&Default::default(), window, cx);
+    });
+
+    // test redo
     cx.assert_editor_state(indoc!(
         r#"abcd
            ef«ghˇ»
