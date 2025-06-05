@@ -1,3 +1,5 @@
+#![cfg_attr(not(unix), allow(unused))]
+
 use anyhow::{Context as _, Result};
 use std::borrow::Cow;
 
