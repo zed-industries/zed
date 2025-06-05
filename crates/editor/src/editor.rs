@@ -1314,7 +1314,7 @@ struct RowHighlight {
 #[derive(Clone, Debug)]
 struct AddSelectionsState {
     above: bool,
-    stack: Vec<usize>,
+    stacks: Vec<Vec<usize>>,
 }
 
 #[derive(Clone)]
@@ -12702,36 +12702,53 @@ impl Editor {
         let mut selections = self.selections.all::<Point>(cx);
         let text_layout_details = self.text_layout_details(window);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
-            let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
-            let range = oldest_selection.display_range(&display_map).sorted();
-
-            let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
-            let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
-            let positions = start_x.min(end_x)..start_x.max(end_x);
+            let existing_selections = selections.clone();
 
             selections.clear();
-            let mut stack = Vec::new();
-            for row in range.start.row().0..=range.end.row().0 {
-                if let Some(selection) = self.selections.build_columnar_selection(
-                    &display_map,
-                    DisplayRow(row),
-                    &positions,
-                    oldest_selection.reversed,
-                    &text_layout_details,
-                ) {
-                    stack.push(selection.id);
-                    selections.push(selection);
+
+            let mut stacks = Vec::new();
+            for selection in existing_selections {
+                let range = selection.display_range(&display_map).sorted();
+
+                let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
+                let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
+                let positions = start_x.min(end_x)..start_x.max(end_x);
+
+                let mut stack = Vec::new();
+                for row in range.start.row().0..=range.end.row().0 {
+                    if let Some(selection) = self.selections.build_columnar_selection(
+                        &display_map,
+                        DisplayRow(row),
+                        &positions,
+                        selection.reversed,
+                        &text_layout_details,
+                    ) {
+                        stack.push(selection.id);
+                        selections.push(selection);
+                    }
                 }
+
+                if above {
+                    stack.reverse();
+                }
+
+                stacks.push(stack);
             }
 
-            if above {
-                stack.reverse();
-            }
-
-            AddSelectionsState { above, stack }
+            AddSelectionsState { above, stacks }
         });
 
-        let last_added_selection = *state.stack.last().unwrap();
+        dbg!(&state);
+
+        let mut last_added_selections = Vec::new();
+        for stack in state.stacks.iter() {
+            if stack.is_empty() {
+                last_added_selections.push(None);
+            } else {
+                last_added_selections.push(Some(*stack.last().unwrap()));
+            }
+        }
+
         let mut new_selections = Vec::new();
         if above == state.above {
             let end_row = if above {
@@ -12741,7 +12758,10 @@ impl Editor {
             };
 
             'outer: for selection in selections {
-                if selection.id == last_added_selection {
+                if let Some(stack_index) = last_added_selections
+                    .iter()
+                    .position(|&x| x == Some(selection.id))
+                {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
                     let mut row = range.start.row();
@@ -12770,7 +12790,8 @@ impl Editor {
                             selection.reversed,
                             &text_layout_details,
                         ) {
-                            state.stack.push(new_selection.id);
+                            debug_assert!(stack_index < state.stacks.len());
+                            state.stacks[stack_index].push(new_selection.id);
                             if above {
                                 new_selections.push(new_selection);
                                 new_selections.push(selection);
@@ -12788,15 +12809,27 @@ impl Editor {
             }
         } else {
             new_selections = selections;
-            new_selections.retain(|s| s.id != last_added_selection);
-            state.stack.pop();
+            new_selections.retain(|s| {
+                if let Some(stack_index) =
+                    last_added_selections.iter().position(|&x| x == Some(s.id))
+                {
+                    debug_assert!(stack_index < state.stacks.len());
+                    state.stacks[stack_index].pop();
+                    false
+                } else {
+                    true
+                }
+            });
         }
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select(new_selections);
         });
-        if state.stack.len() > 1 {
-            self.add_selections_state = Some(state);
+
+        if let Some(stack) = state.stacks.first() {
+            if stack.len() > 1 {
+                self.add_selections_state = Some(state);
+            }
         }
     }
 
