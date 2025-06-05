@@ -12738,16 +12738,13 @@ impl Editor {
             AddSelectionsState { above, stacks }
         });
 
-        dbg!(&state);
-
         let mut last_added_selections = Vec::new();
         for stack in state.stacks.iter() {
-            if stack.is_empty() {
-                last_added_selections.push(None);
-            } else {
-                last_added_selections.push(Some(*stack.last().unwrap()));
-            }
+            debug_assert!(!stack.is_empty());
+            last_added_selections.push(*stack.last().unwrap());
         }
+
+        dbg!(&state);
 
         let mut new_selections = Vec::new();
         if above == state.above {
@@ -12760,7 +12757,7 @@ impl Editor {
             'outer: for selection in selections {
                 if let Some(stack_index) = last_added_selections
                     .iter()
-                    .position(|&x| x == Some(selection.id))
+                    .position(|&x| x == selection.id)
                 {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
@@ -12810,9 +12807,7 @@ impl Editor {
         } else {
             new_selections = selections;
             new_selections.retain(|s| {
-                if let Some(stack_index) =
-                    last_added_selections.iter().position(|&x| x == Some(s.id))
-                {
+                if let Some(stack_index) = last_added_selections.iter().position(|&x| x == s.id) {
                     debug_assert!(stack_index < state.stacks.len());
                     state.stacks[stack_index].pop();
                     false
@@ -12826,10 +12821,9 @@ impl Editor {
             s.select(new_selections);
         });
 
-        if let Some(stack) = state.stacks.first() {
-            if stack.len() > 1 {
-                self.add_selections_state = Some(state);
-            }
+        state.stacks.retain(|stack| stack.len() > 1);
+        if !state.stacks.is_empty() {
+            self.add_selections_state = Some(state);
         }
     }
 
