@@ -47,6 +47,7 @@ pub struct AvailableModel {
     pub max_output_tokens: Option<u32>,
     pub max_completion_tokens: Option<u32>,
     pub supports_tools: Option<bool>,
+    pub supports_images: Option<bool>,
 }
 
 pub struct MistralLanguageModelProvider {
@@ -214,6 +215,7 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
                     supports_tools: model.supports_tools,
+                    supports_images: model.supports_images,
                 },
             );
         }

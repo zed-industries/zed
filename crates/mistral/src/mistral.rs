@@ -74,6 +74,7 @@ pub enum Model {
         max_output_tokens: Option<u32>,
         max_completion_tokens: Option<u32>,
         supports_tools: Option<bool>,
+        supports_images: Option<bool>,
     },
 }
 
@@ -179,7 +180,9 @@ impl Model {
             | Self::OpenMistralNemo
             | Self::OpenCodestralMamba
             | Self::DevstralSmallLatest => false,
-            Self::Custom { .. } => false,
+            Self::Custom {
+                supports_images, ..
+            } => supports_images.unwrap_or(false),
         }
     }
 }
