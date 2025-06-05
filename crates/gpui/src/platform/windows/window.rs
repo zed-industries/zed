@@ -1303,7 +1303,7 @@ mod windows_renderer {
             MessageBoxW(
                 None,
                 &HSTRING::from(content),
-                windows::core::w!("Error: Zed update failed."),
+                windows::core::w!("Error: Zed failed to connect to the GPU renderer"),
                 MB_ICONERROR | MB_SYSTEMMODAL,
             )
         };
