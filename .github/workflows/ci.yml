@@ -365,6 +365,8 @@ jobs:
 
       - name: Run tests
         uses: ./.github/actions/run_eval_tests
+        with:
+          anthropic-key: ${{ secrets.ANTHROPIC_API_KEY }}
 
       # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
       # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code

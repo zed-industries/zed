@@ -1,6 +1,9 @@
 name: "Run eval tests"
 description: "Runs the eval tests"
-
+inputs:
+  anthropic-key:
+    description: "anthropic-key"
+    required: true
 runs:
   using: "composite"
   steps:
@@ -22,4 +25,4 @@ runs:
       shell: bash -euxo pipefail {0}
       run: cargo nextest run --workspace --no-fail-fast --features eval -E 'test(::eval_)'
       env:
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-key }}
