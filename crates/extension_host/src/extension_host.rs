@@ -1028,7 +1028,7 @@ impl ExtensionStore {
         let http_client = self.http_client.clone();
         let fs = self.fs.clone();
         let builder = self.builder.clone();
-        
+
         cx.spawn(async move |this, cx| {
             fs.remove_dir(
                 &temp_dir,

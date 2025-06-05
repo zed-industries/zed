@@ -38,7 +38,7 @@ use crate::components::{ExtensionCard, FeatureUpsell};
 use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
-use crate::private_extension_config::{PrivateExtensionsModal};
+use crate::private_extension_config::PrivateExtensionsModal;
 
 actions!(zed, [InstallDevExtension, InstallPrivateExtension]);
 
@@ -95,14 +95,12 @@ pub fn init(cx: &mut App) {
                     }
                 },
             )
-            .register_action(
-                move |workspace, _: &InstallPrivateExtension, window, cx| {
-                    let wspc = workspace.weak_handle();
-                    workspace.toggle_modal(window, cx, |window, cx| {
-                        PrivateExtensionsModal::new(window, cx, wspc.clone())
-                    });
-                },
-            )
+            .register_action(move |workspace, _: &InstallPrivateExtension, window, cx| {
+                let wspc = workspace.weak_handle();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    PrivateExtensionsModal::new(window, cx, wspc.clone())
+                });
+            })
             .register_action(move |workspace, _: &InstallDevExtension, window, cx| {
                 let store = ExtensionStore::global(cx);
                 let prompt = workspace.prompt_for_open_path(
@@ -582,8 +580,8 @@ impl ExtensionsPage {
                     let extension = &self.private_extension_entries[ix - dev_extension_entries_len];
                     self.render_private_extension(extension, cx)
                 } else {
-                    let extension_ix =
-                        self.filtered_remote_extension_indices[ix - dev_extension_entries_len - private_extension_entries_len];
+                    let extension_ix = self.filtered_remote_extension_indices
+                        [ix - dev_extension_entries_len - private_extension_entries_len];
                     let extension = &self.remote_extension_entries[extension_ix];
                     self.render_remote_extension(extension, cx)
                 }
@@ -880,7 +878,13 @@ impl ExtensionsPage {
         let has_private_extension = Self::private_extension_exists(&extension.id, cx);
 
         let extension_id = extension.id.clone();
-        let buttons = self.buttons_for_entry(extension, &status, has_dev_extension, has_private_extension, cx);
+        let buttons = self.buttons_for_entry(
+            extension,
+            &status,
+            has_dev_extension,
+            has_private_extension,
+            cx,
+        );
         let version = extension.manifest.version.clone();
         let repository_url = extension.manifest.repository.clone();
         let authors = extension.manifest.authors.clone();
@@ -1566,20 +1570,36 @@ impl Render for ExtensionsPage {
                                 h_flex()
                                     .gap_2()
                                     .child(
-                                        Button::new("install-private-extension", "Install Private Extension")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
-                                            .on_click(|_event, window, cx| {
-                                                window.dispatch_action(Box::new(InstallPrivateExtension), cx)
-                                            }),
+                                        Button::new(
+                                            "install-private-extension",
+                                            "Install Private Extension",
+                                        )
+                                        .style(ButtonStyle::Filled)
+                                        .size(ButtonSize::Large)
+                                        .on_click(
+                                            |_event, window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(InstallPrivateExtension),
+                                                    cx,
+                                                )
+                                            },
+                                        ),
                                     )
                                     .child(
-                                        Button::new("install-dev-extension", "Install Dev Extension")
-                                            .style(ButtonStyle::Filled)
-                                            .size(ButtonSize::Large)
-                                            .on_click(|_event, window, cx| {
-                                                window.dispatch_action(Box::new(InstallDevExtension), cx)
-                                            }),
+                                        Button::new(
+                                            "install-dev-extension",
+                                            "Install Dev Extension",
+                                        )
+                                        .style(ButtonStyle::Filled)
+                                        .size(ButtonSize::Large)
+                                        .on_click(
+                                            |_event, window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(InstallDevExtension),
+                                                    cx,
+                                                )
+                                            },
+                                        ),
                                     ),
                             ),
                     )

@@ -4,7 +4,9 @@ pub mod github;
 pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
-pub use http::{self, Method, Request, Response, StatusCode, Uri, HeaderMap, HeaderName, HeaderValue};
+pub use http::{
+    self, HeaderMap, HeaderName, HeaderValue, Method, Request, Response, StatusCode, Uri,
+};
 
 use futures::future::BoxFuture;
 use http::request::Builder;
@@ -86,7 +88,7 @@ pub trait HttpClient: 'static + Send + Sync {
                 })
                 .header(
                     header_name,
-                    HeaderValue::from_bytes(header_value.as_bytes()).unwrap()
+                    HeaderValue::from_bytes(header_value.as_bytes()).unwrap(),
                 )
                 .body(body);
 
@@ -94,7 +96,8 @@ pub trait HttpClient: 'static + Send + Sync {
                 Ok(request) => Box::pin(async move { self.send(request).await }),
                 Err(e) => Box::pin(async move { Err(e.into()) }),
             }
-        } else {    // If no token provided, it's just a default get request
+        } else {
+            // If no token provided, it's just a default get request
             self.get(uri, body, follow_redirects)
         }
     }
