@@ -685,8 +685,9 @@ impl CompletionProvider for RustStyleCompletionProvider {
         &self,
         buffer: &Entity<language::Buffer>,
         position: language::Anchor,
-        _: &str,
-        _: bool,
+        _text: &str,
+        _trigger_in_words: bool,
+        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         completion_replace_range(&buffer.read(cx).snapshot(), &position).is_some()

@@ -239,6 +239,7 @@ impl Tool for EditFileTool {
             };
 
             let mut hallucinated_old_text = false;
+            let mut ambiguous_ranges = Vec::new();
             while let Some(event) = events.next().await {
                 match event {
                     EditAgentOutputEvent::Edited => {
@@ -247,6 +248,7 @@ impl Tool for EditFileTool {
                         }
                     }
                     EditAgentOutputEvent::UnresolvedEditRange => hallucinated_old_text = true,
+                    EditAgentOutputEvent::AmbiguousEditRange(ranges) => ambiguous_ranges = ranges,
                     EditAgentOutputEvent::ResolvingEditRange(range) => {
                         if let Some(card) = card_clone.as_ref() {
                             card.update(cx, |card, cx| card.reveal_range(range, cx))?;
@@ -327,6 +329,17 @@ impl Tool for EditFileTool {
                         Some edits were produced but none of them could be applied.
                         Read the relevant sections of {input_path} again so that
                         I can perform the requested edits.
+                    "}
+                );
+                anyhow::ensure!(
+                    ambiguous_ranges.is_empty(),
+                    // TODO: Include ambiguous_ranges, converted to line numbers.
+                    //       This would work best if we add `line_hint` parameter
+                    //       to edit_file_tool
+                    formatdoc! {"
+                        <old_text> matches more than one position in the file. Read the
+                        relevant sections of {input_path} again and extend <old_text> so
+                        that I can perform the requested edits.
                     "}
                 );
                 Ok(ToolResultOutput {

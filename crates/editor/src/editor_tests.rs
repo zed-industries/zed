@@ -1912,19 +1912,19 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
         assert_selection_ranges("use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("use stdˇ::str::{foo, bar}\n\n  ˇ{baz.qux()}", editor, cx);
+        assert_selection_ranges("use stdˇ::str::{foo, bar}\n\nˇ  {baz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("use ˇstd::str::{foo, bar}\n\nˇ  {baz.qux()}", editor, cx);
-
-        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges("ˇuse std::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
+        assert_selection_ranges("use ˇstd::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
 
         editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
         assert_selection_ranges("ˇuse std::str::{foo, barˇ}\n\n  {baz.qux()}", editor, cx);
 
+        editor.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
+        assert_selection_ranges("ˇuse std::str::{foo, ˇbar}\n\n  {baz.qux()}", editor, cx);
+
         editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
-        assert_selection_ranges("useˇ std::str::{foo, bar}ˇ\n\n  {baz.qux()}", editor, cx);
+        assert_selection_ranges("useˇ std::str::{foo, barˇ}\n\n  {baz.qux()}", editor, cx);
 
         editor.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
         assert_selection_ranges("use stdˇ::str::{foo, bar}\nˇ\n  {baz.qux()}", editor, cx);
@@ -1942,7 +1942,7 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
 
         editor.select_to_previous_word_start(&SelectToPreviousWordStart, window, cx);
         assert_selection_ranges(
-            "use std«ˇ::s»tr::{foo, bar}\n\n  «ˇ{b»az.qux()}",
+            "use std«ˇ::s»tr::{foo, bar}\n\n«ˇ  {b»az.qux()}",
             editor,
             cx,
         );
@@ -5111,7 +5111,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
             Integer sit amet scelerisque nisi.
         "},
-        plaintext_language,
+        plaintext_language.clone(),
         &mut cx,
     );
 
@@ -5171,6 +5171,69 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             }
         "},
         language_with_doc_comments.clone(),
+        &mut cx,
+    );
+
+    assert_rewrap(
+        indoc! {"
+            «ˇone one one one one one one one one one one one one one one one one one one one one one one one one
+
+            two»
+
+            three
+
+            «ˇ\t
+
+            four four four four four four four four four four four four four four four four four four four four»
+
+            «ˇfive five five five five five five five five five five five five five five five five five five five
+            \t»
+            six six six six six six six six six six six six six six six six six six six six six six six six six
+        "},
+        indoc! {"
+            «ˇone one one one one one one one one one one one one one one one one one one one
+            one one one one one
+
+            two»
+
+            three
+
+            «ˇ\t
+
+            four four four four four four four four four four four four four four four four
+            four four four four»
+
+            «ˇfive five five five five five five five five five five five five five five five
+            five five five five
+            \t»
+            six six six six six six six six six six six six six six six six six six six six six six six six six
+        "},
+        plaintext_language.clone(),
+        &mut cx,
+    );
+
+    assert_rewrap(
+        indoc! {"
+            //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
+            //ˇ
+            //ˇ long long long long long long long long long long long long long long long long long long long long long long long long long long long long
+            //ˇ short short short
+            int main(void) {
+                return 17;
+            }
+        "},
+        indoc! {"
+            //ˇ long long long long long long long long long long long long long long long
+            // long long long long long long long long long long long long long
+            //ˇ
+            //ˇ long long long long long long long long long long long long long long long
+            //ˇ long long long long long long long long long long long long long short short
+            // short
+            int main(void) {
+                return 17;
+            }
+        "},
+        language_with_c_comments,
         &mut cx,
     );
 
@@ -17860,6 +17923,7 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
             ("file-2".into(), "two\n".into()),
             ("file-3".into(), "three\n".into()),
         ],
+        "deadbeef",
     );
 
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
@@ -21227,6 +21291,7 @@ fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     point..point
 }
 
+#[track_caller]
 fn assert_selection_ranges(marked_text: &str, editor: &mut Editor, cx: &mut Context<Editor>) {
     let (text, ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), text);

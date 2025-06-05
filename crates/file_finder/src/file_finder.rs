@@ -4,7 +4,6 @@ mod file_finder_tests;
 mod open_path_prompt_tests;
 
 pub mod file_finder_settings;
-mod new_path_prompt;
 mod open_path_prompt;
 
 use futures::future::join_all;
@@ -20,7 +19,6 @@ use gpui::{
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
     Window, actions,
 };
-use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
@@ -85,8 +83,8 @@ pub fn init_settings(cx: &mut App) {
 pub fn init(cx: &mut App) {
     init_settings(cx);
     cx.observe_new(FileFinder::register).detach();
-    cx.observe_new(NewPathPrompt::register).detach();
     cx.observe_new(OpenPathPrompt::register).detach();
+    cx.observe_new(OpenPathPrompt::register_new_path).detach();
 }
 
 impl FileFinder {

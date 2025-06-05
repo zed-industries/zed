@@ -198,6 +198,8 @@
       "9": ["vim::Number", 9],
       "ctrl-w d": "editor::GoToDefinitionSplit",
       "ctrl-w g d": "editor::GoToDefinitionSplit",
+      "ctrl-w ]": "editor::GoToDefinitionSplit",
+      "ctrl-w ctrl-]": "editor::GoToDefinitionSplit",
       "ctrl-w shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w g shift-d": "editor::GoToTypeDefinitionSplit",
       "ctrl-w space": "editor::OpenExcerptsSplit",
