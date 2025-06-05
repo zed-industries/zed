@@ -3635,7 +3635,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
                 buffer.clone(),
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(path!("file.rs").as_ref()),
+                    path: Arc::from("file.rs".as_ref()),
                 },
                 cx,
             )
