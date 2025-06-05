@@ -349,7 +349,6 @@ fn handle_syskeydown_msg(
             is_held: lparam.0 & (0x1 << 30) > 0,
         })
     })?;
-    println!("WM_SYSKEYDOWN: wparam: {:#?}", input);
     let mut func = lock.callbacks.input.take()?;
     drop(lock);
 
@@ -395,7 +394,6 @@ fn handle_keydown_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("WM_KEYDOWN");
     let mut lock = state_ptr.state.borrow_mut();
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
@@ -412,19 +410,8 @@ fn handle_keydown_msg(
     })
     .flatten()
     .is_some();
-    println!("    WM_KEYDOWN is_composing: {}", is_composing);
     if is_composing {
-        unsafe {
-            let msg = MSG {
-                hwnd: handle,
-                message: WM_KEYDOWN,
-                wParam: wparam,
-                lParam: lparam,
-                time: 0,
-                pt: POINT::default(),
-            };
-            TranslateMessage(&msg).ok().log_err();
-        }
+        translate_message(handle, wparam, lparam);
         return Some(0);
     }
 
@@ -436,21 +423,10 @@ fn handle_keydown_msg(
 
     state_ptr.state.borrow_mut().callbacks.input = Some(func);
 
-    println!("    WM_KEYDOWN handled: {}", handled);
     if handled {
         Some(0)
     } else {
-        unsafe {
-            let msg = MSG {
-                hwnd: handle,
-                message: WM_KEYDOWN,
-                wParam: wparam,
-                lParam: lparam,
-                time: 0,
-                pt: POINT::default(),
-            };
-            TranslateMessage(&msg).ok().log_err();
-        }
+        translate_message(handle, wparam, lparam);
         Some(1)
     }
 }
@@ -461,14 +437,12 @@ fn handle_keyup_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    println!("WM_KEYUP");
     let mut lock = state_ptr.state.borrow_mut();
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     }) else {
         return Some(1);
     };
-    println!("    KeyUp: {:#?}", input);
 
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
@@ -1249,6 +1223,19 @@ fn handle_input_language_changed(
         PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
     }
     Some(0)
+}
+
+#[inline]
+fn translate_message(handle: HWND, wparam: WPARAM, lparam: LPARAM) {
+    let msg = MSG {
+        hwnd: handle,
+        message: WM_KEYDOWN,
+        wParam: wparam,
+        lParam: lparam,
+        time: 0,
+        pt: POINT::default(),
+    };
+    unsafe { TranslateMessage(&msg).ok().log_err() };
 }
 
 fn handle_key_event<F>(
