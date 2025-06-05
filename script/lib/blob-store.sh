@@ -9,6 +9,20 @@ function upload_to_blob_store_with_acl
     date=$(date +"%a, %d %b %Y %T %z")
     content_type="application/octet-stream"
     storage_type="x-amz-storage-class:STANDARD"
+
+    # Build the canonical amz headers string for signature calculation
+    amz_headers=""
+    if [ -n "$custom_headers" ]; then
+        # Extract x-amz-* headers and format them for signature
+        # Convert to lowercase and sort (required for AWS signature)
+        amz_header=$(echo "$custom_headers" | tr '[:upper:]' '[:lower:]' | sed 's/: */:/g')
+        if [[ "$amz_header" == x-amz-* ]]; then
+            amz_headers="${amz_header}\n"
+        fi
+    fi
+
+    string="PUT\n\n${content_type}\n${date}\n${amz_headers}${acl}\n${storage_type}\n/${bucket_name}/${blob_store_key}"
+
     string="PUT\n\n${content_type}\n${date}\n${acl}\n${storage_type}\n/${bucket_name}/${blob_store_key}"
     signature=$(echo -en "${string}" | openssl sha1 -hmac "${DIGITALOCEAN_SPACES_SECRET_KEY}" -binary | base64)
 
