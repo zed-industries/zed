@@ -1319,7 +1319,7 @@ mod windows_renderer {
             size: Default::default(),
             transparent,
         };
-        BladeRenderer::new(context, &raw, config)
+        BladeRenderer::new(context, &raw, config).inspect_err(|err| show_error(err.to_string()))
     }
 
     struct RawWindow {
