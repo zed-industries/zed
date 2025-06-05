@@ -12710,7 +12710,7 @@ impl Editor {
         let text_layout_details = self.text_layout_details(window);
 
         let mut state = {
-            let unprocessed_selections = match self.add_selections_state.as_ref() {
+            let non_columnar_selections = match self.add_selections_state.as_ref() {
                 Some(state) => {
                     let all_group_ids: HashSet<_> = state
                         .groups
@@ -12727,15 +12727,15 @@ impl Editor {
                 None => selections.clone(),
             };
 
-            selections.retain(|s| {
-                !unprocessed_selections
+            selections.retain(|selection| {
+                !non_columnar_selections
                     .iter()
-                    .map(|unprocess_s| unprocess_s.id)
-                    .contains(&s.id)
+                    .map(|non_columnar_selection| non_columnar_selection.id)
+                    .contains(&selection.id)
             });
 
             let mut groups = Vec::new();
-            for selection in unprocessed_selections {
+            for selection in non_columnar_selections {
                 let range = selection.display_range(&display_map).sorted();
                 let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
                 let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
@@ -12768,6 +12768,15 @@ impl Editor {
         };
 
         let mut new_selections = Vec::new();
+        let last_selections_in_groups: Vec<_> = state
+            .groups
+            .iter()
+            .map(|group| {
+                // we take care of stack not being empty at end of function
+                debug_assert!(!group.stack.is_empty());
+                *group.stack.last().unwrap()
+            })
+            .collect();
 
         let end_row = if above {
             DisplayRow(0)
@@ -12775,77 +12784,64 @@ impl Editor {
             display_map.max_point().row()
         };
 
-        let last_selections: Vec<_> = state
-            .groups
-            .iter()
-            .map(|group| {
-                debug_assert!(!group.stack.is_empty());
-                *group.stack.last().unwrap()
-            })
-            .collect();
-
         'outer: for selection in selections {
-            for (group, last_added_in_group) in state.groups.iter_mut().zip(last_selections.iter())
+            for (group, last_added_in_group) in state
+                .groups
+                .iter_mut()
+                .zip(last_selections_in_groups.iter())
             {
-                if above == group.above && last_added_in_group == &selection.id {
-                    let range = selection.display_range(&display_map).sorted();
-                    debug_assert_eq!(range.start.row(), range.end.row());
-                    let mut row = range.start.row();
-                    let positions =
-                        if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
-                            px(start)..px(end)
-                        } else {
-                            let start_x =
-                                display_map.x_for_display_point(range.start, &text_layout_details);
-                            let end_x =
-                                display_map.x_for_display_point(range.end, &text_layout_details);
-                            start_x.min(end_x)..start_x.max(end_x)
-                        };
-
-                    while row != end_row {
-                        if above {
-                            row.0 -= 1;
-                        } else {
-                            row.0 += 1;
-                        }
-
-                        if let Some(new_selection) = self.selections.build_columnar_selection(
-                            &display_map,
-                            row,
-                            &positions,
-                            selection.reversed,
-                            &text_layout_details,
-                        ) {
-                            group.stack.push(new_selection.id);
-                            if above {
-                                new_selections.push(new_selection);
-                                new_selections.push(selection);
+                if last_added_in_group == &selection.id {
+                    if above == group.above {
+                        let range = selection.display_range(&display_map).sorted();
+                        // every selection is broken down to columnar till here
+                        debug_assert_eq!(range.start.row(), range.end.row());
+                        let mut row = range.start.row();
+                        let positions =
+                            if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
+                                px(start)..px(end)
                             } else {
-                                new_selections.push(selection);
-                                new_selections.push(new_selection);
+                                let start_x = display_map
+                                    .x_for_display_point(range.start, &text_layout_details);
+                                let end_x = display_map
+                                    .x_for_display_point(range.end, &text_layout_details);
+                                start_x.min(end_x)..start_x.max(end_x)
+                            };
+
+                        while row != end_row {
+                            if above {
+                                row.0 -= 1;
+                            } else {
+                                row.0 += 1;
                             }
 
-                            continue 'outer;
+                            if let Some(new_selection) = self.selections.build_columnar_selection(
+                                &display_map,
+                                row,
+                                &positions,
+                                selection.reversed,
+                                &text_layout_details,
+                            ) {
+                                group.stack.push(new_selection.id);
+                                if above {
+                                    new_selections.push(new_selection);
+                                    new_selections.push(selection);
+                                } else {
+                                    new_selections.push(selection);
+                                    new_selections.push(new_selection);
+                                }
+
+                                continue 'outer;
+                            }
                         }
+                    } else {
+                        group.stack.pop();
+                        continue 'outer;
                     }
                 }
             }
 
             new_selections.push(selection);
         }
-
-        new_selections.retain(|selection| {
-            let mut retain = true;
-            for (group, last_added_in_group) in state.groups.iter_mut().zip(last_selections.iter())
-            {
-                if above != group.above && last_added_in_group == &selection.id {
-                    group.stack.pop();
-                    retain = false;
-                    break;
-                }
-            }
-            retain
-        });
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
             s.select(new_selections);
