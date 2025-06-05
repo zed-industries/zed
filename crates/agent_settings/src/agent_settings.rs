@@ -850,7 +850,12 @@ impl Settings for AgentSettings {
     ) -> anyhow::Result<Self> {
         let mut settings = AgentSettings::default();
 
-        for value in sources.defaults_and_customizations() {
+        // Process all sources including project settings
+        let all_sources = sources
+            .defaults_and_customizations()
+            .chain(sources.project.iter().copied());
+
+        for value in all_sources {
             if value.is_version_outdated() {
                 settings.using_outdated_settings_version = true;
             }
@@ -977,7 +982,7 @@ fn merge<T>(target: &mut T, value: Option<T>) {
 #[cfg(test)]
 mod tests {
     use fs::Fs;
-    use gpui::{ReadGlobal, TestAppContext};
+    use gpui::{BorrowAppContext, ReadGlobal, TestAppContext};
     use settings::SettingsStore;
 
     use super::*;
@@ -1117,5 +1122,88 @@ mod tests {
 
         let agent_settings: AgentSettingsTest = serde_json::from_value(settings).unwrap();
         assert!(agent_settings.agent.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_project_settings_override(cx: &mut TestAppContext) {
+        use settings::{LocalSettingsKind, SettingsLocation};
+        use std::sync::Arc;
+
+        cx.update(|cx| {
+            let test_settings = settings::SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            AgentSettings::register(cx);
+        });
+
+        // Set global settings
+        cx.update(|cx| {
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store
+                    .set_default_settings(
+                        &serde_json::json!({
+                            "assistant": {
+                                "version": "2",
+                                "enabled": true,
+                                "default_model": {
+                                    "provider": "openai",
+                                    "model": "gpt-4"
+                                }
+                            }
+                        })
+                        .to_string(),
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        // Set project-specific settings
+        cx.update(|cx| {
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store
+                    .set_local_settings(
+                        settings::WorktreeId::from_usize(1),
+                        Arc::from(std::path::Path::new("/project")),
+                        LocalSettingsKind::Settings,
+                        Some(
+                            &serde_json::json!({
+                                "assistant": {
+                                    "version": "2",
+                                    "enabled": false,
+                                    "default_model": {
+                                        "provider": "copilot_chat",
+                                        "model": "gpt-3.5-turbo"
+                                    }
+                                }
+                            })
+                            .to_string(),
+                        ),
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        cx.read(|cx| {
+            let global_settings = AgentSettings::get_global(cx);
+            let local_settings = AgentSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: settings::WorktreeId::from_usize(1),
+                    path: std::path::Path::new("/project/file.rs"),
+                }),
+                cx,
+            );
+
+            // Global settings should be different from project-specific settings
+            assert_ne!(global_settings.enabled, local_settings.enabled);
+            assert_ne!(
+                global_settings.default_model.provider.0.as_str(),
+                local_settings.default_model.provider.0.as_str()
+            );
+            assert_ne!(
+                global_settings.default_model.model,
+                local_settings.default_model.model
+            );
+        });
     }
 }

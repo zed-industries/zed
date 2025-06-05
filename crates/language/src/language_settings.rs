@@ -1823,6 +1823,58 @@ mod tests {
         assert!(!settings.enabled_for_file(&home_file, &cx));
     }
 
+    #[gpui::test]
+    async fn test_project_settings_override_edit_prediction_provider(cx: &mut TestAppContext) {
+        use gpui::BorrowAppContext;
+        use settings::{LocalSettingsKind, Settings, SettingsLocation, SettingsStore};
+        use std::sync::Arc;
+
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            AllLanguageSettings::register(cx);
+        });
+
+        // Set project-specific settings
+        cx.update(|cx| {
+            cx.update_global(|store: &mut SettingsStore, cx| {
+                store
+                    .set_local_settings(
+                        settings::WorktreeId::from_usize(1),
+                        Arc::from(std::path::Path::new("/project")),
+                        LocalSettingsKind::Settings,
+                        Some(
+                            &serde_json::json!({
+                                "features": {
+                                    "edit_prediction_provider": "supermaven"
+                                }
+                            })
+                            .to_string(),
+                        ),
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        cx.read(|cx| {
+            let global_settings = AllLanguageSettings::get_global(cx);
+            let local_settings = AllLanguageSettings::get(
+                Some(SettingsLocation {
+                    worktree_id: settings::WorktreeId::from_usize(1),
+                    path: std::path::Path::new("/project/file.rs"),
+                }),
+                cx,
+            );
+
+            // Global settings should be different from project-specific settings
+            assert_ne!(
+                global_settings.edit_predictions.provider,
+                local_settings.edit_predictions.provider
+            );
+        });
+    }
+
     #[test]
     pub fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
