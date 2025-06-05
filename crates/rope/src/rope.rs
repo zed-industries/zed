@@ -772,6 +772,31 @@ impl<'a> Chunks<'a> {
         Some(&chunk.text[slice_range])
     }
 
+    pub fn peek_tabs(&self) -> Option<(&'a str, u128)> {
+        if !self.offset_is_valid() {
+            return None;
+        }
+
+        let chunk = self.chunks.item()?;
+        let chunk_start = *self.chunks.start();
+        let slice_range = if self.reversed {
+            let slice_start = cmp::max(chunk_start, self.range.start) - chunk_start;
+            let slice_end = self.offset - chunk_start;
+            slice_start..slice_end
+        } else {
+            let slice_start = self.offset - chunk_start;
+            let slice_end = cmp::min(self.chunks.end(&()), self.range.end) - chunk_start;
+            slice_start..slice_end
+        };
+        let chunk_start_offset = slice_range.start;
+        let slice_text = &chunk.text[slice_range];
+
+        // Shift the tabs to align with our slice window
+        let shifted_tabs = chunk.tabs >> chunk_start_offset;
+
+        Some((slice_text, shifted_tabs))
+    }
+
     pub fn lines(self) -> Lines<'a> {
         let reversed = self.reversed;
         Lines {
