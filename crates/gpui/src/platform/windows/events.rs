@@ -83,11 +83,11 @@ pub(crate) fn handle_msg(
         WM_XBUTTONUP => handle_xbutton_msg(handle, wparam, lparam, handle_mouse_up_msg, state_ptr),
         WM_MOUSEWHEEL => handle_mouse_wheel_msg(handle, wparam, lparam, state_ptr),
         WM_MOUSEHWHEEL => handle_mouse_horizontal_wheel_msg(handle, wparam, lparam, state_ptr),
-        WM_SYSKEYDOWN => handle_syskeydown_msg(wparam, lparam, state_ptr),
-        WM_SYSKEYUP => handle_syskeyup_msg(wparam, lparam, state_ptr),
+        WM_SYSKEYDOWN => handle_syskeydown_msg(handle, wparam, lparam, state_ptr),
+        WM_SYSKEYUP => handle_syskeyup_msg(handle, wparam, lparam, state_ptr),
         WM_SYSCOMMAND => handle_system_command(wparam, state_ptr),
-        WM_KEYDOWN => handle_keydown_msg(wparam, lparam, state_ptr),
-        WM_KEYUP => handle_keyup_msg(wparam, lparam, state_ptr),
+        WM_KEYDOWN => handle_keydown_msg(handle, wparam, lparam, state_ptr),
+        WM_KEYUP => handle_keyup_msg(handle, wparam, lparam, state_ptr),
         WM_CHAR => handle_char_msg(wparam, state_ptr),
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
@@ -337,12 +337,13 @@ fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize>
 }
 
 fn handle_syskeydown_msg(
+    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+    let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -368,12 +369,13 @@ fn handle_syskeydown_msg(
 }
 
 fn handle_syskeyup_msg(
+    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    let input = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+    let input = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     })?;
     let mut func = lock.callbacks.input.take()?;
@@ -388,12 +390,18 @@ fn handle_syskeyup_msg(
 // It's a known bug that you can't trigger `ctrl-shift-0`. See:
 // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
 fn handle_keydown_msg(
+    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let is_composing = with_input_handler(&state_ptr, |input_handler| {
+        input_handler.marked_text_range()
+    })
+    .flatten()
+    .is_some();
     let mut lock = state_ptr.state.borrow_mut();
-    let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+    let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: lparam.0 & (0x1 << 30) > 0,
@@ -401,6 +409,22 @@ fn handle_keydown_msg(
     }) else {
         return Some(1);
     };
+
+    println!("WM_KEYDOWN is_composing: {}", is_composing);
+    if is_composing {
+        unsafe {
+            let msg = MSG {
+                hwnd: handle,
+                message: WM_KEYDOWN,
+                wParam: wparam,
+                lParam: lparam,
+                time: 0,
+                pt: POINT::default(),
+            };
+            TranslateMessage(&msg).ok().log_err();
+        }
+        return Some(0);
+    }
 
     let Some(mut func) = lock.callbacks.input.take() else {
         return Some(1);
@@ -412,21 +436,34 @@ fn handle_keydown_msg(
     let mut lock = state_ptr.state.borrow_mut();
     lock.callbacks.input = Some(func);
 
+    println!("WM_KEYDOWN handled: {}", handled);
     if handled {
         lock.suppress_next_char_msg = true;
         Some(0)
     } else {
+        unsafe {
+            let msg = MSG {
+                hwnd: handle,
+                message: WM_KEYDOWN,
+                wParam: wparam,
+                lParam: lparam,
+                time: 0,
+                pt: POINT::default(),
+            };
+            TranslateMessage(&msg).ok().log_err();
+        }
         Some(1)
     }
 }
 
 fn handle_keyup_msg(
+    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    let Some(input) = handle_key_event(wparam, lparam, &mut lock, |keystroke| {
+    let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyUp(KeyUpEvent { keystroke })
     }) else {
         return Some(1);
@@ -1214,6 +1251,7 @@ fn handle_input_language_changed(
 }
 
 fn handle_key_event<F>(
+    handle: HWND,
     wparam: WPARAM,
     lparam: LPARAM,
     state: &mut WindowsWindowState,
@@ -1228,9 +1266,9 @@ where
 
     match virtual_key {
         VK_PROCESSKEY => {
-            // IME composition
-            // ImmGetVirtualKey(handle);
-            None
+            let vkey = unsafe { ImmGetVirtualKey(handle) };
+            let keystroke = parse_normal_key(VIRTUAL_KEY(vkey as u16), lparam, modifiers)?;
+            Some(f(keystroke))
         }
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
             if state
@@ -1310,6 +1348,7 @@ fn parse_normal_key(
     let mut key_char = None;
     let key = parse_immutable(vkey).or_else(|| {
         let scan_code = lparam.hiword() & 0xFF;
+        println!("Scan: {}", scan_code);
         key_char = generate_key_char(
             vkey,
             scan_code as u32,
