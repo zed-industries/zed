@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-const MAX_CONCURRENT_LSP_REQUESTS: usize = 20;
+const MAX_CONCURRENT_LSP_REQUESTS: usize = 5;
 const INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS: u64 = 400;
 
 pub struct SemanticTokensCache {
@@ -477,15 +477,15 @@ async fn fetch_semantic_tokens(
         let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
 
         match (invalidate, &editor.semantic_tokens_cache.lsp_request_cache) {
-            (InvalidationStrategy::BufferEdited, None)=> {
-                editor
-                    .semantics_provider
-                    .as_ref()?
-                    .semantic_tokens_full(buffer, fetch_range.clone(), cx)
-            }
-            (InvalidationStrategy::None, Some(tokens)) => {
-                Some(Task::ready(Ok::<_, anyhow::Error>(tokens.clone())))
-            },
+            // (InvalidationStrategy::BufferEdited, None)=> {
+            //     editor
+            //         .semantics_provider
+            //         .as_ref()?
+            //         .semantic_tokens_full(buffer, fetch_range.clone(), cx)
+            // }
+            // (InvalidationStrategy::None, Some(tokens)) => {
+            //     Some(Task::ready(Ok::<_, anyhow::Error>(tokens.clone())))
+            // },
             _ => {
                 editor
                     .semantics_provider
@@ -615,6 +615,9 @@ fn calculate_token_updates(
         if !contains_position(&fetch_range, new_token.range.start, buffer_snapshot) {
             continue;
         }
+        if !contains_position(&fetch_range, new_token.range.end, buffer_snapshot) {
+            continue;
+        }
         let missing_from_cache = match &cached_excerpt_tokens {
             Some(cached_excerpt_tokens) => {
                 let cached_excerpt_tokens = cached_excerpt_tokens.read();
@@ -622,16 +625,16 @@ fn calculate_token_updates(
                     .ordered_tokens
                     .binary_search_by(|probe| {
                         cached_excerpt_tokens.tokens_by_id[probe]
-                            .range
-                            .cmp(&new_token.range, buffer_snapshot)
+                            .range.start
+                            .cmp(&new_token.range.start, buffer_snapshot)
                     }) {
                     Ok(ix) => {
                         let mut missing_from_cache = true;
                         for id in &cached_excerpt_tokens.ordered_tokens[ix..] {
                             let cached_token = &cached_excerpt_tokens.tokens_by_id[id];
                             if new_token
-                                .range
-                                .cmp(&cached_token.range, buffer_snapshot)
+                                .range.start
+                                .cmp(&cached_token.range.start, buffer_snapshot)
                                 .is_gt()
                             {
                                 break;
@@ -659,7 +662,7 @@ fn calculate_token_updates(
         remove_from_visible.extend(
             visible_tokens
                 .iter()
-                .filter(|token| token.range.start.excerpt_id == excerpt_id)
+                .filter(|token| token.range.start.excerpt_id == excerpt_id && token.range.end.excerpt_id == excerpt_id)
                 .map(|token| token.id)
                 .filter(|token_id| !excerpt_tokens_to_persist.contains_key(token_id)),
         );
@@ -728,7 +731,7 @@ fn apply_token_update(
         .retain(|token_id, _| !new_update.remove_from_cache.contains(token_id));
     let mut splice = TokenSplice::default();
     splice.to_remove.extend(new_update.remove_from_visible);
-    'outer: for new_token in new_update.add_to_cache {
+    for new_token in new_update.add_to_cache {
         let Some(mut token_highlight) = cx.theme().tokens().get(new_token.r#type.as_str()) else {
             continue;
         };
@@ -738,25 +741,18 @@ fn apply_token_update(
             };
             token_highlight.style.highlight(r#mod);
         }
-        let mut insert_position = 0;
-        for idx in cached_excerpt_tokens.ordered_tokens.iter() {
-            // here we add a new token to the insert tokens but we must remove the existing one by adding it
-            // to the to_remove list, so we don't have overlapping tokens
-            let probe = cached_excerpt_tokens.tokens_by_id[idx].clone();
-            if probe.range.start.offset >= new_token.range.start.offset
-                && probe.range.end.offset <= new_token.range.end.offset
-            {
-                log::error!("overlapping token, we're doomed");
-                splice.to_remove.push(*idx);
-                insert_position += 1;
+        let insert_position = match cached_excerpt_tokens
+            .ordered_tokens
+            .binary_search_by(|probe| {
+                cached_excerpt_tokens.tokens_by_id[probe]
+                    .range.start
+                    .cmp(&new_token.range.start, &buffer_snapshot)
+            }) {
+            Ok(i) => {
+                i + cached_excerpt_tokens.ordered_tokens[i..].len() + 1
             }
-            if new_token.range.start.offset >= probe.range.end.offset {
-                insert_position += 1;
-            } else {
-                log::error!("failed to add token {}", new_token.r#type.as_str());
-            }
-        }
-
+            Err(i) => i,
+        };
         let new_token_id = post_inc(&mut editor.next_semantic_id);
         if let (Some(new_start), Some(new_end)) = (
             multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_token.range.start),
@@ -938,10 +934,10 @@ mod tests {
             })
             .unwrap();
 
-        fake_server
-            .request::<lsp::request::SemanticTokensRefresh>(())
-            .await
-            .expect("semantic tokens refresh request failed");
+        // fake_server
+        //     .request::<lsp::request::SemanticTokensRefresh>(())
+        //     .await
+        //     .expect("semantic tokens refresh request failed");
         cx.executor().run_until_parked();
 
         editor

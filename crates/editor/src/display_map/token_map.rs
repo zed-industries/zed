@@ -3,9 +3,11 @@ use gpui::HighlightStyle;
 use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::MultiBufferSnapshot;
 use multi_buffer::{MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
+use std::backtrace::Backtrace;
 use std::cmp;
 use std::collections::BTreeMap;
 use std::ops::{Add, AddAssign, Range, Sub, SubAssign};
+use std::sync::Arc;
 use sum_tree::{Bias, Cursor, SumTree};
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks};
@@ -192,6 +194,19 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
     }
 }
 
+impl PartialOrd for HighlightEndpoint {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for HighlightEndpoint {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        self.offset
+            .cmp(&other.offset)
+            .then_with(|| other.is_start.cmp(&self.is_start))
+    }
+}
+
 #[derive(Clone)]
 pub struct TokenBufferRows<'a> {
     transforms: Cursor<'a, Transform, (TokenPoint, Point)>,
@@ -270,7 +285,9 @@ impl<'a> Iterator for TokenChunks<'a> {
             prefix.syntax_highlight_id = None;
             let mut highlight_style = HighlightStyle::default();
             for active_highlight in self.active_highlights.values() {
-                highlight_style.highlight(*active_highlight);
+                let mut new_highlight = active_highlight.clone();
+                new_highlight.highlight(highlight_style);
+                highlight_style = new_highlight;
             }
             prefix.highlight_style = Some(highlight_style);
         }
@@ -379,49 +396,39 @@ impl TokenMap {
             (snapshot.clone(), Vec::new())
         } else {
             snapshot.endpoints = vec![];
+            for token in &self.tokens {
+                if !token.range.start.is_valid(&snapshot.buffer)
+                    || !token.range.end.is_valid(&snapshot.buffer)
+                {
+                    continue;
+                }
+                let start_pos = token.range.start.to_offset(&snapshot.buffer);
+                let end_pos = token.range.end.to_offset(&snapshot.buffer);
+                snapshot.endpoints.push(HighlightEndpoint {
+                    id: token.id,
+                    offset: start_pos,
+                    is_start: true,
+                    style: token.style,
+                });
+                snapshot.endpoints.push(HighlightEndpoint {
+                    id: token.id,
+                    offset: end_pos,
+                    is_start: false,
+                    style: token.style,
+                });
+            }
+
             let token_edits = buffer_edits
                 .into_iter()
                 .map(|edit| {
-                    let (Ok(ix) | Err(ix)) = self.tokens.binary_search_by(|probe| {
-                        probe
-                            .range
-                            .start
-                            .to_offset(&snapshot.buffer)
-                            .cmp(&edit.new.start)
-                            .then(std::cmp::Ordering::Greater)
-                    });
-
-                    for token in &self.tokens[ix..] {
-                        if !token.range.start.is_valid(&snapshot.buffer)
-                            || !token.range.end.is_valid(&snapshot.buffer)
-                        {
-                            continue;
-                        }
-                        let start_pos = token.range.start.to_offset(&snapshot.buffer);
-                        let end_pos = token.range.end.to_offset(&snapshot.buffer);
-                        if start_pos > edit.new.end {
-                            break;
-                        }
-                        snapshot.endpoints.push(HighlightEndpoint {
-                            id: token.id,
-                            offset: start_pos,
-                            is_start: true,
-                            style: token.style,
-                        });
-                        snapshot.endpoints.push(HighlightEndpoint {
-                            id: token.id,
-                            offset: end_pos,
-                            is_start: false,
-                            style: token.style,
-                        });
-                    }
-
                     TokenEdit {
                         old: TokenOffset(edit.old.start)..TokenOffset(edit.old.end),
                         new: TokenOffset(edit.new.start)..TokenOffset(edit.new.end),
                     }
                 })
                 .collect();
+
+            snapshot.endpoints.sort();
 
             (snapshot.clone(), token_edits)
         }
@@ -432,6 +439,7 @@ impl TokenMap {
         to_remove: &[usize],
         to_insert: Vec<Token>,
     ) -> (TokenSnapshot, Vec<TokenEdit>) {
+        log::info!("splice_tokens({}, {})", to_remove.len(), to_insert.len());
         let snapshot = &mut self.snapshot;
         let mut edits = BTreeSet::new();
 
@@ -839,6 +847,7 @@ impl TokenSnapshot {
             &self.buffer,
         );
 
+        log::info!("chunks = {}", self.endpoints.len());
         TokenChunks {
             transforms: cursor,
             buffer_chunks,

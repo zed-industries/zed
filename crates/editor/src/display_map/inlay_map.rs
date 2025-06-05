@@ -588,6 +588,7 @@ impl InlayMap {
         to_remove: &[InlayId],
         to_insert: Vec<Inlay>,
     ) -> (InlaySnapshot, Vec<InlayEdit>) {
+        log::info!("splice_inlays({}, {})", to_remove.len(), to_insert.len());
         let snapshot = &mut self.snapshot;
         let mut edits = BTreeSet::new();
 
