@@ -261,6 +261,93 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 ]
 ```
 
+#### Go
+
+##### Debug Go Tests with Build Tags
+
+Go build tags (build constraints) allow conditional compilation of code. When debugging Go applications or tests that require specific build tags, you can configure them in your debug scenarios:
+
+```json
+[
+  {
+    "label": "Debug Go Test with Integration Tags",
+    "adapter": "Delve",
+    "build": {
+      "label": "Build Go Test with Tags",
+      "command": "go",
+      "args": [
+        "test",
+        "-c",
+        "-tags",
+        "integration",
+        "-gcflags=\"all=-N -l\"",
+        "-o",
+        "__debug_test",
+        "./pkg/..."
+      ]
+    },
+    "program": "${ZED_WORKTREE_ROOT}/__debug_test",
+    "args": ["-test.v", "-test.run=${ZED_SYMBOL}"],
+    "cwd": "${ZED_WORKTREE_ROOT}"
+  }
+]
+```
+
+##### Multiple Tag Configurations
+
+You can create different debug configurations for different tag combinations:
+
+```json
+[
+  {
+    "label": "Debug Unit Tests",
+    "adapter": "Delve",
+    "build": {
+      "command": "go",
+      "args": [
+        "test",
+        "-c",
+        "-tags",
+        "unit",
+        "-gcflags\"all=-N -l\"",
+        "-o",
+        "__debug_unit",
+        "./pkg/..."
+      ]
+    },
+    "program": "${ZED_WORKTREE_ROOT}/__debug_unit",
+    "args": ["-test.v", "-test.run=${ZED_SYMBOL}"]
+  },
+  {
+    "label": "Debug Integration Tests",
+    "adapter": "Delve",
+    "build": {
+      "command": "go",
+      "args": [
+        "test",
+        "-c",
+        "-tags",
+        "integration",
+        "-gcflags",
+        "all=-N -l",
+        "-o",
+        "__debug_integration",
+        "./pkg/..."
+      ]
+    },
+    "program": "${ZED_WORKTREE_ROOT}/__debug_integration",
+    "args": ["-test.v", "-test.run=${ZED_SYMBOL}"]
+  }
+]
+```
+
+**Important Build Arguments for Go:**
+
+- `-c`: Compile the test binary but don't run it
+- `-gcflags "all=-N -l"`: Disable optimizations for better debugging experience
+- `-o <filename>`: Specify output binary name (use different names for different tag configurations)
+- `-tags <taglist>`: Comma-separated list of build tags
+
 ## Breakpoints
 
 To set a breakpoint, simply click next to the line number in the editor gutter.
