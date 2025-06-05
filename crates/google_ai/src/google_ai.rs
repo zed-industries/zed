@@ -508,6 +508,10 @@ pub enum Model {
     Gemini25ProPreview0325,
     #[serde(rename = "gemini-2.5-flash-preview-04-17")]
     Gemini25FlashPreview0417,
+    #[serde(rename = "gemini-2.5-flash-preview-05-20")]
+    Gemini25FlashPreview0520,
+    #[serde(rename = "gemini-2.5-pro-preview-06-05")]
+    Gemini25ProPreview0605,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -535,6 +539,8 @@ impl Model {
             Model::Gemini25ProExp0325 => "gemini-2.5-pro-exp-03-25",
             Model::Gemini25ProPreview0325 => "gemini-2.5-pro-preview-03-25",
             Model::Gemini25FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
+            Model::Gemini25FlashPreview0520 => "gemini-2.5-flash-preview-05-20",
+            Model::Gemini25ProPreview0605 => "gemini-2.5-pro-preview-06-05",
             Model::Custom { name, .. } => name,
         }
     }
@@ -548,8 +554,10 @@ impl Model {
             Model::Gemini20FlashThinking => "Gemini 2.0 Flash Thinking",
             Model::Gemini20FlashLite => "Gemini 2.0 Flash Lite",
             Model::Gemini25ProExp0325 => "Gemini 2.5 Pro Exp",
-            Model::Gemini25ProPreview0325 => "Gemini 2.5 Pro Preview",
-            Model::Gemini25FlashPreview0417 => "Gemini 2.5 Flash Preview",
+            Model::Gemini25ProPreview0325 => "Gemini 2.5 Pro Preview (0325)",
+            Model::Gemini25FlashPreview0417 => "Gemini 2.5 Flash Preview (0417)",
+            Model::Gemini25FlashPreview0520 => "Gemini 2.5 Flash Preview (0520)",
+            Model::Gemini25ProPreview0605 => "Gemini 2.5 Pro Preview (0605)",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -569,6 +577,8 @@ impl Model {
             Model::Gemini25ProExp0325 => ONE_MILLION,
             Model::Gemini25ProPreview0325 => ONE_MILLION,
             Model::Gemini25FlashPreview0417 => ONE_MILLION,
+            Model::Gemini25FlashPreview0520 => ONE_MILLION,
+            Model::Gemini25ProPreview0605 => ONE_MILLION,
             Model::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -583,7 +593,9 @@ impl Model {
             | Self::Gemini20FlashLite
             | Self::Gemini25ProExp0325
             | Self::Gemini25ProPreview0325
-            | Self::Gemini25FlashPreview0417 => GoogleModelMode::Default,
+            | Self::Gemini25FlashPreview0417
+            | Self::Gemini25FlashPreview0520
+            | Self::Gemini25ProPreview0605 => GoogleModelMode::Default,
             Self::Custom { mode, .. } => *mode,
         }
     }
