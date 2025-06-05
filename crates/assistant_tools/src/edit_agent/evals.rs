@@ -39,7 +39,7 @@ fn eval_extract_handle_command_output() {
     // Model                       | Pass rate
     // ----------------------------|----------
     // claude-3.7-sonnet           |  0.98
-    // gemini-2.5-pro              |  0.86
+    // gemini-2.5-pro-06-05        |  0.77
     // gemini-2.5-flash            |  0.11
     // gpt-4.1                     |  1.00
 
