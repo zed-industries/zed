@@ -12740,11 +12740,10 @@ impl Editor {
 
         let mut last_added_selections = Vec::new();
         for stack in state.stacks.iter() {
+            // We make sure any stack can't be empty at end
             debug_assert!(!stack.is_empty());
             last_added_selections.push(*stack.last().unwrap());
         }
-
-        dbg!(&state);
 
         let mut new_selections = Vec::new();
         if above == state.above {
@@ -12787,6 +12786,8 @@ impl Editor {
                             selection.reversed,
                             &text_layout_details,
                         ) {
+                            // We know a non-empty stack exists for this selection,
+                            // because the last_added_selections was built from it.
                             debug_assert!(stack_index < state.stacks.len());
                             state.stacks[stack_index].push(new_selection.id);
                             if above {
@@ -12808,6 +12809,8 @@ impl Editor {
             new_selections = selections;
             new_selections.retain(|s| {
                 if let Some(stack_index) = last_added_selections.iter().position(|&x| x == s.id) {
+                    // We know a non-empty stack exists for this selection,
+                    // because the last_added_selections was built from it.
                     debug_assert!(stack_index < state.stacks.len());
                     state.stacks[stack_index].pop();
                     false
@@ -12821,7 +12824,23 @@ impl Editor {
             s.select(new_selections);
         });
 
-        state.stacks.retain(|stack| stack.len() > 1);
+        let selection_ids: HashSet<_> = self
+            .selections
+            .all::<Point>(cx)
+            .iter()
+            .map(|s| s.id)
+            .collect();
+        state.stacks.retain_mut(|stack| {
+            // Selections might get merged above so we remove invalid
+            // items from stacks, but keeping order of items the same so that
+            // they still can be extended correctly
+            stack.retain(|id| selection_ids.contains(id));
+
+            // Single selection in stack can be treated as
+            // initial state of selection
+            stack.len() > 1
+        });
+
         if !state.stacks.is_empty() {
             self.add_selections_state = Some(state);
         }
