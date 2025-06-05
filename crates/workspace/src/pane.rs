@@ -4414,7 +4414,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        // Add A to Pane A and pin
+        // Add A to pane A and pin
         let item_a = add_labeled_item(&pane_a, "A", false, cx);
         pane_a.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
@@ -4422,7 +4422,7 @@ mod tests {
         });
         assert_item_labels(&pane_a, ["A*!"], cx);
 
-        // Add B to Pane B and pin
+        // Add B to pane B and pin
         let pane_b = workspace.update_in(cx, |workspace, window, cx| {
             workspace.split_pane(pane_a.clone(), SplitDirection::Right, window, cx)
         });
@@ -4433,7 +4433,7 @@ mod tests {
         });
         assert_item_labels(&pane_b, ["B*!"], cx);
 
-        // Move unpinned A from pane A to position 0 in pane B (within pinned region)
+        // Move A from pane A to pane B's pinned region
         pane_b.update_in(cx, |pane, window, cx| {
             let dragged_tab = DraggedTab {
                 pane: pane_a.clone(),
@@ -4445,7 +4445,7 @@ mod tests {
             pane.handle_tab_drop(&dragged_tab, 0, window, cx);
         });
 
-        // A should become pinned since it was dropped in the pinned region
+        // A should stay pinned
         assert_item_labels(&pane_a, [], cx);
         assert_item_labels(&pane_b, ["A*!", "B!"], cx);
     }
@@ -4460,7 +4460,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        // Add A to Pane A and pin
+        // Add A to pane A and pin
         let item_a = add_labeled_item(&pane_a, "A", false, cx);
         pane_a.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
@@ -4481,7 +4481,7 @@ mod tests {
         });
         assert_item_labels(&pane_b, ["B*!"], cx);
 
-        // Move pinned item A from pane A to position 1 (right after pinned region)
+        // Move A from pane A to pane B's unpinned region
         pane_b.update_in(cx, |pane, window, cx| {
             let dragged_tab = DraggedTab {
                 pane: pane_a.clone(),
@@ -4493,7 +4493,7 @@ mod tests {
             pane.handle_tab_drop(&dragged_tab, 1, window, cx);
         });
 
-        // A should be unpinned since it was moved outside the pinned region
+        // A should become pinned
         assert_item_labels(&pane_a, [], cx);
         assert_item_labels(&pane_b, ["B!", "A*"], cx);
     }
@@ -4523,7 +4523,7 @@ mod tests {
         });
         assert_item_labels(&pane_b, ["B*!"], cx);
 
-        // Move unpinned A from pane A to position 0 in pane B (within pinned region)
+        // Move A from pane A to pane B's pinned region
         pane_b.update_in(cx, |pane, window, cx| {
             let dragged_tab = DraggedTab {
                 pane: pane_a.clone(),
@@ -4565,7 +4565,7 @@ mod tests {
         });
         assert_item_labels(&pane_b, ["B*!"], cx);
 
-        // Move unpinned A from pane A to position 1 in pane B (outside pinned region)
+        // Move A from pane A to pane B's unpinned region
         pane_b.update_in(cx, |pane, window, cx| {
             let dragged_tab = DraggedTab {
                 pane: pane_a.clone(),
