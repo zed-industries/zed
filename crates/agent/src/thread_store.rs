@@ -601,11 +601,19 @@ impl ThreadStore {
     }
 
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {
-        cx.subscribe(
-            &self.project.read(cx).context_server_store(),
-            Self::handle_context_server_event,
-        )
-        .detach();
+        let context_server_store = self.project.read(cx).context_server_store();
+        cx.subscribe(&context_server_store, Self::handle_context_server_event)
+            .detach();
+
+        // Check for any servers that are already running when we register handlers. This handles
+        // the race condition where custom servers might start before handlers are ready.
+        for server_id in context_server_store.read(cx).all_server_ids() {
+            if let Some(ContextServerStatus::Running) =
+                context_server_store.read(cx).status_for_server(&server_id)
+            {
+                self.load_mcp_server_tools(context_server_store.clone(), &server_id, cx);
+            }
+        }
     }
 
     fn handle_context_server_event(
@@ -619,56 +627,7 @@ impl ThreadStore {
             project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
                 match status {
                     ContextServerStatus::Running => {
-                        if let Some(server) =
-                            context_server_store.read(cx).get_running_server(server_id)
-                        {
-                            let context_server_manager = context_server_store.clone();
-                            cx.spawn({
-                                let server = server.clone();
-                                let server_id = server_id.clone();
-                                async move |this, cx| {
-                                    let Some(protocol) = server.client() else {
-                                        return;
-                                    };
-
-                                    if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                                        if let Some(tools) = protocol.list_tools().await.log_err() {
-                                            let tool_ids = tool_working_set
-                                                .update(cx, |tool_working_set, _| {
-                                                    tools
-                                                        .tools
-                                                        .into_iter()
-                                                        .map(|tool| {
-                                                            log::info!(
-                                                                "registering context server tool: {:?}",
-                                                                tool.name
-                                                            );
-                                                            tool_working_set.insert(Arc::new(
-                                                                ContextServerTool::new(
-                                                                    context_server_manager.clone(),
-                                                                    server.id(),
-                                                                    tool,
-                                                                ),
-                                                            ))
-                                                        })
-                                                        .collect::<Vec<_>>()
-                                                })
-                                                .log_err();
-
-                                            if let Some(tool_ids) = tool_ids {
-                                                this.update(cx, |this, cx| {
-                                                    this.context_server_tool_ids
-                                                        .insert(server_id, tool_ids);
-                                                    this.load_default_profile(cx);
-                                                })
-                                                .log_err();
-                                            }
-                                        }
-                                    }
-                                }
-                            })
-                            .detach();
-                        }
+                        self.load_mcp_server_tools(context_server_store, server_id, cx);
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
                         if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
@@ -681,6 +640,63 @@ impl ThreadStore {
                     _ => {}
                 }
             }
+        }
+    }
+
+    fn load_mcp_server_tools(
+        &self,
+        context_server_store: Entity<ContextServerStore>,
+        server_id: &ContextServerId,
+        cx: &mut Context<Self>,
+    ) {
+        let tool_working_set = self.tools.clone();
+
+        if let Some(server) = context_server_store.read(cx).get_running_server(server_id) {
+            let context_server_manager = context_server_store.clone();
+            cx.spawn({
+                let server = server.clone();
+                let server_id = server_id.clone();
+                async move |this, cx| {
+                    let Some(protocol) = server.client() else {
+                        return;
+                    };
+
+                    if protocol.capable(context_server::protocol::ServerCapability::Tools) {
+                        if let Some(tools) = protocol.list_tools().await.log_err() {
+                            let tool_ids = tool_working_set
+                                .update(cx, |tool_working_set, _| {
+                                    tools
+                                        .tools
+                                        .into_iter()
+                                        .map(|tool| {
+                                            log::info!(
+                                                "registering context server tool: {:?}",
+                                                tool.name
+                                            );
+                                            tool_working_set.insert(Arc::new(
+                                                ContextServerTool::new(
+                                                    context_server_manager.clone(),
+                                                    server.id(),
+                                                    tool,
+                                                ),
+                                            ))
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .log_err();
+
+                            if let Some(tool_ids) = tool_ids {
+                                this.update(cx, |this, cx| {
+                                    this.context_server_tool_ids.insert(server_id, tool_ids);
+                                    this.load_default_profile(cx);
+                                })
+                                .log_err();
+                            }
+                        }
+                    }
+                }
+            })
+            .detach();
         }
     }
 }
