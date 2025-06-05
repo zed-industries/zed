@@ -392,15 +392,15 @@ pub fn into_mistral(
     for message in request.messages {
         for content in message.content {
             match content {
-                MessageContent::Text(text) => messages.push(match message.role {
-                    Role::User => mistral::RequestMessage::User { content: text },
-                    Role::Assistant => mistral::RequestMessage::Assistant {
-                        content: Some(text),
-                        tool_calls: Vec::new(),
-                    },
-                    Role::System => mistral::RequestMessage::System { content: text },
-                }),
-                MessageContent::Thinking { .. } => {}
+                MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
+                    .push(match message.role {
+                        Role::User => mistral::RequestMessage::User { content: text },
+                        Role::Assistant => mistral::RequestMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => mistral::RequestMessage::System { content: text },
+                    }),
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Image(_) => {}
                 MessageContent::ToolUse(tool_use) => {
@@ -444,24 +444,34 @@ pub fn into_mistral(
         }
     }
 
-    // Fix tool->user sequence by inserting empty assistant messages
-    let mut i = 0;
-    while i < messages.len().saturating_sub(1) {
-        if matches!(messages[i], mistral::RequestMessage::Tool { .. })
-            && matches!(messages[i + 1], mistral::RequestMessage::User { .. })
-        {
-            messages.insert(
-                i + 1,
-                mistral::RequestMessage::Assistant {
-                    content: Some("I understand.".to_string()),
-                    tool_calls: Vec::new(),
-                },
-            );
-            i += 2; // Skip the inserted message
-        } else {
-            i += 1;
+    // The Mistral API requires that tool messages be followed by assistant messages,
+    // not user messages. When we have a tool->user sequence in the conversation,
+    // we need to insert a placeholder assistant message to maintain proper conversation
+    // flow and prevent API errors. This is a Mistral-specific requirement that differs
+    // from other language model APIs.
+    let messages = {
+        let mut fixed_messages = Vec::with_capacity(messages.len());
+        let mut messages_iter = messages.into_iter().peekable();
+
+        while let Some(message) = messages_iter.next() {
+            let is_tool_message = matches!(message, mistral::RequestMessage::Tool { .. });
+            fixed_messages.push(message);
+
+            // Insert assistant message between tool and user messages
+            if is_tool_message {
+                if let Some(next_msg) = messages_iter.peek() {
+                    if matches!(next_msg, mistral::RequestMessage::User { .. }) {
+                        fixed_messages.push(mistral::RequestMessage::Assistant {
+                            content: Some("Continue.".to_string()),
+                            tool_calls: Vec::new(),
+                        });
+                    }
+                }
+            }
         }
-    }
+
+        fixed_messages
+    };
 
     mistral::Request {
         model,
