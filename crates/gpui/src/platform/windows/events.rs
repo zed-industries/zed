@@ -1232,6 +1232,8 @@ fn translate_message(handle: HWND, wparam: WPARAM, lparam: LPARAM) {
         message: WM_KEYDOWN,
         wParam: wparam,
         lParam: lparam,
+        // It seems like leaving the following two parameters empty doesn't break key events, they still work as expected.
+        // But if any bugs pop up after this PR, this is probably the place to look first.
         time: 0,
         pt: POINT::default(),
     };
