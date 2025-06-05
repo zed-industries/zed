@@ -444,29 +444,24 @@ pub fn into_mistral(
         }
     }
 
-    // Mistral does not support "interstitial" user messages
-    // (e.g. a user message in between tool calls)
-    let mut non_user_messages = Vec::new();
-    let mut user_messages_after_tools = Vec::new();
-    let mut seen_tool = false;
-
-    for message in messages {
-        match message {
-            mistral::RequestMessage::Tool { .. } => {
-                seen_tool = true;
-                non_user_messages.push(message);
-            }
-            mistral::RequestMessage::User { .. } if seen_tool => {
-                user_messages_after_tools.push(message);
-            }
-            _ => {
-                non_user_messages.push(message);
-            }
+    // Fix tool->user sequence by inserting empty assistant messages
+    let mut i = 0;
+    while i < messages.len().saturating_sub(1) {
+        if matches!(messages[i], mistral::RequestMessage::Tool { .. })
+            && matches!(messages[i + 1], mistral::RequestMessage::User { .. })
+        {
+            messages.insert(
+                i + 1,
+                mistral::RequestMessage::Assistant {
+                    content: Some("I understand.".to_string()),
+                    tool_calls: Vec::new(),
+                },
+            );
+            i += 2; // Skip the inserted message
+        } else {
+            i += 1;
         }
     }
-
-    non_user_messages.extend(user_messages_after_tools);
-    let messages = non_user_messages;
 
     mistral::Request {
         model,
