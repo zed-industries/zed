@@ -4,11 +4,11 @@ use language::{Chunk, Edit, Point, TextSummary};
 use multi_buffer::MultiBufferSnapshot;
 use multi_buffer::{MultiBufferRow, MultiBufferRows, RowInfo, ToOffset};
 use std::cmp;
+use std::collections::BTreeMap;
 use std::ops::{Add, AddAssign, Range, Sub, SubAssign};
 use sum_tree::{Bias, Cursor, SumTree};
-use text::Patch;
 
-use super::{custom_highlights::CustomHighlightsChunks, Highlights};
+use super::{Highlights, custom_highlights::CustomHighlightsChunks};
 
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -38,12 +38,21 @@ impl Token {
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
 pub struct TokenMap {
+    pub tokens: Vec<Token>,
     snapshot: TokenSnapshot,
-    tokens: Vec<Token>,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct HighlightEndpoint {
+    id: usize,
+    offset: usize,
+    is_start: bool,
+    style: HighlightStyle,
 }
 
 #[derive(Clone)]
 pub struct TokenSnapshot {
+    endpoints: Vec<HighlightEndpoint>,
     pub buffer: MultiBufferSnapshot,
     transforms: SumTree<Transform>,
     pub version: usize,
@@ -195,10 +204,9 @@ pub struct TokenChunks<'a> {
     transforms: Cursor<'a, Transform, (TokenOffset, usize)>,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
-    token_chunk: Option<&'a str>,
-    token_chunks: Option<text::Chunks<'a>>,
-    output_offset: TokenOffset,
-    max_output_offset: TokenOffset,
+    endpoints: std::iter::Peekable<std::vec::IntoIter<HighlightEndpoint>>,
+    offset: TokenOffset,
+    active_highlights: BTreeMap<usize, HighlightStyle>,
     snapshot: &'a TokenSnapshot,
 }
 
@@ -209,15 +217,13 @@ impl TokenChunks<'_> {
         let buffer_range = self.snapshot.to_buffer_offset(new_range.start)
             ..self.snapshot.to_buffer_offset(new_range.end);
         self.buffer_chunks.seek(buffer_range);
-        self.token_chunks = None;
-        self.token_chunk = None;
         self.buffer_chunk = None;
-        self.output_offset = new_range.start;
-        self.max_output_offset = new_range.end;
+        self.offset = new_range.start;
+        self.active_highlights.clear();
     }
 
     pub fn offset(&self) -> TokenOffset {
-        self.output_offset
+        self.offset
     }
 }
 
@@ -225,68 +231,50 @@ impl<'a> Iterator for TokenChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.output_offset >= self.max_output_offset {
-            return None;
+        let mut next_highlight_endpoint = usize::MAX;
+        while let Some(endpoint) = self.endpoints.peek().copied() {
+            if endpoint.offset <= self.offset.0 {
+                if endpoint.is_start {
+                    self.active_highlights.insert(endpoint.id, endpoint.style);
+                } else {
+                    self.active_highlights.remove(&endpoint.id);
+                }
+                self.endpoints.next();
+            } else {
+                next_highlight_endpoint = endpoint.offset;
+                break;
+            }
         }
 
-        let transform = self.transforms.item()?;
         let chunk = self
             .buffer_chunk
             .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
         if chunk.text.is_empty() {
-            *chunk = self.buffer_chunks.next().unwrap();
+            *chunk = self.buffer_chunks.next()?;
         }
+
         let (prefix, suffix) = chunk.text.split_at(
             chunk
                 .text
                 .len()
-                .min(self.transforms.end(&()).0 .0 - self.output_offset.0),
+                .min(next_highlight_endpoint - self.offset.0),
         );
+
         chunk.text = suffix;
-        let chunk = match transform {
-            Transform::Isomorphic(_) => {
-                self.output_offset.0 += prefix.len();
-                Chunk {
-                    text: prefix,
-                    ..chunk.clone()
-                }
-            }
-            Transform::Highlight(token, _) => {
-                #[cfg(test)]
-                let prefix = {
-                    let offset_in_token = self.output_offset - self.transforms.start().0;
-                    let token_chunks = self.token_chunks.get_or_insert_with(|| {
-                        let start = offset_in_token;
-                        let end = cmp::min(self.max_output_offset, self.transforms.end(&()).0)
-                            - self.transforms.start().0;
-                        token.text.chunks_in_range(start.0..end.0)
-                    });
-                    let token_chunk = self
-                        .token_chunk
-                        .get_or_insert_with(|| token_chunks.next().unwrap());
-                    let (prefix, remainder) = token_chunk.split_at(token_chunk.len());
-                    *token_chunk = remainder;
-                    if token_chunk.is_empty() {
-                        self.token_chunk = None;
-                    }
-                    prefix
-                };
-                self.output_offset.0 += prefix.len();
-                Chunk {
-                    text: prefix,
-                    syntax_highlight_id: None,
-                    highlight_style: Some(token.style),
-                    ..chunk.clone()
-                }
-            }
+        self.offset += TokenOffset(prefix.len());
+        let mut prefix = Chunk {
+            text: prefix,
+            ..chunk.clone()
         };
-
-        if self.output_offset == self.transforms.end(&()).0 {
-            self.token_chunks = None;
-            self.transforms.next(&());
+        if !self.active_highlights.is_empty() {
+            prefix.syntax_highlight_id = None;
+            let mut highlight_style = HighlightStyle::default();
+            for active_highlight in self.active_highlights.values() {
+                highlight_style.highlight(*active_highlight);
+            }
+            prefix.highlight_style = Some(highlight_style);
         }
-
-        Some(chunk)
+        Some(prefix)
     }
 }
 
@@ -301,7 +289,7 @@ impl TokenBufferRows<'_> {
         } else {
             match self.transforms.item() {
                 Some(Transform::Isomorphic(_)) => {
-                    buffer_point += token_point.0 - self.transforms.start().0 .0;
+                    buffer_point += token_point.0 - self.transforms.start().0.0;
                     buffer_point.row
                 }
                 _ => cmp::min(buffer_point.row + 1, self.max_buffer_row.0),
@@ -348,6 +336,7 @@ impl TokenMap {
             buffer: buffer.clone(),
             transforms: SumTree::from_iter(Some(Transform::Isomorphic(buffer.text_summary())), &()),
             version,
+            endpoints: vec![],
         };
 
         (
@@ -389,108 +378,52 @@ impl TokenMap {
             snapshot.buffer = buffer_snapshot;
             (snapshot.clone(), Vec::new())
         } else {
-            let mut token_edits = Patch::default();
-            let mut new_transforms = SumTree::default();
-            let mut cursor = snapshot.transforms.cursor::<(usize, TokenOffset)>(&());
-            let mut buffer_edits_iter = buffer_edits.iter().peekable();
-            while let Some(buffer_edit) = buffer_edits_iter.next() {
-                new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
-                if let Some(Transform::Isomorphic(transform)) = cursor.item() {
-                    if cursor.end(&()).0 == buffer_edit.old.start {
-                        push_isomorphic(&mut new_transforms, *transform);
-                        cursor.next(&());
+            snapshot.endpoints = vec![];
+            let token_edits = buffer_edits
+                .into_iter()
+                .map(|edit| {
+                    let (Ok(ix) | Err(ix)) = self.tokens.binary_search_by(|probe| {
+                        probe
+                            .range
+                            .start
+                            .to_offset(&snapshot.buffer)
+                            .cmp(&edit.new.start)
+                            .then(std::cmp::Ordering::Greater)
+                    });
+
+                    for token in &self.tokens[ix..] {
+                        if !token.range.start.is_valid(&snapshot.buffer)
+                            || !token.range.end.is_valid(&snapshot.buffer)
+                        {
+                            continue;
+                        }
+                        let start_pos = token.range.start.to_offset(&snapshot.buffer);
+                        let end_pos = token.range.end.to_offset(&snapshot.buffer);
+                        if start_pos > edit.new.end {
+                            break;
+                        }
+                        snapshot.endpoints.push(HighlightEndpoint {
+                            id: token.id,
+                            offset: start_pos,
+                            is_start: true,
+                            style: token.style,
+                        });
+                        snapshot.endpoints.push(HighlightEndpoint {
+                            id: token.id,
+                            offset: end_pos,
+                            is_start: false,
+                            style: token.style,
+                        });
                     }
-                }
 
-                // Remove all the tokens and transforms contained by the edit.
-                let old_start =
-                    cursor.start().1 + TokenOffset(buffer_edit.old.start - cursor.start().0);
-                cursor.seek(&buffer_edit.old.end, Bias::Right, &());
-                let old_end =
-                    cursor.start().1 + TokenOffset(buffer_edit.old.end - cursor.start().0);
-
-                // Push the unchanged prefix with highlights.
-                let prefix_start = new_transforms.summary().input.len;
-                let prefix_end = buffer_edit.new.start;
-                push_isomorphic(
-                    &mut new_transforms,
-                    buffer_snapshot.text_summary_for_range(prefix_start..prefix_end),
-                );
-
-                // Apply the rest of the edit.
-                let new_start = TokenOffset(new_transforms.summary().output.len);
-                let (Ok(start_ix) | Err(start_ix)) = self.tokens.binary_search_by(|probe| {
-                    Ord::cmp(
-                        &probe.range.start.to_offset(&buffer_snapshot),
-                        &buffer_edit.new.start,
-                    )
-                    .then(std::cmp::Ordering::Greater)
-                });
-
-                for token in &self.tokens[start_ix..] {
-                    let buffer_offset = token.range.start.to_offset(&buffer_snapshot);
-                    let buffer_end = token.range.end.to_offset(&buffer_snapshot);
-                    if buffer_offset > buffer_edit.new.end {
-                        break;
+                    TokenEdit {
+                        old: TokenOffset(edit.old.start)..TokenOffset(edit.old.end),
+                        new: TokenOffset(edit.new.start)..TokenOffset(edit.new.end),
                     }
-                    let prefix_start = new_transforms.summary().input.len;
-                    if buffer_offset > prefix_start {
-                        push_isomorphic(
-                            &mut new_transforms,
-                            buffer_snapshot.text_summary_for_range(prefix_start..buffer_offset),
-                        );
-                    }
-                    let input = buffer_snapshot.text_summary_for_range(buffer_offset..buffer_end);
-                    if token.range.start.is_valid(&buffer_snapshot)
-                        && token.range.end.is_valid(&buffer_snapshot)
-                    {
-                        new_transforms.push(Transform::Highlight(token.clone(), input), &());
-                    }
-                }
+                })
+                .collect();
 
-                let transform_start = new_transforms.summary().output.len;
-                if buffer_edit.new.end > transform_start {
-                    push_isomorphic(
-                        &mut new_transforms,
-                        buffer_snapshot
-                            .text_summary_for_range(transform_start..buffer_edit.new.end),
-                    );
-                }
-                let new_end = TokenOffset(new_transforms.summary().output.len);
-                token_edits.push(Edit {
-                    old: old_start..old_end,
-                    new: new_start..new_end,
-                });
-
-                // If the next edit doesn't intersect the current isomorphic transform, then
-                // we can push its remainder.
-                if buffer_edits_iter
-                    .peek()
-                    .map_or(true, |edit| dbg!(edit.old.start) >= cursor.end(&()).0)
-                {
-                    let transform_start = new_transforms.summary().input.len;
-                    let transform_end =
-                        buffer_edit.new.end + (cursor.end(&()).0 - buffer_edit.old.end);
-                    push_isomorphic(
-                        &mut new_transforms,
-                        buffer_snapshot.text_summary_for_range(transform_start..transform_end),
-                    );
-                    cursor.next(&());
-                }
-            }
-
-            new_transforms.append(cursor.suffix(&()), &());
-            if new_transforms.is_empty() {
-                new_transforms.push(Transform::Isomorphic(Default::default()), &());
-            }
-
-            drop(cursor);
-            snapshot.transforms = new_transforms;
-            snapshot.version += 1;
-            snapshot.buffer = buffer_snapshot;
-            snapshot.check_invariants();
-
-            (snapshot.clone(), token_edits.into_inner())
+            (snapshot.clone(), token_edits)
         }
     }
 
@@ -511,7 +444,7 @@ impl TokenMap {
             retain
         });
 
-        for token_to_insert in dbg!(to_insert) {
+        for token_to_insert in to_insert {
             edits.insert(token_to_insert.range.start.to_offset(&snapshot.buffer));
             let (Ok(ix) | Err(ix)) = self.tokens.binary_search_by(|probe| {
                 probe
@@ -598,21 +531,21 @@ impl TokenSnapshot {
             .transforms
             .cursor::<(TokenOffset, (TokenPoint, usize))>(&());
         cursor.seek(&offset, Bias::Right, &());
-        let overshoot = offset.0 - cursor.start().0 .0;
+        let overshoot = offset.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let buffer_offset_start = cursor.start().1 .1;
+                let buffer_offset_start = cursor.start().1.1;
                 let buffer_offset_end = buffer_offset_start + overshoot;
                 let buffer_start = self.buffer.offset_to_point(buffer_offset_start);
                 let buffer_end = self.buffer.offset_to_point(buffer_offset_end);
-                TokenPoint(cursor.start().1 .0 .0 + (buffer_end - buffer_start))
+                TokenPoint(cursor.start().1.0.0 + (buffer_end - buffer_start))
             }
             Some(Transform::Highlight(_, _)) => {
-                let buffer_offset_start = cursor.start().1 .1;
+                let buffer_offset_start = cursor.start().1.1;
                 let buffer_offset_end = buffer_offset_start + overshoot;
                 let buffer_start = self.buffer.offset_to_point(buffer_offset_start);
                 let buffer_end = self.buffer.offset_to_point(buffer_offset_end);
-                TokenPoint(cursor.start().1 .0 .0 + (buffer_end - buffer_start))
+                TokenPoint(cursor.start().1.0.0 + (buffer_end - buffer_start))
             }
             None => self.max_point(),
         }
@@ -635,21 +568,21 @@ impl TokenSnapshot {
             .transforms
             .cursor::<(TokenPoint, (TokenOffset, Point))>(&());
         cursor.seek(&point, Bias::Right, &());
-        let overshoot = point.0 - cursor.start().0 .0;
+        let overshoot = point.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let buffer_point_start = cursor.start().1 .1;
+                let buffer_point_start = cursor.start().1.1;
                 let buffer_point_end = buffer_point_start + overshoot;
                 let buffer_offset_start = self.buffer.point_to_offset(buffer_point_start);
                 let buffer_offset_end = self.buffer.point_to_offset(buffer_point_end); // TODO: check here
-                TokenOffset(cursor.start().1 .0 .0 + (buffer_offset_end - buffer_offset_start))
+                TokenOffset(cursor.start().1.0.0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Highlight(_, _)) => {
-                let buffer_point_start = cursor.start().1 .1;
+                let buffer_point_start = cursor.start().1.1;
                 let buffer_point_end = buffer_point_start + overshoot;
                 let buffer_offset_start = self.buffer.point_to_offset(buffer_point_start);
                 let buffer_offset_end = self.buffer.point_to_offset(buffer_point_end);
-                TokenOffset(cursor.start().1 .0 .0 + (buffer_offset_end - buffer_offset_start))
+                TokenOffset(cursor.start().1.0.0 + (buffer_offset_end - buffer_offset_start))
             }
             None => self.len(),
         }
@@ -660,11 +593,11 @@ impl TokenSnapshot {
         cursor.seek(&point, Bias::Right, &());
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let overshoot = point.0 - cursor.start().0 .0;
+                let overshoot = point.0 - cursor.start().0.0;
                 cursor.start().1 + overshoot
             }
             Some(Transform::Highlight(_, _)) => {
-                let overshoot = point.0 - cursor.start().0 .0;
+                let overshoot = point.0 - cursor.start().0.0;
                 cursor.start().1 + overshoot
             }
             None => self.buffer.max_point(),
@@ -696,7 +629,7 @@ impl TokenSnapshot {
                     cursor.end(&()).1
                 } else {
                     let overshoot = offset - cursor.start().0;
-                    TokenOffset(cursor.start().1 .0 + overshoot)
+                    TokenOffset(cursor.start().1.0 + overshoot)
                 }
             }
             Some(Transform::Highlight(_, _)) => {
@@ -704,7 +637,7 @@ impl TokenSnapshot {
                     cursor.end(&()).1
                 } else {
                     let overshoot = offset - cursor.start().0;
-                    TokenOffset(cursor.start().1 .0 + overshoot)
+                    TokenOffset(cursor.start().1.0 + overshoot)
                 }
             }
             None => self.len(),
@@ -719,7 +652,7 @@ impl TokenSnapshot {
                     cursor.end(&()).1
                 } else {
                     let overshoot = point - cursor.start().0;
-                    TokenPoint(cursor.start().1 .0 + overshoot)
+                    TokenPoint(cursor.start().1.0 + overshoot)
                 }
             }
             Some(Transform::Highlight(_, _)) => {
@@ -727,7 +660,7 @@ impl TokenSnapshot {
                     cursor.end(&()).1
                 } else {
                     let overshoot = point - cursor.start().0;
-                    TokenPoint(cursor.start().1 .0 + overshoot)
+                    TokenPoint(cursor.start().1.0 + overshoot)
                 }
             }
             None => self.max_point(),
@@ -745,11 +678,11 @@ impl TokenSnapshot {
                     } else if cursor.end(&()).0 == point {
                         return point;
                     } else {
-                        let overshoot = point.0 - cursor.start().0 .0;
+                        let overshoot = point.0 - cursor.start().0.0;
                         let buffer_point = cursor.start().1 + overshoot;
                         let clipped_buffer_point = self.buffer.clip_point(buffer_point, bias);
                         let clipped_overshoot = clipped_buffer_point - cursor.start().1;
-                        let clipped_point = TokenPoint(cursor.start().0 .0 + clipped_overshoot);
+                        let clipped_point = TokenPoint(cursor.start().0.0 + clipped_overshoot);
                         if clipped_point == point {
                             return clipped_point;
                         } else {
@@ -763,11 +696,11 @@ impl TokenSnapshot {
                     } else if cursor.end(&()).0 == point {
                         return point;
                     } else {
-                        let overshoot = point.0 - cursor.start().0 .0;
+                        let overshoot = point.0 - cursor.start().0.0;
                         let buffer_point = cursor.start().1 + overshoot;
                         let clipped_buffer_point = self.buffer.clip_point(buffer_point, bias);
                         let clipped_overshoot = clipped_buffer_point - cursor.start().1;
-                        let clipped_point = TokenPoint(cursor.start().0 .0 + clipped_overshoot);
+                        let clipped_point = TokenPoint(cursor.start().0.0 + clipped_overshoot);
                         if clipped_point == point {
                             return clipped_point;
                         } else {
@@ -799,13 +732,13 @@ impl TokenSnapshot {
         let mut cursor = self.transforms.cursor::<(TokenOffset, usize)>(&());
         cursor.seek(&range.start, Bias::Right, &());
 
-        let overshoot = range.start.0 - cursor.start().0 .0;
+        let overshoot = range.start.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
                 let buffer_start = cursor.start().1;
                 let suffix_start = buffer_start + overshoot;
                 let suffix_end =
-                    buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0);
+                    buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0.0);
                 summary = self.buffer.text_summary_for_range(suffix_start..suffix_end);
                 cursor.next(&());
             }
@@ -813,7 +746,7 @@ impl TokenSnapshot {
                 let buffer_start = cursor.start().1;
                 let suffix_start = buffer_start + overshoot;
                 let suffix_end =
-                    buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0 .0);
+                    buffer_start + (cmp::min(cursor.end(&()).0, range.end).0 - cursor.start().0.0);
                 summary = self.buffer.text_summary_for_range(suffix_start..suffix_end);
                 cursor.next(&());
             }
@@ -825,7 +758,7 @@ impl TokenSnapshot {
                 .summary::<_, TransformSummary>(&range.end, Bias::Right, &())
                 .output;
 
-            let overshoot = range.end.0 - cursor.start().0 .0;
+            let overshoot = range.end.0 - cursor.start().0.0;
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
                     let prefix_start = cursor.start().1;
@@ -860,11 +793,11 @@ impl TokenSnapshot {
         } else {
             match cursor.item() {
                 Some(Transform::Isomorphic(_)) => {
-                    buffer_point += token_point.0 - cursor.start().0 .0;
+                    buffer_point += token_point.0 - cursor.start().0.0;
                     MultiBufferRow(buffer_point.row)
                 }
                 Some(Transform::Highlight(_, _)) => {
-                    buffer_point += token_point.0 - cursor.start().0 .0;
+                    buffer_point += token_point.0 - cursor.start().0.0;
                     MultiBufferRow(buffer_point.row)
                 }
                 _ => cmp::min(MultiBufferRow(buffer_point.row + 1), max_buffer_row),
@@ -909,11 +842,10 @@ impl TokenSnapshot {
         TokenChunks {
             transforms: cursor,
             buffer_chunks,
-            token_chunks: None,
-            token_chunk: None,
             buffer_chunk: None,
-            output_offset: range.start,
-            max_output_offset: range.end,
+            endpoints: self.endpoints.clone().into_iter().peekable(),
+            active_highlights: Default::default(),
+            offset: range.start,
             snapshot: self,
         }
     }
@@ -924,40 +856,13 @@ impl TokenSnapshot {
             .map(|chunk| chunk.text)
             .collect()
     }
-
-    fn check_invariants(&self) {
-        #[cfg(any(debug_assertions, feature = "test-support"))]
-        {
-            // assert_eq!(self.transforms.summary().input, self.buffer.text_summary());
-        }
-    }
-}
-
-fn push_isomorphic(sum_tree: &mut SumTree<Transform>, summary: TextSummary) {
-    if summary.len == 0 {
-        return;
-    }
-
-    let mut summary = Some(summary);
-    sum_tree.update_last(
-        |transform| {
-            if let Transform::Isomorphic(transform) = transform {
-                *transform += summary.take().unwrap();
-            }
-        },
-        &(),
-    );
-
-    if let Some(summary) = summary {
-        sum_tree.push(Transform::Isomorphic(summary), &());
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use gpui::Hsla;
     use multi_buffer::MultiBuffer;
-    use rand::{rngs::StdRng, Rng as _};
+    use rand::{Rng as _, rngs::StdRng};
     use ui::App;
     use util::post_inc;
 

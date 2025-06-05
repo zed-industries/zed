@@ -142,7 +142,6 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use semantic_token_cache::{SemanticTokensCache, TokenSplice};
-use smallvec::smallvec;
 use std::{cell::OnceCell, iter::Peekable, ops::Not};
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 use tasks_for_ranges::InvalidationStrategy;

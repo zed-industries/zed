@@ -190,7 +190,7 @@ message Envelope {
         GetChannelMessagesById get_channel_messages_by_id = 144;
 
         MoveChannel move_channel = 147;
-        ReorderChannel reorder_channel = 349;
+        ReorderChannel reorder_channel = 394;
         SetChannelVisibility set_channel_visibility = 148;
 
         AddNotification add_notification = 149;
@@ -388,7 +388,7 @@ message Envelope {
         LspExtClearFlycheck lsp_ext_clear_flycheck = 347;
 
         LogToDebugConsole log_to_debug_console = 348;
-        
+
         SemanticTokensFullRequest semantic_tokens_full_request = 349;
         SemanticTokensResponse semantic_tokens_response = 350;
         RefreshSemanticTokens refresh_semantic_tokens = 351;

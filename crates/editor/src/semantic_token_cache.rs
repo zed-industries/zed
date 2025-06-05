@@ -738,24 +738,24 @@ fn apply_token_update(
             };
             token_highlight.style.highlight(r#mod);
         }
-        // let mut insert_position = 0;
-        // for idx in cached_excerpt_tokens.ordered_tokens.iter() {
-        //     // here we add a new token to the insert tokens but we must remove the existing one by adding it
-        //     // to the to_remove list, so we don't have overlapping tokens
-        //     let probe = cached_excerpt_tokens.tokens_by_id[idx].clone();
-        //     if probe.range.start.offset >= new_token.range.start.offset
-        //         && probe.range.end.offset <= new_token.range.end.offset
-        //     {
-        //         log::error!("overlapping token, we're doomed");
-        //         splice.to_remove.push(*idx);
-        //         insert_position += 1;
-        //     }
-        //     if new_token.range.start.offset >= probe.range.end.offset {
-        //         insert_position += 1;
-        //     } else {
-        //         log::error!("failed to add token {}", new_token.r#type.as_str());
-        //     }
-        // }
+        let mut insert_position = 0;
+        for idx in cached_excerpt_tokens.ordered_tokens.iter() {
+            // here we add a new token to the insert tokens but we must remove the existing one by adding it
+            // to the to_remove list, so we don't have overlapping tokens
+            let probe = cached_excerpt_tokens.tokens_by_id[idx].clone();
+            if probe.range.start.offset >= new_token.range.start.offset
+                && probe.range.end.offset <= new_token.range.end.offset
+            {
+                log::error!("overlapping token, we're doomed");
+                splice.to_remove.push(*idx);
+                insert_position += 1;
+            }
+            if new_token.range.start.offset >= probe.range.end.offset {
+                insert_position += 1;
+            } else {
+                log::error!("failed to add token {}", new_token.r#type.as_str());
+            }
+        }
 
         let new_token_id = post_inc(&mut editor.next_semantic_id);
         if let (Some(new_start), Some(new_end)) = (
@@ -776,24 +776,13 @@ fn apply_token_update(
             .tokens_by_id
             .insert(new_token_id, new_token);
         cached_excerpt_tokens.ordered_tokens.push(new_token_id);
-        let new_tokens = cached_excerpt_tokens
-            .ordered_tokens
-            .iter()
-            .sorted_by(|a, b| {
-                let a = cached_excerpt_tokens.tokens_by_id[*a].clone();
-                let b = cached_excerpt_tokens.tokens_by_id[*b].clone();
-                a.range.start.cmp(&b.range.end, &buffer_snapshot)
-            })
-            .copied()
-            .collect_vec();
-        cached_excerpt_tokens.ordered_tokens = new_tokens;
-        // if cached_excerpt_tokens.ordered_tokens.len() <= insert_position {
-        //     cached_excerpt_tokens.ordered_tokens.push(new_token_id);
-        // } else {
-        //     cached_excerpt_tokens
-        //         .ordered_tokens
-        //         .insert(insert_position, new_token_id);
-        // }
+        if cached_excerpt_tokens.ordered_tokens.len() <= insert_position {
+            cached_excerpt_tokens.ordered_tokens.push(new_token_id);
+        } else {
+            cached_excerpt_tokens
+                .ordered_tokens
+                .insert(insert_position, new_token_id);
+        }
 
         cached_tokens_changed = true;
     }
