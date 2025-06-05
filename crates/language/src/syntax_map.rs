@@ -94,6 +94,7 @@ enum SyntaxLayerContent {
     Parsed {
         tree: tree_sitter::Tree,
         language: Arc<Language>,
+        included_sub_ranges: Vec<Range<Anchor>>,
     },
     Pending {
         language_name: Arc<str>,
@@ -621,7 +622,7 @@ impl SyntaxSnapshot {
                             grammar,
                             text.as_rope(),
                             step_start_byte,
-                            included_ranges,
+                            &included_ranges,
                             Some(old_tree.clone()),
                         );
                         match result {
@@ -674,7 +675,7 @@ impl SyntaxSnapshot {
                             grammar,
                             text.as_rope(),
                             step_start_byte,
-                            included_ranges,
+                            &included_ranges,
                             None,
                         );
                         match result {
@@ -717,7 +718,18 @@ impl SyntaxSnapshot {
                         );
                     }
 
-                    SyntaxLayerContent::Parsed { tree, language }
+                    let included_sub_ranges = included_ranges
+                        .into_iter()
+                        .map(|r| {
+                            text.anchor_before(Point::from_ts_point(r.start_point))
+                                ..text.anchor_after(Point::from_ts_point(r.end_point))
+                        })
+                        .collect();
+                    SyntaxLayerContent::Parsed {
+                        tree,
+                        language,
+                        included_sub_ranges,
+                    }
                 }
                 ParseStepLanguage::Pending { name } => SyntaxLayerContent::Pending {
                     language_name: name,
@@ -864,13 +876,27 @@ impl SyntaxSnapshot {
         });
 
         cursor.next(buffer);
+        let mut is_first = true;
         iter::from_fn(move || {
             while let Some(layer) = cursor.item() {
                 let mut info = None;
-                if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
+                if let SyntaxLayerContent::Parsed {
+                    tree,
+                    language,
+                    included_sub_ranges,
+                } = &layer.content
+                {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
-                    if include_hidden || !language.config.hidden {
+                    let any_sub_ranges_contain_range =
+                        included_sub_ranges.iter().any(|sub_range| {
+                            let is_before_start = sub_range.end.cmp(&start, buffer).is_lt();
+                            let is_after_end = sub_range.start.cmp(&end, buffer).is_gt();
+                            !is_before_start && !is_after_end
+                        });
+                    if (any_sub_ranges_contain_range || is_first)
+                        && (include_hidden || !language.config.hidden)
+                    {
                         info = Some(SyntaxLayer {
                             tree,
                             language,
@@ -881,6 +907,7 @@ impl SyntaxSnapshot {
                 }
                 cursor.next(buffer);
                 if info.is_some() {
+                    is_first = false;
                     return info;
                 }
             }
@@ -1231,7 +1258,7 @@ fn parse_text(
     grammar: &Grammar,
     text: &Rope,
     start_byte: usize,
-    ranges: Vec<tree_sitter::Range>,
+    ranges: &[tree_sitter::Range],
     old_tree: Option<Tree>,
 ) -> anyhow::Result<Tree> {
     with_parser(|parser| {
