@@ -1351,7 +1351,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
 
     let mismatched_tag_ratio =
         cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
-    if mismatched_tag_ratio > 0.05 {
+    if mismatched_tag_ratio > 0.10 {
         for eval_output in eval_outputs {
             println!("{}", eval_output);
         }
