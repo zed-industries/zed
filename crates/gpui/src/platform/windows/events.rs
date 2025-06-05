@@ -34,7 +34,14 @@ pub(crate) fn handle_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> LRESULT {
+    if msg != WM_PAINT {
+        println!("==> MSG: {}", msg);
+    }
     let handled = match msg {
+        WM_IME_NOTIFY => {
+            println!("WM_IME_NOTIFY: wparam: {}", wparam.0);
+            None
+        }
         WM_ACTIVATE => handle_activate_msg(handle, wparam, state_ptr),
         WM_CREATE => handle_create_msg(handle, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
