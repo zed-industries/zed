@@ -10,13 +10,12 @@ use clock::Global;
 use collections::{HashMap, HashSet, IndexMap};
 use futures::future;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
-use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, language_settings::SemanticTokensSettings};
 use multi_buffer::{ExcerptId, MultiBufferSnapshot};
 use parking_lot::RwLock;
 use project::SemanticToken;
 use smol::lock::Semaphore;
-use text::{AnchorRangeExt, BufferId, ToOffset, ToPoint as _};
+use text::{BufferId, ToOffset, ToPoint as _};
 use ui::{ActiveTheme, Context};
 use util::{ResultExt, post_inc};
 
@@ -625,7 +624,8 @@ fn calculate_token_updates(
                     .ordered_tokens
                     .binary_search_by(|probe| {
                         cached_excerpt_tokens.tokens_by_id[probe]
-                            .range.start
+                            .range
+                            .start
                             .cmp(&new_token.range.start, buffer_snapshot)
                     }) {
                     Ok(ix) => {
@@ -633,7 +633,8 @@ fn calculate_token_updates(
                         for id in &cached_excerpt_tokens.ordered_tokens[ix..] {
                             let cached_token = &cached_excerpt_tokens.tokens_by_id[id];
                             if new_token
-                                .range.start
+                                .range
+                                .start
                                 .cmp(&cached_token.range.start, buffer_snapshot)
                                 .is_gt()
                             {
@@ -662,7 +663,10 @@ fn calculate_token_updates(
         remove_from_visible.extend(
             visible_tokens
                 .iter()
-                .filter(|token| token.range.start.excerpt_id == excerpt_id && token.range.end.excerpt_id == excerpt_id)
+                .filter(|token| {
+                    token.range.start.excerpt_id == excerpt_id
+                        && token.range.end.excerpt_id == excerpt_id
+                })
                 .map(|token| token.id)
                 .filter(|token_id| !excerpt_tokens_to_persist.contains_key(token_id)),
         );
@@ -745,12 +749,11 @@ fn apply_token_update(
             .ordered_tokens
             .binary_search_by(|probe| {
                 cached_excerpt_tokens.tokens_by_id[probe]
-                    .range.start
+                    .range
+                    .start
                     .cmp(&new_token.range.start, &buffer_snapshot)
             }) {
-            Ok(i) => {
-                i + cached_excerpt_tokens.ordered_tokens[i..].len() + 1
-            }
+            Ok(i) => i + cached_excerpt_tokens.ordered_tokens[i..].len() + 1,
             Err(i) => i,
         };
         let new_token_id = post_inc(&mut editor.next_semantic_id);
