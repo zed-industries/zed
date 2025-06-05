@@ -309,6 +309,7 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         _position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
+        _menu_is_open: bool,
         _cx: &mut Context<Editor>,
     ) -> bool {
         true

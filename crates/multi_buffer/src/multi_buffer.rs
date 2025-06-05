@@ -1690,7 +1690,9 @@ impl MultiBuffer {
                     last_range.context.start <= range.context.start,
                     "Last range: {last_range:?} Range: {range:?}"
                 );
-                if last_range.context.end >= range.context.start {
+                if last_range.context.end >= range.context.start
+                    || last_range.context.end.row + 1 == range.context.start.row
+                {
                     last_range.context.end = range.context.end.max(last_range.context.end);
                     *counts.last_mut().unwrap() += 1;
                     continue;

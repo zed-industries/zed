@@ -22,7 +22,6 @@ Non-Burn Mode usage will use up to 25 tool calls per one prompt. If your prompt 
 ## Burn Mode {#burn-mode}
 
 > Note: "Burn Mode" is the new name for what was previously called "Max Mode".
-> Currently, the new terminology is only available in Preview and will follow to Stable in the next version.
 
 In Burn Mode, we enable models to use [large context windows](#context-windows), unlimited tool calls, and other capabilities for expanded reasoning, to allow an unfettered agentic experience.
 

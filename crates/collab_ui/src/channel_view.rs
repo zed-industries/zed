@@ -357,6 +357,10 @@ impl ChannelView {
                 editor.set_read_only(true);
                 cx.notify();
             }),
+            ChannelBufferEvent::Connected => self.editor.update(cx, |editor, cx| {
+                editor.set_read_only(false);
+                cx.notify();
+            }),
             ChannelBufferEvent::ChannelChanged => {
                 self.editor.update(cx, |_, cx| {
                     cx.emit(editor::EditorEvent::TitleChanged);

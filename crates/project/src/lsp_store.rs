@@ -2308,7 +2308,7 @@ impl LocalLspStore {
                     });
                 (false, lsp_delegate, servers)
             });
-        let servers = servers
+        let servers_and_adapters = servers
             .into_iter()
             .filter_map(|server_node| {
                 if reused && server_node.server_id().is_none() {
@@ -2384,14 +2384,14 @@ impl LocalLspStore {
                     },
                 )?;
                 let server_state = self.language_servers.get(&server_id)?;
-                if let LanguageServerState::Running { server, .. } = server_state {
-                    Some(server.clone())
+                if let LanguageServerState::Running { server, adapter, .. } = server_state {
+                    Some((server.clone(), adapter.clone()))
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-        for server in servers {
+        for (server, adapter) in servers_and_adapters {
             buffer_handle.update(cx, |buffer, cx| {
                 buffer.set_completion_triggers(
                     server.server_id(),
@@ -2409,47 +2409,26 @@ impl LocalLspStore {
                     cx,
                 );
             });
-        }
-        for adapter in self.languages.lsp_adapters(&language.name()) {
-            let servers = self
-                .language_server_ids
-                .get(&(worktree_id, adapter.name.clone()))
-                .map(|ids| {
-                    ids.iter().flat_map(|id| {
-                        self.language_servers.get(id).and_then(|server_state| {
-                            if let LanguageServerState::Running { server, .. } = server_state {
-                                Some(server.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                });
-            let servers = match servers {
-                Some(server) => server,
-                None => continue,
+
+            let snapshot = LspBufferSnapshot {
+                version: 0,
+                snapshot: initial_snapshot.clone(),
             };
 
-            for server in servers {
-                let snapshot = LspBufferSnapshot {
-                    version: 0,
-                    snapshot: initial_snapshot.clone(),
-                };
-                self.buffer_snapshots
-                    .entry(buffer_id)
-                    .or_default()
-                    .entry(server.server_id())
-                    .or_insert_with(|| {
-                        server.register_buffer(
-                            uri.clone(),
-                            adapter.language_id(&language.name()),
-                            0,
-                            initial_snapshot.text(),
-                        );
+            self.buffer_snapshots
+                .entry(buffer_id)
+                .or_default()
+                .entry(server.server_id())
+                .or_insert_with(|| {
+                    server.register_buffer(
+                        uri.clone(),
+                        adapter.language_id(&language.name()),
+                        0,
+                        initial_snapshot.text(),
+                    );
 
-                        vec![snapshot]
-                    });
-            }
+                    vec![snapshot]
+                });
         }
     }
 
@@ -3981,16 +3960,20 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
         let handle = cx.new(|_| buffer.clone());
         if let Some(local) = self.as_local_mut() {
+            let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
+            if !ignore_refcounts {
+                *refcount += 1;
+            }
+
+            // We run early exits on non-existing buffers AFTER we mark the buffer as registered in order to handle buffer saving.
+            // When a new unnamed buffer is created and saved, we will start loading it's language. Once the language is loaded, we go over all "language-less" buffers and try to fit that new language
+            // with them. However, we do that only for the buffers that we think are open in at least one editor; thus, we need to keep tab of unnamed buffers as well, even though they're not actually registered with any language
+            // servers in practice (we don't support non-file URI schemes in our LSP impl).
             let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
                 return handle;
             };
             if !file.is_local() {
                 return handle;
-            }
-
-            let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
-            if !ignore_refcounts {
-                *refcount += 1;
             }
 
             if ignore_refcounts || *refcount == 1 {
