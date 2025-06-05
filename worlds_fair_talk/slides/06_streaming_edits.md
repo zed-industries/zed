@@ -17,7 +17,3 @@ Show the model edits as they happen, token by token.
    - Wrong closing tags: `<old_text>...</new_text>`
    - Inconsistent indentation and whitespace
    - Escaping
-
-4. Streaming Diff Computation: Calculating diffs while content streams
-   - Can't wait for complete content to show changes
-   - Must update diff incrementally as tokens arrive
