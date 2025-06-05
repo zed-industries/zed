@@ -1288,9 +1288,26 @@ mod windows_renderer {
     use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
     use raw_window_handle as rwh;
     use std::num::NonZeroIsize;
-    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
+    use windows::{
+        Win32::{
+            Foundation::HWND,
+            UI::WindowsAndMessaging::{GWLP_HINSTANCE, MB_ICONERROR, MB_SYSTEMMODAL, MessageBoxW},
+        },
+        core::HSTRING,
+    };
 
     use crate::get_window_long;
+
+    fn show_error(content: String) {
+        let _ = unsafe {
+            MessageBoxW(
+                None,
+                &HSTRING::from(content),
+                windows::core::w!("Error: Zed update failed."),
+                MB_ICONERROR | MB_SYSTEMMODAL,
+            )
+        };
+    }
 
     pub(super) fn init(
         context: &BladeContext,
