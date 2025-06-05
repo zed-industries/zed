@@ -366,7 +366,6 @@ fn handle_syskeydown_msg(
 
     if handled {
         lock.system_key_handled = true;
-        lock.suppress_next_char_msg = true;
         Some(0)
     } else {
         // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
@@ -445,7 +444,6 @@ fn handle_keydown_msg(
 
     println!("WM_KEYDOWN handled: {}", handled);
     if handled {
-        lock.suppress_next_char_msg = true;
         Some(0)
     } else {
         unsafe {
@@ -1267,7 +1265,6 @@ fn handle_key_event<F>(
 where
     F: FnOnce(Keystroke) -> PlatformInput,
 {
-    state.suppress_next_char_msg = false;
     let virtual_key = VIRTUAL_KEY(wparam.loword());
     let mut modifiers = current_modifiers();
 
@@ -1538,12 +1535,7 @@ fn with_input_handler<F, R>(state_ptr: &Rc<WindowsWindowStatePtr>, f: F) -> Opti
 where
     F: FnOnce(&mut PlatformInputHandler) -> R,
 {
-    let mut lock = state_ptr.state.borrow_mut();
-    if lock.suppress_next_char_msg {
-        return None;
-    }
-    let mut input_handler = lock.input_handler.take()?;
-    drop(lock);
+    let mut input_handler = state_ptr.state.borrow_mut().input_handler.take()?;
     let result = f(&mut input_handler);
     state_ptr.state.borrow_mut().input_handler = Some(input_handler);
     Some(result)
@@ -1557,9 +1549,6 @@ where
     F: FnOnce(&mut PlatformInputHandler, f32) -> Option<R>,
 {
     let mut lock = state_ptr.state.borrow_mut();
-    if lock.suppress_next_char_msg {
-        return None;
-    }
     let mut input_handler = lock.input_handler.take()?;
     let scale_factor = lock.scale_factor;
     drop(lock);
