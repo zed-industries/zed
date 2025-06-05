@@ -831,7 +831,7 @@ impl LaunchMode {
     pub(super) fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("ENV=Zed ~/bin/debugger --launch", cx);
+            this.set_placeholder_text("ENV=Zed ~/bin/program --option", cx);
         });
 
         let cwd = cx.new(|cx| Editor::single_line(window, cx));
@@ -919,7 +919,7 @@ impl LaunchMode {
                     .child(adapter_menu),
             )
             .child(
-                Label::new("Debugger Program")
+                Label::new("Program")
                     .size(ui::LabelSize::Small)
                     .color(Color::Muted),
             )
