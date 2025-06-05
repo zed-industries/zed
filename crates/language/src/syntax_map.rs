@@ -94,7 +94,7 @@ enum SyntaxLayerContent {
     Parsed {
         tree: tree_sitter::Tree,
         language: Arc<Language>,
-        included_sub_ranges: Vec<Range<Anchor>>,
+        included_sub_ranges: Option<Vec<Range<Anchor>>>,
     },
     Pending {
         language_name: Arc<str>,
@@ -123,7 +123,7 @@ impl SyntaxLayerContent {
 pub struct SyntaxLayer<'a> {
     /// The language for this layer.
     pub language: &'a Arc<Language>,
-    pub included_sub_ranges: &'a [Range<Anchor>],
+    pub included_sub_ranges: Option<&'a [Range<Anchor>]>,
     pub(crate) depth: usize,
     tree: &'a Tree,
     pub(crate) offset: (usize, tree_sitter::Point),
@@ -719,13 +719,16 @@ impl SyntaxSnapshot {
                         );
                     }
 
-                    let included_sub_ranges = included_ranges
-                        .into_iter()
-                        .map(|r| {
-                            text.anchor_before(r.start_byte + step_start_byte)
-                                ..text.anchor_after(r.end_byte + step_start_byte)
-                        })
-                        .collect();
+                    let included_sub_ranges: Option<Vec<Range<Anchor>>> =
+                        (included_ranges.len() > 1).then_some(
+                            included_ranges
+                                .into_iter()
+                                .map(|r| {
+                                    text.anchor_before(r.start_byte + step_start_byte)
+                                        ..text.anchor_after(r.end_byte + step_start_byte)
+                                })
+                                .collect(),
+                        );
                     SyntaxLayerContent::Parsed {
                         tree,
                         language,
@@ -796,7 +799,7 @@ impl SyntaxSnapshot {
             [SyntaxLayer {
                 language,
                 tree,
-                included_sub_ranges: &[], // todo! fix
+                included_sub_ranges: None,
                 depth: 0,
                 offset: (0, tree_sitter::Point::new(0, 0)),
             }]
@@ -893,7 +896,7 @@ impl SyntaxSnapshot {
                         info = Some(SyntaxLayer {
                             tree,
                             language,
-                            included_sub_ranges,
+                            included_sub_ranges: included_sub_ranges.as_deref(),
                             depth: layer.depth,
                             offset: (layer_start_offset, layer_start_point),
                         });

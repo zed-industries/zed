@@ -1384,12 +1384,16 @@ impl Buffer {
                     is_first = false;
                     return true;
                 }
-                let any_sub_ranges_contain_range =
-                    layer.included_sub_ranges.iter().any(|sub_range| {
-                        let is_before_start = sub_range.end.cmp(&start_anchor, self).is_lt();
-                        let is_after_end = sub_range.start.cmp(&end_anchor, self).is_gt();
-                        !is_before_start && !is_after_end
-                    });
+                let any_sub_ranges_contain_range = layer
+                    .included_sub_ranges
+                    .map(|sub_ranges| {
+                        sub_ranges.iter().any(|sub_range| {
+                            let is_before_start = sub_range.end.cmp(&start_anchor, self).is_lt();
+                            let is_after_end = sub_range.start.cmp(&end_anchor, self).is_gt();
+                            !is_before_start && !is_after_end
+                        })
+                    })
+                    .unwrap_or(true);
                 let result = any_sub_ranges_contain_range;
                 return result;
             })
