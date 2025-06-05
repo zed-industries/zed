@@ -3995,16 +3995,20 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
         let handle = cx.new(|_| buffer.clone());
         if let Some(local) = self.as_local_mut() {
+            let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
+            if !ignore_refcounts {
+                *refcount += 1;
+            }
+
+            // We run early exits on non-existing buffers AFTER we mark the buffer as registered in order to handle buffer saving.
+            // When a new unnamed buffer is created and saved, we will start loading it's language. Once the language is loaded, we go over all "language-less" buffers and try to fit that new language
+            // with them. However, we do that only for the buffers that we think are open in at least one editor; thus, we need to keep tab of unnamed buffers as well, even though they're not actually registered with any language
+            // servers in practice (we don't support non-file URI schemes in our LSP impl).
             let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
                 return handle;
             };
             if !file.is_local() {
                 return handle;
-            }
-
-            let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
-            if !ignore_refcounts {
-                *refcount += 1;
             }
 
             if ignore_refcounts || *refcount == 1 {

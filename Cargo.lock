@@ -631,6 +631,7 @@ name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-watch",
  "buffer_diff",
  "clock",
  "collections",
@@ -4233,6 +4234,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "log",
  "menu",
@@ -4542,6 +4544,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "command_palette",
+ "gpui",
  "mdbook",
  "regex",
  "serde",
@@ -4549,6 +4553,7 @@ dependencies = [
  "settings",
  "util",
  "workspace-hack",
+ "zed",
 ]
 
 [[package]]

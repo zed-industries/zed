@@ -120,7 +120,7 @@
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
-      "alt-g b": "editor::ToggleGitBlame",
+      "alt-g b": "git::Blame",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-shift-e": "editor::ToggleEditPrediction",
@@ -512,14 +512,14 @@
   {
     "context": "Workspace",
     "bindings": {
+      "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
-      "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": false }],
-      "alt-shift-open": "projects::OpenRemote",
-      "alt-ctrl-shift-o": "projects::OpenRemote",
+      "alt-shift-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "alt-ctrl-shift-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
+      "alt-ctrl-shift-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "alt-shift-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",
