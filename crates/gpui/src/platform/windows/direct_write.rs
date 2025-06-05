@@ -1362,9 +1362,7 @@ const fn make_direct_write_feature(feature_name: &str, parameter: u32) -> DWRITE
 #[inline]
 const fn make_open_type_tag(tag_name: &str) -> u32 {
     let bytes = tag_name.as_bytes();
-    if bytes.len() != 4 {
-        panic!("direct write tag name did not have length 4");
-    }
+    debug_assert!(bytes.len() == 4);
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
