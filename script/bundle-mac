@@ -220,7 +220,7 @@ function prepare_binaries() {
         "zed-debug-symbols" \
         target/${architecture}/${target_dir}/Zed.dwarf.gz \
         "by-uuid/${uuid}.dwarf.gz" \
-        "X-Zed-Version: ${version_tag}"
+        "x-amz-meta-zed-version: ${version_tag}"
 
     cp target/${architecture}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
