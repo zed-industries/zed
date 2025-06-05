@@ -680,6 +680,7 @@ fn handle_ime_composition_inner(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut ime_input = None;
+    println!("IME composition lparam: {lparam:?}");
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
         let comp_string = parse_ime_compostion_string(ctx)?;
         with_input_handler(&state_ptr, |input_handler| {
@@ -1320,6 +1321,7 @@ fn parse_normal_key(
 fn parse_ime_compostion_string(ctx: HIMC) -> Option<String> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
+        println!("Comp str len: {}", string_len);
         if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
@@ -1347,6 +1349,7 @@ fn retrieve_composition_cursor_position(ctx: HIMC) -> usize {
 fn parse_ime_compostion_result(ctx: HIMC) -> Option<String> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
+        println!("Comp str res len: {}", string_len);
         if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
