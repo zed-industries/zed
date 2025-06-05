@@ -2717,7 +2717,9 @@ impl Editor {
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        self.add_selections_state = None;
+        if self.selections.count() == 1 && self.selections.newest_adjusted(cx).is_empty() {
+            self.add_selections_state = None;
+        }
         self.select_next_state = None;
         self.select_prev_state = None;
         self.select_syntax_node_history.try_clear();
