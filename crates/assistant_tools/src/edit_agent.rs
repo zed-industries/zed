@@ -238,7 +238,7 @@ impl EditAgent {
         let (output, edit_events) = Self::parse_edit_chunks(edit_chunks, cx);
         let mut edit_events = edit_events.peekable();
         while let Some(edit_event) = Pin::new(&mut edit_events).peek().await {
-            // Skip events until we're at the start of a new edit.
+            // Salta gli eventi finché non siamo all'inizio di una nuova modifica.
             let Ok(EditParserEvent::OldTextChunk { .. }) = edit_event else {
                 edit_events.next().await.unwrap()?;
                 continue;
@@ -246,8 +246,8 @@ impl EditAgent {
 
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
-            // Resolve the old text in the background, updating the agent
-            // location as we keep refining which range it corresponds to.
+            // Risolvi il vecchio testo in background, aggiornando la posizione
+            // dell'agente mentre continuiamo a perfezionare a quale intervallo corrisponde.
             let (resolve_old_text, mut old_range) =
                 Self::resolve_old_text(snapshot.text.clone(), edit_events, cx);
             while let Ok(old_range) = old_range.recv().await {
@@ -726,9 +726,9 @@ mod tests {
         );
         cx.run_until_parked();
 
-        // !talk: This is a more traditional unit test.
-        // !talk: It's randomized, but still fundamentally deterministic.
-        // !talk: But still relevant to working with an LLM
+        // !talk: Questo è un test unitario più tradizionale.
+        // !talk: È randomizzato, ma ancora fondamentalmente deterministico.
+        // !talk: Ma comunque rilevante per lavorare con un LLM
         simulate_llm_output(
             &agent,
             indoc! {"

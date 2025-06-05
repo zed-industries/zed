@@ -10,18 +10,22 @@ fn eval_string_escaping() {
         // Ask to change the message
         let (task, _) = agent.edit(
             buffer.clone(),
-            "Change message to include user's name",
+            "Change message to say goodbye",
             &conversation,
         );
 
-        // What models would generate:
-        // <old_text>let msg = &quot;Hello, world!&quot;;</old_text>
-        // Or worse:
-        // <old_text>let msg = \"Hello, world!\";</old_text>
+        let edited = task.await.unwrap();
+        assert_eq!(edited.text(), r#"let msg = "Goodbye, world!";"#);
 
-        // Fuzzy matcher can't find escaped version in buffer!
     });
 }
+
+// What models would generate:
+// <old_text>let msg = &quot;Hello, world!&quot;;</old_text>
+// Or...
+// <old_text>let msg = \"Hello, world!\";</old_text>
+
+// Fuzzy matcher can't find escaped version in buffer!
 
 // Even more chaos with newlines:
 // Buffer:    "fn test() {\n    println!(\"hi\");\n}"
