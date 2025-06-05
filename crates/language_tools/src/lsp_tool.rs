@@ -218,6 +218,7 @@ impl LspPickerDelegate {
             .when(has_logs, |div| {
                 div.child(
                     IconButton::new("open-lsp-messages", IconName::BoltFilled)
+                        .icon_size(IconSize::Small)
                         .tooltip(|_, cx| Tooltip::simple("Open LSP messages", cx))
                         .on_click({
                             let lsp_logs = self.lsp_logs.clone();
@@ -251,6 +252,7 @@ impl LspPickerDelegate {
         language_server_name: &LanguageServerName,
         status: LanguageServerStatus,
         lsp_status: &Option<(SharedString, Severity)>,
+        cx: &App,
     ) -> Div {
         let lsp_store = self.lsp_store.clone();
         let restart_button = IconButton::new("restart-server", IconName::Rerun)
@@ -282,27 +284,37 @@ impl LspPickerDelegate {
             .group("lsp-status")
             .child(
                 h_flex()
-                    .group("lsp-status")
                     .w_full()
                     .gap_2()
                     .child(
-                        div()
-                            .hover(|style| style.invisible().w_0())
-                            .child(Icon::new(icon).color(icon_color)),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .visible_on_hover("lsp-status")
-                            .child(restart_button),
+                        h_flex()
+                            .group("lsp-status")
+                            .child(
+                                div()
+                                    .hover(|style| style.invisible().w_0())
+                                    .child(Icon::new(icon).color(icon_color)),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .visible_on_hover("lsp-status")
+                                    .child(restart_button),
+                            ),
                     )
                     .child(Label::new(language_server_name.0.clone()).color(Color::Muted)),
             )
             .when_some(lsp_status.as_ref(), |header, (message, severity)| {
-                // TODO have a close button to dismiss the message
                 header.child(
-                    Label::new(format!("TODO kb status: {message} | {severity:?}"))
-                        .color(Color::Warning),
+                    div()
+                        .map(|div| match severity {
+                            Severity::Other | Severity::Ok | Severity::Info => div,
+                            Severity::Warning => {
+                                div.border_1().border_color(Color::Warning.color(cx))
+                            }
+                            Severity::Error => div.border_1().border_color(Color::Error.color(cx)),
+                        })
+                        // TODO kb have a close button to dismiss the message
+                        .child(Label::new(message)),
                 )
             })
             .cursor_default()
@@ -413,7 +425,7 @@ impl PickerDelegate for LspPickerDelegate {
                     server_name,
                     status,
                     message,
-                } => self.render_server_header(*server_id, server_name, *status, message),
+                } => self.render_server_header(*server_id, server_name, *status, message, cx),
                 LspItem::Item(server_id) => self.render_server_actions(server_id, cx),
             }
             .into_any_element(),
@@ -488,6 +500,17 @@ impl PickerDelegate for LspPickerDelegate {
                 )
                 .into_any_element(),
         )
+    }
+
+    fn separators_after_indices(&self) -> Vec<usize> {
+        self.items
+            .iter()
+            .enumerate()
+            .filter_map(|(i, item)| match item {
+                LspItem::Header { .. } => None,
+                LspItem::Item(..) => Some(i),
+            })
+            .collect()
     }
 }
 
@@ -714,9 +737,9 @@ impl StatusItemView for LspTool {
 }
 
 impl Render for LspTool {
-    // TODO kb add a setting to remove this button out of the status bar
     // TODO kb add scrollbar + max width and height
-    // TODO keyboard story
+    // TODO kb keyboard story
+    // TODO kb add a link to LSP docs (footer?)
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let delegate = &self.lsp_picker.read(cx).delegate;
         if delegate.active_editor.is_none() || delegate.items.is_empty() {
