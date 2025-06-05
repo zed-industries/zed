@@ -626,7 +626,7 @@ pub fn into_anthropic(
                             | anthropic::RequestContent::Image { cache_control, .. }
                             | anthropic::RequestContent::ToolUse { cache_control, .. }
                             | anthropic::RequestContent::ToolResult { cache_control, .. } => {
-                                *cache_control = cache_control_value.clone();
+                                *cache_control = cache_control_value;
                                 break;
                             }
                         }
