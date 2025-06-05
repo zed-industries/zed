@@ -1319,6 +1319,7 @@ mod windows_renderer {
             size: Default::default(),
             transparent,
         };
+        println!("==> Initializing BladeRenderer with hwnd: {:?}", hwnd);
         BladeRenderer::new(context, &raw, config).inspect_err(|err| show_error(err.to_string()))
     }
 

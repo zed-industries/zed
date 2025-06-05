@@ -331,6 +331,7 @@ impl BladeRenderer {
         window: &I,
         config: BladeSurfaceConfig,
     ) -> anyhow::Result<Self> {
+        println!("1");
         let surface_config = gpu::SurfaceConfig {
             size: config.size,
             usage: gpu::TextureUsage::TARGET,
@@ -342,30 +343,37 @@ impl BladeRenderer {
         let surface = context
             .gpu
             .create_surface_configured(window, surface_config)
-            .unwrap();
+            .map_err(|err| anyhow::anyhow!("Failed to create surface: {err:?}"))?;
+        println!("2");
 
         let command_encoder = context.gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
         });
+        println!("3");
         // workaround for https://github.com/zed-industries/zed/issues/26143
         let path_sample_count = std::env::var("ZED_PATH_SAMPLE_COUNT")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_PATH_SAMPLE_COUNT);
+        println!("4");
         let pipelines = BladePipelines::new(&context.gpu, surface.info(), path_sample_count);
+        println!("5");
         let instance_belt = BufferBelt::new(BufferBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
+        println!("6");
         let atlas = Arc::new(BladeAtlas::new(&context.gpu, path_sample_count));
+        println!("7");
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "atlas",
             mag_filter: gpu::FilterMode::Linear,
             min_filter: gpu::FilterMode::Linear,
             ..Default::default()
         });
+        println!("8");
 
         #[cfg(target_os = "macos")]
         let core_video_texture_cache = unsafe {
