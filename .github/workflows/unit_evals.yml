@@ -2,16 +2,9 @@ name: Run Unit Evals
 
 on:
   schedule:
-    - cron: "0 0 * * *"
+    # GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
+    - cron: "47 1 * * *"
   workflow_dispatch:
-
-  push:
-    branches:
-      - main
-      - "v[0-9]+.[0-9]+.x"
-  pull_request:
-    branches:
-      - "**"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
@@ -23,7 +16,6 @@ env:
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
   ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-  ZED_EVAL_TELEMETRY: 1
 
 jobs:
   unit_evals:
@@ -70,15 +62,13 @@ jobs:
 
       - name: Run unit evals
         shell: bash -euxo pipefail {0}
-        run: |
-          false
-        # cargo nextest run --workspace --no-fail-fast --features eval --no-capture -E 'test(::eval_)' --test-threads 1
+        run: cargo nextest run --workspace --no-fail-fast --features eval --no-capture -E 'test(::eval_)' --test-threads 1
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Send the pull request link into the Slack channel
         if: ${{ failure() }}
-        uses: slackapi/slack-github-action@v2.1.0
+        uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52
         with:
           method: chat.postMessage
           token: ${{ secrets.SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN }}
