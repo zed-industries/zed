@@ -1229,6 +1229,7 @@ where
     match virtual_key {
         VK_PROCESSKEY => {
             // IME composition
+            // ImmGetVirtualKey(handle);
             None
         }
         VK_SHIFT | VK_CONTROL | VK_MENU | VK_LWIN | VK_RWIN => {
