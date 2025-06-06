@@ -3248,8 +3248,7 @@ impl Window {
     /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
     /// binding for the action (last binding added to the keymap).
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
-        self.bindings_for_action(action)
-            .last()
+        self.highest_precedence_binding_for_action(action)
             .map(|binding| {
                 binding
                     .keystrokes()
@@ -3921,6 +3920,38 @@ impl Window {
             .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
     }
 
+    /// Returns the highest precedence key binding that invokes an action on the currently focused
+    /// element. This is more efficient than getting the last result of `bindings_for_action`.
+    pub fn highest_precedence_binding_for_action(&self, action: &dyn Action) -> Option<KeyBinding> {
+        self.rendered_frame
+            .dispatch_tree
+            .highest_precedence_binding_for_action(
+                action,
+                &self.rendered_frame.dispatch_tree.context_stack,
+            )
+    }
+
+    /// Returns the key bindings for an action in a context.
+    pub fn bindings_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.bindings_for_action(action, &[context])
+    }
+
+    /// Returns the highest precedence key binding for an action in a context. This is more
+    /// efficient than getting the last result of `bindings_for_action_in_context`.
+    pub fn highest_precedence_binding_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.highest_precedence_binding_for_action(action, &[context])
+    }
+
     /// Returns any bindings that would invoke an action on the given focus handle if it were
     /// focused. Bindings are returned in the order they were added. For display, the last binding
     /// should take precedence.
@@ -3930,26 +3961,37 @@ impl Window {
         focus_handle: &FocusHandle,
     ) -> Vec<KeyBinding> {
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
-
-        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+        let Some(context_stack) = self.context_stack_for_focus_handle(focus_handle) else {
             return vec![];
         };
+        dispatch_tree.bindings_for_action(action, &context_stack)
+    }
+
+    /// Returns the highest precedence key binding that would invoke an action on the given focus
+    /// handle if it were focused. This is more efficient than getting the last result of
+    /// `bindings_for_action_in`.
+    pub fn highest_precedence_binding_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let context_stack = self.context_stack_for_focus_handle(focus_handle)?;
+        dispatch_tree.highest_precedence_binding_for_action(action, &context_stack)
+    }
+
+    fn context_stack_for_focus_handle(
+        &self,
+        focus_handle: &FocusHandle,
+    ) -> Option<Vec<KeyContext>> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let node_id = dispatch_tree.focusable_node_id(focus_handle.id)?;
         let context_stack: Vec<_> = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
-        dispatch_tree.bindings_for_action(action, &context_stack)
-    }
-
-    /// Returns the key bindings for the given action in the given context.
-    pub fn bindings_for_action_in_context(
-        &self,
-        action: &dyn Action,
-        context: KeyContext,
-    ) -> Vec<KeyBinding> {
-        let dispatch_tree = &self.rendered_frame.dispatch_tree;
-        dispatch_tree.bindings_for_action(action, &[context])
+        Some(context_stack)
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
