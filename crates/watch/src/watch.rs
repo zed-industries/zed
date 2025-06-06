@@ -113,10 +113,8 @@ impl<T> Future for Changed<'_, T> {
 
         let state = this.receiver.state.upgradable_read();
         if state.version != this.receiver.observed_version {
-            // If the current version is different from what we observed, it
-            // means that the sender updated the value. In this case, we don't
-            // need to clear the pending waker because the sender has already
-            // cleared it.
+            // The sender produced a new value. Avoid unregistering the pending
+            // waker, because the sender has already done so.
             this.pending_waker_id = None;
             this.receiver.observed_version = state.version;
             Poll::Ready(Ok(()))
@@ -125,15 +123,15 @@ impl<T> Future for Changed<'_, T> {
         } else {
             let mut state = RwLockUpgradableReadGuard::upgrade(state);
 
-            // Remove the pending waker from the state. This should happen
-            // automatically when the waker was woken up by the sender, but if
-            // this future was polled again without an explicit call to `wake`
-            // by the sender, we need to remove it manually.
+            // Unregister the pending waker. This should happen automatically
+            // when the waker gets awoken by the sender, but if this future was
+            // polled again without an explicit call to `wake` (e.g., a spurious
+            // wake by the executor), we need to remove it manually.
             if let Some(pending_waker_id) = this.pending_waker_id.take() {
                 state.wakers.remove(&pending_waker_id);
             }
 
-            // Insert a waker so that this future can be woken up when the state changes.
+            // Register the waker for this future.
             let waker_id = state.next_waker_id.post_inc();
             state.wakers.insert(waker_id, cx.waker().clone());
             this.pending_waker_id = Some(waker_id);
@@ -146,7 +144,7 @@ impl<T> Future for Changed<'_, T> {
 impl<T> Drop for Changed<'_, T> {
     fn drop(&mut self) {
         // If this future gets dropped before the waker has a chance of being
-        // woken up, we need to clear it to avoid a memory leak.
+        // awoken, we need to clear it to avoid a memory leak.
         if let Some(waker_id) = self.pending_waker_id {
             let mut state = self.receiver.state.write();
             state.wakers.remove(&waker_id);
