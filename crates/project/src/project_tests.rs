@@ -8223,6 +8223,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     git_add(B_TXT, &repo);
     git_commit("Committing modified and added", &repo);
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     // The worktree detects that the files' git status have changed.
@@ -8242,6 +8245,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
     std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     // Check that more complex repo changes are tracked
@@ -8282,6 +8288,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _cx| {
@@ -8303,6 +8312,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _cx| {
