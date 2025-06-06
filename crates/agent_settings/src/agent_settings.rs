@@ -531,7 +531,7 @@ impl AgentSettingsContent {
     pub fn create_profile(
         &mut self,
         profile_id: AgentProfileId,
-        profile: AgentProfileSettings,
+        profile_settings: AgentProfileSettings,
     ) -> Result<()> {
         self.v2_setting(|settings| {
             let profiles = settings.profiles.get_or_insert_default();
@@ -542,10 +542,10 @@ impl AgentSettingsContent {
             profiles.insert(
                 profile_id,
                 AgentProfileContent {
-                    name: profile.name.into(),
-                    tools: profile.tools,
-                    enable_all_context_servers: Some(profile.enable_all_context_servers),
-                    context_servers: profile
+                    name: profile_settings.name.into(),
+                    tools: profile_settings.tools,
+                    enable_all_context_servers: Some(profile_settings.enable_all_context_servers),
+                    context_servers: profile_settings
                         .context_servers
                         .into_iter()
                         .map(|(server_id, preset)| {

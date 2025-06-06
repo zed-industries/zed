@@ -72,7 +72,7 @@ pub struct ToolPickerDelegate {
     fs: Arc<dyn Fs>,
     items: Arc<Vec<PickerItem>>,
     profile_id: AgentProfileId,
-    profile: AgentProfileSettings,
+    profile_settings: AgentProfileSettings,
     filtered_items: Vec<PickerItem>,
     selected_index: usize,
     mode: ToolPickerMode,
@@ -84,7 +84,7 @@ impl ToolPickerDelegate {
         fs: Arc<dyn Fs>,
         tool_set: Entity<ToolWorkingSet>,
         profile_id: AgentProfileId,
-        profile: AgentProfileSettings,
+        profile_settings: AgentProfileSettings,
         cx: &mut Context<ToolPicker>,
     ) -> Self {
         let items = Arc::new(Self::resolve_items(mode, &tool_set, cx));
@@ -94,7 +94,7 @@ impl ToolPickerDelegate {
             fs,
             items,
             profile_id,
-            profile,
+            profile_settings,
             filtered_items: Vec::new(),
             selected_index: 0,
             mode,
@@ -244,19 +244,31 @@ impl PickerDelegate for ToolPickerDelegate {
         };
 
         let is_currently_enabled = if let Some(server_id) = server_id.clone() {
-            let preset = self.profile.context_servers.entry(server_id).or_default();
+            let preset = self
+                .profile_settings
+                .context_servers
+                .entry(server_id)
+                .or_default();
             let is_enabled = *preset.tools.entry(tool_name.clone()).or_default();
             *preset.tools.entry(tool_name.clone()).or_default() = !is_enabled;
             is_enabled
         } else {
-            let is_enabled = *self.profile.tools.entry(tool_name.clone()).or_default();
-            *self.profile.tools.entry(tool_name.clone()).or_default() = !is_enabled;
+            let is_enabled = *self
+                .profile_settings
+                .tools
+                .entry(tool_name.clone())
+                .or_default();
+            *self
+                .profile_settings
+                .tools
+                .entry(tool_name.clone())
+                .or_default() = !is_enabled;
             is_enabled
         };
 
         update_settings_file::<AgentSettings>(self.fs.clone(), cx, {
             let profile_id = self.profile_id.clone();
-            let default_profile = self.profile.clone();
+            let default_profile = self.profile_settings.clone();
             let server_id = server_id.clone();
             let tool_name = tool_name.clone();
             move |settings: &mut AgentSettingsContent, _cx| {
@@ -334,14 +346,18 @@ impl PickerDelegate for ToolPickerDelegate {
             ),
             PickerItem::Tool { name, server_id } => {
                 let is_enabled = if let Some(server_id) = server_id {
-                    self.profile
+                    self.profile_settings
                         .context_servers
                         .get(server_id.as_ref())
                         .and_then(|preset| preset.tools.get(name))
                         .copied()
-                        .unwrap_or(self.profile.enable_all_context_servers)
+                        .unwrap_or(self.profile_settings.enable_all_context_servers)
                 } else {
-                    self.profile.tools.get(name).copied().unwrap_or(false)
+                    self.profile_settings
+                        .tools
+                        .get(name)
+                        .copied()
+                        .unwrap_or(false)
                 };
 
                 Some(

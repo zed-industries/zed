@@ -95,11 +95,11 @@ impl ProfileSelector {
     fn menu_entry_for_profile(
         &self,
         profile_id: AgentProfileId,
-        profile: &AgentProfileSettings,
+        profile_settings: &AgentProfileSettings,
         settings: &AgentSettings,
         cx: &App,
     ) -> ContextMenuEntry {
-        let documentation = match profile.name.to_lowercase().as_str() {
+        let documentation = match profile_settings.name.to_lowercase().as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
             builtin_profiles::ASK => Some("Chat about your codebase."),
             builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
@@ -107,7 +107,7 @@ impl ProfileSelector {
         };
         let thread_profile_id = self.thread.read(cx).profile().id();
 
-        let entry = ContextMenuEntry::new(profile.name.clone())
+        let entry = ContextMenuEntry::new(profile_settings.name.clone())
             .toggleable(IconPosition::End, &profile_id == thread_profile_id);
 
         let entry = if let Some(doc_text) = documentation {
