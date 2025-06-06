@@ -2926,7 +2926,10 @@ impl Pane {
                             let is_pinned_in_to_pane = this.is_tab_pinned(ix);
                             let is_at_same_position = ix == from_ix;
 
-                            if is_at_same_position || (moved_right && is_pinned_in_to_pane) {
+                            if is_at_same_position
+                                || (moved_right && is_pinned_in_to_pane)
+                                || (!moved_right && !is_pinned_in_to_pane)
+                            {
                                 return;
                             }
 
