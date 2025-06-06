@@ -125,7 +125,8 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath, PulledDiagnostics,
+    BreakpointWithPosition, CompletionResponse, LspAction, LspPullDiagnostics, ProjectPath,
+    PulledDiagnostics,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -5795,7 +5796,7 @@ impl Editor {
                                 vec![]
                             }
                         })?;
-                        let spawn_straight_away = quick_launch
+                        let one_template = quick_launch
                             && resolved_tasks
                                 .as_ref()
                                 .map_or(false, |tasks| tasks.templates.len() == 1)
@@ -5803,6 +5804,18 @@ impl Editor {
                                 .as_ref()
                                 .map_or(true, |actions| actions.is_empty())
                             && debug_scenarios.is_empty();
+
+                        let preferred_action_ix = code_actions.as_ref().map_or(None, |actions| {
+                            actions.iter().position(|action| {
+                                if let LspAction::Action(a) = &action.action.lsp_action {
+                                    a.is_preferred.unwrap_or_default()
+                                } else {
+                                    false
+                                }
+                            })
+                        });
+                        let spawn_straight_away = one_template || preferred_action_ix.is_some();
+                        let task_len = resolved_tasks.as_ref().map_or(0, |x| x.templates.len());
                         if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                             crate::hover_popover::hide_hover(editor, cx);
                             *editor.context_menu.borrow_mut() =
@@ -5819,8 +5832,13 @@ impl Editor {
                                     deployed_from,
                                 }));
                             if spawn_straight_away {
+                                // todo: horrible lol
+                                let item_ix = preferred_action_ix.map_or(0, |ix| ix + task_len);
+
                                 if let Some(task) = editor.confirm_code_action(
-                                    &ConfirmCodeAction { item_ix: Some(0) },
+                                    &ConfirmCodeAction {
+                                        item_ix: Some(item_ix),
+                                    },
                                     window,
                                     cx,
                                 ) {
