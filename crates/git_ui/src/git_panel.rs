@@ -1822,27 +1822,27 @@ impl GitPanel {
 
     fn get_fetch_options(
         &self,
-        is_fetch_all: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl Future<Output = anyhow::Result<Option<FetchOptions>>> + use<> {
+    ) -> Task<Option<FetchOptions>> {
         let repo = self.active_repository.clone();
         let workspace = self.workspace.clone();
-        let mut cx = window.to_async(cx);
-        async move {
-            let repo = repo.context("No active repository")?;
-            let remotes: Vec<Remote> = repo
-                .update(&mut cx, |repo, _| repo.get_remotes(None))?
-                .await??;
+
+        cx.spawn_in(window, async move |_, cx| {
+            let repo = repo?;
+            let remotes = repo
+                .update(cx, |repo, _| repo.get_remotes(None))
+                .ok()?
+                .await
+                .ok()?
+                .log_err()?;
 
             let mut remotes: Vec<_> = remotes.into_iter().map(FetchOptions::Remote).collect();
             if remotes.len() > 1 {
                 remotes.push(FetchOptions::All);
             }
-            let selection = if is_fetch_all {
-                Some(remotes.len())
-            } else {
-                cx.update(|window, cx| {
+            let selection = cx
+                .update(|window, cx| {
                     picker_prompt::prompt(
                         "Pick which remote to fetch",
                         remotes.iter().map(|r| r.name()).collect(),
@@ -1850,11 +1850,11 @@ impl GitPanel {
                         window,
                         cx,
                     )
-                })?
-                .await
-            };
-            Ok(selection.map(|selection| remotes[selection].clone()))
-        }
+                })
+                .ok()?
+                .await?;
+            remotes.get(selection).cloned()
+        })
     }
 
     pub(crate) fn fetch(
@@ -1873,18 +1873,17 @@ impl GitPanel {
         telemetry::event!("Git Fetched");
         let askpass = self.askpass_delegate("git fetch", window, cx);
         let this = cx.weak_entity();
-        let fetch_options = self.get_fetch_options(is_fetch_all, window, cx);
+
+        let fetch_options = if is_fetch_all {
+            Task::ready(Some(FetchOptions::All))
+        } else {
+            self.get_fetch_options(window, cx)
+        };
+
         window
             .spawn(cx, async move |cx| {
-                let fetch_options = match fetch_options.await {
-                    Ok(Some(fetch_options)) => fetch_options,
-                    Ok(None) => {
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        log::error!("Failed to get remote: {}", e);
-                        return Ok(());
-                    }
+                let Some(fetch_options) = fetch_options.await else {
+                    return Ok(());
                 };
                 let fetch = repo.update(cx, |repo, cx| repo.fetch(fetch_options, askpass, cx))?;
 
