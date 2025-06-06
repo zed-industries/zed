@@ -2889,7 +2889,7 @@ impl Pane {
             || cfg!(not(target_os = "macos")) && window.modifiers().control;
 
         let from_pane = dragged_tab.pane.clone();
-        let from_ix = dragged_tab.ix.clone();
+        let from_ix = dragged_tab.ix;
         self.workspace
             .update(cx, |_, cx| {
                 cx.defer_in(window, move |workspace, window, cx| {
