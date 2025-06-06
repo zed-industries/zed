@@ -35,6 +35,7 @@ struct ActiveEditor {
 struct LspPickerDelegate {
     language_servers: LanguageServers,
     active_editor: Option<ActiveEditor>,
+    workspace: WeakEntity<Workspace>,
     lsp_store: Entity<LspStore>,
     lsp_logs: Entity<LogStore>,
     _lsp_store_subscription: Subscription,
@@ -205,11 +206,17 @@ impl LspPickerDelegate {
                     IconButton::new("open-server-log", IconName::ListX)
                         .tooltip(|_, cx| Tooltip::simple("Open Log", cx))
                         .on_click({
+                            let workspace = self.workspace.clone();
                             let lsp_logs = self.lsp_logs.clone();
                             let server_id = *server_id;
-                            move |_, _, cx| {
+                            move |_, window, cx| {
                                 lsp_logs.update(cx, |lsp_logs, cx| {
-                                    lsp_logs.open_server_log(server_id, cx);
+                                    lsp_logs.open_server_log(
+                                        workspace.clone(),
+                                        server_id,
+                                        window,
+                                        cx,
+                                    );
                                 });
                             }
                         }),
@@ -221,11 +228,18 @@ impl LspPickerDelegate {
                         .icon_size(IconSize::Small)
                         .tooltip(|_, cx| Tooltip::simple("Open LSP messages", cx))
                         .on_click({
+                            let workspace = self.workspace.clone();
                             let lsp_logs = self.lsp_logs.clone();
                             let server_id = *server_id;
-                            move |_, _, cx| {
+                            move |_, window, cx| {
                                 lsp_logs.update(cx, |lsp_logs, cx| {
-                                    lsp_logs.open_server_trace(server_id, cx);
+                                    // TODO kb none of the open_* methods focus the log input
+                                    lsp_logs.open_server_trace(
+                                        workspace.clone(),
+                                        server_id,
+                                        window,
+                                        cx,
+                                    );
                                 });
                             }
                         }),
@@ -522,6 +536,7 @@ impl LspTool {
             cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
                 lsp_tool.on_lsp_store_event(e, window, cx)
             });
+        let workspace = workspace.weak_handle();
 
         Self {
             lsp_picker: cx.new(|cx| {
@@ -531,6 +546,7 @@ impl LspTool {
                         items: Vec::new(),
                         language_servers: LanguageServers::default(),
                         active_editor: None,
+                        workspace,
                         lsp_store,
                         lsp_logs,
                         _lsp_store_subscription: lsp_store_subscription,

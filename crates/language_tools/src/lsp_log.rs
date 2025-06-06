@@ -21,6 +21,8 @@ use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
 
+use crate::get_or_create_tool;
+
 const SEND_LINE: &str = "\n// Send:";
 const RECEIVE_LINE: &str = "\n// Receive:";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
@@ -224,13 +226,14 @@ pub fn init(cx: &mut App) {
         workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, window, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() || project.is_via_ssh() {
-                workspace.split_item(
+                let project = workspace.project().clone();
+                let log_store = log_store.clone();
+                get_or_create_tool(
+                    workspace,
                     SplitDirection::Right,
-                    Box::new(cx.new(|cx| {
-                        LspLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
-                    })),
                     window,
                     cx,
+                    move |window, cx| LspLogView::new(project, log_store, window, cx),
                 );
             }
         });
@@ -537,12 +540,64 @@ impl LogStore {
         Some(())
     }
 
-    pub fn open_server_log(&mut self, server_id: LanguageServerId, cx: &mut Context<Self>) {
-        dbg!("TODO kb open server log");
+    pub fn open_server_log(
+        &mut self,
+        workspace: WeakEntity<Workspace>,
+        server_id: LanguageServerId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |log_store, cx| {
+            let Some(log_store) = log_store.upgrade() else {
+                return;
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    let log_view = get_or_create_tool(
+                        workspace,
+                        SplitDirection::Right,
+                        window,
+                        cx,
+                        move |window, cx| LspLogView::new(project, log_store, window, cx),
+                    );
+                    log_view.update(cx, |log_view, cx| {
+                        log_view.show_logs_for_server(server_id, window, cx);
+                    });
+                })
+                .ok();
+        })
+        .detach();
     }
 
-    pub fn open_server_trace(&mut self, server_id: LanguageServerId, cx: &mut Context<Self>) {
-        dbg!("TODO kb open server trace");
+    pub fn open_server_trace(
+        &mut self,
+        workspace: WeakEntity<Workspace>,
+        server_id: LanguageServerId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |log_store, cx| {
+            let Some(log_store) = log_store.upgrade() else {
+                return;
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    let log_view = get_or_create_tool(
+                        workspace,
+                        SplitDirection::Right,
+                        window,
+                        cx,
+                        move |window, cx| LspLogView::new(project, log_store, window, cx),
+                    );
+                    log_view.update(cx, |log_view, cx| {
+                        log_view.show_rpc_trace_for_server(server_id, window, cx);
+                    });
+                })
+                .ok();
+        })
+        .detach();
     }
 
     fn on_io(
