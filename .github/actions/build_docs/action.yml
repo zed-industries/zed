@@ -24,3 +24,9 @@ runs:
       run: |
         mkdir -p target/deploy
         mdbook build ./docs --dest-dir=../target/deploy/docs/
+
+    - name: Link Checker
+      uses: lycheeverse/lychee-action@82202e5e9c2f4ef1a55a3d02563e1cb6041e5332
+      with:
+        args: "./docs --verbose --no-progress './**/*.md' './**/*.html' './**/*.rst'"
+        fail: true
