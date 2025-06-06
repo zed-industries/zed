@@ -59,7 +59,8 @@ impl CodeOrbit {
         cx: &mut ViewContext<Self>,
     ) {
         if self.panel.is_none() {
-            let panel = cx.new_view(|cx| PromptPanel::new(cx));
+            let orchestrator = self.orchestrator.clone();
+            let panel = cx.new_view(move |_cx| PromptPanel::new(orchestrator));
             self.panel = Some(panel);
         } else {
             self.panel = None;
