@@ -9,8 +9,8 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    LspStore, LspStoreEvent, PrettierStore, ProjectEnvironment, ProjectPath, ToolchainStore,
-    WorktreeId,
+    LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment, ProjectPath,
+    ToolchainStore, WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
@@ -87,12 +87,13 @@ impl HeadlessProject {
         });
 
         let environment = cx.new(|_| ProjectEnvironment::new(None));
-
+        let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),
                 worktree_store.clone(),
                 environment.clone(),
+                manifest_tree.clone(),
                 cx,
             )
         });
@@ -172,6 +173,7 @@ impl HeadlessProject {
                 prettier_store.clone(),
                 toolchain_store.clone(),
                 environment,
+                manifest_tree,
                 languages.clone(),
                 http_client.clone(),
                 fs.clone(),

@@ -202,6 +202,7 @@ pub enum Part {
     InlineDataPart(InlineDataPart),
     FunctionCallPart(FunctionCallPart),
     FunctionResponsePart(FunctionResponsePart),
+    ThoughtPart(ThoughtPart),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -233,6 +234,13 @@ pub struct FunctionCallPart {
 #[serde(rename_all = "camelCase")]
 pub struct FunctionResponsePart {
     pub function_response: FunctionResponse,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThoughtPart {
+    pub thought: bool,
+    pub thought_signature: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -281,6 +289,22 @@ pub struct UsageMetadata {
     pub total_token_count: Option<usize>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThinkingConfig {
+    pub thinking_budget: u32,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum GoogleModelMode {
+    #[default]
+    Default,
+    Thinking {
+        budget_tokens: Option<u32>,
+    },
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerationConfig {
@@ -296,6 +320,8 @@ pub struct GenerationConfig {
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_k: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_config: Option<ThinkingConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -482,12 +508,24 @@ pub enum Model {
     Gemini25ProPreview0325,
     #[serde(rename = "gemini-2.5-flash-preview-04-17")]
     Gemini25FlashPreview0417,
+    #[serde(
+        rename = "gemini-2.5-flash-preview-latest",
+        alias = "gemini-2.5-flash-preview-05-20"
+    )]
+    Gemini25FlashPreview,
+    #[serde(
+        rename = "gemini-2.5-pro-preview-latest",
+        alias = "gemini-2.5-pro-preview-06-05"
+    )]
+    Gemini25ProPreview,
     #[serde(rename = "custom")]
     Custom {
         name: String,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
         max_tokens: usize,
+        #[serde(default)]
+        mode: GoogleModelMode,
     },
 }
 
@@ -507,6 +545,24 @@ impl Model {
             Model::Gemini25ProExp0325 => "gemini-2.5-pro-exp-03-25",
             Model::Gemini25ProPreview0325 => "gemini-2.5-pro-preview-03-25",
             Model::Gemini25FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
+            Model::Gemini25FlashPreview => "gemini-2.5-flash-preview-latest",
+            Model::Gemini25ProPreview => "gemini-2.5-pro-preview-latest",
+            Model::Custom { name, .. } => name,
+        }
+    }
+    pub fn request_id(&self) -> &str {
+        match self {
+            Model::Gemini15Pro => "gemini-1.5-pro",
+            Model::Gemini15Flash => "gemini-1.5-flash",
+            Model::Gemini20Pro => "gemini-2.0-pro-exp",
+            Model::Gemini20Flash => "gemini-2.0-flash",
+            Model::Gemini20FlashThinking => "gemini-2.0-flash-thinking-exp",
+            Model::Gemini20FlashLite => "gemini-2.0-flash-lite-preview",
+            Model::Gemini25ProExp0325 => "gemini-2.5-pro-exp-03-25",
+            Model::Gemini25ProPreview0325 => "gemini-2.5-pro-preview-03-25",
+            Model::Gemini25FlashPreview0417 => "gemini-2.5-flash-preview-04-17",
+            Model::Gemini25FlashPreview => "gemini-2.5-flash-preview-05-20",
+            Model::Gemini25ProPreview => "gemini-2.5-pro-preview-06-05",
             Model::Custom { name, .. } => name,
         }
     }
@@ -520,8 +576,10 @@ impl Model {
             Model::Gemini20FlashThinking => "Gemini 2.0 Flash Thinking",
             Model::Gemini20FlashLite => "Gemini 2.0 Flash Lite",
             Model::Gemini25ProExp0325 => "Gemini 2.5 Pro Exp",
-            Model::Gemini25ProPreview0325 => "Gemini 2.5 Pro Preview",
-            Model::Gemini25FlashPreview0417 => "Gemini 2.5 Flash Preview",
+            Model::Gemini25ProPreview0325 => "Gemini 2.5 Pro Preview (0325)",
+            Model::Gemini25FlashPreview0417 => "Gemini 2.5 Flash Preview (0417)",
+            Model::Gemini25FlashPreview => "Gemini 2.5 Flash Preview",
+            Model::Gemini25ProPreview => "Gemini 2.5 Pro Preview",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -541,7 +599,26 @@ impl Model {
             Model::Gemini25ProExp0325 => ONE_MILLION,
             Model::Gemini25ProPreview0325 => ONE_MILLION,
             Model::Gemini25FlashPreview0417 => ONE_MILLION,
+            Model::Gemini25FlashPreview => ONE_MILLION,
+            Model::Gemini25ProPreview => ONE_MILLION,
             Model::Custom { max_tokens, .. } => *max_tokens,
+        }
+    }
+
+    pub fn mode(&self) -> GoogleModelMode {
+        match self {
+            Self::Gemini15Pro
+            | Self::Gemini15Flash
+            | Self::Gemini20Pro
+            | Self::Gemini20Flash
+            | Self::Gemini20FlashThinking
+            | Self::Gemini20FlashLite
+            | Self::Gemini25ProExp0325
+            | Self::Gemini25ProPreview
+            | Self::Gemini25FlashPreview
+            | Self::Gemini25ProPreview0325
+            | Self::Gemini25FlashPreview0417 => GoogleModelMode::Default,
+            Self::Custom { mode, .. } => *mode,
         }
     }
 }
