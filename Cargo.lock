@@ -148,7 +148,6 @@ dependencies = [
  "deepseek",
  "fs",
  "gpui",
- "indexmap",
  "language_model",
  "lmstudio",
  "log",
