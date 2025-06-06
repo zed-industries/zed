@@ -263,7 +263,8 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 
 #### Go
 
-Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications. By default Zed will detect tasks of the form `go run ...` or `go test ...` and automatically convert those to the appropriate debug configuration for Delve.
+Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications. Zed will automatically create debug scenarios for `func main` in your main packages, and also
+for any tests, so you can use the Play button in the gutter to debug these without configuration.
 
 ##### Debug Go Packages
 
