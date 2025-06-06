@@ -1746,16 +1746,24 @@ impl GitPanel {
                     Ok(result) => match result {
                         Ok(text) => text,
                         Err(e) => {
-                            this.update(cx, |this, cx| {
-                                this.show_error_toast("generate commit message", e, cx)
-                            })?;
+                            if let Ok(Some(workspace)) = this.update(cx, |this, _cx| this.workspace.upgrade()) {
+                                workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace.show_error(&e, cx);
+                                    })
+                                    .ok();
+                            }
                             return anyhow::Ok(());
                         }
                     },
                     Err(e) => {
-                        this.update(cx, |this, cx| {
-                            this.show_error_toast("generate commit message", e.into(), cx)
-                        })?;
+                        if let Ok(Some(workspace)) = this.update(cx, |this, _cx| this.workspace.upgrade()) {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.show_error(&e, cx);
+                                })
+                                .ok();
+                        }
                         return anyhow::Ok(());
                     }
                 };
@@ -1818,18 +1826,26 @@ impl GitPanel {
                                     })?;
                                 }
                                 Err(e) => {
-                                    this.update(cx, |this, cx| {
-                                        this.show_error_toast("generate commit message", e.into(), cx)
-                                    })?;
+                                    if let Ok(Some(workspace)) = this.update(cx, |this, _cx| this.workspace.upgrade()) {
+                                        workspace
+                                            .update(cx, |workspace, cx| {
+                                                workspace.show_error(&e, cx);
+                                            })
+                                            .ok();
+                                    }
                                     break;
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        this.update(cx, |this, cx| {
-                            this.show_error_toast("generate commit message", e, cx)
-                        })?;
+                        if let Ok(Some(workspace)) = this.update(cx, |this, _cx| this.workspace.upgrade()) {
+                            workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.show_error(&e, cx);
+                                })
+                                .ok();
+                        }
                     }
                 }
 
