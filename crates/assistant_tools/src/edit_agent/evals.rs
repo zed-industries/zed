@@ -1311,10 +1311,17 @@ fn eval(
     run_eval(eval.clone(), tx.clone());
 
     let executor = gpui::background_executor();
+    let semaphore = Arc::new(smol::lock::Semaphore::new(32));
     for _ in 1..iterations {
         let eval = eval.clone();
         let tx = tx.clone();
-        executor.spawn(async move { run_eval(eval, tx) }).detach();
+        let semaphore = semaphore.clone();
+        executor
+            .spawn(async move {
+                let _guard = semaphore.acquire().await;
+                run_eval(eval, tx)
+            })
+            .detach();
     }
     drop(tx);
 
