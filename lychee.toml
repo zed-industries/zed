@@ -7,8 +7,9 @@ max_retries = 5
 timeout = 45
 
 exclude = [
-    # Collab staging environment.
+    # Don't fail CI check if collab is down
     'https://staging-collab.zed.dev/',
+    "https://collab.zed.dev",
 
     # Slow and unreliable server.
     'https://repology.org',
