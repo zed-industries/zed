@@ -2,7 +2,7 @@ use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, AppContext, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,9 @@ impl Tool for OpenTool {
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
-
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
     fn description(&self) -> String {
         include_str!("./open_tool/description.md").to_string()
     }
@@ -49,9 +51,10 @@ impl Tool for OpenTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -70,7 +73,7 @@ impl Tool for OpenTool {
             }
             .context("Failed to open URL or file path")?;
 
-            Ok(format!("Successfully opened {}", input.path_or_url))
+            Ok(format!("Successfully opened {}", input.path_or_url).into())
         })
         .into()
     }

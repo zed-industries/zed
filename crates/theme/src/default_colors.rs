@@ -86,9 +86,14 @@ impl ThemeColors {
             pane_group_border: neutral().light().step_6(),
             scrollbar_thumb_background: neutral().light_alpha().step_3(),
             scrollbar_thumb_hover_background: neutral().light_alpha().step_4(),
+            scrollbar_thumb_active_background: neutral().light_alpha().step_5(),
             scrollbar_thumb_border: gpui::transparent_black(),
             scrollbar_track_background: gpui::transparent_black(),
             scrollbar_track_border: neutral().light().step_5(),
+            minimap_thumb_background: neutral().light_alpha().step_3().alpha(0.7),
+            minimap_thumb_hover_background: neutral().light_alpha().step_4().alpha(0.7),
+            minimap_thumb_active_background: neutral().light_alpha().step_5().alpha(0.7),
+            minimap_thumb_border: gpui::transparent_black(),
             editor_foreground: neutral().light().step_12(),
             editor_background: neutral().light().step_1(),
             editor_gutter_background: neutral().light().step_1(),
@@ -206,9 +211,14 @@ impl ThemeColors {
             pane_group_border: neutral().dark().step_6(),
             scrollbar_thumb_background: neutral().dark_alpha().step_3(),
             scrollbar_thumb_hover_background: neutral().dark_alpha().step_4(),
+            scrollbar_thumb_active_background: neutral().dark_alpha().step_5(),
             scrollbar_thumb_border: gpui::transparent_black(),
             scrollbar_track_background: gpui::transparent_black(),
             scrollbar_track_border: neutral().dark().step_5(),
+            minimap_thumb_background: neutral().dark_alpha().step_3().alpha(0.7),
+            minimap_thumb_hover_background: neutral().dark_alpha().step_4().alpha(0.7),
+            minimap_thumb_active_background: neutral().dark_alpha().step_5().alpha(0.7),
+            minimap_thumb_border: gpui::transparent_black(),
             editor_foreground: neutral().dark().step_12(),
             editor_background: neutral().dark().step_1(),
             editor_gutter_background: neutral().dark().step_1(),
@@ -286,7 +296,7 @@ impl TryFrom<StaticColorScaleSet> for ColorScaleSet {
     type Error = anyhow::Error;
 
     fn try_from(value: StaticColorScaleSet) -> Result<Self, Self::Error> {
-        fn to_color_scale(scale: StaticColorScale) -> Result<ColorScale, anyhow::Error> {
+        fn to_color_scale(scale: StaticColorScale) -> anyhow::Result<ColorScale> {
             scale
                 .into_iter()
                 .map(|color| Rgba::try_from(color).map(Hsla::from))

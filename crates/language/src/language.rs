@@ -24,9 +24,9 @@ pub mod buffer_tests;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexSet};
 use fs::Fs;
 use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -34,7 +34,7 @@ pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
-pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
+pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -64,8 +64,10 @@ use std::{
 use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{ContextProvider, RunnableRange};
-pub use text_diff::{DiffOptions, line_diff, text_diff, text_diff_with_options, unified_diff};
+pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
+pub use text_diff::{
+    DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
+};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
@@ -243,6 +245,10 @@ impl CachedLspAdapter {
         self.adapter.retain_old_diagnostic(previous_diagnostic, cx)
     }
 
+    pub fn underline_diagnostic(&self, diagnostic: &lsp::Diagnostic) -> bool {
+        self.adapter.underline_diagnostic(diagnostic)
+    }
+
     pub fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
         self.adapter.diagnostic_message_to_markdown(message)
     }
@@ -317,7 +323,6 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
-    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -368,9 +373,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 }
             }
 
-            if !binary_options.allow_binary_download {
-                return Err(anyhow!("downloading language servers disabled"));
-            }
+            anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
 
             if let Some(cached_binary) = cached_binary.as_ref() {
                 return Ok(cached_binary.clone());
@@ -468,6 +471,16 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// When processing new `lsp::PublishDiagnosticsParams` diagnostics, whether to retain previous one(s) or not.
     fn retain_old_diagnostic(&self, _previous_diagnostic: &Diagnostic, _cx: &App) -> bool {
         false
+    }
+
+    /// Whether to underline a given diagnostic or not, when rendering in the editor.
+    ///
+    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticTag
+    /// states that
+    /// > Clients are allowed to render diagnostics with this tag faded out instead of having an error squiggle.
+    /// for the unnecessary diagnostics, so do not underline them.
+    fn underline_diagnostic(&self, _diagnostic: &lsp::Diagnostic) -> bool {
+        true
     }
 
     /// Post-processes completions provided by the language server.
@@ -681,6 +694,10 @@ pub struct LanguageConfig {
     #[serde(default)]
     #[schemars(schema_with = "bracket_pair_config_json_schema")]
     pub brackets: BracketPairConfig,
+    /// If set to true, indicates the language uses significant whitespace/indentation
+    /// for syntax structure (like Python) rather than brackets/braces for code blocks.
+    #[serde(default)]
+    pub significant_indentation: bool,
     /// If set to true, auto indentation uses last non empty line to determine
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
@@ -748,6 +765,13 @@ pub struct LanguageConfig {
     /// A list of characters that Zed should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
+    /// A list of preferred debuggers for this language.
+    #[serde(default)]
+    pub debuggers: IndexSet<SharedString>,
+    /// Whether to treat documentation comment of this language differently by
+    /// auto adding prefix on new line, adjusting the indenting , etc.
+    #[serde(default)]
+    pub documentation: Option<DocumentationConfig>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -798,6 +822,19 @@ pub struct JsxTagAutoCloseConfig {
     pub erroneous_close_tag_name_node_name: Option<String>,
 }
 
+/// The configuration for documentation block for this language.
+#[derive(Clone, Deserialize, JsonSchema)]
+pub struct DocumentationConfig {
+    /// A start tag of documentation block.
+    pub start: Arc<str>,
+    /// A end tag of documentation block.
+    pub end: Arc<str>,
+    /// A character to add as a prefix when a new line is added to a documentation block.
+    pub prefix: Arc<str>,
+    /// A indent to add for prefix and end line upon new line.
+    pub tab_size: NonZeroU32,
+}
+
 /// Represents a language for the given range. Some languages (e.g. HTML)
 /// interleave several languages together, thus a single buffer might actually contain
 /// several nested scopes.
@@ -821,6 +858,8 @@ pub struct LanguageConfigOverride {
     pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
+    #[serde(default)]
+    pub prefer_label_for_snippet: Option<bool>,
 }
 
 #[derive(Clone, Deserialize, Debug, Serialize, JsonSchema)]
@@ -872,6 +911,9 @@ impl Default for LanguageConfig {
             hidden: false,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
+            debuggers: Default::default(),
+            significant_indentation: Default::default(),
+            documentation: None,
         }
     }
 }
@@ -1032,7 +1074,6 @@ pub struct Grammar {
     pub(crate) brackets_config: Option<BracketsConfig>,
     pub(crate) redactions_config: Option<RedactionConfig>,
     pub(crate) runnable_config: Option<RunnableConfig>,
-    pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) indents_config: Option<IndentConfig>,
     pub outline_config: Option<OutlineConfig>,
     pub text_object_config: Option<TextObjectConfig>,
@@ -1133,18 +1174,6 @@ struct RunnableConfig {
     pub extra_captures: Vec<RunnableCapture>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-enum DebugVariableCapture {
-    Named(SharedString),
-    Variable,
-}
-
-#[derive(Debug)]
-struct DebugVariablesConfig {
-    pub query: Query,
-    pub captures: Vec<DebugVariableCapture>,
-}
-
 struct OverrideConfig {
     query: Query,
     values: HashMap<u32, OverrideEntry>,
@@ -1205,7 +1234,6 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
-                    debug_variables_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     ts_language,
                     highlight_map: Default::default(),
@@ -1277,26 +1305,17 @@ impl Language {
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
         }
-        if let Some(query) = queries.debug_variables {
-            self = self
-                .with_debug_variables_query(query.as_ref())
-                .context("Error loading debug variable query")?;
-        }
         Ok(self)
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_runnable_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
         let mut extra_captures = Vec::with_capacity(query.capture_names().len());
@@ -1319,9 +1338,7 @@ impl Language {
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -1358,9 +1375,7 @@ impl Language {
     }
 
     pub fn with_text_object_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
 
         let mut text_objects_by_capture_ix = Vec::new();
@@ -1377,29 +1392,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
-        let query = Query::new(&grammar.ts_language, source)?;
-
-        let mut captures = Vec::new();
-        for name in query.capture_names() {
-            captures.push(if *name == "debug_variable" {
-                DebugVariableCapture::Variable
-            } else {
-                DebugVariableCapture::Named(name.to_string().into())
-            });
-        }
-        grammar.debug_variables_config = Some(DebugVariablesConfig { query, captures });
-
-        Ok(self)
-    }
-
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -1430,9 +1424,7 @@ impl Language {
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
@@ -1467,9 +1459,7 @@ impl Language {
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
@@ -1497,9 +1487,7 @@ impl Language {
     }
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut injection_language_capture_ix = None;
@@ -1517,18 +1505,14 @@ impl Language {
         language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
             (None, Some(ix)) => Some(ix),
             (Some(_), Some(_)) => {
-                return Err(anyhow!(
-                    "both language and injection.language captures are present"
-                ));
+                anyhow::bail!("both language and injection.language captures are present");
             }
             _ => language_capture_ix,
         };
         content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
             (None, Some(ix)) => Some(ix),
             (Some(_), Some(_)) => {
-                return Err(anyhow!(
-                    "both content and injection.content captures are present"
-                ));
+                anyhow::bail!("both content and injection.content captures are present")
             }
             _ => content_capture_ix,
         };
@@ -1562,10 +1546,7 @@ impl Language {
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
         let query = {
-            let grammar = self
-                .grammar
-                .as_ref()
-                .ok_or_else(|| anyhow!("no grammar for language"))?;
+            let grammar = self.grammar.as_ref().context("no grammar for language")?;
             Query::new(&grammar.ts_language, source)?
         };
 
@@ -1616,10 +1597,10 @@ impl Language {
                 .values()
                 .any(|entry| entry.name == *referenced_name)
             {
-                Err(anyhow!(
+                anyhow::bail!(
                     "language {:?} has overrides in config not in query: {referenced_name:?}",
                     self.config.name
-                ))?;
+                );
             }
         }
 
@@ -1642,9 +1623,7 @@ impl Language {
 
         self.config.brackets.disabled_scopes_by_bracket_ix.clear();
 
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         grammar.override_config = Some(OverrideConfig {
             query,
             values: override_configs_by_id,
@@ -1653,9 +1632,7 @@ impl Language {
     }
 
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
         let mut redaction_capture_ix = None;
@@ -1817,6 +1794,26 @@ impl LanguageScope {
         )
     }
 
+    /// Returns whether to prefer snippet `label` over `new_text` to replace text when
+    /// completion is accepted.
+    ///
+    /// In cases like when cursor is in string or renaming existing function,
+    /// you don't want to expand function signature instead just want function name
+    /// to replace existing one.
+    pub fn prefers_label_for_snippet_in_completion(&self) -> bool {
+        self.config_override()
+            .and_then(|o| o.prefer_label_for_snippet)
+            .unwrap_or(false)
+    }
+
+    /// Returns config to documentation block for this language.
+    ///
+    /// Used for documentation styles that require a leading character on each line,
+    /// such as the asterisk in JSDoc, Javadoc, etc.
+    pub fn documentation(&self) -> Option<&DocumentationConfig> {
+        self.language.config.documentation.as_ref()
+    }
+
     /// Returns a list of bracket pairs for a given language with an additional
     /// piece of information about whether the particular bracket pair is currently active for a given language.
     pub fn brackets(&self) -> impl Iterator<Item = (&BracketPair, bool)> {
@@ -1848,9 +1845,9 @@ impl LanguageScope {
     pub fn language_allowed(&self, name: &LanguageServerName) -> bool {
         let config = &self.language.config;
         let opt_in_servers = &config.scope_opt_in_language_servers;
-        if opt_in_servers.iter().any(|o| *o == *name) {
+        if opt_in_servers.contains(name) {
             if let Some(over) = self.config_override() {
-                over.opt_into_language_servers.iter().any(|o| *o == *name)
+                over.opt_into_language_servers.contains(name)
             } else {
                 false
             }
@@ -1948,6 +1945,9 @@ impl CodeLabel {
                 Kind::ENUM => grammar
                     .highlight_id_for_name("enum")
                     .or_else(|| grammar.highlight_id_for_name("type")),
+                Kind::ENUM_MEMBER => grammar
+                    .highlight_id_for_name("variant")
+                    .or_else(|| grammar.highlight_id_for_name("property")),
                 Kind::FIELD => grammar.highlight_id_for_name("property"),
                 Kind::FUNCTION => grammar.highlight_id_for_name("function"),
                 Kind::INTERFACE => grammar.highlight_id_for_name("type"),
@@ -2176,18 +2176,16 @@ pub fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
 }
 
 pub fn range_to_lsp(range: Range<PointUtf16>) -> Result<lsp::Range> {
-    if range.start > range.end {
-        Err(anyhow!(
-            "Inverted range provided to an LSP request: {:?}-{:?}",
-            range.start,
-            range.end
-        ))
-    } else {
-        Ok(lsp::Range {
-            start: point_to_lsp(range.start),
-            end: point_to_lsp(range.end),
-        })
-    }
+    anyhow::ensure!(
+        range.start <= range.end,
+        "Inverted range provided to an LSP request: {:?}-{:?}",
+        range.start,
+        range.end
+    );
+    Ok(lsp::Range {
+        start: point_to_lsp(range.start),
+        end: point_to_lsp(range.end),
+    })
 }
 
 pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {

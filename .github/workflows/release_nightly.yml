@@ -20,7 +20,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
-      - test
+      - macOS
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -40,7 +40,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
-      - test
+      - macOS
     needs: style
     steps:
       - name: Checkout repo
@@ -68,7 +68,6 @@ jobs:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -104,7 +103,6 @@ jobs:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -144,7 +142,6 @@ jobs:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -169,6 +166,55 @@ jobs:
 
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
+
+  freebsd:
+    timeout-minutes: 60
+    if: github.repository_owner == 'zed-industries'
+    runs-on: github-8vcpu-ubuntu-2404
+    needs: tests
+    env:
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+    name: Build Zed on FreeBSD
+    # env:
+    #   MYTOKEN : ${{ secrets.MYTOKEN }}
+    #   MYTOKEN2: "value2"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build FreeBSD remote-server
+        id: freebsd-build
+        uses: vmactions/freebsd-vm@c3ae29a132c8ef1924775414107a97cac042aad5 # v1.2.0
+        with:
+          # envs: "MYTOKEN MYTOKEN2"
+          usesh: true
+          release: 13.5
+          copyback: true
+          prepare: |
+            pkg install -y \
+              bash curl jq git \
+              rustup-init cmake-core llvm-devel-lite pkgconf protobuf # ibx11 alsa-lib rust-bindgen-cli
+          run: |
+            freebsd-version
+            sysctl hw.model
+            sysctl hw.ncpu
+            sysctl hw.physmem
+            sysctl hw.usermem
+            git config --global --add safe.directory /home/runner/work/zed/zed
+            rustup-init --profile minimal --default-toolchain none -y
+            . "$HOME/.cargo/env"
+            ./script/bundle-freebsd
+            mkdir -p out/
+            mv "target/zed-remote-server-freebsd-x86_64.gz" out/
+            rm -rf target/
+            cargo clean
+
+      - name: Upload Zed Nightly
+        run: script/upload-nightly freebsd
+
+  bundle-nix:
+    name: Build and cache Nix package
+    needs: tests
+    uses: ./.github/workflows/nix.yml
 
   update-nightly-tag:
     name: Update nightly tag

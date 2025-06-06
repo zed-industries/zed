@@ -40,6 +40,6 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 proto = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

@@ -1010,7 +1010,6 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     workspace_b.update_in(cx_b, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
             pane.close_inactive_items(&Default::default(), window, cx)
-                .unwrap()
                 .detach();
         });
     });
@@ -2066,7 +2065,7 @@ async fn share_workspace(
     workspace: &Entity<Workspace>,
     cx: &mut VisualTestContext,
 ) -> anyhow::Result<u64> {
-    let project = workspace.update(cx, |workspace, _| workspace.project().clone());
+    let project = workspace.read_with(cx, |workspace, _| workspace.project().clone());
     cx.read(ActiveCall::global)
         .update(cx, |call, cx| call.share_project(project, cx))
         .await

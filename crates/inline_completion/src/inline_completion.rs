@@ -1,7 +1,7 @@
 use std::ops::Range;
 use std::str::FromStr as _;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use gpui::http_client::http::{HeaderMap, HeaderValue};
 use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
@@ -69,19 +69,26 @@ impl EditPredictionUsage {
     pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
         let limit = headers
             .get(EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME)
-            .ok_or_else(|| {
-                anyhow!("missing {EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME:?} header")
+            .with_context(|| {
+                format!("missing {EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME:?} header")
             })?;
         let limit = UsageLimit::from_str(limit.to_str()?)?;
 
         let amount = headers
             .get(EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME)
-            .ok_or_else(|| {
-                anyhow!("missing {EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME:?} header")
+            .with_context(|| {
+                format!("missing {EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME:?} header")
             })?;
         let amount = amount.to_str()?.parse::<i32>()?;
 
         Ok(Self { limit, amount })
+    }
+
+    pub fn over_limit(&self) -> bool {
+        match self.limit {
+            UsageLimit::Limited(limit) => self.amount >= limit,
+            UsageLimit::Unlimited => false,
+        }
     }
 }
 

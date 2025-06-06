@@ -1,10 +1,10 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::AnyWindowHandle;
 use gpui::{App, AppContext, Entity, Task};
-use language_model::LanguageModelRequestMessage;
-use language_model::LanguageModelToolSchemaFormat;
+use language_model::LanguageModel;
+use language_model::{LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,6 +48,10 @@ impl Tool for CopyPathTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./copy_path_tool/description.md").into()
     }
@@ -74,9 +78,10 @@ impl Tool for CopyPathTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -106,18 +111,13 @@ impl Tool for CopyPathTool {
         });
 
         cx.background_spawn(async move {
-            match copy_task.await {
-                Ok(_) => Ok(format!(
-                    "Copied {} to {}",
+            let _ = copy_task.await.with_context(|| {
+                format!(
+                    "Copying {} to {}",
                     input.source_path, input.destination_path
-                )),
-                Err(err) => Err(anyhow!(
-                    "Failed to copy {} to {}: {}",
-                    input.source_path,
-                    input.destination_path,
-                    err
-                )),
-            }
+                )
+            })?;
+            Ok(format!("Copied {} to {}", input.source_path, input.destination_path).into())
         })
         .into()
     }

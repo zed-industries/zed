@@ -18,12 +18,12 @@ use futures::{
     select, select_biased,
 };
 use gpui::{
-    App, AppContext as _, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Global,
-    SemanticVersion, Task, WeakEntity,
+    App, AppContext as _, AsyncApp, BackgroundExecutor, BorrowAppContext, Context, Entity,
+    EventEmitter, Global, SemanticVersion, Task, WeakEntity,
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
-use paths;
+
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
@@ -100,7 +100,7 @@ macro_rules! shell_script {
 fn parse_port_number(port_str: &str) -> Result<u16> {
     port_str
         .parse()
-        .map_err(|e| anyhow!("Invalid port number: {}: {}", port_str, e))
+        .with_context(|| format!("parsing port number: {port_str}"))
 }
 
 fn parse_port_forward_spec(spec: &str) -> Result<SshPortForwardOption> {
@@ -151,9 +151,7 @@ impl SshConnectionOptions {
             "-w",
         ];
 
-        let mut tokens = shlex::split(input)
-            .ok_or_else(|| anyhow!("invalid input"))?
-            .into_iter();
+        let mut tokens = shlex::split(input).context("invalid input")?.into_iter();
 
         'outer: while let Some(arg) = tokens.next() {
             if ALLOWED_OPTS.contains(&(&arg as &str)) {
@@ -369,14 +367,12 @@ impl SshSocket {
 
     async fn run_command(&self, program: &str, args: &[&str]) -> Result<String> {
         let output = self.ssh_command(program, args).output().await?;
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(anyhow!(
-                "failed to run command: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to run command: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
@@ -683,6 +679,7 @@ impl SshRemoteClient {
     pub fn shutdown_processes<T: RequestMessage>(
         &self,
         shutdown_request: Option<T>,
+        executor: BackgroundExecutor,
     ) -> Option<impl Future<Output = ()> + use<T>> {
         let state = self.state.lock().take()?;
         log::info!("shutting down ssh processes");
@@ -705,7 +702,7 @@ impl SshRemoteClient {
                 // We wait 50ms instead of waiting for a response, because
                 // waiting for a response would require us to wait on the main thread
                 // which we want to avoid in an `on_app_quit` callback.
-                smol::Timer::after(Duration::from_millis(50)).await;
+                executor.timer(Duration::from_millis(50)).await;
             }
 
             // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
@@ -726,13 +723,13 @@ impl SshRemoteClient {
             .map(|state| state.can_reconnect())
             .unwrap_or(false);
         if !can_reconnect {
+            log::info!("aborting reconnect, because not in state that allows reconnecting");
             let error = if let Some(state) = lock.as_ref() {
                 format!("invalid state, cannot reconnect while in state {state}")
             } else {
                 "no state set".to_string()
             };
-            log::info!("aborting reconnect, because not in state that allows reconnecting");
-            return Err(anyhow!(error));
+            anyhow::bail!(error);
         }
 
         let state = lock.take().unwrap();
@@ -904,7 +901,7 @@ impl SshRemoteClient {
         mut connection_activity_rx: mpsc::Receiver<()>,
         cx: &mut AsyncApp,
     ) -> Task<Result<()>> {
-        let Ok(client) = this.update(cx, |this, _| this.client.clone()) else {
+        let Ok(client) = this.read_with(cx, |this, _| this.client.clone()) else {
             return Task::ready(Err(anyhow!("SshRemoteClient lost")));
         };
 
@@ -924,7 +921,7 @@ impl SshRemoteClient {
 
                             if missed_heartbeats != 0 {
                                 missed_heartbeats = 0;
-                                this.update(cx, |this, mut cx| {
+                                let _ =this.update(cx, |this, mut cx| {
                                     this.handle_heartbeat_result(missed_heartbeats, &mut cx)
                                 })?;
                             }
@@ -1362,14 +1359,13 @@ impl RemoteConnection for SshRemoteConnection {
         cx.background_spawn(async move {
             let output = output.await?;
 
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "failed to upload directory {} -> {}: {}",
-                    src_path.display(),
-                    dest_path.display(),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to upload directory {} -> {}: {}",
+                src_path.display(),
+                dest_path.display(),
+                String::from_utf8_lossy(&output.stderr)
+            );
 
             Ok(())
         })
@@ -1445,7 +1441,7 @@ impl SshRemoteConnection {
         _delegate: Arc<dyn SshClientDelegate>,
         _cx: &mut AsyncApp,
     ) -> Result<Self> {
-        Err(anyhow!("ssh is not supported on this platform"))
+        anyhow::bail!("ssh is not supported on this platform");
     }
 
     #[cfg(unix)]
@@ -1505,10 +1501,10 @@ impl SshRemoteConnection {
                 match result {
                     AskPassResult::CancelledByUser => {
                         master_process.kill().ok();
-                        Err(anyhow!("SSH connection canceled"))?
+                        anyhow::bail!("SSH connection canceled")
                     }
                     AskPassResult::Timedout => {
-                        Err(anyhow!("connecting to host timed out"))?
+                        anyhow::bail!("connecting to host timed out")
                     }
                 }
             }
@@ -1530,7 +1526,7 @@ impl SshRemoteConnection {
                 "failed to connect: {}",
                 String::from_utf8_lossy(&output).trim()
             );
-            Err(anyhow!(error_message))?;
+            anyhow::bail!(error_message);
         }
 
         drop(askpass);
@@ -1565,15 +1561,15 @@ impl SshRemoteConnection {
     async fn platform(&self) -> Result<SshPlatform> {
         let uname = self.socket.run_command("sh", &["-c", "uname -sm"]).await?;
         let Some((os, arch)) = uname.split_once(" ") else {
-            Err(anyhow!("unknown uname: {uname:?}"))?
+            anyhow::bail!("unknown uname: {uname:?}")
         };
 
         let os = match os.trim() {
             "Darwin" => "macos",
             "Linux" => "linux",
-            _ => Err(anyhow!(
+            _ => anyhow::bail!(
                 "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
-            ))?,
+            ),
         };
         // exclude armv5,6,7 as they are 32-bit.
         let arch = if arch.starts_with("armv8")
@@ -1585,9 +1581,9 @@ impl SshRemoteConnection {
         } else if arch.starts_with("x86") {
             "x86_64"
         } else {
-            Err(anyhow!(
+            anyhow::bail!(
                 "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
-            ))?
+            )
         };
 
         Ok(SshPlatform { os, arch })
@@ -1706,7 +1702,7 @@ impl SshRemoteConnection {
     ) -> Result<PathBuf> {
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
-                let commit = commit.map(|s| s.0.to_string()).unwrap_or_default();
+                let commit = commit.map(|s| s.full()).unwrap_or_default();
 
                 format!("{}-{}", version, commit)
             }
@@ -1719,20 +1715,21 @@ impl SshRemoteConnection {
             version_str
         );
         let dst_path = paths::remote_server_dir_relative().join(binary_name);
-        let tmp_path_gz = PathBuf::from(format!(
-            "{}-download-{}.gz",
-            dst_path.to_string_lossy(),
-            std::process::id()
-        ));
 
+        let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_BUILD_REMOTE_SERVER").is_ok() {
+        if let Some(build_remote_server) = build_remote_server {
             let src_path = self
-                .build_local(self.platform().await?, delegate, cx)
+                .build_local(build_remote_server, self.platform().await?, delegate, cx)
                 .await?;
-            self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+            let tmp_path = paths::remote_server_dir_relative().join(format!(
+                "download-{}-{}",
+                std::process::id(),
+                src_path.file_name().unwrap().to_string_lossy()
+            ));
+            self.upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
                 .await?;
-            self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+            self.extract_server_binary(&dst_path, &tmp_path, delegate, cx)
                 .await?;
             return Ok(dst_path);
         }
@@ -1759,6 +1756,11 @@ impl SshRemoteConnection {
 
         let platform = self.platform().await?;
 
+        let tmp_path_gz = PathBuf::from(format!(
+            "{}-download-{}.gz",
+            dst_path.to_string_lossy(),
+            std::process::id()
+        ));
         if !self.socket.connection_options.upload_binary_over_ssh {
             if let Some((url, body)) = delegate
                 .get_download_params(platform, release_channel, wanted_version, cx)
@@ -1899,20 +1901,27 @@ impl SshRemoteConnection {
     async fn extract_server_binary(
         &self,
         dst_path: &Path,
-        tmp_path_gz: &Path,
+        tmp_path: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
-        let script = shell_script!(
-            "gunzip -f {tmp_path_gz} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
-            tmp_path_gz = &tmp_path_gz.to_string_lossy(),
-            tmp_path = &tmp_path_gz.to_string_lossy().strip_suffix(".gz").unwrap(),
-            server_mode = &format!("{:o}", server_mode),
-            dst_path = &dst_path.to_string_lossy()
-        );
+        let orig_tmp_path = tmp_path.to_string_lossy();
+        let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
+            shell_script!(
+                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
+                server_mode = &format!("{:o}", server_mode),
+                dst_path = &dst_path.to_string_lossy()
+            )
+        } else {
+            shell_script!(
+                "chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",
+                server_mode = &format!("{:o}", server_mode),
+                dst_path = &dst_path.to_string_lossy()
+            )
+        };
         self.socket.run_command("sh", &["-c", &script]).await?;
         Ok(())
     }
@@ -1939,21 +1948,20 @@ impl SshRemoteConnection {
             .output()
             .await?;
 
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "failed to upload file {} -> {}: {}",
-                src_path.display(),
-                dest_path.display(),
-                String::from_utf8_lossy(&output.stderr)
-            ))
-        }
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to upload file {} -> {}: {}",
+            src_path.display(),
+            dest_path.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
     }
 
     #[cfg(debug_assertions)]
     async fn build_local(
         &self,
+        build_remote_server: String,
         platform: SshPlatform,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
@@ -1966,9 +1974,10 @@ impl SshRemoteConnection {
                 .stderr(Stdio::inherit())
                 .output()
                 .await?;
-            if !output.status.success() {
-                Err(anyhow!("Failed to run command: {:?}", command))?;
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "Failed to run command: {command:?}"
+            );
             Ok(())
         }
 
@@ -2003,57 +2012,81 @@ impl SshRemoteConnection {
         };
         smol::fs::create_dir_all("target/remote_server").await?;
 
-        delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
-        log::info!("installing cross");
-        run_cmd(Command::new("cargo").args([
-            "install",
-            "cross",
-            "--git",
-            "https://github.com/cross-rs/cross",
-        ]))
-        .await?;
+        if build_remote_server.contains("zigbuild") {
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with Zig"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with Zig");
+            run_cmd(Command::new("cargo").args([
+                "zigbuild",
+                "--package",
+                "remote_server",
+                "--features",
+                "debug-embed",
+                "--target-dir",
+                "target/remote_server",
+                "--target",
+                &triple,
+            ]))
+            .await?;
+        } else {
+            delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+            log::info!("installing cross");
+            run_cmd(Command::new("cargo").args([
+                "install",
+                "cross",
+                "--git",
+                "https://github.com/cross-rs/cross",
+            ]))
+            .await?;
 
-        delegate.set_status(
-            Some(&format!(
-                "Building remote server binary from source for {} with Docker",
-                &triple
-            )),
-            cx,
-        );
-        log::info!("building remote server binary from source for {}", &triple);
-        run_cmd(
-            Command::new("cross")
-                .args([
-                    "build",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ])
-                .env(
-                    "CROSS_CONTAINER_OPTS",
-                    "--mount type=bind,src=./target,dst=/app/target",
-                ),
-        )
-        .await?;
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote server binary from source for {} with Docker",
+                    &triple
+                )),
+                cx,
+            );
+            log::info!("building remote server binary from source for {}", &triple);
+            run_cmd(
+                Command::new("cross")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env(
+                        "CROSS_CONTAINER_OPTS",
+                        "--mount type=bind,src=./target,dst=/app/target",
+                    ),
+            )
+            .await?;
+        }
 
         delegate.set_status(Some("Compressing binary"), cx);
 
-        run_cmd(Command::new("gzip").args([
-            "-9",
-            "-f",
-            &format!("target/remote_server/{}/debug/remote_server", triple),
-        ]))
-        .await?;
+        let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
+        if !build_remote_server.contains("nocompress") {
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                &format!("target/remote_server/{}/debug/remote_server", triple),
+            ]))
+            .await?;
 
-        let path = std::env::current_dir()?.join(format!(
-            "target/remote_server/{}/debug/remote_server.gz",
-            triple
-        ));
+            path = std::env::current_dir()?.join(format!(
+                "target/remote_server/{triple}/debug/remote_server.gz"
+            ));
+        }
 
         return Ok(path);
     }
@@ -2241,8 +2274,7 @@ impl ChannelClient {
         async move {
             let response = response.await?;
             log::debug!("ssh request finish. name:{}", T::NAME);
-            T::Response::from_envelope(response)
-                .ok_or_else(|| anyhow!("received a response of the wrong type"))
+            T::Response::from_envelope(response).context("received a response of the wrong type")
         }
     }
 
@@ -2262,7 +2294,7 @@ impl ChannelClient {
             },
             async {
                 smol::Timer::after(timeout).await;
-                Err(anyhow!("Timeout detected"))
+                anyhow::bail!("Timeout detected")
             },
         )
         .await
@@ -2276,7 +2308,7 @@ impl ChannelClient {
             },
             async {
                 smol::Timer::after(timeout).await;
-                Err(anyhow!("Timeout detected"))
+                anyhow::bail!("Timeout detected")
             },
         )
         .await
@@ -2306,8 +2338,8 @@ impl ChannelClient {
         };
         async move {
             if let Err(error) = &result {
-                log::error!("failed to send message: {}", error);
-                return Err(anyhow!("failed to send message: {}", error));
+                log::error!("failed to send message: {error}");
+                anyhow::bail!("failed to send message: {error}");
             }
 
             let response = rx.await.context("connection lost")?.0;

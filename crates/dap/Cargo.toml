@@ -36,7 +36,6 @@ gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
 log.workspace = true
-lsp-types.workspace = true
 node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
@@ -48,13 +47,16 @@ settings.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 task.workspace = true
+telemetry.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
 async-pipe.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"] }
+tree-sitter.workspace = true
+tree-sitter-go.workspace = true
 util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

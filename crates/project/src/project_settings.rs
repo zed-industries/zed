@@ -36,6 +36,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -104,7 +105,7 @@ pub struct NodeBinarySettings {
     pub npm_path: Option<String>,
     /// If enabled, Zed will download its own copy of Node.
     #[serde(default)]
-    pub ignore_system_version: Option<bool>,
+    pub ignore_system_version: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -117,18 +118,22 @@ pub enum DirenvSettings {
     Direct,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct DiagnosticsSettings {
-    /// Whether or not to include warning diagnostics
-    #[serde(default = "true_value")]
+    /// Whether to show the project diagnostics button in the status bar.
+    pub button: bool,
+
+    /// Whether or not to include warning diagnostics.
     pub include_warnings: bool,
 
-    /// Settings for showing inline diagnostics
-    #[serde(default)]
+    /// Settings for using LSP pull diagnostics mechanism in Zed.
+    pub lsp_pull_diagnostics: LspPullDiagnosticsSettings,
+
+    /// Settings for showing inline diagnostics.
     pub inline: InlineDiagnosticsSettings,
 
     /// Configuration, related to Rust language diagnostics.
-    #[serde(default)]
     pub cargo: Option<CargoDiagnosticsSettings>,
 }
 
@@ -141,17 +146,37 @@ impl DiagnosticsSettings {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct LspPullDiagnosticsSettings {
+    /// Whether to pull for diagnostics or not.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Minimum time to wait before pulling diagnostics from the language server(s).
+    /// 0 turns the debounce off.
+    ///
+    /// Default: 50
+    #[serde(default = "default_lsp_diagnostics_pull_debounce_ms")]
+    pub debounce_ms: u64,
+}
+
+fn default_lsp_diagnostics_pull_debounce_ms() -> u64 {
+    50
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct InlineDiagnosticsSettings {
     /// Whether or not to show inline diagnostics
     ///
     /// Default: false
-    #[serde(default)]
     pub enabled: bool,
     /// Whether to only show the inline diagnostics after a delay after the
     /// last editor event.
     ///
     /// Default: 150
-    #[serde(default = "default_inline_diagnostics_debounce_ms")]
+    #[serde(default = "default_inline_diagnostics_update_debounce_ms")]
     pub update_debounce_ms: u64,
     /// The amount of padding between the end of the source line and the start
     /// of the inline diagnostic in units of columns.
@@ -164,11 +189,50 @@ pub struct InlineDiagnosticsSettings {
     /// longer than this value will still push diagnostics further to the right.
     ///
     /// Default: 0
-    #[serde(default)]
     pub min_column: u32,
 
-    #[serde(default)]
     pub max_severity: Option<DiagnosticSeverity>,
+}
+
+fn default_inline_diagnostics_update_debounce_ms() -> u64 {
+    150
+}
+
+fn default_inline_diagnostics_padding() -> u32 {
+    4
+}
+
+impl Default for DiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            button: true,
+            include_warnings: true,
+            lsp_pull_diagnostics: LspPullDiagnosticsSettings::default(),
+            inline: InlineDiagnosticsSettings::default(),
+            cargo: None,
+        }
+    }
+}
+
+impl Default for LspPullDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            debounce_ms: default_lsp_diagnostics_pull_debounce_ms(),
+        }
+    }
+}
+
+impl Default for InlineDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            update_debounce_ms: default_inline_diagnostics_update_debounce_ms(),
+            padding: default_inline_diagnostics_padding(),
+            min_column: 0,
+            max_severity: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -181,33 +245,29 @@ pub struct CargoDiagnosticsSettings {
     pub fetch_cargo_diagnostics: bool,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
+    // No diagnostics are shown.
+    Off,
     Error,
     Warning,
     Info,
     Hint,
 }
 
-impl Default for InlineDiagnosticsSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            update_debounce_ms: default_inline_diagnostics_debounce_ms(),
-            padding: default_inline_diagnostics_padding(),
-            min_column: 0,
-            max_severity: None,
+impl DiagnosticSeverity {
+    pub fn into_lsp(self) -> Option<lsp::DiagnosticSeverity> {
+        match self {
+            DiagnosticSeverity::Off => None,
+            DiagnosticSeverity::Error => Some(lsp::DiagnosticSeverity::ERROR),
+            DiagnosticSeverity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
+            DiagnosticSeverity::Info => Some(lsp::DiagnosticSeverity::INFORMATION),
+            DiagnosticSeverity::Hint => Some(lsp::DiagnosticSeverity::HINT),
         }
     }
-}
-
-fn default_inline_diagnostics_debounce_ms() -> u64 {
-    150
-}
-
-fn default_inline_diagnostics_padding() -> u32 {
-    4
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -288,7 +348,7 @@ pub struct InlineBlameSettings {
     /// the currently focused line.
     ///
     /// Default: true
-    #[serde(default = "true_value")]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Whether to only show the inline blame information
     /// after a delay once the cursor stops moving.
@@ -304,10 +364,6 @@ pub struct InlineBlameSettings {
     /// Default: false
     #[serde(default)]
     pub show_commit_summary: bool,
-}
-
-const fn true_value() -> bool {
-    true
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -889,7 +945,7 @@ impl SettingsObserver {
         let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
         let weak_entry = cx.weak_entity();
         cx.spawn(async move |settings_observer, cx| {
-            let Ok(task_store) = settings_observer.update(cx, |settings_observer, _| {
+            let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
                 settings_observer.task_store.clone()
             }) else {
                 return;

@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use assistant_context_editor::AssistantContext;
 use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
@@ -18,11 +19,11 @@ use crate::context::{AgentContextHandle, ContextKind};
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::ui::{AddedContext, ContextPill};
 use crate::{
-    AcceptSuggestedContext, AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
-    RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
+    AcceptSuggestedContext, AgentPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
+    ModelUsageContext, RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
 };
 
 pub struct ContextStrip {
@@ -36,6 +37,7 @@ pub struct ContextStrip {
     _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
     children_bounds: Option<Vec<Bounds<Pixels>>>,
+    model_usage_context: ModelUsageContext,
 }
 
 impl ContextStrip {
@@ -43,8 +45,10 @@ impl ContextStrip {
         context_store: Entity<ContextStore>,
         workspace: WeakEntity<Workspace>,
         thread_store: Option<WeakEntity<ThreadStore>>,
+        text_thread_store: Option<WeakEntity<TextThreadStore>>,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
+        model_usage_context: ModelUsageContext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -52,6 +56,7 @@ impl ContextStrip {
             ContextPicker::new(
                 workspace.clone(),
                 thread_store.clone(),
+                text_thread_store,
                 context_store.downgrade(),
                 window,
                 cx,
@@ -78,7 +83,14 @@ impl ContextStrip {
             _subscriptions: subscriptions,
             focused_index: None,
             children_bounds: None,
+            model_usage_context,
         }
+    }
+
+    /// Whether or not the context strip has items to display
+    pub fn has_context_items(&self, cx: &App) -> bool {
+        self.context_store.read(cx).context().next().is_some()
+            || self.suggested_context(cx).is_some()
     }
 
     fn added_contexts(&self, cx: &App) -> Vec<AddedContext> {
@@ -89,11 +101,20 @@ impl ContextStrip {
                 .as_ref()
                 .and_then(|thread_store| thread_store.upgrade())
                 .and_then(|thread_store| thread_store.read(cx).prompt_store().as_ref());
+
+            let current_model = self.model_usage_context.language_model(cx);
+
             self.context_store
                 .read(cx)
                 .context()
                 .flat_map(|context| {
-                    AddedContext::new_pending(context.clone(), prompt_store, project, cx)
+                    AddedContext::new_pending(
+                        context.clone(),
+                        prompt_store,
+                        project,
+                        current_model.as_ref(),
+                        cx,
+                    )
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -101,14 +122,14 @@ impl ContextStrip {
         }
     }
 
-    fn suggested_context(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_context(&self, cx: &App) -> Option<SuggestedContext> {
         match self.suggest_context_kind {
             SuggestContextKind::File => self.suggested_file(cx),
             SuggestContextKind::Thread => self.suggested_thread(cx),
         }
     }
 
-    fn suggested_file(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_file(&self, cx: &App) -> Option<SuggestedContext> {
         let workspace = self.workspace.upgrade()?;
         let active_item = workspace.read(cx).active_item(cx)?;
 
@@ -135,33 +156,48 @@ impl ContextStrip {
         })
     }
 
-    fn suggested_thread(&self, cx: &Context<Self>) -> Option<SuggestedContext> {
+    fn suggested_thread(&self, cx: &App) -> Option<SuggestedContext> {
         if !self.context_picker.read(cx).allow_threads() {
             return None;
         }
 
         let workspace = self.workspace.upgrade()?;
-        let active_thread = workspace
-            .read(cx)
-            .panel::<AssistantPanel>(cx)?
-            .read(cx)
-            .active_thread(cx);
-        let weak_active_thread = active_thread.downgrade();
+        let panel = workspace.read(cx).panel::<AgentPanel>(cx)?.read(cx);
 
-        let active_thread = active_thread.read(cx);
+        if let Some(active_thread) = panel.active_thread() {
+            let weak_active_thread = active_thread.downgrade();
 
-        if self
-            .context_store
-            .read(cx)
-            .includes_thread(active_thread.id())
-        {
-            return None;
+            let active_thread = active_thread.read(cx);
+
+            if self
+                .context_store
+                .read(cx)
+                .includes_thread(active_thread.id())
+            {
+                return None;
+            }
+
+            Some(SuggestedContext::Thread {
+                name: active_thread.summary().or_default(),
+                thread: weak_active_thread,
+            })
+        } else if let Some(active_context_editor) = panel.active_context_editor() {
+            let context = active_context_editor.read(cx).context();
+            let weak_context = context.downgrade();
+            let context = context.read(cx);
+            let path = context.path()?;
+
+            if self.context_store.read(cx).includes_text_thread(path) {
+                return None;
+            }
+
+            Some(SuggestedContext::TextThread {
+                name: context.summary().or_default(),
+                context: weak_context,
+            })
+        } else {
+            None
         }
-
-        Some(SuggestedContext::Thread {
-            name: active_thread.summary_or_default(),
-            thread: weak_active_thread,
-        })
     }
 
     fn handle_context_picker_event(
@@ -402,12 +438,25 @@ impl Render for ContextStrip {
             })
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |window, cx| {
-                        context_picker.update(cx, |this, cx| {
-                            this.init(window, cx);
-                        });
+                    .menu({
+                        let context_picker = context_picker.clone();
+                        move |window, cx| {
+                            context_picker.update(cx, |this, cx| {
+                                this.init(window, cx);
+                            });
 
-                        Some(context_picker.clone())
+                            Some(context_picker.clone())
+                        }
+                    })
+                    .on_open({
+                        let context_picker = context_picker.downgrade();
+                        Rc::new(move |window, cx| {
+                            context_picker
+                                .update(cx, |context_picker, cx| {
+                                    context_picker.select_first(window, cx);
+                                })
+                                .ok();
+                        })
                     })
                     .trigger_with_tooltip(
                         IconButton::new("add-context", IconName::Plus)
@@ -538,6 +587,10 @@ pub enum SuggestedContext {
         name: SharedString,
         thread: WeakEntity<Thread>,
     },
+    TextThread {
+        name: SharedString,
+        context: WeakEntity<AssistantContext>,
+    },
 }
 
 impl SuggestedContext {
@@ -545,6 +598,7 @@ impl SuggestedContext {
         match self {
             Self::File { name, .. } => name,
             Self::Thread { name, .. } => name,
+            Self::TextThread { name, .. } => name,
         }
     }
 
@@ -552,6 +606,7 @@ impl SuggestedContext {
         match self {
             Self::File { icon_path, .. } => icon_path.clone(),
             Self::Thread { .. } => None,
+            Self::TextThread { .. } => None,
         }
     }
 
@@ -559,6 +614,7 @@ impl SuggestedContext {
         match self {
             Self::File { .. } => ContextKind::File,
             Self::Thread { .. } => ContextKind::Thread,
+            Self::TextThread { .. } => ContextKind::TextThread,
         }
     }
 }

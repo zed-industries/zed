@@ -41,7 +41,7 @@ impl RenderOnce for SplitButton {
             )
             .child(self.right)
             .bg(ElevationIndex::Surface.on_elevation_bg(cx))
-            .shadow(smallvec::smallvec![BoxShadow {
+            .shadow(vec![BoxShadow {
                 color: hsla(0.0, 0.0, 0.0, 0.16),
                 offset: point(px(0.), px(1.)),
                 blur_radius: px(0.),

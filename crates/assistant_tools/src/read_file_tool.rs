@@ -1,16 +1,21 @@
 use crate::schema::json_schema_for;
-use anyhow::{Result, anyhow};
-use assistant_tool::outline;
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{ToolResultContent, outline};
 use gpui::{AnyWindowHandle, App, Entity, Task};
+use project::{ImageItem, image_store};
 
+use assistant_tool::ToolResultOutput;
 use indoc::formatdoc;
 use itertools::Itertools;
 use language::{Anchor, Point};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
-use project::{AgentLocation, Project};
+use language_model::{
+    LanguageModel, LanguageModelImage, LanguageModelRequest, LanguageModelToolSchemaFormat,
+};
+use project::{AgentLocation, Project, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::sync::Arc;
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
@@ -54,6 +59,10 @@ impl Tool for ReadFileTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./read_file_tool/description.md").into()
     }
@@ -83,9 +92,10 @@ impl Tool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -97,27 +107,94 @@ impl Tool for ReadFileTool {
         let Some(project_path) = project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
         };
-        let Some(worktree) = project
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-        else {
-            return Task::ready(Err(anyhow!("Worktree not found for project path"))).into();
-        };
-        let exists = worktree.update(cx, |worktree, cx| {
-            worktree.file_exists(&project_path.path, cx)
-        });
+
+        // Error out if this path is either excluded or private in global settings
+        let global_settings = WorktreeSettings::get_global(cx);
+        if global_settings.is_path_excluded(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot read file because its path matches the global `file_scan_exclusions` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
+
+        if global_settings.is_path_private(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot read file because its path matches the global `private_files` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
+
+        // Error out if this path is either excluded or private in worktree settings
+        let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+        if worktree_settings.is_path_excluded(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot read file because its path matches the worktree `file_scan_exclusions` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
+
+        if worktree_settings.is_path_private(&project_path.path) {
+            return Task::ready(Err(anyhow!(
+                "Cannot read file because its path matches the worktree `private_files` setting: {}",
+                &input.path
+            )))
+            .into();
+        }
 
         let file_path = input.path.clone();
-        cx.spawn(async move |cx| {
-            if !exists.await? {
-                return Err(anyhow!("{} not found", file_path));
+
+        if image_store::is_image_file(&project, &project_path, cx) {
+            if !model.supports_images() {
+                return Task::ready(Err(anyhow!(
+                    "Attempted to read an image, but Zed doesn't currently support sending images to {}.",
+                    model.name().0
+                )))
+                .into();
             }
 
+            let task = cx.spawn(async move |cx| -> Result<ToolResultOutput> {
+                let image_entity: Entity<ImageItem> = cx
+                    .update(|cx| {
+                        project.update(cx, |project, cx| {
+                            project.open_image(project_path.clone(), cx)
+                        })
+                    })?
+                    .await?;
+
+                let image =
+                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image))?;
+
+                let language_model_image = cx
+                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .await
+                    .context("processing image")?;
+
+                Ok(ToolResultOutput {
+                    content: ToolResultContent::Image(language_model_image),
+                    output: None,
+                })
+            });
+
+            return task.into();
+        }
+
+        cx.spawn(async move |cx| {
             let buffer = cx
                 .update(|cx| {
                     project.update(cx, |project, cx| project.open_buffer(project_path, cx))
                 })?
                 .await?;
+            if buffer.read_with(cx, |buffer, _| {
+                buffer
+                    .file()
+                    .as_ref()
+                    .map_or(true, |file| !file.disk_state().exists())
+            })? {
+                anyhow::bail!("{file_path} not found");
+            }
 
             project.update(cx, |project, cx| {
                 project.set_agent_location(
@@ -145,9 +222,13 @@ impl Tool for ReadFileTool {
                     let lines = text.split('\n').skip(start_row as usize);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
-                        Itertools::intersperse(lines.take(count as usize), "\n").collect()
+                        Itertools::intersperse(lines.take(count as usize), "\n")
+                            .collect::<String>()
+                            .into()
                     } else {
-                        Itertools::intersperse(lines, "\n").collect()
+                        Itertools::intersperse(lines, "\n")
+                            .collect::<String>()
+                            .into()
                     }
                 })?;
 
@@ -180,19 +261,24 @@ impl Tool for ReadFileTool {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result)
+                    Ok(result.into())
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
-                    let outline = outline::file_outline(project, file_path, action_log, None, cx).await?;
+                    let outline =
+                        outline::file_outline(project, file_path, action_log, None, cx).await?;
                     Ok(formatdoc! {"
-                        This file was too big to read all at once. Here is an outline of its symbols:
+                        This file was too big to read all at once.
+
+                        Here is an outline of its symbols:
 
                         {outline}
 
-                        Using the line numbers in this outline, you can call this tool again while specifying
-                        the start_line and end_line fields to see the implementations of symbols in the outline."
-                    })
+                        Using the line numbers in this outline, you can call this tool again
+                        while specifying the start_line and end_line fields to see the
+                        implementations of symbols in the outline."
+                    }
+                    .into())
                 }
             }
         })
@@ -203,9 +289,10 @@ impl Tool for ReadFileTool {
 #[cfg(test)]
 mod test {
     use super::*;
-    use gpui::{AppContext, TestAppContext};
+    use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use language::{Language, LanguageConfig, LanguageMatcher};
-    use project::{FakeFs, Project};
+    use language_model::fake_provider::FakeLanguageModel;
+    use project::{FakeFs, Project, WorktreeSettings};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -215,16 +302,25 @@ mod test {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/root", json!({})).await;
+        fs.insert_tree(path!("/root"), json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
                     "path": "root/nonexistent_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -240,7 +336,7 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "small_file.txt": "This is a small file content"
             }),
@@ -248,17 +344,29 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
                     "path": "root/small_file.txt"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content");
+        assert_eq!(
+            result.unwrap().content.as_str(),
+            Some("This is a small file content")
+        );
     }
 
     #[gpui::test]
@@ -267,7 +375,7 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "large_file.rs": (0..1000).map(|i| format!("struct Test{} {{\n    a: u32,\n    b: usize,\n}}", i)).collect::<Vec<_>>().join("\n")
             }),
@@ -277,6 +385,7 @@ mod test {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(Arc::new(rust_lang()));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
 
         let result = cx
             .update(|cx| {
@@ -284,13 +393,22 @@ mod test {
                     "path": "root/large_file.rs"
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
         let content = result.unwrap();
+        let content = content.as_str().unwrap();
         assert_eq!(
-            content.lines().skip(2).take(6).collect::<Vec<_>>(),
+            content.lines().skip(4).take(6).collect::<Vec<_>>(),
             vec![
                 "struct Test0 [L1-4]",
                 " a [L2]",
@@ -308,7 +426,15 @@ mod test {
                     "offset": 1
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
@@ -324,8 +450,10 @@ mod test {
             .collect::<Vec<_>>();
         pretty_assertions::assert_eq!(
             content
+                .as_str()
+                .unwrap()
                 .lines()
-                .skip(2)
+                .skip(4)
                 .take(expected_content.len())
                 .collect::<Vec<_>>(),
             expected_content
@@ -338,7 +466,7 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "multiline.txt": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
             }),
@@ -346,6 +474,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
         let result = cx
             .update(|cx| {
                 let input = json!({
@@ -354,11 +483,22 @@ mod test {
                     "end_line": 4
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
+        assert_eq!(
+            result.unwrap().content.as_str(),
+            Some("Line 2\nLine 3\nLine 4")
+        );
     }
 
     #[gpui::test]
@@ -367,7 +507,7 @@ mod test {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "multiline.txt": "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
             }),
@@ -375,6 +515,7 @@ mod test {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
 
         // start_line of 0 should be treated as 1
         let result = cx
@@ -385,11 +526,19 @@ mod test {
                     "end_line": 2
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2");
+        assert_eq!(result.unwrap().content.as_str(), Some("Line 1\nLine 2"));
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -400,11 +549,19 @@ mod test {
                     "end_line": 0
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log.clone(), None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1");
+        assert_eq!(result.unwrap().content.as_str(), Some("Line 1"));
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -415,11 +572,19 @@ mod test {
                     "end_line": 2
                 });
                 Arc::new(ReadFileTool)
-                    .run(input, &[], project.clone(), action_log, None, cx)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log,
+                        model,
+                        None,
+                        cx,
+                    )
                     .output
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3");
+        assert_eq!(result.unwrap().content.as_str(), Some("Line 3"));
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -472,5 +637,545 @@ mod test {
             "#,
         )
         .unwrap()
+    }
+
+    #[gpui::test]
+    async fn test_read_file_security(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            path!("/"),
+            json!({
+                "project_root": {
+                    "allowed_file.txt": "This file is in the project",
+                    ".mysecrets": "SECRET_KEY=abc123",
+                    ".secretdir": {
+                        "config": "special configuration"
+                    },
+                    ".mymetadata": "custom metadata",
+                    "subdir": {
+                        "normal_file.txt": "Normal file content",
+                        "special.privatekey": "private key content",
+                        "data.mysensitive": "sensitive data"
+                    }
+                },
+                "outside_project": {
+                    "sensitive_file.txt": "This file is outside the project"
+                }
+            }),
+        )
+        .await;
+
+        cx.update(|cx| {
+            use gpui::UpdateGlobal;
+            use project::WorktreeSettings;
+            use settings::SettingsStore;
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.file_scan_exclusions = Some(vec![
+                        "**/.secretdir".to_string(),
+                        "**/.mymetadata".to_string(),
+                    ]);
+                    settings.private_files = Some(vec![
+                        "**/.mysecrets".to_string(),
+                        "**/*.privatekey".to_string(),
+                        "**/*.mysensitive".to_string(),
+                    ]);
+                });
+            });
+        });
+
+        let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+
+        // Reading a file outside the project worktree should fail
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "/outside_project/sensitive_file.txt"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read an absolute path outside a worktree"
+        );
+
+        // Reading a file within the project should succeed
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/allowed_file.txt"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_ok(),
+            "read_file_tool should be able to read files inside worktrees"
+        );
+
+        // Reading files that match file_scan_exclusions should fail
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/.secretdir/config"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read files in .secretdir (file_scan_exclusions)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/.mymetadata"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read .mymetadata files (file_scan_exclusions)"
+        );
+
+        // Reading private files should fail
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/.mysecrets"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read .mysecrets (private_files)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/subdir/special.privatekey"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read .privatekey files (private_files)"
+        );
+
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/subdir/data.mysensitive"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read .mysensitive files (private_files)"
+        );
+
+        // Reading a normal file should still work, even with private_files configured
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/subdir/normal_file.txt"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(result.is_ok(), "Should be able to read normal files");
+        assert_eq!(
+            result.unwrap().content.as_str().unwrap(),
+            "Normal file content"
+        );
+
+        // Path traversal attempts with .. should fail
+        let result = cx
+            .update(|cx| {
+                let input = json!({
+                    "path": "project_root/../outside_project/sensitive_file.txt"
+                });
+                Arc::new(ReadFileTool)
+                    .run(
+                        input,
+                        Arc::default(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None,
+                        cx,
+                    )
+                    .output
+            })
+            .await;
+        assert!(
+            result.is_err(),
+            "read_file_tool should error when attempting to read a relative path that resolves to outside a worktree"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_read_file_with_multiple_worktree_settings(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create first worktree with its own private_files setting
+        fs.insert_tree(
+            path!("/worktree1"),
+            json!({
+                "src": {
+                    "main.rs": "fn main() { println!(\"Hello from worktree1\"); }",
+                    "secret.rs": "const API_KEY: &str = \"secret_key_1\";",
+                    "config.toml": "[database]\nurl = \"postgres://localhost/db1\""
+                },
+                "tests": {
+                    "test.rs": "mod tests { fn test_it() {} }",
+                    "fixture.sql": "CREATE TABLE users (id INT, name VARCHAR(255));"
+                },
+                ".zed": {
+                    "settings.json": r#"{
+                        "file_scan_exclusions": ["**/fixture.*"],
+                        "private_files": ["**/secret.rs", "**/config.toml"]
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        // Create second worktree with different private_files setting
+        fs.insert_tree(
+            path!("/worktree2"),
+            json!({
+                "lib": {
+                    "public.js": "export function greet() { return 'Hello from worktree2'; }",
+                    "private.js": "const SECRET_TOKEN = \"private_token_2\";",
+                    "data.json": "{\"api_key\": \"json_secret_key\"}"
+                },
+                "docs": {
+                    "README.md": "# Public Documentation",
+                    "internal.md": "# Internal Secrets and Configuration"
+                },
+                ".zed": {
+                    "settings.json": r#"{
+                        "file_scan_exclusions": ["**/internal.*"],
+                        "private_files": ["**/private.js", "**/data.json"]
+                    }"#
+                }
+            }),
+        )
+        .await;
+
+        // Set global settings
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
+                    settings.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
+                    settings.private_files = Some(vec!["**/.env".to_string()]);
+                });
+            });
+        });
+
+        let project = Project::test(
+            fs.clone(),
+            [path!("/worktree1").as_ref(), path!("/worktree2").as_ref()],
+            cx,
+        )
+        .await;
+
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let tool = Arc::new(ReadFileTool);
+
+        // Test reading allowed files in worktree1
+        let input = json!({
+            "path": "worktree1/src/main.rs"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.content.as_str().unwrap(),
+            "fn main() { println!(\"Hello from worktree1\"); }"
+        );
+
+        // Test reading private file in worktree1 should fail
+        let input = json!({
+            "path": "worktree1/src/secret.rs"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `private_files` setting"),
+            "Error should mention worktree private_files setting"
+        );
+
+        // Test reading excluded file in worktree1 should fail
+        let input = json!({
+            "path": "worktree1/tests/fixture.sql"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `file_scan_exclusions` setting"),
+            "Error should mention worktree file_scan_exclusions setting"
+        );
+
+        // Test reading allowed files in worktree2
+        let input = json!({
+            "path": "worktree2/lib/public.js"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.content.as_str().unwrap(),
+            "export function greet() { return 'Hello from worktree2'; }"
+        );
+
+        // Test reading private file in worktree2 should fail
+        let input = json!({
+            "path": "worktree2/lib/private.js"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `private_files` setting"),
+            "Error should mention worktree private_files setting"
+        );
+
+        // Test reading excluded file in worktree2 should fail
+        let input = json!({
+            "path": "worktree2/docs/internal.md"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `file_scan_exclusions` setting"),
+            "Error should mention worktree file_scan_exclusions setting"
+        );
+
+        // Test that files allowed in one worktree but not in another are handled correctly
+        // (e.g., config.toml is private in worktree1 but doesn't exist in worktree2)
+        let input = json!({
+            "path": "worktree1/src/config.toml"
+        });
+
+        let result = cx
+            .update(|cx| {
+                tool.clone().run(
+                    input,
+                    Arc::default(),
+                    project.clone(),
+                    action_log.clone(),
+                    model.clone(),
+                    None,
+                    cx,
+                )
+            })
+            .output
+            .await;
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("worktree `private_files` setting"),
+            "Config.toml should be blocked by worktree1's private_files setting"
+        );
     }
 }

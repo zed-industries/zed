@@ -176,6 +176,7 @@ messages!(
     (LspExtClearFlycheck, Background),
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
+    (ReorderChannel, Foreground),
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
@@ -305,6 +306,10 @@ messages!(
     (DebugAdapterBinary, Background),
     (RunDebugLocators, Background),
     (DebugRequest, Background),
+    (LogToDebugConsole, Background),
+    (GetDocumentDiagnostics, Background),
+    (GetDocumentDiagnosticsResponse, Background),
+    (PullWorkspaceDiagnostics, Background)
 );
 
 request_messages!(
@@ -388,6 +393,7 @@ request_messages!(
     (RemoveContact, Ack),
     (RenameChannel, RenameChannelResponse),
     (RenameProjectEntry, ProjectEntryResponse),
+    (ReorderChannel, Ack),
     (RequestContact, Ack),
     (
         ResolveCompletionDocumentation,
@@ -466,6 +472,8 @@ request_messages!(
     (ToggleBreakpoint, Ack),
     (GetDebugAdapterBinary, DebugAdapterBinary),
     (RunDebugLocators, DebugRequest),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (PullWorkspaceDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -591,6 +599,9 @@ entity_messages!(
     ToggleBreakpoint,
     RunDebugLocators,
     GetDebugAdapterBinary,
+    LogToDebugConsole,
+    GetDocumentDiagnostics,
+    PullWorkspaceDiagnostics
 );
 
 entity_messages!(

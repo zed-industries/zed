@@ -19,6 +19,7 @@ test-support = [
     "lsp/test-support",
     "text/test-support",
     "tree-sitter-rust",
+    "tree-sitter-python",
     "tree-sitter-typescript",
     "settings/test-support",
     "util/test-support",
@@ -27,7 +28,6 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-async-watch.workspace = true
 clock.workspace = true
 collections.workspace = true
 ec4rs.workspace = true
@@ -50,6 +50,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+shellexpand.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 streaming-iterator.workspace = true
@@ -58,17 +59,19 @@ sum_tree.workspace = true
 task.workspace = true
 text.workspace = true
 theme.workspace = true
+tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter.workspace = true
 unicase = "2.6"
 util.workspace = true
+watch.workspace = true
 workspace-hack.workspace = true
+diffy = "0.4.2"
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 lsp = { workspace = true, features = ["test-support"] }
@@ -76,15 +79,17 @@ pretty_assertions.workspace = true
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 tree-sitter-elixir.workspace = true
 tree-sitter-embedded-template.workspace = true
 tree-sitter-heex.workspace = true
 tree-sitter-html.workspace = true
 tree-sitter-json.workspace = true
 tree-sitter-md.workspace = true
+tree-sitter-python.workspace = true
 tree-sitter-ruby.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

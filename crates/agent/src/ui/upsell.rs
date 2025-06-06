@@ -15,7 +15,7 @@ use ui::{
 /// ```
 /// let upsell = Upsell::new(
 ///     "Upgrade to Zed Pro",
-///     "Get unlimited access to AI features and more",
+///     "Get access to advanced AI features and more",
 ///     "Upgrade Now",
 ///     Box::new(|_, _window, cx| {
 ///         cx.open_url("https://zed.dev/pricing");
@@ -33,9 +33,9 @@ pub struct Upsell {
     title: SharedString,
     message: SharedString,
     cta_text: SharedString,
-    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
-    on_dismiss: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
-    on_dont_show_again: Box<dyn Fn(bool, &mut Window, &mut App)>,
+    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    on_dismiss: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    on_dont_show_again: Box<dyn Fn(bool, &mut Window, &mut App) + 'static>,
 }
 
 impl Upsell {
@@ -44,9 +44,9 @@ impl Upsell {
         title: impl Into<SharedString>,
         message: impl Into<SharedString>,
         cta_text: impl Into<SharedString>,
-        on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
-        on_dismiss: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
-        on_dont_show_again: Box<dyn Fn(bool, &mut Window, &mut App)>,
+        on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+        on_dismiss: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+        on_dont_show_again: Box<dyn Fn(bool, &mut Window, &mut App) + 'static>,
     ) -> Self {
         Self {
             title: title.into(),
@@ -105,7 +105,7 @@ impl RenderOnce for Upsell {
                         h_flex()
                             .gap_2()
                             .child(
-                                Button::new("dismiss-button", "Dismiss")
+                                Button::new("dismiss-button", "No Thanks")
                                     .style(ButtonStyle::Subtle)
                                     .on_click(self.on_dismiss),
                             )

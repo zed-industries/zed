@@ -17,11 +17,12 @@
 
 use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxId,
-    IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task, TooltipId,
-    Visibility, Window, point, px, size,
+    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
+    HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
+    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
+    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
+    size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -37,7 +38,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use taffy::style::Overflow;
 use util::ResultExt;
 
 use super::ImageCacheProvider;
@@ -83,6 +83,35 @@ impl<T: 'static> DragMoveEvent<T> {
 }
 
 impl Interactivity {
+    /// Create an `Interactivity`, capturing the caller location in debug mode.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    #[track_caller]
+    pub fn new() -> Interactivity {
+        Interactivity {
+            source_location: Some(core::panic::Location::caller()),
+            ..Default::default()
+        }
+    }
+
+    /// Create an `Interactivity`, capturing the caller location in debug mode.
+    #[cfg(not(any(feature = "inspector", debug_assertions)))]
+    pub fn new() -> Interactivity {
+        Interactivity::default()
+    }
+
+    /// Gets the source location of construction. Returns `None` when not in debug mode.
+    pub fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        {
+            self.source_location
+        }
+
+        #[cfg(not(any(feature = "inspector", debug_assertions)))]
+        {
+            None
+        }
+    }
+
     /// Bind the given callback to the mouse down event for the given mouse button, during the bubble phase
     /// The imperative API equivalent of [`InteractiveElement::on_mouse_down`]
     ///
@@ -285,7 +314,7 @@ impl Interactivity {
     ) {
         self.scroll_wheel_listeners
             .push(Box::new(move |event, phase, hitbox, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     (listener)(event, window, cx);
                 }
             }));
@@ -490,7 +519,7 @@ impl Interactivity {
 
     /// Bind the given callback on the hover start and end events of this element. Note that the boolean
     /// passed to the callback is true when the hover starts and false when it ends.
-    /// The imperative API equivalent to [`StatefulInteractiveElement::on_drag`]
+    /// The imperative API equivalent to [`StatefulInteractiveElement::on_hover`]
     ///
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static)
@@ -539,10 +568,26 @@ impl Interactivity {
         });
     }
 
-    /// Block the mouse from interacting with this element or any of its children
+    /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
+    /// `block_mouse_except_scroll` should be preferred.
+    ///
     /// The imperative API equivalent to [`InteractiveElement::occlude`]
     pub fn occlude_mouse(&mut self) {
-        self.occlude_mouse = true;
+        self.hitbox_behavior = HitboxBehavior::BlockMouse;
+    }
+
+    /// Set the bounds of this element as a window control area for the platform window.
+    /// The imperative API equivalent to [`InteractiveElement::window_control_area`]
+    pub fn window_control_area(&mut self, area: WindowControlArea) {
+        self.window_control = Some(area);
+    }
+
+    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
+    /// [`Hitbox::is_hovered`] for details.
+    ///
+    /// The imperative API equivalent to [`InteractiveElement::block_mouse_except_scroll`]
+    pub fn block_mouse_except_scroll(&mut self) {
+        self.hitbox_behavior = HitboxBehavior::BlockMouseExceptScroll;
     }
 }
 
@@ -912,17 +957,28 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Block the mouse from interacting with this element or any of its children
+    /// Block the mouse from all interactions with elements behind this element's hitbox. Typically
+    /// `block_mouse_except_scroll` should be preferred.
     /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
     fn occlude(mut self) -> Self {
         self.interactivity().occlude_mouse();
         self
     }
 
-    /// Block the mouse from interacting with this element or any of its children
-    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
-    fn block_mouse_down(mut self) -> Self {
-        self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    /// Set the bounds of this element as a window control area for the platform window.
+    /// The fluent API equivalent to [`Interactivity::window_control_area`]
+    fn window_control_area(mut self, area: WindowControlArea) -> Self {
+        self.interactivity().window_control_area(area);
+        self
+    }
+
+    /// Block non-scroll mouse interactions with elements behind this element's hitbox. See
+    /// [`Hitbox::is_hovered`] for details.
+    ///
+    /// The fluent API equivalent to [`Interactivity::block_mouse_except_scroll`]
+    fn block_mouse_except_scroll(mut self) -> Self {
+        self.interactivity().block_mouse_except_scroll();
+        self
     }
 }
 
@@ -1123,17 +1179,8 @@ pub(crate) type ActionListener =
 /// Construct a new [`Div`] element
 #[track_caller]
 pub fn div() -> Div {
-    #[cfg(debug_assertions)]
-    let interactivity = Interactivity {
-        location: Some(*core::panic::Location::caller()),
-        ..Default::default()
-    };
-
-    #[cfg(not(debug_assertions))]
-    let interactivity = Interactivity::default();
-
     Div {
-        interactivity,
+        interactivity: Interactivity::new(),
         children: SmallVec::default(),
         prepaint_listener: None,
         image_cache: None,
@@ -1176,6 +1223,20 @@ pub struct DivFrameState {
     child_layout_ids: SmallVec<[LayoutId; 2]>,
 }
 
+/// Interactivity state displayed an manipulated in the inspector.
+#[derive(Clone)]
+pub struct DivInspectorState {
+    /// The inspected element's base style. This is used for both inspecting and modifying the
+    /// state. In the future it will make sense to separate the read and write, possibly tracking
+    /// the modifications.
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub base_style: Box<StyleRefinement>,
+    /// Inspects the bounds of the element.
+    pub bounds: Bounds<Pixels>,
+    /// Size of the children of the element, or `bounds.size` if it has no children.
+    pub content_size: Size<Pixels>,
+}
+
 impl Styled for Div {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
@@ -1202,9 +1263,14 @@ impl Element for Div {
         self.interactivity.element_id.clone()
     }
 
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        self.interactivity.source_location()
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
@@ -1215,8 +1281,12 @@ impl Element for Div {
             .map(|provider| provider.provide(window, cx));
 
         let layout_id = window.with_image_cache(image_cache, |window| {
-            self.interactivity
-                .request_layout(global_id, window, cx, |style, window, cx| {
+            self.interactivity.request_layout(
+                global_id,
+                inspector_id,
+                window,
+                cx,
+                |style, window, cx| {
                     window.with_text_style(style.text_style().cloned(), |window| {
                         child_layout_ids = self
                             .children
@@ -1225,7 +1295,8 @@ impl Element for Div {
                             .collect::<SmallVec<_>>();
                         window.request_layout(style, child_layout_ids.iter().copied(), cx)
                     })
-                })
+                },
+            )
         });
 
         (layout_id, DivFrameState { child_layout_ids })
@@ -1234,6 +1305,7 @@ impl Element for Div {
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -1279,6 +1351,7 @@ impl Element for Div {
 
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             content_size,
             window,
@@ -1302,6 +1375,7 @@ impl Element for Div {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -1316,6 +1390,7 @@ impl Element for Div {
         window.with_image_cache(image_cache, |window| {
             self.interactivity.paint(
                 global_id,
+                inspector_id,
                 bounds,
                 hitbox.as_ref(),
                 window,
@@ -1386,10 +1461,11 @@ pub struct Interactivity {
     pub(crate) drag_listener: Option<(Arc<dyn Any>, DragListener)>,
     pub(crate) hover_listener: Option<Box<dyn Fn(&bool, &mut Window, &mut App)>>,
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
-    pub(crate) occlude_mouse: bool,
+    pub(crate) window_control: Option<WindowControlArea>,
+    pub(crate) hitbox_behavior: HitboxBehavior,
 
-    #[cfg(debug_assertions)]
-    pub(crate) location: Option<core::panic::Location<'static>>,
+    #[cfg(any(feature = "inspector", debug_assertions))]
+    pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
 
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_selector: Option<String>,
@@ -1400,10 +1476,28 @@ impl Interactivity {
     pub fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
         f: impl FnOnce(Style, &mut Window, &mut App) -> LayoutId,
     ) -> LayoutId {
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        window.with_inspector_state(
+            _inspector_id,
+            cx,
+            |inspector_state: &mut Option<DivInspectorState>, _window| {
+                if let Some(inspector_state) = inspector_state {
+                    self.base_style = inspector_state.base_style.clone();
+                } else {
+                    *inspector_state = Some(DivInspectorState {
+                        base_style: self.base_style.clone(),
+                        bounds: Default::default(),
+                        content_size: Default::default(),
+                    })
+                }
+            },
+        );
+
         window.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
             |element_state, window| {
@@ -1463,6 +1557,7 @@ impl Interactivity {
     pub fn prepaint<R>(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         content_size: Size<Pixels>,
         window: &mut Window,
@@ -1470,6 +1565,19 @@ impl Interactivity {
         f: impl FnOnce(&Style, Point<Pixels>, Option<Hitbox>, &mut Window, &mut App) -> R,
     ) -> R {
         self.content_size = content_size;
+
+        #[cfg(any(feature = "inspector", debug_assertions))]
+        window.with_inspector_state(
+            _inspector_id,
+            cx,
+            |inspector_state: &mut Option<DivInspectorState>, _window| {
+                if let Some(inspector_state) = inspector_state {
+                    inspector_state.bounds = bounds;
+                    inspector_state.content_size = content_size;
+                }
+            },
+        );
+
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
             window.set_focus_handle(focus_handle, cx);
         }
@@ -1499,8 +1607,8 @@ impl Interactivity {
                     window.with_content_mask(
                         style.overflow_mask(bounds, window.rem_size()),
                         |window| {
-                            let hitbox = if self.should_insert_hitbox(&style) {
-                                Some(window.insert_hitbox(bounds, self.occlude_mouse))
+                            let hitbox = if self.should_insert_hitbox(&style, window, cx) {
+                                Some(window.insert_hitbox(bounds, self.hitbox_behavior))
                             } else {
                                 None
                             };
@@ -1516,8 +1624,9 @@ impl Interactivity {
         )
     }
 
-    fn should_insert_hitbox(&self, style: &Style) -> bool {
-        self.occlude_mouse
+    fn should_insert_hitbox(&self, style: &Style, window: &Window, cx: &App) -> bool {
+        self.hitbox_behavior != HitboxBehavior::Normal
+            || self.window_control.is_some()
             || style.mouse_cursor.is_some()
             || self.group.is_some()
             || self.scroll_offset.is_some()
@@ -1533,6 +1642,7 @@ impl Interactivity {
             || self.drag_listener.is_some()
             || !self.drop_listeners.is_empty()
             || self.tooltip_builder.is_some()
+            || window.is_inspector_picking(cx)
     }
 
     fn clamp_scroll_position(
@@ -1544,32 +1654,20 @@ impl Interactivity {
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
-            if let Some(scroll_handle) = &self.tracked_scroll_handle {
-                let mut state = scroll_handle.0.borrow_mut();
-                state.overflow = style.overflow;
-                scroll_to_bottom = mem::take(&mut state.scroll_to_bottom);
+            let mut tracked_scroll_handle = self
+                .tracked_scroll_handle
+                .as_ref()
+                .map(|handle| handle.0.borrow_mut());
+            if let Some(mut scroll_handle_state) = tracked_scroll_handle.as_deref_mut() {
+                scroll_handle_state.overflow = style.overflow;
+                scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
 
             let rem_size = window.rem_size();
-            let padding_size = size(
-                style
-                    .padding
-                    .left
-                    .to_pixels(bounds.size.width.into(), rem_size)
-                    + style
-                        .padding
-                        .right
-                        .to_pixels(bounds.size.width.into(), rem_size),
-                style
-                    .padding
-                    .top
-                    .to_pixels(bounds.size.height.into(), rem_size)
-                    + style
-                        .padding
-                        .bottom
-                        .to_pixels(bounds.size.height.into(), rem_size),
-            );
-            let scroll_max = (self.content_size + padding_size - bounds.size).max(&Size::default());
+            let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
+            let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+            let padded_content_size = self.content_size + padding_size;
+            let scroll_max = (padded_content_size - bounds.size).max(&Size::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -1579,6 +1677,10 @@ impl Interactivity {
                 scroll_offset.y = -scroll_max.height;
             } else {
                 scroll_offset.y = scroll_offset.y.clamp(-scroll_max.height, px(0.));
+            }
+
+            if let Some(mut scroll_handle_state) = tracked_scroll_handle {
+                scroll_handle_state.padded_content_size = padded_content_size;
             }
 
             *scroll_offset
@@ -1598,6 +1700,7 @@ impl Interactivity {
     pub fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         hitbox: Option<&Hitbox>,
         window: &mut Window,
@@ -1653,6 +1756,11 @@ impl Interactivity {
                                             GroupHitboxes::push(group, hitbox.id, cx);
                                         }
 
+                                        if let Some(area) = self.window_control {
+                                            window
+                                                .insert_window_control_hitbox(area, hitbox.clone());
+                                        }
+
                                         self.paint_mouse_listeners(
                                             hitbox,
                                             element_state.as_mut(),
@@ -1665,7 +1773,14 @@ impl Interactivity {
                                     self.paint_keyboard_listeners(window, cx);
                                     f(&style, window, cx);
 
-                                    if hitbox.is_some() {
+                                    if let Some(_hitbox) = hitbox {
+                                        #[cfg(any(feature = "inspector", debug_assertions))]
+                                        window.insert_inspector_hitbox(
+                                            _hitbox.id,
+                                            _inspector_id,
+                                            cx,
+                                        );
+
                                         if let Some(group) = self.group.as_ref() {
                                             GroupHitboxes::pop(group, cx);
                                         }
@@ -1720,7 +1835,7 @@ impl Interactivity {
                         origin: hitbox.origin,
                         size: text.size(FONT_SIZE),
                     };
-                    if self.location.is_some()
+                    if self.source_location.is_some()
                         && text_bounds.contains(&window.mouse_position())
                         && window.modifiers().secondary()
                     {
@@ -1751,7 +1866,7 @@ impl Interactivity {
 
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            let location = self.location.unwrap();
+                            let location = self.source_location.unwrap();
                             move |e: &crate::MouseDownEvent, phase, window, cx| {
                                 if text_bounds.contains(&e.position)
                                     && phase.capture()
@@ -2175,7 +2290,7 @@ impl Interactivity {
             let hitbox = hitbox.clone();
             let current_view = window.current_view();
             window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
                     let mut scroll_offset = scroll_offset.borrow_mut();
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
@@ -2205,7 +2320,6 @@ impl Interactivity {
                     }
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
-                    cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
                         cx.notify(current_view);
                     }
@@ -2714,37 +2828,52 @@ where
         self.element.id()
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        self.element.source_location()
+    }
+
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, window, cx)
+        self.element.request_layout(id, inspector_id, window, cx)
     }
 
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> E::PrepaintState {
-        self.element.prepaint(id, bounds, state, window, cx)
+        self.element
+            .prepaint(id, inspector_id, bounds, state, window, cx)
     }
 
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.element
-            .paint(id, bounds, request_layout, prepaint, window, cx)
+        self.element.paint(
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            prepaint,
+            window,
+            cx,
+        )
     }
 }
 
@@ -2811,37 +2940,52 @@ where
         self.element.id()
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        self.element.source_location()
+    }
+
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.element.request_layout(id, window, cx)
+        self.element.request_layout(id, inspector_id, window, cx)
     }
 
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         state: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> E::PrepaintState {
-        self.element.prepaint(id, bounds, state, window, cx)
+        self.element
+            .prepaint(id, inspector_id, bounds, state, window, cx)
     }
 
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
-        self.element
-            .paint(id, bounds, request_layout, prepaint, window, cx);
+        self.element.paint(
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            prepaint,
+            window,
+            cx,
+        );
     }
 }
 
@@ -2898,6 +3042,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
+    padded_content_size: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -2958,6 +3103,11 @@ impl ScrollHandle {
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
+    }
+
+    /// Get the size of the content with padding of the container.
+    pub fn padded_content_size(&self) -> Size<Pixels> {
+        self.0.borrow().padded_content_size
     }
 
     /// scroll_to_item scrolls the minimal amount to ensure that the child is

@@ -23,7 +23,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EntityId, Global, SemanticVersion,
     Subscription, Task, WeakEntity, actions,
 };
-use http_client::{HttpClient, Method};
+use http_client::{AsyncBody, HttpClient, Method, Request, Response};
 use input_excerpt::excerpt_for_cursor_position;
 use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
@@ -48,14 +48,14 @@ use std::{
 };
 use telemetry_events::InlineCompletionRating;
 use thiserror::Error;
-use util::ResultExt;
+use util::{ResultExt, maybe};
 use uuid::Uuid;
 use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use worktree::Worktree;
 use zed_llm_client::{
-    EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, PredictEditsBody,
-    PredictEditsResponse,
+    AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
+    PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
 };
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -193,6 +193,7 @@ pub struct Zeta {
     tos_accepted: bool,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
+    user_store: Entity<UserStore>,
     _user_store_subscription: Subscription,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
@@ -230,6 +231,28 @@ impl Zeta {
 
     pub fn clear_history(&mut self) {
         self.events.clear();
+    }
+
+    pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
+        self.last_usage.or_else(|| {
+            let user_store = self.user_store.read(cx);
+            maybe!({
+                let amount = user_store.edit_predictions_usage_amount()?;
+                let limit = user_store.edit_predictions_usage_limit()?.variant?;
+
+                Some(EditPredictionUsage {
+                    amount: amount as i32,
+                    limit: match limit {
+                        proto::usage_limit::Variant::Limited(limited) => {
+                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                        }
+                        proto::usage_limit::Variant::Unlimited(_) => {
+                            zed_llm_client::UsageLimit::Unlimited
+                        }
+                    },
+                })
+            })
+        })
     }
 
     fn new(
@@ -282,6 +305,7 @@ impl Zeta {
                 }
             }),
             license_detection_watchers: HashMap::default(),
+            user_store,
         }
     }
 
@@ -754,6 +778,7 @@ and then another
                 let request = request_builder
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", token))
+                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
                     .body(serde_json::to_string(&body)?.into())?;
 
                 let mut response = http_client.send(request).await?;
@@ -763,11 +788,12 @@ and then another
                     .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
                     .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
                 {
-                    if app_version < minimum_required_version {
-                        return Err(anyhow!(ZedUpdateRequiredError {
+                    anyhow::ensure!(
+                        app_version >= minimum_required_version,
+                        ZedUpdateRequiredError {
                             minimum_version: minimum_required_version
-                        }));
-                    }
+                        }
+                    );
                 }
 
                 if response.status().is_success() {
@@ -787,14 +813,82 @@ and then another
                 } else {
                     let mut body = String::new();
                     response.body_mut().read_to_string(&mut body).await?;
-                    return Err(anyhow!(
+                    anyhow::bail!(
                         "error predicting edits.\nStatus: {:?}\nBody: {}",
                         response.status(),
                         body
-                    ));
+                    );
                 }
             }
         }
+    }
+
+    fn accept_edit_prediction(
+        &mut self,
+        request_id: InlineCompletionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let client = self.client.clone();
+        let llm_token = self.llm_token.clone();
+        let app_version = AppVersion::global(cx);
+        cx.spawn(async move |this, cx| {
+            let http_client = client.http_client();
+            let mut response = llm_token_retry(&llm_token, &client, |token| {
+                let request_builder = http_client::Request::builder().method(Method::POST);
+                let request_builder =
+                    if let Ok(accept_prediction_url) = std::env::var("ZED_ACCEPT_PREDICTION_URL") {
+                        request_builder.uri(accept_prediction_url)
+                    } else {
+                        request_builder.uri(
+                            http_client
+                                .build_zed_llm_url("/predict_edits/accept", &[])?
+                                .as_ref(),
+                        )
+                    };
+                Ok(request_builder
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", token))
+                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                    .body(
+                        serde_json::to_string(&AcceptEditPredictionBody {
+                            request_id: request_id.0,
+                        })?
+                        .into(),
+                    )?)
+            })
+            .await?;
+
+            if let Some(minimum_required_version) = response
+                .headers()
+                .get(MINIMUM_REQUIRED_VERSION_HEADER_NAME)
+                .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
+            {
+                if app_version < minimum_required_version {
+                    return Err(anyhow!(ZedUpdateRequiredError {
+                        minimum_version: minimum_required_version
+                    }));
+                }
+            }
+
+            if response.status().is_success() {
+                if let Some(usage) = EditPredictionUsage::from_headers(response.headers()).ok() {
+                    this.update(cx, |this, cx| {
+                        this.last_usage = Some(usage);
+                        cx.notify();
+                    })?;
+                }
+
+                Ok(())
+            } else {
+                let mut body = String::new();
+                response.body_mut().read_to_string(&mut body).await?;
+                Err(anyhow!(
+                    "error accepting edit prediction.\nStatus: {:?}\nBody: {}",
+                    response.status(),
+                    body
+                ))
+            }
+        })
     }
 
     fn process_completion_response(
@@ -1355,6 +1449,34 @@ impl ProviderDataCollection {
     }
 }
 
+async fn llm_token_retry(
+    llm_token: &LlmApiToken,
+    client: &Arc<Client>,
+    build_request: impl Fn(String) -> Result<Request<AsyncBody>>,
+) -> Result<Response<AsyncBody>> {
+    let mut did_retry = false;
+    let http_client = client.http_client();
+    let mut token = llm_token.acquire(client).await?;
+    loop {
+        let request = build_request(token.clone())?;
+        let response = http_client.send(request).await?;
+
+        if !did_retry
+            && !response.status().is_success()
+            && response
+                .headers()
+                .get(EXPIRED_LLM_TOKEN_HEADER_NAME)
+                .is_some()
+        {
+            did_retry = true;
+            token = llm_token.refresh(client).await?;
+            continue;
+        }
+
+        return Ok(response);
+    }
+}
+
 pub struct ZetaInlineCompletionProvider {
     zeta: Entity<Zeta>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
@@ -1416,7 +1538,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
     }
 
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.zeta.read(cx).last_usage
+        self.zeta.read(cx).usage(cx)
     }
 
     fn is_enabled(
@@ -1449,6 +1571,17 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         }
 
         if self.zeta.read(cx).update_required {
+            return;
+        }
+
+        if self
+            .zeta
+            .read(cx)
+            .user_store
+            .read_with(cx, |user_store, _| {
+                user_store.account_too_young() || user_store.has_overdue_invoices()
+            })
+        {
             return;
         }
 
@@ -1571,7 +1704,18 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         // Right now we don't support cycling.
     }
 
-    fn accept(&mut self, _cx: &mut Context<Self>) {
+    fn accept(&mut self, cx: &mut Context<Self>) {
+        let completion_id = self
+            .current_completion
+            .as_ref()
+            .map(|completion| completion.completion.id);
+        if let Some(completion_id) = completion_id {
+            self.zeta
+                .update(cx, |zeta, cx| {
+                    zeta.accept_edit_prediction(completion_id, cx)
+                })
+                .detach();
+        }
         self.pending_completions.clear();
     }
 
@@ -1890,6 +2034,7 @@ mod tests {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
 
+        server.receive::<proto::GetUsers>().await.unwrap();
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
             token_request.receipt(),
@@ -1944,6 +2089,7 @@ mod tests {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
 
+        server.receive::<proto::GetUsers>().await.unwrap();
         let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
         server.respond(
             token_request.receipt(),
@@ -1994,8 +2140,6 @@ mod tests {
 
     #[ctor::ctor]
     fn init_logger() {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::init();
-        }
+        zlog::init_test();
     }
 }

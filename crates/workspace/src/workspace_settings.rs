@@ -1,5 +1,6 @@
 use std::num::NonZeroUsize;
 
+use crate::DockPosition;
 use anyhow::Result;
 use collections::HashMap;
 use gpui::App;
@@ -23,10 +24,11 @@ pub struct WorkspaceSettings {
     pub use_system_path_prompts: bool,
     pub use_system_prompts: bool,
     pub command_aliases: HashMap<String, String>,
-    pub show_user_picture: bool,
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub on_last_window_closed: OnLastWindowClosed,
+    pub resize_all_panels_in_dock: Vec<DockPosition>,
+    pub close_on_file_delete: bool,
 }
 
 #[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -51,12 +53,6 @@ impl OnLastWindowClosed {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivePanelModifiers {
-    /// Scale by which to zoom the active pane.
-    /// When set to 1.0, the active pane has the same size as others,
-    /// but when set to a larger value, the active pane takes up more space.
-    ///
-    /// Default: `1.0`
-    pub magnification: Option<f32>,
     /// Size of the border surrounding the active pane.
     /// When set to 0, the active pane doesn't have any border.
     /// The border is drawn inset.
@@ -189,10 +185,6 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub command_aliases: Option<HashMap<String, String>>,
-    /// Whether to show user avatar in the title bar.
-    ///
-    /// Default: true
-    pub show_user_picture: Option<bool>,
     /// Maximum open tabs in a pane. Will not close an unsaved
     /// tab. Set to `None` for unlimited tabs.
     ///
@@ -202,6 +194,14 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: auto (nothing on macOS, "app quit" otherwise)
     pub on_last_window_closed: Option<OnLastWindowClosed>,
+    /// Whether to resize all the panels in a dock when resizing the dock.
+    ///
+    /// Default: ["left"]
+    pub resize_all_panels_in_dock: Option<Vec<DockPosition>>,
+    /// Whether to automatically close files that have been deleted on disk.
+    ///
+    /// Default: false
+    pub close_on_file_delete: Option<bool>,
 }
 
 #[derive(Deserialize)]

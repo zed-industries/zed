@@ -564,6 +564,10 @@ pub trait ItemHandle: 'static + Send {
     fn preserve_preview(&self, cx: &App) -> bool;
     fn include_in_nav_history(&self) -> bool;
     fn relay_action(&self, action: Box<dyn Action>, window: &mut Window, cx: &mut App);
+    fn can_autosave(&self, cx: &App) -> bool {
+        let is_deleted = self.project_entry_ids(cx).is_empty();
+        self.is_dirty(cx) && !self.has_conflict(cx) && self.can_save(cx) && !is_deleted
+    }
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -852,10 +856,36 @@ impl<T: Item> ItemHandle for Entity<T> {
 
                         ItemEvent::UpdateTab => {
                             workspace.update_item_dirty_state(item, window, cx);
-                            pane.update(cx, |_, cx| {
-                                cx.emit(pane::Event::ChangeItemTitle);
-                                cx.notify();
-                            });
+
+                            if item.has_deleted_file(cx)
+                                && !item.is_dirty(cx)
+                                && item.workspace_settings(cx).close_on_file_delete
+                            {
+                                let item_id = item.item_id();
+                                let close_item_task = pane.update(cx, |pane, cx| {
+                                    pane.close_item_by_id(
+                                        item_id,
+                                        crate::SaveIntent::Close,
+                                        window,
+                                        cx,
+                                    )
+                                });
+                                cx.spawn_in(window, {
+                                    let pane = pane.clone();
+                                    async move |_workspace, cx| {
+                                        close_item_task.await?;
+                                        pane.update(cx, |pane, _cx| {
+                                            pane.nav_history_mut().remove_item(item_id);
+                                        })
+                                    }
+                                })
+                                .detach_and_log_err(cx);
+                            } else {
+                                pane.update(cx, |_, cx| {
+                                    cx.emit(pane::Event::ChangeItemTitle);
+                                    cx.notify();
+                                });
+                            }
                         }
 
                         ItemEvent::Edit => {
@@ -1299,6 +1329,7 @@ pub mod test {
         pub is_dirty: bool,
         pub is_singleton: bool,
         pub has_conflict: bool,
+        pub has_deleted_file: bool,
         pub project_items: Vec<Entity<TestProjectItem>>,
         pub nav_history: Option<ItemNavHistory>,
         pub tab_descriptions: Option<Vec<&'static str>>,
@@ -1312,7 +1343,7 @@ pub mod test {
             _project: &Entity<Project>,
             _path: &ProjectPath,
             _cx: &mut App,
-        ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+        ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
             None
         }
         fn entry_id(&self, _: &App) -> Option<ProjectEntryId> {
@@ -1378,6 +1409,7 @@ pub mod test {
                 reload_count: 0,
                 is_dirty: false,
                 has_conflict: false,
+                has_deleted_file: false,
                 project_items: Vec::new(),
                 is_singleton: true,
                 nav_history: None,
@@ -1403,6 +1435,10 @@ pub mod test {
         pub fn with_singleton(mut self, singleton: bool) -> Self {
             self.is_singleton = singleton;
             self
+        }
+
+        pub fn set_has_deleted_file(&mut self, deleted: bool) {
+            self.has_deleted_file = deleted;
         }
 
         pub fn with_dirty(mut self, dirty: bool) -> Self {
@@ -1542,6 +1578,7 @@ pub mod test {
                 is_dirty: self.is_dirty,
                 is_singleton: self.is_singleton,
                 has_conflict: self.has_conflict,
+                has_deleted_file: self.has_deleted_file,
                 project_items: self.project_items.clone(),
                 nav_history: None,
                 tab_descriptions: None,
@@ -1558,6 +1595,10 @@ pub mod test {
 
         fn has_conflict(&self, _: &App) -> bool {
             self.has_conflict
+        }
+
+        fn has_deleted_file(&self, _: &App) -> bool {
+            self.has_deleted_file
         }
 
         fn can_save(&self, cx: &App) -> bool {

@@ -4,7 +4,7 @@ use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
 use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{Project, context_server_store::ContextServerStore};
 use ui::IconName;
 
@@ -51,6 +51,10 @@ impl Tool for ContextServerTool {
         true
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         let mut schema = self.tool.input_schema.clone();
         assistant_tool::adapt_schema_to_format(&mut schema, format)?;
@@ -72,9 +76,10 @@ impl Tool for ContextServerTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         _project: Entity<Project>,
         _action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -99,7 +104,15 @@ impl Tool for ContextServerTool {
                     tool_name,
                     arguments
                 );
-                let response = protocol.run_tool(tool_name, arguments).await?;
+                let response = protocol
+                    .request::<context_server::types::request::CallTool>(
+                        context_server::types::CallToolParams {
+                            name: tool_name,
+                            arguments,
+                            meta: None,
+                        },
+                    )
+                    .await?;
 
                 let mut result = String::new();
                 for content in response.content {
@@ -115,7 +128,7 @@ impl Tool for ContextServerTool {
                         }
                     }
                 }
-                Ok(result)
+                Ok(result.into())
             })
             .into()
         } else {

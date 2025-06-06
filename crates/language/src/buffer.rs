@@ -1,6 +1,12 @@
+pub use crate::{
+    Grammar, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet,
+    highlight_map::{HighlightId, HighlightMap},
+    proto,
+};
 use crate::{
-    DebugVariableCapture, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag,
-    TextObject, TreeSitterOptions,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
     outline::OutlineItem,
@@ -11,14 +17,7 @@ use crate::{
     task_context::RunnableRange,
     text_diff::text_diff,
 };
-pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
-    proto,
-};
-use anyhow::{Context as _, Result, anyhow};
-use async_watch as watch;
+use anyhow::{Context as _, Result};
 pub use clock::ReplicaId;
 use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
@@ -69,15 +68,9 @@ use util::RandomCharIter;
 use util::{RangeExt, debug_panic, maybe};
 
 #[cfg(any(test, feature = "test-support"))]
-pub use {tree_sitter_rust, tree_sitter_typescript};
+pub use {tree_sitter_python, tree_sitter_rust, tree_sitter_typescript};
 
 pub use lsp::DiagnosticSeverity;
-
-#[derive(Debug)]
-pub struct DebugVariableRanges {
-    pub buffer_id: BufferId,
-    pub range: Range<usize>,
-}
 
 /// A label for the background task spawned by the buffer to compute
 /// a diff against the contents of its file.
@@ -133,6 +126,8 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
+    /// The result id received last time when pulling diagnostics for this buffer.
+    pull_diagnostics_result_id: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -235,8 +230,19 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
     /// Whether this diagnostic marks unnecessary code.
     pub is_unnecessary: bool,
+    /// Quick separation of diagnostics groups based by their source.
+    pub source_kind: DiagnosticSourceKind,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
+    /// Whether to underline the corresponding text range in the editor.
+    pub underline: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiagnosticSourceKind {
+    Pulled,
+    Pushed,
+    Other,
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -468,6 +474,7 @@ pub struct BufferChunks<'a> {
     information_depth: usize,
     hint_depth: usize,
     unnecessary_depth: usize,
+    underline: bool,
     highlights: Option<BufferChunkHighlights<'a>>,
 }
 
@@ -488,6 +495,10 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// Whether this chunk of text was originally a tab character.
+    pub is_inlay: bool,
+    /// Whether to underline the corresponding text range in the editor.
+    pub underline: bool,
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
@@ -498,10 +509,11 @@ pub struct Diff {
     pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct DiagnosticEndpoint {
     offset: usize,
     is_start: bool,
+    underline: bool,
     severity: DiagnosticSeverity,
     is_unnecessary: bool,
 }
@@ -822,13 +834,11 @@ impl Buffer {
         message: proto::BufferState,
         file: Option<Arc<dyn File>>,
     ) -> Result<Self> {
-        let buffer_id = BufferId::new(message.id)
-            .with_context(|| anyhow!("Could not deserialize buffer_id"))?;
+        let buffer_id = BufferId::new(message.id).context("Could not deserialize buffer_id")?;
         let buffer = TextBuffer::new(replica_id, buffer_id, message.base_text);
         let mut this = Self::build(buffer, file, capability);
         this.text.set_line_ending(proto::deserialize_line_ending(
-            rpc::proto::LineEnding::from_i32(message.line_ending)
-                .ok_or_else(|| anyhow!("missing line_ending"))?,
+            rpc::proto::LineEnding::from_i32(message.line_ending).context("missing line_ending")?,
         ));
         this.saved_version = proto::deserialize_version(&message.saved_version);
         this.saved_mtime = message.saved_mtime.map(|time| time.into());
@@ -934,7 +944,7 @@ impl Buffer {
             reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
-            parse_status: async_watch::channel(ParseStatus::Idle),
+            parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
@@ -946,6 +956,7 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
+            pull_diagnostics_result_id: None,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
         }
@@ -1375,9 +1386,30 @@ impl Buffer {
     /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
+        let mut is_first = true;
+        let start_anchor = self.anchor_before(offset);
+        let end_anchor = self.anchor_after(offset);
         self.syntax_map
             .lock()
             .layers_for_range(offset..offset, &self.text, false)
+            .filter(|layer| {
+                if is_first {
+                    is_first = false;
+                    return true;
+                }
+                let any_sub_ranges_contain_range = layer
+                    .included_sub_ranges
+                    .map(|sub_ranges| {
+                        sub_ranges.iter().any(|sub_range| {
+                            let is_before_start = sub_range.end.cmp(&start_anchor, self).is_lt();
+                            let is_after_end = sub_range.start.cmp(&end_anchor, self).is_gt();
+                            !is_before_start && !is_after_end
+                        })
+                    })
+                    .unwrap_or(true);
+                let result = any_sub_ranges_contain_range;
+                return result;
+            })
             .last()
             .map(|info| info.language.clone())
             .or_else(|| self.language.clone())
@@ -2704,7 +2736,7 @@ impl Buffer {
         }
         self.send_operation(
             Operation::UpdateCompletionTriggers {
-                triggers: triggers.iter().cloned().collect(),
+                triggers: triggers.into_iter().collect(),
                 lamport_timestamp: self.completion_triggers_timestamp,
                 server_id,
             },
@@ -2730,6 +2762,14 @@ impl Buffer {
     /// Whether we should preserve the preview status of a tab containing this buffer.
     pub fn preserve_preview(&self) -> bool {
         !self.has_edits_since(&self.preview_version)
+    }
+
+    pub fn result_id(&self) -> Option<String> {
+        self.pull_diagnostics_result_id.clone()
+    }
+
+    pub fn set_result_id(&mut self, result_id: Option<String>) {
+        self.pull_diagnostics_result_id = result_id;
     }
 }
 
@@ -2863,6 +2903,7 @@ impl BufferSnapshot {
     ) -> Option<impl Iterator<Item = Option<IndentSuggestion>> + '_> {
         let config = &self.language.as_ref()?.config;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+        let significant_indentation = config.significant_indentation;
 
         // Find the suggested indentation ranges based on the syntax tree.
         let start = Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0);
@@ -2882,6 +2923,7 @@ impl BufferSnapshot {
         while let Some(mat) = matches.peek() {
             let mut start: Option<Point> = None;
             let mut end: Option<Point> = None;
+            let mut outdent: Option<Point> = None;
 
             let config = &indent_configs[mat.grammar_index];
             for capture in mat.captures {
@@ -2893,16 +2935,23 @@ impl BufferSnapshot {
                 } else if Some(capture.index) == config.end_capture_ix {
                     end = Some(Point::from_ts_point(capture.node.start_position()));
                 } else if Some(capture.index) == config.outdent_capture_ix {
-                    outdent_positions.push(Point::from_ts_point(capture.node.start_position()));
+                    let point = Point::from_ts_point(capture.node.start_position());
+                    outdent.get_or_insert(point);
+                    outdent_positions.push(point);
                 }
             }
 
             matches.advance();
+            // in case of significant indentation expand end to outdent position
+            let end = if significant_indentation {
+                outdent.or(end)
+            } else {
+                end
+            };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row {
+                if start.row == end.row && (!significant_indentation || start.column < end.column) {
                     continue;
                 }
-
                 let range = start..end;
                 match indent_ranges.binary_search_by_key(&range.start, |r| r.start) {
                     Err(ix) => indent_ranges.insert(ix, range),
@@ -2938,16 +2987,20 @@ impl BufferSnapshot {
             matches.advance();
         }
 
-        outdent_positions.sort();
-        for outdent_position in outdent_positions {
-            // find the innermost indent range containing this outdent_position
-            // set its end to the outdent position
-            if let Some(range_to_truncate) = indent_ranges
-                .iter_mut()
-                .filter(|indent_range| indent_range.contains(&outdent_position))
-                .next_back()
-            {
-                range_to_truncate.end = outdent_position;
+        // we don't use outdent positions to truncate in case of significant indentation
+        // rather we use them to expand (handled above)
+        if !significant_indentation {
+            outdent_positions.sort();
+            for outdent_position in outdent_positions {
+                // find the innermost indent range containing this outdent_position
+                // set its end to the outdent position
+                if let Some(range_to_truncate) = indent_ranges
+                    .iter_mut()
+                    .filter(|indent_range| indent_range.contains(&outdent_position))
+                    .next_back()
+                {
+                    range_to_truncate.end = outdent_position;
+                }
             }
         }
 
@@ -3017,8 +3070,14 @@ impl BufferSnapshot {
                 if range.start.row == prev_row && range.end > row_start {
                     indent_from_prev_row = true;
                 }
-                if range.end > prev_row_start && range.end <= row_start {
-                    outdent_to_row = outdent_to_row.min(range.start.row);
+                if significant_indentation && self.is_line_blank(row) && range.start.row == prev_row
+                {
+                    indent_from_prev_row = true;
+                }
+                if !significant_indentation || !self.is_line_blank(row) {
+                    if range.end > prev_row_start && range.end <= row_start {
+                        outdent_to_row = outdent_to_row.min(range.start.row);
+                    }
                 }
             }
 
@@ -3266,8 +3325,8 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
-        let mut next_chars = self.chars_at(start).peekable();
-        let mut prev_chars = self.reversed_chars_at(start).peekable();
+        let mut next_chars = self.chars_at(start).take(128).peekable();
+        let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
         let classifier = self.char_classifier_at(start);
         let word_kind = cmp::max(
@@ -3307,11 +3366,19 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range,
-            // and if the range is non-empty, extends beyond the start.
+            // Descend to the first leaf that touches the start of the range.
+            //
+            // If the range is non-empty and the current node ends exactly at the start,
+            // move to the next sibling to find a node that extends beyond the start.
+            //
+            // If the range is empty and the current node starts after the range position,
+            // move to the previous sibling to find the node that contains the position.
             while cursor.goto_first_child_for_byte(range.start).is_some() {
                 if !range.is_empty() && cursor.node().end_byte() == range.start {
                     cursor.goto_next_sibling();
+                }
+                if range.is_empty() && cursor.node().start_byte() > range.start {
+                    cursor.goto_previous_sibling();
                 }
             }
 
@@ -3367,6 +3434,36 @@ impl BufferSnapshot {
         }
 
         result
+    }
+
+    /// Returns the root syntax node within the given row
+    pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node> {
+        let start_offset = position.to_offset(self);
+
+        let row = self.summary_for_anchor::<text::PointUtf16>(&position).row as usize;
+
+        let layer = self
+            .syntax
+            .layers_for_range(start_offset..start_offset, &self.text, true)
+            .next()?;
+
+        let mut cursor = layer.node().walk();
+
+        // Descend to the first leaf that touches the start of the range.
+        while cursor.goto_first_child_for_byte(start_offset).is_some() {
+            if cursor.node().end_byte() == start_offset {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the root node within the same row.
+        while cursor.goto_parent() {
+            if cursor.node().start_position().row != row {
+                break;
+            }
+        }
+
+        return Some(cursor.node());
     }
 
     /// Returns the outline for the buffer.
@@ -3930,79 +4027,6 @@ impl BufferSnapshot {
         })
     }
 
-    pub fn debug_variable_ranges(
-        &self,
-        offset_range: Range<usize>,
-    ) -> impl Iterator<Item = DebugVariableRanges> + '_ {
-        let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
-            grammar
-                .debug_variables_config
-                .as_ref()
-                .map(|config| &config.query)
-        });
-
-        let configs = syntax_matches
-            .grammars()
-            .iter()
-            .map(|grammar| grammar.debug_variables_config.as_ref())
-            .collect::<Vec<_>>();
-
-        iter::from_fn(move || {
-            loop {
-                let mat = syntax_matches.peek()?;
-
-                let variable_ranges = configs[mat.grammar_index].and_then(|config| {
-                    let full_range = mat.captures.iter().fold(
-                        Range {
-                            start: usize::MAX,
-                            end: 0,
-                        },
-                        |mut acc, next| {
-                            let byte_range = next.node.byte_range();
-                            if acc.start > byte_range.start {
-                                acc.start = byte_range.start;
-                            }
-                            if acc.end < byte_range.end {
-                                acc.end = byte_range.end;
-                            }
-                            acc
-                        },
-                    );
-                    if full_range.start > full_range.end {
-                        // We did not find a full spanning range of this match.
-                        return None;
-                    }
-
-                    let captures = mat.captures.iter().filter_map(|capture| {
-                        Some((
-                            capture,
-                            config.captures.get(capture.index as usize).cloned()?,
-                        ))
-                    });
-
-                    let mut variable_range = None;
-                    for (query, capture) in captures {
-                        if let DebugVariableCapture::Variable = capture {
-                            let _ = variable_range.insert(query.node.byte_range());
-                        }
-                    }
-
-                    Some(DebugVariableRanges {
-                        buffer_id: self.remote_id(),
-                        range: variable_range?,
-                    })
-                });
-
-                syntax_matches.advance();
-                if variable_ranges.is_some() {
-                    // It's fine for us to short-circuit on .peek()? returning None. We don't want to return None from this iter if we
-                    // had a capture that did not contain a run marker, hence we'll just loop around for the next capture.
-                    return variable_ranges;
-                }
-            }
-        })
-    }
-
     pub fn runnable_ranges(
         &self,
         offset_range: Range<usize>,
@@ -4412,6 +4436,7 @@ impl<'a> BufferChunks<'a> {
             information_depth: 0,
             hint_depth: 0,
             unnecessary_depth: 0,
+            underline: true,
             highlights,
         };
         this.initialize_diagnostic_endpoints();
@@ -4472,12 +4497,14 @@ impl<'a> BufferChunks<'a> {
                         is_start: true,
                         severity: entry.diagnostic.severity,
                         is_unnecessary: entry.diagnostic.is_unnecessary,
+                        underline: entry.diagnostic.underline,
                     });
                     diagnostic_endpoints.push(DiagnosticEndpoint {
                         offset: entry.range.end,
                         is_start: false,
                         severity: entry.diagnostic.severity,
                         is_unnecessary: entry.diagnostic.is_unnecessary,
+                        underline: entry.diagnostic.underline,
                     });
                 }
                 diagnostic_endpoints
@@ -4583,6 +4610,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 if endpoint.offset <= self.range.start {
                     self.update_diagnostic_depths(endpoint);
                     diagnostic_endpoints.next();
+                    self.underline = endpoint.underline;
                 } else {
                     next_diagnostic_endpoint = endpoint.offset;
                     break;
@@ -4614,9 +4642,10 @@ impl<'a> Iterator for BufferChunks<'a> {
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,
+                underline: self.underline,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
-                ..Default::default()
+                ..Chunk::default()
             })
         } else {
             None
@@ -4647,6 +4676,7 @@ impl Default for Diagnostic {
     fn default() -> Self {
         Self {
             source: Default::default(),
+            source_kind: DiagnosticSourceKind::Other,
             code: None,
             code_description: None,
             severity: DiagnosticSeverity::ERROR,
@@ -4656,6 +4686,7 @@ impl Default for Diagnostic {
             is_primary: false,
             is_disk_based: false,
             is_unnecessary: false,
+            underline: true,
             data: None,
         }
     }

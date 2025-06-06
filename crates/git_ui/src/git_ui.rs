@@ -10,7 +10,7 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{App, FocusHandle, actions};
+use gpui::{Action, App, FocusHandle, actions};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
@@ -59,7 +59,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.fetch(window, cx);
+                    panel.fetch(true, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::FetchFrom, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.fetch(false, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::Push, window, cx| {
@@ -115,7 +123,7 @@ pub fn init(cx: &mut App) {
             },
         );
         workspace.register_action(move |_, _: &ResetOnboarding, window, cx| {
-            cx.dispatch_action(&workspace::RestoreBanner);
+            window.dispatch_action(workspace::RestoreBanner.boxed_clone(), cx);
             window.refresh();
         });
         workspace.register_action(|workspace, _action: &git::Init, window, cx| {
@@ -367,6 +375,7 @@ mod remote_button {
                             el.context(keybinding_target.clone())
                         })
                         .action("Fetch", git::Fetch.boxed_clone())
+                        .action("Fetch From", git::FetchFrom.boxed_clone())
                         .action("Pull", git::Pull.boxed_clone())
                         .separator()
                         .action("Push", git::Push.boxed_clone())

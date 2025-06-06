@@ -24,12 +24,12 @@ test-support = ["fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
-async-watch.workspace = true
 backtrace = "0.3"
 chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 dap_adapters.workspace = true
+debug_adapter_extension.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 extension_host.workspace = true
@@ -62,6 +62,7 @@ smol.workspace = true
 sysinfo.workspace = true
 telemetry_events.workspace = true
 util.workspace = true
+watch.workspace = true
 worktree.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
@@ -69,6 +70,8 @@ fork.workspace = true
 libc.workspace = true
 
 [dev-dependencies]
+assistant_tool.workspace = true
+assistant_tools.workspace = true
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 dap = { workspace = true, features = ["test-support"] }
@@ -79,9 +82,11 @@ language = { workspace = true, features = ["test-support"] }
 node_runtime = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 remote = { workspace = true, features = ["test-support"] }
+language_model = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features=["test-support"] }
 unindent.workspace = true
 serde_json.workspace = true
+zlog.workspace = true
 
 [build-dependencies]
 cargo_toml.workspace = true

@@ -4,7 +4,8 @@ use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
 use google_ai::{
-    FunctionDeclaration, GenerateContentResponse, Part, SystemInstruction, UsageMetadata,
+    FunctionDeclaration, GenerateContentResponse, GoogleModelMode, Part, SystemInstruction,
+    ThinkingConfig, UsageMetadata,
 };
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
@@ -12,8 +13,8 @@ use gpui::{
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    StopReason,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -45,11 +46,41 @@ pub struct GoogleSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ModelMode {
+    #[default]
+    Default,
+    Thinking {
+        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
+        budget_tokens: Option<u32>,
+    },
+}
+
+impl From<ModelMode> for GoogleModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => GoogleModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => GoogleModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
+impl From<GoogleModelMode> for ModelMode {
+    fn from(value: GoogleModelMode) -> Self {
+        match value {
+            GoogleModelMode::Default => ModelMode::Default,
+            GoogleModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
     name: String,
     display_name: Option<String>,
     max_tokens: usize,
+    mode: Option<ModelMode>,
 }
 
 pub struct GoogleLanguageModelProvider {
@@ -216,6 +247,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
+                    mode: model.mode.unwrap_or_default().into(),
                 },
             );
         }
@@ -279,7 +311,7 @@ impl GoogleLanguageModel {
         };
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let api_key = api_key.context("Missing Google API key")?;
             let request = google_ai::stream_generate_content(
                 http_client.as_ref(),
                 &api_url,
@@ -313,12 +345,24 @@ impl LanguageModel for GoogleLanguageModel {
         true
     }
 
+    fn supports_images(&self) -> bool {
+        true
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto
+            | LanguageModelToolChoice::Any
+            | LanguageModelToolChoice::None => true,
+        }
+    }
+
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         LanguageModelToolSchemaFormat::JsonSchemaSubset
     }
 
     fn telemetry_id(&self) -> String {
-        format!("google/{}", self.model.id())
+        format!("google/{}", self.model.request_id())
     }
 
     fn max_token_count(&self) -> usize {
@@ -330,8 +374,8 @@ impl LanguageModel for GoogleLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        let model_id = self.model.id().to_string();
-        let request = into_google(request, model_id.clone());
+        let model_id = self.model.request_id().to_string();
+        let request = into_google(request, model_id.clone(), self.model.mode());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
 
@@ -339,7 +383,7 @@ impl LanguageModel for GoogleLanguageModel {
         let api_url = settings.api_url.clone();
 
         async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Google API key"))?;
+            let api_key = api_key.context("Missing Google API key")?;
             let response = google_ai::count_tokens(
                 http_client.as_ref(),
                 &api_url,
@@ -367,7 +411,11 @@ impl LanguageModel for GoogleLanguageModel {
             >,
         >,
     > {
-        let request = into_google(request, self.model.id().to_string());
+        let request = into_google(
+            request,
+            self.model.request_id().to_string(),
+            self.model.mode(),
+        );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request
@@ -382,47 +430,73 @@ impl LanguageModel for GoogleLanguageModel {
 pub fn into_google(
     mut request: LanguageModelRequest,
     model_id: String,
+    mode: GoogleModelMode,
 ) -> google_ai::GenerateContentRequest {
     fn map_content(content: Vec<MessageContent>) -> Vec<Part> {
         content
             .into_iter()
-            .filter_map(|content| match content {
+            .flat_map(|content| match content {
                 language_model::MessageContent::Text(text)
                 | language_model::MessageContent::Thinking { text, .. } => {
                     if !text.is_empty() {
-                        Some(Part::TextPart(google_ai::TextPart { text }))
+                        vec![Part::TextPart(google_ai::TextPart { text })]
                     } else {
-                        None
+                        vec![]
                     }
                 }
-                language_model::MessageContent::RedactedThinking(_) => None,
+                language_model::MessageContent::RedactedThinking(_) => vec![],
                 language_model::MessageContent::Image(image) => {
-                    Some(Part::InlineDataPart(google_ai::InlineDataPart {
+                    vec![Part::InlineDataPart(google_ai::InlineDataPart {
                         inline_data: google_ai::GenerativeContentBlob {
                             mime_type: "image/png".to_string(),
                             data: image.source.to_string(),
                         },
-                    }))
+                    })]
                 }
                 language_model::MessageContent::ToolUse(tool_use) => {
-                    Some(Part::FunctionCallPart(google_ai::FunctionCallPart {
+                    vec![Part::FunctionCallPart(google_ai::FunctionCallPart {
                         function_call: google_ai::FunctionCall {
                             name: tool_use.name.to_string(),
                             args: tool_use.input,
                         },
-                    }))
+                    })]
                 }
-                language_model::MessageContent::ToolResult(tool_result) => Some(
-                    Part::FunctionResponsePart(google_ai::FunctionResponsePart {
-                        function_response: google_ai::FunctionResponse {
-                            name: tool_result.tool_name.to_string(),
-                            // The API expects a valid JSON object
-                            response: serde_json::json!({
-                                "output": tool_result.content
-                            }),
-                        },
-                    }),
-                ),
+                language_model::MessageContent::ToolResult(tool_result) => {
+                    match tool_result.content {
+                        language_model::LanguageModelToolResultContent::Text(text) => {
+                            vec![Part::FunctionResponsePart(
+                                google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        // The API expects a valid JSON object
+                                        response: serde_json::json!({
+                                            "output": text
+                                        }),
+                                    },
+                                },
+                            )]
+                        }
+                        language_model::LanguageModelToolResultContent::Image(image) => {
+                            vec![
+                                Part::FunctionResponsePart(google_ai::FunctionResponsePart {
+                                    function_response: google_ai::FunctionResponse {
+                                        name: tool_result.tool_name.to_string(),
+                                        // The API expects a valid JSON object
+                                        response: serde_json::json!({
+                                            "output": "Tool responded with an image"
+                                        }),
+                                    },
+                                }),
+                                Part::InlineDataPart(google_ai::InlineDataPart {
+                                    inline_data: google_ai::GenerativeContentBlob {
+                                        mime_type: "image/png".to_string(),
+                                        data: image.source.to_string(),
+                                    },
+                                }),
+                            ]
+                        }
+                    }
+                }
             })
             .collect()
     }
@@ -467,6 +541,12 @@ pub fn into_google(
             stop_sequences: Some(request.stop),
             max_output_tokens: None,
             temperature: request.temperature.map(|t| t as f64).or(Some(1.0)),
+            thinking_config: match mode {
+                GoogleModelMode::Thinking { budget_tokens } => {
+                    budget_tokens.map(|thinking_budget| ThinkingConfig { thinking_budget })
+                }
+                GoogleModelMode::Default => None,
+            },
             top_p: None,
             top_k: None,
         }),
@@ -484,7 +564,16 @@ pub fn into_google(
                     .collect(),
             }]
         }),
-        tool_config: None,
+        tool_config: request.tool_choice.map(|choice| google_ai::ToolConfig {
+            function_calling_config: google_ai::FunctionCallingConfig {
+                mode: match choice {
+                    LanguageModelToolChoice::Auto => google_ai::FunctionCallingMode::Auto,
+                    LanguageModelToolChoice::Any => google_ai::FunctionCallingMode::Any,
+                    LanguageModelToolChoice::None => google_ai::FunctionCallingMode::None,
+                },
+                allowed_function_names: None,
+            },
+        }),
     }
 }
 
@@ -574,6 +663,7 @@ impl GoogleEventMapper {
                             )));
                         }
                         Part::FunctionResponsePart(_) => {}
+                        Part::ThoughtPart(_) => {}
                     });
             }
         }
@@ -582,6 +672,7 @@ impl GoogleEventMapper {
         // responds with `finish_reason: STOP`
         if wants_to_use_tool {
             self.stop_reason = StopReason::ToolUse;
+            events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)));
         }
         events
     }
@@ -638,10 +729,15 @@ fn update_usage(usage: &mut UsageMetadata, new: &UsageMetadata) {
 }
 
 fn convert_usage(usage: &UsageMetadata) -> language_model::TokenUsage {
+    let prompt_tokens = usage.prompt_token_count.unwrap_or(0) as u32;
+    let cached_tokens = usage.cached_content_token_count.unwrap_or(0) as u32;
+    let input_tokens = prompt_tokens - cached_tokens;
+    let output_tokens = usage.candidates_token_count.unwrap_or(0) as u32;
+
     language_model::TokenUsage {
-        input_tokens: usage.prompt_token_count.unwrap_or(0) as u32,
-        output_tokens: usage.candidates_token_count.unwrap_or(0) as u32,
-        cache_read_input_tokens: usage.cached_content_token_count.unwrap_or(0) as u32,
+        input_tokens,
+        output_tokens,
+        cache_read_input_tokens: cached_tokens,
         cache_creation_input_tokens: 0,
     }
 }

@@ -44,7 +44,8 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Hide Others", super::HideOthers),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Show All", super::ShowAll),
-                MenuItem::action("Quit", Quit),
+                MenuItem::separator(),
+                MenuItem::action("Quit Zed", Quit),
             ],
         },
         Menu {
@@ -66,10 +67,16 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action(
                     "Open Recent...",
                     zed_actions::OpenRecent {
-                        create_new_window: true,
+                        create_new_window: false,
                     },
                 ),
-                MenuItem::action("Open Remote...", zed_actions::OpenRemote),
+                MenuItem::action(
+                    "Open Remote...",
+                    zed_actions::OpenRemote {
+                        create_new_window: false,
+                        from_existing_connection: false,
+                    },
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Add Folder to Project…", workspace::AddFolderToProject),
                 MenuItem::separator(),
@@ -207,6 +214,10 @@ pub fn app_menus() -> Vec<Menu> {
         Menu {
             name: "Help".into(),
             items: vec![
+                MenuItem::action(
+                    "View Release Notes",
+                    auto_update_ui::ViewReleaseNotesLocally,
+                ),
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),

@@ -10,19 +10,44 @@ pub use sink::{flush, init_output_file, init_output_stdout};
 pub const SCOPE_DEPTH_MAX: usize = 4;
 
 pub fn init() {
-    process_env();
-    log::set_logger(&ZLOG).expect("Logger should not be initialized twice");
+    match try_init() {
+        Err(err) => {
+            log::error!("{err}");
+            eprintln!("{err}");
+        }
+        Ok(()) => {}
+    }
+}
+
+pub fn try_init() -> anyhow::Result<()> {
+    log::set_logger(&ZLOG)?;
     log::set_max_level(log::LevelFilter::max());
+    process_env();
+    filter::refresh_from_settings(&std::collections::HashMap::default());
+    Ok(())
+}
+
+pub fn init_test() {
+    if get_env_config().is_some() {
+        if try_init().is_ok() {
+            init_output_stdout();
+        }
+    }
+}
+
+fn get_env_config() -> Option<String> {
+    std::env::var("ZED_LOG")
+        .or_else(|_| std::env::var("RUST_LOG"))
+        .ok()
 }
 
 pub fn process_env() {
-    let Ok(env_config) = std::env::var("ZED_LOG").or_else(|_| std::env::var("RUST_LOG")) else {
+    let Some(env_config) = get_env_config() else {
         return;
     };
     match env_config::parse(&env_config) {
         Ok(filter) => {
             filter::init_env_filter(filter);
-            filter::refresh();
         }
         Err(err) => {
             eprintln!("Failed to parse log filter: {}", err);

@@ -145,6 +145,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
                     style: BlockStyle::Flex,
                     render: Arc::new(move |bcx| block.render_block(editor.clone(), bcx)),
                     priority: 1,
+                    render_in_minimap: false,
                 }
             })
             .collect()
@@ -255,7 +256,7 @@ impl DiagnosticBlock {
 
         if let Some(diagnostics_editor) = diagnostics_editor {
             if let Some(diagnostic) = diagnostics_editor
-                .update(cx, |diagnostics, _| {
+                .read_with(cx, |diagnostics, _| {
                     diagnostics
                         .diagnostics
                         .get(&buffer_id)

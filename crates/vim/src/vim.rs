@@ -433,6 +433,12 @@ impl Vim {
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
 
+        if !editor.mode().is_full() {
+            vim.update(cx, |vim, _| {
+                vim.mode = Mode::Insert;
+            });
+        }
+
         editor.register_addon(VimAddon {
             entity: vim.clone(),
         });
@@ -1140,10 +1146,10 @@ impl Vim {
         let editor_mode = editor.mode();
 
         if editor_mode.is_full()
-                && !newest_selection_empty
-                && self.mode == Mode::Normal
-                // When following someone, don't switch vim mode.
-                && editor.leader_id().is_none()
+            && !newest_selection_empty
+            && self.mode == Mode::Normal
+            // When following someone, don't switch vim mode.
+            && editor.leader_id().is_none()
         {
             if preserve_selection {
                 self.switch_mode(Mode::Visual, true, window, cx);

@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
-use language_model::{LanguageModelRequestMessage, LanguageModelToolSchemaFormat};
+use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -50,6 +50,10 @@ impl Tool for DiagnosticsTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./diagnostics_tool/description.md").into()
     }
@@ -79,9 +83,10 @@ impl Tool for DiagnosticsTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _messages: &[LanguageModelRequestMessage],
+        _request: Arc<LanguageModelRequest>,
         project: Entity<Project>,
         action_log: Entity<ActionLog>,
+        _model: Arc<dyn LanguageModel>,
         _window: Option<AnyWindowHandle>,
         cx: &mut App,
     ) -> ToolResult {
@@ -122,9 +127,9 @@ impl Tool for DiagnosticsTool {
                     }
 
                     if output.is_empty() {
-                        Ok("File doesn't have errors or warnings!".to_string())
+                        Ok("File doesn't have errors or warnings!".to_string().into())
                     } else {
-                        Ok(output)
+                        Ok(output.into())
                     }
                 })
                 .into()
@@ -158,10 +163,12 @@ impl Tool for DiagnosticsTool {
                 });
 
                 if has_diagnostics {
-                    Task::ready(Ok(output)).into()
+                    Task::ready(Ok(output.into())).into()
                 } else {
-                    Task::ready(Ok("No errors or warnings found in the project.".to_string()))
-                        .into()
+                    Task::ready(Ok("No errors or warnings found in the project."
+                        .to_string()
+                        .into()))
+                    .into()
                 }
             }
         }
