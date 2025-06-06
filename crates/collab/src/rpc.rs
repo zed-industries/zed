@@ -356,7 +356,7 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateDiffBases>)
             .add_message_handler(
-                broadcast_project_message_from_host::<proto::RefreshDocumentsDiagnostics>,
+                broadcast_project_message_from_host::<proto::PullWorkspaceDiagnostics>,
             )
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
