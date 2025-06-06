@@ -90,10 +90,6 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
     };
 }
 
-pub(crate) fn refresh() {
-    refresh_from_settings(&HashMap::default());
-}
-
 pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     let env_config = ENV_FILTER.get();
     let map_new = ScopeMap::new_from_settings_and_env(settings, env_config, DEFAULT_FILTERS);
