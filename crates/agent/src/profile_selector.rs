@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use agent_settings::{
-    AgentDockPosition, AgentProfileId, AgentProfileSettings, AgentSettings, GroupedAgentProfiles,
-    builtin_profiles,
-};
+use agent_settings::{AgentDockPosition, AgentProfileId, AgentSettings, builtin_profiles};
 use fs::Fs;
 use gpui::{Action, Empty, Entity, FocusHandle, Subscription, prelude::*};
 use language_model::LanguageModelRegistry;
@@ -13,10 +10,13 @@ use ui::{
     prelude::*,
 };
 
-use crate::{ManageProfiles, Thread, ToggleProfileSelector};
+use crate::{
+    ManageProfiles, Thread, ToggleProfileSelector,
+    agent_profile::{AgentProfile, AvailableProfiles},
+};
 
 pub struct ProfileSelector {
-    profiles: GroupedAgentProfiles,
+    profiles: AvailableProfiles,
     fs: Arc<dyn Fs>,
     thread: Entity<Thread>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -36,7 +36,7 @@ impl ProfileSelector {
         });
 
         Self {
-            profiles: GroupedAgentProfiles::from_settings(AgentSettings::get_global(cx)),
+            profiles: AgentProfile::available_profiles(cx),
             fs,
             thread,
             menu_handle: PopoverMenuHandle::default(),
@@ -50,7 +50,7 @@ impl ProfileSelector {
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
-        self.profiles = GroupedAgentProfiles::from_settings(AgentSettings::get_global(cx));
+        self.profiles = AgentProfile::available_profiles(cx);
     }
 
     fn build_context_menu(
@@ -60,21 +60,29 @@ impl ProfileSelector {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
             let settings = AgentSettings::get_global(cx);
-            for (profile_id, profile) in self.profiles.builtin.iter() {
+
+            let mut found_non_builtin = false;
+            for (profile_id, profile_name) in self.profiles.iter() {
+                if !builtin_profiles::is_builtin(profile_id) {
+                    found_non_builtin = true;
+                }
                 menu = menu.item(self.menu_entry_for_profile(
                     profile_id.clone(),
-                    profile,
+                    profile_name,
                     settings,
                     cx,
                 ));
             }
 
-            if !self.profiles.custom.is_empty() {
+            if found_non_builtin {
                 menu = menu.separator().header("Custom Profiles");
-                for (profile_id, profile) in self.profiles.custom.iter() {
+                for (profile_id, profile_name) in self.profiles.iter() {
+                    if builtin_profiles::is_builtin(profile_id) {
+                        continue;
+                    }
                     menu = menu.item(self.menu_entry_for_profile(
                         profile_id.clone(),
-                        profile,
+                        profile_name,
                         settings,
                         cx,
                     ));
@@ -95,11 +103,11 @@ impl ProfileSelector {
     fn menu_entry_for_profile(
         &self,
         profile_id: AgentProfileId,
-        profile_settings: &AgentProfileSettings,
+        profile_name: &SharedString,
         settings: &AgentSettings,
         cx: &App,
     ) -> ContextMenuEntry {
-        let documentation = match profile_settings.name.to_lowercase().as_str() {
+        let documentation = match profile_name.to_lowercase().as_str() {
             builtin_profiles::WRITE => Some("Get help to write anything."),
             builtin_profiles::ASK => Some("Chat about your codebase."),
             builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
@@ -107,7 +115,7 @@ impl ProfileSelector {
         };
         let thread_profile_id = self.thread.read(cx).profile().id();
 
-        let entry = ContextMenuEntry::new(profile_settings.name.clone())
+        let entry = ContextMenuEntry::new(profile_name.clone())
             .toggleable(IconPosition::End, &profile_id == thread_profile_id);
 
         let entry = if let Some(doc_text) = documentation {

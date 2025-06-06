@@ -17,29 +17,6 @@ pub mod builtin_profiles {
     }
 }
 
-#[derive(Default)]
-pub struct GroupedAgentProfiles {
-    pub builtin: IndexMap<AgentProfileId, AgentProfileSettings>,
-    pub custom: IndexMap<AgentProfileId, AgentProfileSettings>,
-}
-
-impl GroupedAgentProfiles {
-    pub fn from_settings(settings: &crate::AgentSettings) -> Self {
-        let mut builtin = IndexMap::default();
-        let mut custom = IndexMap::default();
-
-        for (profile_id, profile) in settings.profiles.clone() {
-            if builtin_profiles::is_builtin(&profile_id) {
-                builtin.insert(profile_id, profile);
-            } else {
-                custom.insert(profile_id, profile);
-            }
-        }
-
-        Self { builtin, custom }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileId(pub Arc<str>);
 

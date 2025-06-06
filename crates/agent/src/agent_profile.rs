@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings};
 use assistant_tool::{Tool, ToolSource, ToolWorkingSet};
+use collections::IndexMap;
 use convert_case::{Case, Casing};
 use fs::Fs;
 use gpui::{App, Entity};
 use settings::{Settings, update_settings_file};
+use ui::SharedString;
 use util::ResultExt;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13,6 +15,8 @@ pub struct AgentProfile {
     id: AgentProfileId,
     tool_set: Entity<ToolWorkingSet>,
 }
+
+pub type AvailableProfiles = IndexMap<AgentProfileId, SharedString>;
 
 impl AgentProfile {
     pub fn new(id: AgentProfileId, tool_set: Entity<ToolWorkingSet>) -> Self {
@@ -54,6 +58,15 @@ impl AgentProfile {
         });
 
         id
+    }
+
+    /// Returns a map of AgentProfileIds to their names
+    pub fn available_profiles(cx: &App) -> AvailableProfiles {
+        let mut profiles = AvailableProfiles::default();
+        for (id, profile) in AgentSettings::get_global(cx).profiles.iter() {
+            profiles.insert(id.clone(), profile.name.clone());
+        }
+        profiles
     }
 
     pub fn id(&self) -> &AgentProfileId {
