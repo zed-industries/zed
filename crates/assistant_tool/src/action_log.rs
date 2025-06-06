@@ -204,7 +204,7 @@ impl ActionLog {
             git_store.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
         })?;
 
-        let (git_diff_updates_tx, mut git_diff_updates_rx) = async_watch::channel(());
+        let (mut git_diff_updates_tx, mut git_diff_updates_rx) = watch::channel(());
         let _repo_subscription =
             if let Some((git_diff, (buffer_repo, _))) = git_diff.as_ref().zip(buffer_repo) {
                 cx.update(|cx| {
