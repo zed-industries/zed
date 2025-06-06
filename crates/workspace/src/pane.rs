@@ -2896,10 +2896,10 @@ impl Pane {
                         to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
                     }
                     let database_id = workspace.database_id();
-                    let from_old_ix = from_pane.read(cx).index_for_item_id(item_id);
-                    let was_pinned = from_old_ix
-                        .map(|ix| from_pane.read(cx).is_tab_pinned(ix))
-                        .unwrap_or(false);
+                    let was_pinned_in_from_pane = from_pane.read_with(cx, |pane, _| {
+                        pane.index_for_item_id(item_id)
+                            .is_some_and(|ix| pane.is_tab_pinned(ix))
+                    });
                     let to_pane_old_length = to_pane.read(cx).items.len();
                     if is_clone {
                         let Some(item) = from_pane
@@ -2919,17 +2919,22 @@ impl Pane {
                         move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
                     }
                     to_pane.update(cx, |this, _| {
-                        let now_in_pinned_region = ix < this.pinned_tab_count;
+                        let is_pinned_in_to_pane = this.is_tab_pinned(ix);
+
                         if to_pane == from_pane {
-                            if was_pinned && !now_in_pinned_region {
+                            if was_pinned_in_from_pane && !is_pinned_in_to_pane {
                                 this.pinned_tab_count -= 1;
-                            } else if !was_pinned && now_in_pinned_region {
+                            } else if !was_pinned_in_from_pane && is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
                             }
                         } else if this.items.len() > to_pane_old_length {
-                            if to_pane_old_length == 0 && was_pinned {
-                                this.pinned_tab_count = 1;
-                            } else if now_in_pinned_region {
+                            let item_created_pane = to_pane_old_length == 0;
+                            let is_first_position = ix == 0;
+                            let was_dropped_at_beginning = item_created_pane || is_first_position;
+                            let should_remain_pinned = is_pinned_in_to_pane
+                                || (was_pinned_in_from_pane && was_dropped_at_beginning);
+
+                            if should_remain_pinned {
                                 this.pinned_tab_count += 1;
                             }
                         }
@@ -4496,6 +4501,50 @@ mod tests {
         // A should become pinned
         assert_item_labels(&pane_a, [], cx);
         assert_item_labels(&pane_b, ["B!", "A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_pinned_tab_into_existing_panes_first_position_with_no_pinned_tabs(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A to pane A and pin
+        let item_a = add_labeled_item(&pane_a, "A", false, cx);
+        pane_a.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane_a, ["A*!"], cx);
+
+        // Add B to pane B
+        let pane_b = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_a.clone(), SplitDirection::Right, window, cx)
+        });
+        add_labeled_item(&pane_b, "B", false, cx);
+        assert_item_labels(&pane_b, ["B*"], cx);
+
+        // Move A from pane A to position 0 in pane B, indicating it should stay pinned
+        pane_b.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 0,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 0, window, cx);
+        });
+
+        // A should stay pinned
+        assert_item_labels(&pane_a, [], cx);
+        assert_item_labels(&pane_b, ["A*!", "B"], cx);
     }
 
     #[gpui::test]
