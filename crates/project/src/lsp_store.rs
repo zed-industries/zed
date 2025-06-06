@@ -255,8 +255,8 @@ impl LocalLspStore {
             let fs = self.fs.clone();
             let pull_diagnostics = ProjectSettings::get_global(cx)
                 .diagnostics
-                .lsp_pull_diagnostics_debounce_ms
-                .is_some();
+                .lsp_pull_diagnostics
+                .enabled;
             cx.spawn(async move |cx| {
                 let result = async {
                     let toolchains = this.update(cx, |this, cx| this.toolchain_store(cx))?;

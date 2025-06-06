@@ -15966,11 +15966,13 @@ impl Editor {
 
     fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
         let project = self.project.as_ref()?.downgrade();
-        let debounce = Duration::from_millis(
-            ProjectSettings::get_global(cx)
-                .diagnostics
-                .lsp_pull_diagnostics_debounce_ms?,
-        );
+        let pull_diagnostics_settings = ProjectSettings::get_global(cx)
+            .diagnostics
+            .lsp_pull_diagnostics;
+        if !pull_diagnostics_settings.enabled {
+            return None;
+        }
+        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
         let buffers = self.buffer.read(cx).all_buffers();
 
         self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
