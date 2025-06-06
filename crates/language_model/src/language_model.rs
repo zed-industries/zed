@@ -22,6 +22,7 @@ use std::fmt;
 use std::ops::{Add, Sub};
 use std::str::FromStr as _;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 use util::serde::is_default;
 use zed_llm_client::{
@@ -74,6 +75,8 @@ pub enum LanguageModelCompletionEvent {
 
 #[derive(Error, Debug)]
 pub enum LanguageModelCompletionError {
+    #[error("rate limit exceeded, retry after {0:?}")]
+    RateLimit(Duration),
     #[error("received bad input JSON")]
     BadInputJson {
         id: LanguageModelToolUseId,
