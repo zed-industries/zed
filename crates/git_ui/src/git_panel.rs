@@ -2025,7 +2025,7 @@ impl GitPanel {
         };
         telemetry::event!("Git Pulled");
         let branch = branch.clone();
-        let remote = self.get_remote(true, window, cx);
+        let remote = self.get_remote(false, window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
@@ -2177,7 +2177,7 @@ impl GitPanel {
 
     fn get_remote(
         &mut self,
-        is_using_current_branch: bool,
+        always_select: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = anyhow::Result<Option<Remote>>> + use<> {
@@ -2189,11 +2189,11 @@ impl GitPanel {
             let repo = repo.context("No active repository")?;
             let current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, _| {
-                    let current_branch = if is_using_current_branch {
+                    let current_branch = if always_select {
+                        None
+                    } else {
                         let current_branch = repo.branch.as_ref().context("No active branch")?;
                         Some(current_branch.name().to_string())
-                    } else {
-                        None
                     };
                     anyhow::Ok(repo.get_remotes(current_branch))
                 })??
