@@ -7,18 +7,43 @@ on:
     branches: [ main ]
   release:
     types: [created]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Target platform (windows, linux, macos, all)'
+        required: false
+        default: 'all'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUST_BACKTRACE: 1
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            rust-target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            rust-target: x86_64-apple-darwin
+    
     steps:
     - uses: actions/checkout@v3
+    
     - name: Install Rust
       uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
+        target: ${{ matrix.rust-target }}
         profile: minimal
         override: true
+    
     - name: Cache cargo
       uses: actions/cache@v3
       with:
@@ -26,35 +51,126 @@ jobs:
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.rust-target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
     - name: Run tests
       run: |
         cargo test --workspace --no-fail-fast
         cargo clippy --all-targets -- -D warnings
         cargo fmt --all -- --check
 
-  release:
+  build:
     needs: test
-    if: github.event_name == 'release' && github.event.action == 'created'
-    runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            package_suffix: linux-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            package_suffix: windows
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            package_suffix: macos-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            package_suffix: macos-arm64
+    
+    runs-on: ${{ matrix.os }}
+    
     steps:
     - uses: actions/checkout@v3
+    
     - name: Install Rust
       uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
+        target: ${{ matrix.target }}
         profile: minimal
         override: true
+    
+    - name: Install dependencies
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libgtk-3-dev \
+          libxcb-render0-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev \
+          libspeechd-dev \
+          libxkbcommon-dev \
+          libssl-dev \
+          libgtk-3-0 \
+          libwebkit2gtk-4.0-dev \
+          libappindicator3-dev \
+          librsvg2-dev
+    
+    - name: Cache cargo
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
     - name: Build release
       run: |
-        cargo build --release
-        mkdir -p release
-        cp target/release/codeorbit release/
-        cp -r assets release/
-        cp README.md release/
-    - name: Create release asset
+        cargo build --release --target ${{ matrix.target }}
+        
+        # Package the release
+        VERSION=$(git describe --tags --always)
+        PACKAGE_DIR="release/zed-${{ matrix.package_suffix }}"
+        
+        mkdir -p "$PACKAGE_DIR"
+        
+        # Copy binary
+        if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+          cp "target/${{ matrix.target }}/release/zed.exe" "$PACKAGE_DIR/"
+        else
+          cp "target/${{ matrix.target }}/release/zed" "$PACKAGE_DIR/"
+        fi
+        
+        # Copy assets and documentation
+        cp -r assets "$PACKAGE_DIR/"
+        cp README.md LICENSE "$PACKAGE_DIR/"
+        
+        # Create archive
+        if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+          cd release
+          Compress-Archive -Path "zed-${{ matrix.package_suffix }}" -DestinationPath "zed-${{ matrix.package_suffix }}.zip" -Force
+        else
+          tar -czf "release/zed-${{ matrix.package_suffix }}.tar.gz" -C release "zed-${{ matrix.package_suffix }}"
+        fi
+    
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: zed-${{ matrix.package_suffix }}
+        path: |
+          release/zed-${{ matrix.package_suffix }}.*
+          release/SHA256SUMS
+        if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'release' && github.event.action == 'created'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts
+    
+    - name: Create release
       uses: softprops/action-gh-release@v1
       with:
-        files: release/**/*
+        files: |
+          artifacts/zed-*/**/*
+          artifacts/SHA256SUMS
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

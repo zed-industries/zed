@@ -24,9 +24,15 @@ Welcome to **CodeOrbit**, a high-performance, AI-powered code editor with multi-
 
 ### Prerequisites
 
-- Node.js 16.0.0 or higher
-- npm or yarn
-- Git
+- **For Development:**
+  - Node.js 16.0.0 or higher
+  - npm or yarn
+  - Git
+  - Rust (latest stable)
+  - Platform-specific build tools:
+    - **Windows:** Visual Studio 2019/2022 with C++ build tools
+    - **macOS:** Xcode command line tools
+    - **Linux:** Build essentials, GTK+3, and other system dependencies
 
 ### Installation
 
@@ -49,6 +55,120 @@ Welcome to **CodeOrbit**, a high-performance, AI-powered code editor with multi-
    # or
    yarn start
    ```
+
+## 🛠 Building from Source
+
+### Development Build
+
+```bash
+# Clone the repository
+https://github.com/yourusername/codeorbit.git
+cd codeorbit
+
+# Install dependencies
+cargo build
+
+# Run in development mode
+cargo run
+```
+
+### Release Builds
+
+#### Windows
+```bash
+# Build for Windows
+cargo build --release --target x86_64-pc-windows-msvc
+
+# The binary will be at:
+# target/x86_64-pc-windows-msvc/release/zed.exe
+```
+
+#### macOS (Intel)
+```bash
+# Build for Intel Mac
+cargo build --release --target x86_64-apple-darwin
+
+# The binary will be at:
+# target/x86_64-apple-darwin/release/zed
+```
+
+#### macOS (Apple Silicon)
+```bash
+# Build for Apple Silicon
+cargo build --release --target aarch64-apple-darwin
+
+# The binary will be at:
+# target/aarch64-apple-darwin/release/zed
+```
+
+#### Linux
+```bash
+# Install system dependencies (Ubuntu/Debian)
+sudo apt-get update
+sudo apt-get install -y \
+    libgtk-3-dev \
+    libxcb-render0-dev \
+    libxcb-shape0-dev \
+    libxcb-xfixes0-dev \
+    libspeechd-dev \
+    libxkbcommon-dev \
+    libssl-dev \
+    libgtk-3-0 \
+    libwebkit2gtk-4.0-dev \
+    libappindicator3-dev \
+    librsvg2-dev
+
+# Build for Linux
+cargo build --release --target x86_64-unknown-linux-gnu
+
+# The binary will be at:
+# target/x86_64-unknown-linux-gnu/release/zed
+```
+
+## 📦 Release Process
+
+### Creating a New Release
+
+1. Update version in `Cargo.toml`
+2. Update `CHANGELOG.md` with the new version
+3. Commit changes with message `chore: prepare vX.Y.Z release`
+4. Create a new Git tag: `git tag vX.Y.Z`
+5. Push the tag: `git push origin vX.Y.Z`
+
+### CI/CD Pipeline
+
+The GitHub Actions workflow will automatically:
+- Run tests on all platforms
+- Build release artifacts for all supported platforms
+- Create a GitHub release with all artifacts when a new tag is pushed
+
+### Manual Build Scripts
+
+For local builds, use the provided scripts:
+
+#### Windows (PowerShell)
+```powershell
+.\scripts\build-release.ps1 -Target windows
+```
+
+#### All Platforms
+```powershell
+.\scripts\build-release.ps1 -Target all
+```
+
+#### Specific Target
+```powershell
+.\scripts\build-release.ps1 -Target x86_64-unknown-linux-gnu
+```
+
+## 📦 Release Artifacts
+
+Each release includes:
+- `zed-windows.zip` - Windows x86_64 installer
+- `zed-macos-x64.tar.gz` - macOS x86_64 binary
+- `zed-macos-arm64.tar.gz` - macOS ARM64 binary
+- `zed-linux-x64.tar.gz` - Linux x86_64 binary
+- `SHA256SUMS` - Checksums for all release artifacts
 
 ## 🛠 Development
 
