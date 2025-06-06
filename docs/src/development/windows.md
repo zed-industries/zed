@@ -259,3 +259,23 @@ New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name
 For more information on this, please see [win32 docs](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)
 
 (note that you will need to restart your system after enabling longpath support)
+
+### Graphics issues
+
+#### Zed fails to launch
+
+Currently, Zed uses Vulkan as its graphics API on Windows. However, Vulkan isn't always the most reliable on Windows, so if Zed fails to launch, it's likely a Vulkan-related issue.
+
+You can check the Zed log at:
+`C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
+
+If you see messages like:
+
+- `Zed failed to open a window: NoSupportedDeviceFound`
+- `ERROR_INITIALIZATION_FAILED`
+- `GPU Crashed`
+- `ERROR_SURFACE_LOST_KHR`
+
+Then Vulkan might not be working properly on your system. In most cases, updating your GPU drivers may help resolve this.
+
+If there's nothing Vulkan-related in the logs and you happen to have Bandicam installed, try uninstalling it. Zed is currently not compatible with Bandicam.

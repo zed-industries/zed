@@ -23,6 +23,8 @@ You can click on the card that contains your message and re-submit it with an ad
 
 Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message, allowing you to return your codebase to the state it was in prior to that message.
 
+The checkpoint button appears even if you interrupt the thread midway through an edit attempt, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
+
 ### Navigating History {#navigating-history}
 
 To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the hamburger icon button at the top left of the panel to open the dropdown that shows you the six most recent threads.
@@ -44,12 +46,9 @@ If you send a prompt to the Agent and then move elsewhere, thus putting Zed in t
 - a visual notification that appears in the top right of your screen
 - or a sound notification
 
-You can use both notification methods together or just pick one of them.
+Both notification methods can be used together or individually according to your preference.
 
-For the visual notification, you can customize its behavior, including the option to turn it off entirely, by using the `agent.notify_when_agent_waiting` settings key.
-For the sound notification, turn it on or off using the `agent.play_sound_when_agent_done` settings key.
-
-#### Sound Notification
+You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
 
 ### Reviewing Changes {#reviewing-changes}
 

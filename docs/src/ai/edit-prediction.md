@@ -231,6 +231,18 @@ To not have predictions appear automatically as you type when working with a spe
 }
 ```
 
+### In Specific Directories
+
+To disable edit predictions for specific directories or files, set this within `settings.json`:
+
+```json
+{
+  "edit_predictions": {
+    "disabled_globs": ["~/.config/zed/settings.json"]
+  }
+}
+```
+
 ### Turning Off Completely
 
 To completely turn off edit prediction across all providers, explicitly set the settings to `none`, like so:

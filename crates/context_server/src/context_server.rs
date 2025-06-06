@@ -1,5 +1,7 @@
 pub mod client;
 pub mod protocol;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test;
 pub mod transport;
 pub mod types;
 

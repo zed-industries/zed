@@ -4,8 +4,8 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::display_map::EditorMargins;
@@ -134,7 +134,7 @@ impl InlineAssistant {
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
-            let enabled = AssistantSettings::get_global(cx).enabled;
+            let enabled = AgentSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
@@ -219,7 +219,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         if !settings.enabled {
             return;
         }
@@ -1011,7 +1011,7 @@ impl InlineAssistant {
                         self.update_editor_highlights(&editor, cx);
                     }
                 } else {
-                    entry.get().highlight_updates.send(()).ok();
+                    entry.get_mut().highlight_updates.send(()).ok();
                 }
             }
 
@@ -1445,7 +1445,7 @@ impl InlineAssistant {
                     style: BlockStyle::Flex,
                     render: Arc::new(move |cx| {
                         div()
-                            .block_mouse_down()
+                            .block_mouse_except_scroll()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.window.line_height())
@@ -1519,7 +1519,7 @@ impl InlineAssistant {
 struct EditorInlineAssists {
     assist_ids: Vec<InlineAssistId>,
     scroll_lock: Option<InlineAssistScrollLock>,
-    highlight_updates: async_watch::Sender<()>,
+    highlight_updates: watch::Sender<()>,
     _update_highlights: Task<Result<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -1531,7 +1531,7 @@ struct InlineAssistScrollLock {
 
 impl EditorInlineAssists {
     fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
-        let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
+        let (highlight_updates_tx, mut highlight_updates_rx) = watch::channel(());
         Self {
             assist_ids: Vec::new(),
             scroll_lock: None,
@@ -1689,7 +1689,7 @@ impl InlineAssist {
                         if let Some(editor) = editor.upgrade() {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor_assists) =
-                                    this.assists_by_editor.get(&editor.downgrade())
+                                    this.assists_by_editor.get_mut(&editor.downgrade())
                                 {
                                     editor_assists.highlight_updates.send(()).ok();
                                 }
@@ -1771,7 +1771,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        if !AssistantSettings::get_global(cx).enabled {
+        if !AgentSettings::get_global(cx).enabled {
             return Task::ready(Ok(Vec::new()));
         }
 

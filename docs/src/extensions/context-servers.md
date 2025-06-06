@@ -6,7 +6,7 @@ Extensions may provide [context servers](../ai/mcp.md) for use in the Assistant.
 
 To see a working example of an extension that provides context servers, check out the [`postgres-context-server` extension](https://github.com/zed-extensions/postgres-context-server).
 
-This extension can be [installed as a dev extension](./developing-extensions.html#developing-an-extension-locally) if you want to try it out for yourself.
+This extension can be [installed as a dev extension](./developing-extensions.md#developing-an-extension-locally) if you want to try it out for yourself.
 
 ## Defining context servers
 

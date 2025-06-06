@@ -778,11 +778,7 @@ impl GitStore {
         let is_unmerged = self
             .repository_and_path_for_buffer_id(buffer_id, cx)
             .map_or(false, |(repo, path)| {
-                repo.read(cx)
-                    .snapshot
-                    .merge
-                    .conflicted_paths
-                    .contains(&path)
+                repo.read(cx).snapshot.has_conflict(&path)
             });
         let git_store = cx.weak_entity();
         let buffer_git_state = self
@@ -1145,7 +1141,7 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let id = repo.read(cx).id;
-        let merge_conflicts = repo.read(cx).snapshot.merge.conflicted_paths.clone();
+        let repo_snapshot = repo.read(cx).snapshot.clone();
         for (buffer_id, diff) in self.diffs.iter() {
             if let Some((buffer_repo, repo_path)) =
                 self.repository_and_path_for_buffer_id(*buffer_id, cx)
@@ -1155,7 +1151,7 @@ impl GitStore {
                         if let Some(conflict_set) = &diff.conflict_set {
                             let conflict_status_changed =
                                 conflict_set.update(cx, |conflict_set, cx| {
-                                    let has_conflict = merge_conflicts.contains(&repo_path);
+                                    let has_conflict = repo_snapshot.has_conflict(&repo_path);
                                     conflict_set.set_has_conflict(has_conflict, cx)
                                 })?;
                             if conflict_status_changed {
@@ -1557,7 +1553,7 @@ impl GitStore {
     ) -> Result<proto::RemoteMessageResponse> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let fetch_options = FetchOptions::from_proto(envelope.payload.fetch_options);
+        let fetch_options = FetchOptions::from_proto(envelope.payload.remote);
         let askpass_id = envelope.payload.askpass_id;
 
         let askpass = make_remote_delegate(
@@ -2180,7 +2176,7 @@ impl GitStore {
         id: RepositoryId,
         cx: &mut AsyncApp,
     ) -> Result<Entity<Repository>> {
-        this.update(cx, |this, _| {
+        this.read_with(cx, |this, _| {
             this.repositories
                 .get(&id)
                 .context("missing repository handle")
@@ -2669,8 +2665,17 @@ impl RepositorySnapshot {
             .ok()
     }
 
+    pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
+        self.merge.conflicted_paths.contains(&repo_path)
+    }
+
     pub fn has_conflict(&self, repo_path: &RepoPath) -> bool {
-        self.merge.conflicted_paths.contains(repo_path)
+        let had_conflict_on_last_merge_head_change =
+            self.merge.conflicted_paths.contains(&repo_path);
+        let has_conflict_currently = self
+            .status_for_path(&repo_path)
+            .map_or(false, |entry| entry.status.is_conflicted());
+        had_conflict_on_last_merge_head_change || has_conflict_currently
     }
 
     /// This is the name that will be displayed in the repository selector for this repository.
@@ -3523,7 +3528,7 @@ impl Repository {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
                             askpass_id,
-                            fetch_options: fetch_options.to_proto(),
+                            remote: fetch_options.to_proto(),
                         })
                         .await
                         .context("sending fetch request")?;
@@ -4025,7 +4030,7 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .update(&mut cx, |this, _| {
+                    .read_with(&mut cx, |this, _| {
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),

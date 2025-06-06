@@ -23,6 +23,7 @@ use serde_json::Value;
 use settings::{
     Settings, SettingsLocation, SettingsSources, SettingsStore, add_references_to_properties,
 };
+use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
@@ -1045,6 +1046,15 @@ pub struct LanguageTaskConfig {
     pub variables: HashMap<String, String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Use LSP tasks over Zed language extension ones.
+    /// If no LSP tasks are returned due to error/timeout or regular execution,
+    /// Zed language extension tasks will be used instead.
+    ///
+    /// Other Zed tasks will still be shown:
+    /// * Zed task from either of the task config file
+    /// * Zed task from history (e.g. one-off task was spawned before)
+    #[serde(default = "default_true")]
+    pub prefer_lsp: bool,
 }
 
 impl InlayHintSettings {
@@ -1322,9 +1332,10 @@ impl settings::Settings for AllLanguageSettings {
                 disabled_globs: completion_globs
                     .iter()
                     .filter_map(|g| {
+                        let expanded_g = shellexpand::tilde(g).into_owned();
                         Some(DisabledGlob {
-                            matcher: globset::Glob::new(g).ok()?.compile_matcher(),
-                            is_absolute: Path::new(g).is_absolute(),
+                            matcher: globset::Glob::new(&expanded_g).ok()?.compile_matcher(),
+                            is_absolute: Path::new(&expanded_g).is_absolute(),
                         })
                     })
                     .collect(),
@@ -1493,8 +1504,27 @@ impl settings::Settings for AllLanguageSettings {
                 associations.entry(v.into()).or_default().push(k.clone());
             }
         }
+
         // TODO: do we want to merge imported globs per filetype? for now we'll just replace
         current.file_types.extend(associations);
+
+        // cursor global ignore list applies to cursor-tab, so transfer it to edit_predictions.disabled_globs
+        if let Some(disabled_globs) = vscode
+            .read_value("cursor.general.globalCursorIgnoreList")
+            .and_then(|v| v.as_array())
+        {
+            current
+                .edit_predictions
+                .get_or_insert_default()
+                .disabled_globs
+                .get_or_insert_default()
+                .extend(
+                    disabled_globs
+                        .iter()
+                        .filter_map(|glob| glob.as_str())
+                        .map(|s| s.to_string()),
+                );
+        }
     }
 }
 
@@ -1684,10 +1714,12 @@ mod tests {
                         };
                         #[cfg(windows)]
                         let glob_str = glob_str.as_str();
-
+                        let expanded_glob_str = shellexpand::tilde(glob_str).into_owned();
                         DisabledGlob {
-                            matcher: globset::Glob::new(glob_str).unwrap().compile_matcher(),
-                            is_absolute: Path::new(glob_str).is_absolute(),
+                            matcher: globset::Glob::new(&expanded_glob_str)
+                                .unwrap()
+                                .compile_matcher(),
+                            is_absolute: Path::new(&expanded_glob_str).is_absolute(),
                         }
                     })
                     .collect(),
@@ -1783,10 +1815,16 @@ mod tests {
         let dot_env_file = make_test_file(&[".env"]);
         let settings = build_settings(&[".env"]);
         assert!(!settings.enabled_for_file(&dot_env_file, &cx));
+
+        // Test tilde expansion
+        let home = shellexpand::tilde("~").into_owned().to_string();
+        let home_file = make_test_file(&[&home, "test.rs"]);
+        let settings = build_settings(&["~/test.rs"]);
+        assert!(!settings.enabled_for_file(&home_file, &cx));
     }
 
     #[test]
-    pub fn test_resolve_language_servers() {
+    fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
                 .iter()
