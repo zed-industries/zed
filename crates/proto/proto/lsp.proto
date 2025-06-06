@@ -543,6 +543,14 @@ message UpdateLanguageServer {
     }
 }
 
+message ShowDocument {
+    uint64 project_id = 1;
+    string uri = 2;
+    bool take_focus = 3;
+    optional PointUtf16 selection_start = 4;
+    optional PointUtf16 selection_end = 5;
+}
+
 message LspWorkStart {
     string token = 1;
     optional string title = 4;

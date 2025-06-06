@@ -249,6 +249,11 @@ enum BufferOrderedMessage {
         language_server_id: LanguageServerId,
         message: proto::update_language_server::Variant,
     },
+    ShowDocument {
+        uri: lsp::Url,
+        take_focus: bool,
+        selection: Option<lsp::Range>,
+    },
     Resync,
 }
 
@@ -915,6 +920,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_buffer_by_path);
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
+        client.add_entity_message_handler(Self::handle_show_document);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1266,6 +1272,7 @@ impl Project {
             ssh_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             ssh_proto.add_entity_message_handler(Self::handle_hide_toast);
             ssh_proto.add_entity_request_handler(Self::handle_update_buffer_from_ssh);
+            ssh_proto.add_entity_message_handler(Self::handle_show_document);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
@@ -2705,6 +2712,45 @@ impl Project {
                             }
                         })?;
                     }
+
+                    BufferOrderedMessage::ShowDocument {
+                        uri,
+                        take_focus,
+                        selection,
+                    } => {
+                        flush_operations(
+                            &this,
+                            &mut operations_by_buffer_id,
+                            &mut needs_resync_with_host,
+                            is_local,
+                            cx,
+                        )
+                        .await?;
+
+                        this.read_with(cx, |this, _| {
+                            if let Some(project_id) = this.remote_id() {
+                                this.client
+                                    .send(proto::ShowDocument {
+                                        project_id,
+                                        uri: uri.to_string(),
+                                        take_focus,
+                                        selection_start: selection.as_ref().map(|range| {
+                                            proto::PointUtf16 {
+                                                row: range.start.line,
+                                                column: range.start.character,
+                                            }
+                                        }),
+                                        selection_end: selection.as_ref().map(|range| {
+                                            proto::PointUtf16 {
+                                                row: range.end.line,
+                                                column: range.end.character,
+                                            }
+                                        }),
+                                    })
+                                    .log_err();
+                            }
+                        })?;
+                    }
                 }
             }
 
@@ -2853,6 +2899,30 @@ impl Project {
             } => {
                 if most_recent_edit.replica_id == self.replica_id() {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
+                }
+            }
+            LspStoreEvent::ShowDocument {
+                uri,
+                take_focus,
+                selection,
+            } => {
+                if self.is_via_collab() {
+                    self.enqueue_buffer_ordered_message(BufferOrderedMessage::ShowDocument {
+                        uri: uri.clone(),
+                        take_focus: *take_focus,
+                        selection: *selection,
+                    })
+                    .log_err();
+                } else {
+                    if let Ok(path) = uri.to_file_path() {
+                        if let Some((worktree, relative_path)) = self.find_worktree(&path, cx) {
+                            let project_path = ProjectPath {
+                                worktree_id: worktree.read(cx).id(),
+                                path: relative_path.into(),
+                            };
+                            self.open_buffer(project_path, cx).detach();
+                        }
+                    }
                 }
             }
         }
@@ -4545,6 +4615,27 @@ impl Project {
             cx.emit(Event::HideToast {
                 notification_id: envelope.payload.notification_id.into(),
             });
+            Ok(())
+        })?
+    }
+
+    async fn handle_show_document(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::ShowDocument>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, cx| {
+            if let Ok(uri) = lsp::Url::parse(&envelope.payload.uri) {
+                if let Ok(path) = uri.to_file_path() {
+                    if let Some((worktree, relative_path)) = this.find_worktree(&path, cx) {
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: relative_path.into(),
+                        };
+                        this.open_buffer(project_path, cx).detach();
+                    }
+                }
+            }
             Ok(())
         })?
     }

@@ -810,7 +810,7 @@ impl LanguageServer {
                     show_message: Some(ShowMessageRequestClientCapabilities {
                         message_action_item: None,
                     }),
-                    ..Default::default()
+                    show_document: Some(ShowDocumentClientCapabilities { support: true }),
                 }),
             },
             trace: None,
