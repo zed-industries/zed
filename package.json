@@ -1,20 +1,71 @@
 {
   "name": "codeorbit",
   "version": "1.0.0",
-  "description": "[![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)",
-  "main": "index.js",
+  "displayName": "CodeOrbit",
+  "description": "A modern, AI-powered code editor with multi-agent collaboration capabilities",
+  "main": "dist/main.js",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "ts-node src/main.ts",
+    "build": "tsc",
+    "test": "jest",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\""
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "code-editor",
+    "ai",
+    "multi-agent",
+    "typescript",
+    "productivity"
+  ],
+  "author": "CodeOrbit Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/codeorbit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/codeorbit/issues"
+  },
+  "homepage": "https://codeorbit.dev",
+  "type": "module",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^5.1.0",
+    "morgan": "^1.10.0"
+  },
   "devDependencies": {
-    "@types/node": "^22.15.30",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.8.3"
-  }
+    "@types/cors": "^2.8.18",
+    "@types/express": "^4.17.22",
+    "@types/jest": "^29.5.0",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^20.0.0",
+    "@types/supertest": "^2.0.15",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint": "^8.0.0",
+    "eslint-config-prettier": "^8.0.0",
+    "eslint-plugin-prettier": "^4.0.0",
+    "husky": "^8.0.3",
+    "jest": "^29.0.0",
+    "lint-staged": "^15.2.0",
+    "nodemon": "^3.1.0",
+    "prettier": "^2.7.0",
+    "supertest": "^6.3.3",
+    "ts-jest": "^29.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "browserslist": [
+    "last 2 Chrome versions",
+    "last 2 Firefox versions",
+    "last 2 Safari versions"
+  ]
 }

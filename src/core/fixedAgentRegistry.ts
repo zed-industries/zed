@@ -1,4 +1,4 @@
-import { IAgent, AgentResult, Subtask } from './Agent';
+import { AgentBase, type AgentResult, type Subtask } from '../agents/AgentBase.js';
 
 /**
  * Registry for managing all agents in the system.
@@ -6,7 +6,7 @@ import { IAgent, AgentResult, Subtask } from './Agent';
  */
 export class AgentRegistry {
   private static instance: AgentRegistry;
-  private agents: Map<string, IAgent> = new Map();
+  private agents: Map<string, AgentBase> = new Map();
 
   /**
    * Private constructor to enforce singleton pattern
@@ -28,7 +28,7 @@ export class AgentRegistry {
    * @param agent The agent to register
    * @throws Error if an agent with the same ID is already registered
    */
-  public registerAgent(agent: IAgent): void {
+  public registerAgent(agent: AgentBase): void {
     if (this.agents.has(agent.id)) {
       throw new Error(`Agent with ID '${agent.id}' is already registered`);
     }
@@ -42,7 +42,7 @@ export class AgentRegistry {
    * @param agentId The ID of the agent to retrieve
    * @returns The agent if found, undefined otherwise
    */
-  public getAgent(agentId: string): IAgent | undefined {
+  public getAgent(agentId: string): AgentBase | undefined {
     return this.agents.get(agentId);
   }
 
@@ -77,14 +77,17 @@ export class AgentRegistry {
   public async executeWithAgent(
     agentId: string,
     input: string,
-    context?: Record<string, any>
+    context: Record<string, any> = {}
   ): Promise<AgentResult> {
     const agent = this.getAgent(agentId);
     if (!agent) {
       return {
         success: false,
         output: `Agent with ID '${agentId}' not found`,
-        error: new Error(`Agent not found: ${agentId}`)
+        error: `Agent not found: ${agentId}`,
+        agentId,
+        input,
+        timestamp: new Date().toISOString()
       };
     }
 
@@ -101,62 +104,52 @@ export class AgentRegistry {
       return {
         success: false,
         output: `Error executing agent: ${errorMessage}`,
-        error: error instanceof Error ? error : new Error(errorMessage)
+        error: errorMessage,
+        agentId,
+        input,
+        timestamp: new Date().toISOString()
       };
     }
   }
 
   /**
-   * Execute subtasks in parallel
-   * @param subtasks Array of subtasks to execute
-   * @returns Promise that resolves when all subtasks are complete
+   * Route a task to the most appropriate agent based on content
+   * @param input The task input
+   * @param context Optional context data
+   * @returns Promise that resolves to the task result
    */
-  public async executeSubtasks(subtasks: Subtask[]): Promise<AgentResult[]> {
-    if (subtasks.length === 0) {
-      return [];
+  public async routeTask(input: string, context: Record<string, any> = {}): Promise<AgentResult> {
+    // Simple keyword-based routing - can be enhanced with NLP
+    const lowerInput = input.toLowerCase();
+    
+    let agentType: string;
+    if (lowerInput.includes('frontend') || lowerInput.includes('react') || lowerInput.includes('ui')) {
+      agentType = 'frontend';
+    } else if (lowerInput.includes('backend') || lowerInput.includes('api') || lowerInput.includes('server')) {
+      agentType = 'backend';
+    } else if (lowerInput.includes('database') || lowerInput.includes('schema') || lowerInput.includes('sql')) {
+      agentType = 'database';
+    } else if (lowerInput.includes('deploy') || lowerInput.includes('devops') || lowerInput.includes('aws')) {
+      agentType = 'devops';
+    } else if (lowerInput.includes('doc') || lowerInput.includes('help') || lowerInput.includes('readme')) {
+      agentType = 'docs';
+    } else {
+      agentType = 'general';
     }
 
-    console.log(`[AgentRegistry] Executing ${subtasks.length} subtasks in parallel`);
-    
-    // Sort subtasks by priority (higher priority first)
-    const sortedSubtasks = [...subtasks].sort((a, b) => (b.priority || 0) - (a.priority || 0));
-    
-    // Execute subtasks in parallel
-    const results = await Promise.all(
-      sortedSubtasks.map(async subtask => {
-        console.log(`[AgentRegistry] Executing subtask with agent: ${subtask.agentId}`);
-        const result = await this.executeWithAgent(
-          subtask.agentId,
-          subtask.input,
-          subtask.context
-        );
-        
-        // If the agent has a handler for subtask results, call it
-        const agent = this.getAgent(subtask.agentId);
-        if (agent && agent.handleSubtaskResult) {
-          await agent.handleSubtaskResult(result, subtask.context || {});
-        }
-        
-        return result;
-      })
-    );
-    
-    return results;
-  }
+    const agent = this.getAgent(agentType);
+    if (!agent) {
+      return {
+        success: false,
+        output: `No agent found to handle this task: ${input}`,
+        error: `No agent found for type: ${agentType}`,
+        agentId: 'system',
+        input,
+        timestamp: new Date().toISOString()
+      };
+    }
 
-  /**
-   * Clear all registered agents (for testing)
-   */
-  public clear(): void {
-    console.log('[AgentRegistry] Clearing all registered agents');
-    this.agents.clear();
-  }
-
-  /**
-   * Get the number of registered agents
-   */
-  public get size(): number {
-    return this.agents.size;
+    return this.executeWithAgent(agentType, input, context);
   }
 }
 

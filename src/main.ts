@@ -1,6 +1,7 @@
-import { agentRegistry } from './core/agentRegistry';
-import { orchestrator } from './core/orchestrator';
-import { contextMemory } from './core/contextMemory';
+import { agentRegistry } from './core/agentRegistry.js';
+import { orchestrator } from './core/orchestrator.js';
+import { contextMemory } from './core/contextMemory.js';
+import type { IAgent } from './core/Agent.js';
 
 // Import agents to register them with the agent registry
 import './agents/frontend/frontendAgent';
@@ -48,7 +49,7 @@ async function main() {
   
   // Display registered agents
   console.log('\n=== Registered Agents ===');
-  agentRegistry.listAgents().forEach(agent => {
+  Array.from(agentRegistry['agents'].values()).forEach((agent: IAgent) => {
     console.log(`- ${agent.name} (${agent.id}): ${agent.description}`);
   });
 }
@@ -73,7 +74,7 @@ async function processTask(task: string) {
     
     if (result.subtasks && result.subtasks.length > 0) {
       console.log('\nGenerated Subtasks:');
-      result.subtasks.forEach((subtask, index) => {
+      result.subtasks.forEach((subtask: { agentId: string; input: string }, index: number) => {
         console.log(`  ${index + 1}. [${subtask.agentId}] ${subtask.input}`);
       });
     }

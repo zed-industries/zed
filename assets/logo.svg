@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Circle -->
+  <circle cx="256" cy="256" r="248" fill="#1a1a2e" />
+  
+  <!-- Orbit Rings -->
+  <circle cx="256" cy="256" r="180" stroke="#e94560" stroke-width="4" opacity="0.7" />
+  <circle cx="256" cy="256" r="120" stroke="#4cc9f0" stroke-width="4" opacity="0.7" />
+  <circle cx="256" cy="256" r="60" stroke="#f72585" stroke-width="4" opacity="0.7" />
+  
+  <!-- Code Brackets -->
+  <path d="M180 160L140 256L180 352" stroke="#ffffff" stroke-width="16" stroke-linecap="round" />
+  <path d="M332 160L372 256L332 352" stroke="#ffffff" stroke-width="16" stroke-linecap="round" />
+  
+  <!-- Code Elements -->
+  <path d="M240 200L280 240L240 280" stroke="#4cc9f0" stroke-width="8" stroke-linecap="round" />
+  <path d="M272 280L312 240L272 200" stroke="#f72585" stroke-width="8" stroke-linecap="round" />
+  
+  <!-- Glow Effect -->
+  <circle cx="256" cy="256" r="200" fill="url(#paint0_radial_1_2)" style="mix-blend-mode: overlay;" opacity="0.5"/>
+  <defs>
+    <radialGradient id="paint0_radial_1_2" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(256 256) rotate(90) scale(200)">
+      <stop stop-color="#4cc9f0" stop-opacity="0.8"/>
+      <stop offset="1" stop-color="#f72585" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+</svg>

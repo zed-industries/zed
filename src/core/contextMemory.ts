@@ -34,17 +34,28 @@ export class ContextMemory {
    * @param value The value to store
    */
   public save(agentId: string, key: string, value: any): void {
-    if (!this.memory.has(agentId)) {
-      this.memory.set(agentId, new Map());
+    if (!agentId || typeof agentId !== 'string') {
+      throw new Error('agentId must be a non-empty string');
     }
-
-    const agentMemory = this.memory.get(agentId)!;
+    
+    let agentMemory = this.memory.get(agentId);
+    
+    // Initialize agent memory if it doesn't exist
+    if (!agentMemory) {
+      agentMemory = new Map();
+      this.memory.set(agentId, agentMemory);
+    }
+    
+    // Set the value
     agentMemory.set(key, value);
     
-    // Enforce maximum entries
+    // Enforce maximum entries if needed
     if (agentMemory.size > this.maxEntriesPerAgent) {
+      // Get the first key from the map
       const firstKey = agentMemory.keys().next().value;
-      agentMemory.delete(firstKey);
+      if (firstKey !== undefined) {
+        agentMemory.delete(firstKey);
+      }
     }
     
     console.log(`[ContextMemory] Saved context for ${agentId}.${key}`);
@@ -57,7 +68,11 @@ export class ContextMemory {
    * @returns The stored value or undefined if not found
    */
   public get<T = any>(agentId: string, key: string): T | undefined {
-    return this.memory.get(agentId)?.get(key);
+    if (!agentId || typeof agentId !== 'string') {
+      return undefined;
+    }
+    const agentMemory = this.memory.get(agentId);
+    return agentMemory ? agentMemory.get(key) : undefined;
   }
 
   /**

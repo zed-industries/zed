@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodeOrbit - AI-Powered Code Editor</title>
+  <link rel="icon" href="favicon.ico" type="image/x-icon">
+  <style>
+    :root {
+      --primary: #1a1a2e;
+      --secondary: #16213e;
+      --accent: #e94560;
+      --highlight: #4cc9f0;
+      --text: #ffffff;
+    }
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    
+    body {
+      background-color: var(--primary);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+      text-align: center;
+    }
+    
+    .logo {
+      width: 200px;
+      height: 200px;
+      margin: 2rem auto;
+      animation: float 6s ease-in-out infinite;
+    }
+    
+    @keyframes float {
+      0% { transform: translateY(0px); }
+      50% { transform: translateY(-20px); }
+      100% { transform: translateY(0px); }
+    }
+    
+    h1 {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      background: linear-gradient(90deg, #4cc9f0, #f72585);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    
+    .tagline {
+      font-size: 1.5rem;
+      margin-bottom: 2rem;
+      color: #a8a8c0;
+    }
+    
+    .cta-button {
+      display: inline-block;
+      padding: 1rem 2rem;
+      background: linear-gradient(45deg, #4cc9f0, #f72585);
+      color: white;
+      text-decoration: none;
+      border-radius: 50px;
+      font-weight: bold;
+      margin: 1rem;
+      transition: transform 0.3s, box-shadow 0.3s;
+      border: none;
+      cursor: pointer;
+      font-size: 1.1rem;
+    }
+    
+    .cta-button:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+    }
+    
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 2rem;
+      margin: 4rem 0;
+      text-align: left;
+    }
+    
+    .feature {
+      background: rgba(255, 255, 255, 0.05);
+      padding: 2rem;
+      border-radius: 10px;
+      transition: transform 0.3s;
+    }
+    
+    .feature:hover {
+      transform: translateY(-5px);
+    }
+    
+    .feature h3 {
+      color: var(--highlight);
+      margin-bottom: 1rem;
+    }
+    
+    footer {
+      margin-top: 4rem;
+      padding: 2rem 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    @media (max-width: 768px) {
+      h1 {
+        font-size: 2.5rem;
+      }
+      
+      .tagline {
+        font-size: 1.2rem;
+      }
+      
+      .features {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <img src="../assets/logo.svg" alt="CodeOrbit Logo" class="logo">
+    <h1>CodeOrbit</h1>
+    <p class="tagline">The Next-Generation AI-Powered Code Editor</p>
+    
+    <div>
+      <a href="#" class="cta-button">Download Now</a>
+      <a href="#features" class="cta-button" style="background: transparent; border: 2px solid var(--highlight);">Learn More</a>
+    </div>
+    
+    <div id="features" class="features">
+      <div class="feature">
+        <h3>AI-Powered</h3>
+        <p>Smart code completion and suggestions powered by advanced AI models that understand your code context.</p>
+      </div>
+      
+      <div class="feature">
+        <h3>Multi-Agent System</h3>
+        <p>Collaborative AI agents work together to help you code faster and more efficiently.</p>
+      </div>
+      
+      <div class="feature">
+        <h3>Real-time Collaboration</h3>
+        <p>Work together with your team in real-time, no matter where you are in the world.</p>
+      </div>
+      
+      <div class="feature">
+        <h3>Extensible</h3>
+        <p>Built with plugins and extensions in mind. Customize your editor to fit your workflow.</p>
+      </div>
+    </div>
+    
+    <footer>
+      <p>&copy; 2025 CodeOrbit. All rights reserved.</p>
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,39 +1,80 @@
-# Zed
+# CodeOrbit
 
-[![CI](https://github.com/zed-industries/zed/actions/workflows/ci.yml/badge.svg)](https://github.com/zed-industries/zed/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 
-Welcome to Zed, a high-performance, multiplayer code editor from the creators of [Atom](https://github.com/atom/atom) and [Tree-sitter](https://github.com/tree-sitter/tree-sitter).
+Welcome to **CodeOrbit**, a next-generation AI-powered code editor with multi-agent collaboration capabilities. Built with modern web technologies and designed for developer productivity.
 
----
+<div align="center">
+  <img src="assets/logo.svg" alt="CodeOrbit Logo" width="300"/>
+</div>
+
+## ✨ Features
+
+- **AI-Powered Code Completion** - Smart suggestions powered by advanced AI models
+- **Multi-Agent System** - Collaborative AI agents for different development tasks
+- **Real-time Collaboration** - Work together with your team in real-time
+- **Extensible Architecture** - Built with plugins and extensions in mind
+- **Cross-Platform** - Available on Windows, macOS, and Linux
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Node.js 16.0.0 or higher
+- npm or yarn
+- Git
 
 ### Installation
 
-On macOS and Linux you can [download Zed directly](https://zed.dev/download) or [install Zed via your local package manager](https://zed.dev/docs/linux#installing-via-a-package-manager).
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/codeorbit.git
+   cd codeorbit
+   ```
 
-Other platforms are not yet available:
+2. Install dependencies:
+   ```bash
+   npm install
+   # or
+   yarn
+   ```
 
-- Windows ([tracking issue](https://github.com/zed-industries/zed/issues/5394))
-- Web ([tracking issue](https://github.com/zed-industries/zed/issues/5396))
+3. Start the development server:
+   ```bash
+   npm start
+   # or
+   yarn start
+   ```
 
-### Developing Zed
+## 🛠 Development
 
-- [Building Zed for macOS](./docs/src/development/macos.md)
-- [Building Zed for Linux](./docs/src/development/linux.md)
-- [Building Zed for Windows](./docs/src/development/windows.md)
-- [Running Collaboration Locally](./docs/src/development/local-collaboration.md)
+### Available Scripts
 
-### Contributing
+- `npm start` - Start the development server
+- `npm run build` - Build for production
+- `npm test` - Run tests
+- `npm run lint` - Lint the codebase
+- `npm run format` - Format the code
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for ways you can contribute to Zed.
+## 🤝 Contributing
 
-Also... we're hiring! Check out our [jobs](https://zed.dev/jobs) page for open roles.
+Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) to get started.
 
-### Licensing
+## 📄 License
 
-License information for third party dependencies must be correctly provided for CI to pass.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-We use [`cargo-about`](https://github.com/EmbarkStudios/cargo-about) to automatically comply with open source licenses. If CI is failing, check the following:
+## 🌐 Links
 
-- Is it showing a `no license specified` error for a crate you've created? If so, add `publish = false` under `[package]` in your crate's Cargo.toml.
-- Is the error `failed to satisfy license requirements` for a dependency? If so, first determine what license the project has and whether this system is sufficient to comply with this license's requirements. If you're unsure, ask a lawyer. Once you've verified that this system is acceptable add the license's SPDX identifier to the `accepted` array in `script/licenses/zed-licenses.toml`.
-- Is `cargo-about` unable to find the license for a dependency? If so, add a clarification field at the end of `script/licenses/zed-licenses.toml`, as specified in the [cargo-about book](https://embarkstudios.github.io/cargo-about/cli/generate/config.html#crate-configuration).
+- [Documentation](https://docs.codeorbit.dev)
+- [GitHub Repository](https://github.com/yourusername/codeorbit)
+- [Issue Tracker](https://github.com/yourusername/codeorbit/issues)
+- [Changelog](CHANGELOG.md)
+
+## 🙏 Acknowledgments
+
+- Built with ❤️ by the CodeOrbit Team
+- Inspired by modern code editors and IDEs
+- Thanks to all contributors who help make this project better!
