@@ -529,33 +529,17 @@ mod tests {
             ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(), cx)
         });
 
-        let server_1_id = ContextServerId("mcp-1".into());
-        let server_2_id = ContextServerId("mcp-2".into());
+        let server_1_id = ContextServerId(SERVER_1_ID.into());
+        let server_2_id = ContextServerId(SERVER_2_ID.into());
 
-        let transport_1 =
-            Arc::new(FakeTransport::new(
-                cx.executor(),
-                |_, request_type, _| match request_type {
-                    Some(RequestType::Initialize) => {
-                        Some(create_initialize_response("mcp-1".to_string()))
-                    }
-                    _ => None,
-                },
-            ));
-
-        let transport_2 =
-            Arc::new(FakeTransport::new(
-                cx.executor(),
-                |_, request_type, _| match request_type {
-                    Some(RequestType::Initialize) => {
-                        Some(create_initialize_response("mcp-2".to_string()))
-                    }
-                    _ => None,
-                },
-            ));
-
-        let server_1 = Arc::new(ContextServer::new(server_1_id.clone(), transport_1.clone()));
-        let server_2 = Arc::new(ContextServer::new(server_2_id.clone(), transport_2.clone()));
+        let server_1 = Arc::new(ContextServer::new(
+            server_1_id.clone(),
+            Arc::new(create_fake_transport(SERVER_1_ID, cx.executor())),
+        ));
+        let server_2 = Arc::new(ContextServer::new(
+            server_2_id.clone(),
+            Arc::new(create_fake_transport(SERVER_2_ID, cx.executor())),
+        ));
 
         store
             .update(cx, |store, cx| store.start_server(server_1, cx))
@@ -624,33 +608,17 @@ mod tests {
             ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(), cx)
         });
 
-        let server_1_id = ContextServerId("mcp-1".into());
-        let server_2_id = ContextServerId("mcp-2".into());
+        let server_1_id = ContextServerId(SERVER_1_ID.into());
+        let server_2_id = ContextServerId(SERVER_2_ID.into());
 
-        let transport_1 =
-            Arc::new(FakeTransport::new(
-                cx.executor(),
-                |_, request_type, _| match request_type {
-                    Some(RequestType::Initialize) => {
-                        Some(create_initialize_response("mcp-1".to_string()))
-                    }
-                    _ => None,
-                },
-            ));
-
-        let transport_2 =
-            Arc::new(FakeTransport::new(
-                cx.executor(),
-                |_, request_type, _| match request_type {
-                    Some(RequestType::Initialize) => {
-                        Some(create_initialize_response("mcp-2".to_string()))
-                    }
-                    _ => None,
-                },
-            ));
-
-        let server_1 = Arc::new(ContextServer::new(server_1_id.clone(), transport_1.clone()));
-        let server_2 = Arc::new(ContextServer::new(server_2_id.clone(), transport_2.clone()));
+        let server_1 = Arc::new(ContextServer::new(
+            server_1_id.clone(),
+            Arc::new(create_fake_transport(SERVER_1_ID, cx.executor())),
+        ));
+        let server_2 = Arc::new(ContextServer::new(
+            server_2_id.clone(),
+            Arc::new(create_fake_transport(SERVER_2_ID, cx.executor())),
+        ));
 
         let _server_events = assert_server_events(
             &store,
@@ -699,30 +667,14 @@ mod tests {
 
         let server_id = ContextServerId(SERVER_1_ID.into());
 
-        let transport_1 =
-            Arc::new(FakeTransport::new(
-                cx.executor(),
-                |_, request_type, _| match request_type {
-                    Some(RequestType::Initialize) => {
-                        Some(create_initialize_response(SERVER_1_ID.to_string()))
-                    }
-                    _ => None,
-                },
-            ));
-
-        let transport_2 =
-            Arc::new(FakeTransport::new(
-                cx.executor(),
-                |_, request_type, _| match request_type {
-                    Some(RequestType::Initialize) => {
-                        Some(create_initialize_response(SERVER_1_ID.to_string()))
-                    }
-                    _ => None,
-                },
-            ));
-
-        let server_with_same_id_1 = Arc::new(ContextServer::new(server_id.clone(), transport_1));
-        let server_with_same_id_2 = Arc::new(ContextServer::new(server_id.clone(), transport_2));
+        let server_with_same_id_1 = Arc::new(ContextServer::new(
+            server_id.clone(),
+            Arc::new(create_fake_transport(SERVER_1_ID, cx.executor())),
+        ));
+        let server_with_same_id_2 = Arc::new(ContextServer::new(
+            server_id.clone(),
+            Arc::new(create_fake_transport(SERVER_1_ID, cx.executor())),
+        ));
 
         // If we start another server with the same id, we should report that we stopped the previous one
         let _server_events = assert_server_events(
@@ -791,16 +743,10 @@ mod tests {
         let store = cx.new(|cx| {
             ContextServerStore::test_maintain_server_loop(
                 Box::new(move |id, _| {
-                    let transport = FakeTransport::new(executor.clone(), {
-                        let id = id.0.clone();
-                        move |_, request_type, _| match request_type {
-                            Some(RequestType::Initialize) => {
-                                Some(create_initialize_response(id.clone().to_string()))
-                            }
-                            _ => None,
-                        }
-                    });
-                    Arc::new(ContextServer::new(id.clone(), Arc::new(transport)))
+                    Arc::new(ContextServer::new(
+                        id.clone(),
+                        Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+                    ))
                 }),
                 registry.clone(),
                 project.read(cx).worktree_store(),
@@ -1031,8 +977,18 @@ mod tests {
         (fs, project)
     }
 
-    fn create_initialize_response(server_name: String) -> serde_json::Value {
-        serde_json::to_value(&InitializeResponse {
+    fn create_fake_transport(
+        name: impl Into<String>,
+        executor: BackgroundExecutor,
+    ) -> FakeTransport {
+        let name = name.into();
+        FakeTransport::new(executor).on_request::<types::Initialize>(move |_params| {
+            create_initialize_response(name.clone())
+        })
+    }
+
+    fn create_initialize_response(server_name: String) -> InitializeResponse {
+        InitializeResponse {
             protocol_version: ProtocolVersion(types::LATEST_PROTOCOL_VERSION.to_string()),
             server_info: Implementation {
                 name: server_name,
@@ -1040,15 +996,13 @@ mod tests {
             },
             capabilities: ServerCapabilities::default(),
             meta: None,
-        })
-        .unwrap()
+        }
     }
 
     struct FakeTransport {
-        on_request: Arc<
-            dyn Fn(u64, Option<RequestType>, serde_json::Value) -> Option<serde_json::Value>
-                + Send
-                + Sync,
+        request_handlers: HashMap<
+            &'static str,
+            Arc<dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync>,
         >,
         tx: futures::channel::mpsc::UnboundedSender<String>,
         rx: Arc<Mutex<futures::channel::mpsc::UnboundedReceiver<String>>>,
@@ -1056,24 +1010,31 @@ mod tests {
     }
 
     impl FakeTransport {
-        fn new(
-            executor: BackgroundExecutor,
-            on_request: impl Fn(
-                u64,
-                Option<RequestType>,
-                serde_json::Value,
-            ) -> Option<serde_json::Value>
-            + 'static
-            + Send
-            + Sync,
-        ) -> Self {
+        fn new(executor: BackgroundExecutor) -> Self {
             let (tx, rx) = futures::channel::mpsc::unbounded();
             Self {
-                on_request: Arc::new(on_request),
+                request_handlers: Default::default(),
                 tx,
                 rx: Arc::new(Mutex::new(rx)),
                 executor,
             }
+        }
+
+        fn on_request<T: context_server::types::Request>(
+            mut self,
+            handler: impl Fn(T::Params) -> T::Response + Send + Sync + 'static,
+        ) -> Self {
+            self.request_handlers.insert(
+                T::METHOD,
+                Arc::new(move |value| {
+                    let params = value.get("params").expect("Missing parameters").clone();
+                    let params: T::Params =
+                        serde_json::from_value(params).expect("Invalid parameters received");
+                    let response = handler(params);
+                    serde_json::to_value(response).unwrap()
+                }),
+            );
+            self
         }
     }
 
@@ -1084,19 +1045,19 @@ mod tests {
                 let id = msg.get("id").and_then(|id| id.as_u64()).unwrap_or(0);
 
                 if let Some(method) = msg.get("method") {
-                    let request_type = method
-                        .as_str()
-                        .and_then(|method| types::RequestType::try_from(method).ok());
-                    if let Some(payload) = (self.on_request.as_ref())(id, request_type, msg) {
+                    let method = method.as_str().expect("Invalid method received");
+                    if let Some(handler) = self.request_handlers.get(method) {
+                        let payload = handler(msg);
                         let response = serde_json::json!({
                             "jsonrpc": "2.0",
                             "id": id,
                             "result": payload
                         });
-
                         self.tx
                             .unbounded_send(response.to_string())
                             .context("sending a message")?;
+                    } else {
+                        log::debug!("No handler registered for MCP request '{method}'");
                     }
                 }
             }
