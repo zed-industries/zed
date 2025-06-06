@@ -546,10 +546,10 @@ impl ThreadStore {
                                     };
 
                                     if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                                        if let Some(tools) = protocol.list_tools().await.log_err() {
+                                        if let Some(response) = protocol.request::<context_server::types::ListTools>(()).await.log_err() {
                                             let tool_ids = tool_working_set
                                                 .update(cx, |tool_working_set, _| {
-                                                    tools
+                                                    response
                                                         .tools
                                                         .into_iter()
                                                         .map(|tool| {

@@ -501,10 +501,7 @@ mod tests {
     use crate::{FakeFs, Project, project_settings::ProjectSettings};
     use context_server::{
         transport::Transport,
-        types::{
-            self, Implementation, InitializeResponse, ProtocolVersion, RequestType,
-            ServerCapabilities,
-        },
+        types::{self, Implementation, InitializeResponse, ProtocolVersion, ServerCapabilities},
     };
     use futures::{Stream, StreamExt as _, lock::Mutex};
     use gpui::{AppContext, BackgroundExecutor, TestAppContext, UpdateGlobal as _};

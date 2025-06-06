@@ -139,7 +139,8 @@ pub struct PromptsGetParams {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CompletionCompleteParams {
-    pub r#ref: CompletionReference,
+    #[serde(rename = "ref")]
+    pub reference: CompletionReference,
     pub argument: CompletionArgument,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
@@ -154,13 +155,15 @@ pub enum CompletionReference {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PromptReference {
-    pub r#type: PromptReferenceType,
+    #[serde(rename = "type")]
+    pub ty: PromptReferenceType,
     pub name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResourceReference {
-    pub r#type: PromptReferenceType,
+    #[serde(rename = "type")]
+    pub ty: PromptReferenceType,
     pub uri: Url,
 }
 
