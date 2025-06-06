@@ -1679,18 +1679,49 @@ impl Item for TerminalView {
     }
 
     fn is_dirty(&self, cx: &gpui::App) -> bool {
-        match self.terminal.read(cx).task() {
-            Some(task) => task.status == TaskStatus::Running,
-            None => self.has_bell(),
+        if let Some(task) = self.terminal.read(cx).task() {
+            if task.status == TaskStatus::Running {
+                return true;
+            }
         }
+        let has_children = self
+            .terminal
+            .read(cx)
+            .pty_info
+            .has_active_child_processes_readonly();
+        if has_children {
+            return true;
+        }
+        let has_bell = self.has_bell();
+        has_bell
     }
 
-    fn has_conflict(&self, _cx: &App) -> bool {
+    fn can_save(&self, cx: &App) -> bool {
+        if let Some(task) = self.terminal.read(cx).task() {
+            if task.status == TaskStatus::Running {
+                return true;
+            }
+        }
+        let has_children = self
+            .terminal
+            .read(cx)
+            .pty_info
+            .has_active_child_processes_readonly();
+        if has_children {
+            return true;
+        }
         false
     }
 
-    fn can_save_as(&self, _cx: &App) -> bool {
-        false
+    fn save(
+        &mut self,
+        _should_format: bool,
+        _project: Entity<Project>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        // No-op for terminals, just return Ok in a ready Task
+        gpui::Task::ready(Ok(()))
     }
 
     fn is_singleton(&self, _cx: &App) -> bool {
