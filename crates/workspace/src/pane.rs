@@ -6267,6 +6267,42 @@ mod tests {
         .unwrap();
     }
 
+    #[gpui::test]
+    async fn test_close_terminal_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add a terminal item
+        pane.update_in(cx, |pane, window, cx| {
+            let terminal_item = Box::new(cx.new(|cx| TestItem::new(cx).with_label("Terminal")));
+            pane.add_item(terminal_item.clone(), false, false, None, window, cx);
+            terminal_item
+        });
+        assert_item_labels(&pane, ["Terminal*"], cx);
+
+        // Close the terminal item
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_active_item(
+                &CloseActiveItem {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+        // Ensure the terminal item is closed
+        assert_item_labels(&pane, [], cx);
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);

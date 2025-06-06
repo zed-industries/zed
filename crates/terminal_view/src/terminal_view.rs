@@ -1715,7 +1715,7 @@ impl Item for TerminalView {
 
     fn save(
         &mut self,
-        _should_format: bool,
+        _should_format: workspace::item::SaveOptions,
         _project: Entity<Project>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
