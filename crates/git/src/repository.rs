@@ -200,19 +200,17 @@ pub enum FetchOptions {
 }
 
 impl FetchOptions {
-    pub fn to_proto(&self) -> String {
+    pub fn to_proto(&self) -> Option<String> {
         match self {
-            FetchOptions::All => "--all".to_string(),
-            FetchOptions::Remote(remote) => remote.clone().name.into(),
+            FetchOptions::All => None,
+            FetchOptions::Remote(remote) => Some(remote.clone().name.into()),
         }
     }
 
-    pub fn from_proto(remote_name: String) -> Self {
+    pub fn from_proto(remote_name: Option<String>) -> Self {
         match remote_name {
-            val if val.eq("--all") => Self::All,
-            _ => Self::Remote(Remote {
-                name: remote_name.into(),
-            }),
+            Some(name) => FetchOptions::Remote(Remote { name: name.into() }),
+            None => FetchOptions::All,
         }
     }
 
