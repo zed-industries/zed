@@ -1019,7 +1019,12 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     async move {
                         if params.external.unwrap_or(false) || params.uri.scheme() != "file" {
-                            let success = open::that(params.uri.as_str()).is_ok();
+                            let success = cx
+                                .update(|cx| {
+                                    cx.open_url(params.uri.as_str());
+                                    true
+                                })
+                                .unwrap_or(false);
                             return Ok(lsp::ShowDocumentResult { success });
                         }
 
