@@ -71,6 +71,24 @@ impl UiPlannerAgent {
         
         Ok(layout)
     }
+
+    /// Parses a natural language prompt and returns a simple UI plan.
+    pub async fn plan_from_prompt(&self, prompt: &str) -> Result<String> {
+        log::debug!("Planning UI for prompt: {}", prompt);
+
+        // Very naive keyword extraction for demonstration purposes.
+        let mut components = vec!["AppBar".to_string()];
+        let prompt_lower = prompt.to_lowercase();
+        if prompt_lower.contains("login") {
+            components.push("LoginForm".to_string());
+        }
+        if prompt_lower.contains("footer") || !prompt_lower.contains("login") {
+            components.push("Footer".to_string());
+        }
+
+        let plan = serde_json::to_string(&components)?;
+        Ok(plan)
+    }
 }
 
 #[async_trait]
@@ -166,5 +184,12 @@ mod tests {
         let result = agent.process(&request.to_string()).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), crate::core::error::Error::AgentError(_)));
+    }
+
+    #[tokio::test]
+    async fn test_plan_from_prompt() {
+        let agent = UiPlannerAgent::new();
+        let plan = agent.plan_from_prompt("Login page").await.unwrap();
+        assert!(plan.contains("LoginForm"));
     }
 }

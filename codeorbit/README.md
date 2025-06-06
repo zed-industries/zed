@@ -108,6 +108,23 @@ cargo fmt
 cargo clippy
 ```
 
+## Prompt Handling Loop
+
+The extension provides a simple round-trip for user prompts. A prompt entered in
+the UI is sent to the orchestrator, which forwards it to the `UiPlannerAgent`.
+The agent returns a UI component plan and the orchestrator delivers this back to
+the prompt panel for display.
+
+Submit a prompt by pressing **Enter** inside the panel's input area or by
+clicking the *Send* button. Any agent errors are shown inline.
+
+Main files involved:
+
+- `ui/prompt_panel.rs` – gathers user input and renders responses.
+- `core/orchestrator.rs` – routes prompts and manages agents.
+- `agents/frontend/ui_planner_agent.rs` – interprets prompts and creates a UI plan.
+
+
 ## Contributing
 
 Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) for details.
