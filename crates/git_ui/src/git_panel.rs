@@ -27,7 +27,7 @@ use git::status::StageStatus;
 use git::{Amend, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::{
-    Action, Animation, AnimationExt as _, Axis, ClickEvent, Corner, DismissEvent, Entity,
+    Action, Animation, AnimationExt as _, AsyncApp, Axis, ClickEvent, Corner, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, Point,
     PromptLevel, ScrollStrategy, Subscription, Task, Transformation, UniformListScrollHandle,
@@ -67,7 +67,7 @@ use workspace::AppState;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::DetachAndPromptErr,
+    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
 };
 use zed_llm_client::CompletionIntent;
 
@@ -1778,24 +1778,12 @@ impl GitPanel {
                     Ok(result) => match result {
                         Ok(text) => text,
                         Err(e) => {
-                            if let Ok(Some(workspace)) = this.update(cx, |this, _cx| this.workspace.upgrade()) {
-                                workspace
-                                    .update(cx, |workspace, cx| {
-                                        workspace.show_error(&e, cx);
-                                    })
-                                    .ok();
-                            }
+                            Self::show_commit_message_error(&this, &e, cx);
                             return anyhow::Ok(());
                         }
                     },
                     Err(e) => {
-                        if let Ok(Some(workspace)) = this.update(cx, |this, _cx| this.workspace.upgrade()) {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace.show_error(&e, cx);
-                                })
-                                .ok();
-                        }
+                        Self::show_commit_message_error(&this, &e, cx);
                         return anyhow::Ok(());
                     }
                 };
@@ -1858,26 +1846,14 @@ impl GitPanel {
                                     })?;
                                 }
                                 Err(e) => {
-                                    if let Ok(Some(workspace)) = this.update(cx, |this, _cx| this.workspace.upgrade()) {
-                                        workspace
-                                            .update(cx, |workspace, cx| {
-                                                workspace.show_error(&e, cx);
-                                            })
-                                            .ok();
-                                    }
+                                    Self::show_commit_message_error(&this, &e, cx);
                                     break;
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        if let Ok(Some(workspace)) = this.update(cx, |this, _cx| this.workspace.upgrade()) {
-                            workspace
-                                .update(cx, |workspace, cx| {
-                                    workspace.show_error(&e, cx);
-                                })
-                                .ok();
-                        }
+                        Self::show_commit_message_error(&this, &e, cx);
                     }
                 }
 
@@ -2732,6 +2708,26 @@ impl GitPanel {
                         })
                 });
                 workspace.toggle_status_toast(toast, cx)
+            });
+        }
+    }
+
+    fn show_commit_message_error<E>(weak_this: &WeakEntity<Self>, err: &E, cx: &mut AsyncApp)
+    where
+        E: std::fmt::Debug + std::fmt::Display,
+    {
+        if let Ok(Some(workspace)) = weak_this.update(cx, |this, _cx| this.workspace.upgrade()) {
+            let _ = workspace.update(cx, |workspace, cx| {
+                struct CommitMessageError;
+                let notification_id = NotificationId::unique::<CommitMessageError>();
+                workspace.show_notification(notification_id, cx, |cx| {
+                    cx.new(|cx| {
+                        ErrorMessagePrompt::new(
+                            format!("Failed to generate commit message: {err}"),
+                            cx,
+                        )
+                    })
+                });
             });
         }
     }
