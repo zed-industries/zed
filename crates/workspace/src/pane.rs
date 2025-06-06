@@ -2896,10 +2896,10 @@ impl Pane {
                         to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
                     }
                     let database_id = workspace.database_id();
-                    let from_old_ix = from_pane.read(cx).index_for_item_id(item_id);
-                    let was_pinned = from_old_ix
-                        .map(|ix| from_pane.read(cx).is_tab_pinned(ix))
-                        .unwrap_or(false);
+                    let was_pinned_in_from_pane = from_pane.read_with(cx, |pane, _| {
+                        pane.index_for_item_id(item_id)
+                            .is_some_and(|ix| pane.is_tab_pinned(ix))
+                    });
                     let to_pane_old_length = to_pane.read(cx).items.len();
                     if is_clone {
                         let Some(item) = from_pane
@@ -2919,17 +2919,18 @@ impl Pane {
                         move_item(&from_pane, &to_pane, item_id, ix, true, window, cx);
                     }
                     to_pane.update(cx, |this, _| {
-                        let now_in_pinned_region = ix < this.pinned_tab_count;
+                        let is_pinned_in_to_pane = this.is_tab_pinned(ix);
+
                         if to_pane == from_pane {
-                            if was_pinned && !now_in_pinned_region {
+                            if was_pinned_in_from_pane && !is_pinned_in_to_pane {
                                 this.pinned_tab_count -= 1;
-                            } else if !was_pinned && now_in_pinned_region {
+                            } else if !was_pinned_in_from_pane && is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
                             }
                         } else if this.items.len() > to_pane_old_length {
-                            if to_pane_old_length == 0 && was_pinned {
+                            if to_pane_old_length == 0 && was_pinned_in_from_pane {
                                 this.pinned_tab_count = 1;
-                            } else if now_in_pinned_region {
+                            } else if is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
                             }
                         }
