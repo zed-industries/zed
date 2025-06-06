@@ -18735,12 +18735,15 @@ impl Editor {
                 }
                 if let Some(project) = self.project.as_ref() {
                     project.update(cx, |project, cx| {
-                        // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
-                        // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
                         if edited_buffer
                             .as_ref()
                             .is_some_and(|buffer| buffer.read(cx).file().is_some())
                         {
+                            // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
+                            // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
+                            // TODO: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic_refresh explains the flow how
+                            // diagnostics should be pulled: instead of pulling every open editor's buffer's diagnostics (which happens effectively due to emitting this event),
+                            // we should only pull for the current buffer's diagnostics and get the rest via the workspace diagnostics LSP request — this is not implemented yet.
                             cx.emit(project::Event::PullWorkspaceDiagnostics);
                         }
 
