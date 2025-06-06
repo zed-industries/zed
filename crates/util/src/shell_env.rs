@@ -27,10 +27,12 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
         _ => "",
     });
 
-    command_string.push_str("sh -c 'export -p' >&3;");
+    // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
+    // so file descriptor 0 is used instead.
+    command_string.push_str("sh -c 'export -p' >&0;");
     unsafe {
         command.pre_exec(|| {
-            libc::dup2(1, 3);
+            libc::dup2(1, 0);
             libc::dup2(2, 1);
             Ok(())
         });
