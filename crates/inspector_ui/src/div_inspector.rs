@@ -12,7 +12,6 @@ use language::{
 };
 use project::lsp_store::CompletionDocumentation;
 use project::{Completion, CompletionResponse, CompletionSource, Project, ProjectPath};
-use std::cell::RefCell;
 use std::fmt::Write as _;
 use std::ops::Range;
 use std::path::Path;
@@ -669,16 +668,6 @@ impl CompletionProvider for RustStyleCompletionProvider {
                 .collect(),
             is_incomplete: false,
         }]))
-    }
-
-    fn resolve_completions(
-        &self,
-        _buffer: Entity<Buffer>,
-        _completion_indices: Vec<usize>,
-        _completions: Rc<RefCell<Box<[Completion]>>>,
-        _cx: &mut Context<Editor>,
-    ) -> Task<Result<bool>> {
-        Task::ready(Ok(true))
     }
 
     fn is_completion_trigger(

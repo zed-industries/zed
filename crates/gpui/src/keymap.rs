@@ -23,6 +23,10 @@ pub struct Keymap {
     version: KeymapVersion,
 }
 
+/// Index of a binding within a keymap.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct BindingIndex(usize);
+
 impl Keymap {
     /// Create a new keymap with the given bindings.
     pub fn new(bindings: Vec<KeyBinding>) -> Self {
@@ -63,7 +67,7 @@ impl Keymap {
     }
 
     /// Iterate over all bindings, in the order they were added.
-    pub fn bindings(&self) -> impl DoubleEndedIterator<Item = &KeyBinding> {
+    pub fn bindings(&self) -> impl DoubleEndedIterator<Item = &KeyBinding> + ExactSizeIterator {
         self.bindings.iter()
     }
 
@@ -73,6 +77,15 @@ impl Keymap {
         &'a self,
         action: &'a dyn Action,
     ) -> impl 'a + DoubleEndedIterator<Item = &'a KeyBinding> {
+        self.bindings_for_action_with_indices(action)
+            .map(|(_, binding)| binding)
+    }
+
+    /// Like `bindings_for_action_with_indices`, but also returns the binding indices.
+    pub fn bindings_for_action_with_indices<'a>(
+        &'a self,
+        action: &'a dyn Action,
+    ) -> impl 'a + DoubleEndedIterator<Item = (BindingIndex, &'a KeyBinding)> {
         let action_id = action.type_id();
         let binding_indices = self
             .binding_indices_by_action_id
@@ -105,7 +118,7 @@ impl Keymap {
                 }
             }
 
-            Some(binding)
+            Some((BindingIndex(*ix), binding))
         })
     }
 
@@ -123,7 +136,7 @@ impl Keymap {
 
     /// Returns a list of bindings that match the given input, and a boolean indicating whether or
     /// not more bindings might match if the input was longer. Bindings are returned in precedence
-    /// order.
+    /// order (higher precedence first, reverse of the order they were added to the keymap).
     ///
     /// Precedence is defined by the depth in the tree (matches on the Editor take precedence over
     /// matches on the Pane, then the Workspace, etc.). Bindings with no context are treated as the
@@ -140,18 +153,36 @@ impl Keymap {
         input: &[Keystroke],
         context_stack: &[KeyContext],
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
-        let possibilities = self.bindings().rev().filter_map(|binding| {
-            binding
-                .match_keystrokes(input)
-                .map(|pending| (binding, pending))
-        });
+        let (bindings, pending) = self.bindings_for_input_with_indices(input, context_stack);
+        let bindings = bindings
+            .into_iter()
+            .map(|(_, binding)| binding)
+            .collect::<SmallVec<[KeyBinding; 1]>>();
+        (bindings, pending)
+    }
 
-        let mut bindings: SmallVec<[(KeyBinding, usize); 1]> = SmallVec::new();
+    /// Like `bindings_for_input`, but also returns the binding indices.
+    pub fn bindings_for_input_with_indices(
+        &self,
+        input: &[Keystroke],
+        context_stack: &[KeyContext],
+    ) -> (SmallVec<[(BindingIndex, KeyBinding); 1]>, bool) {
+        let possibilities = self
+            .bindings()
+            .enumerate()
+            .rev()
+            .filter_map(|(ix, binding)| {
+                binding
+                    .match_keystrokes(input)
+                    .map(|pending| (BindingIndex(ix), binding, pending))
+            });
+
+        let mut bindings: SmallVec<[(BindingIndex, KeyBinding, usize); 1]> = SmallVec::new();
 
         // (pending, is_no_action, depth, keystrokes)
         let mut pending_info_opt: Option<(bool, bool, usize, &[Keystroke])> = None;
 
-        'outer: for (binding, pending) in possibilities {
+        'outer: for (binding_index, binding, pending) in possibilities {
             for depth in (0..=context_stack.len()).rev() {
                 if self.binding_enabled(binding, &context_stack[0..depth]) {
                     let is_no_action = is_no_action(&*binding.action);
@@ -191,20 +222,21 @@ impl Keymap {
                     }
 
                     if !pending {
-                        bindings.push((binding.clone(), depth));
+                        bindings.push((binding_index, binding.clone(), depth));
                         continue 'outer;
                     }
                 }
             }
         }
-        bindings.sort_by(|a, b| a.1.cmp(&b.1).reverse());
+        // sort by descending depth
+        bindings.sort_by(|a, b| a.2.cmp(&b.2).reverse());
         let bindings = bindings
             .into_iter()
-            .map_while(|(binding, _)| {
+            .map_while(|(binding_index, binding, _)| {
                 if is_no_action(&*binding.action) {
                     None
                 } else {
-                    Some(binding)
+                    Some((binding_index, binding))
                 }
             })
             .collect();
@@ -222,34 +254,6 @@ impl Keymap {
         }
 
         true
-    }
-
-    /// WARN: Assumes the bindings are in the order they were added to the keymap
-    /// returns the last binding for the given bindings, which
-    /// should be the user's binding in their keymap.json if they've set one,
-    /// otherwise, the last declared binding for this action in the base keymaps
-    /// (with Vim mode bindings being considered as declared later if Vim mode
-    /// is enabled)
-    ///
-    /// If you are considering changing the behavior of this function
-    /// (especially to fix a user reported issue) see issues #23621, #24931,
-    /// and possibly others as evidence that it has swapped back and forth a
-    /// couple times. The decision as of now is to pick a side and leave it
-    /// as is, until we have a better way to decide which binding to display
-    /// that is consistent and not confusing.
-    pub fn binding_to_display_from_bindings(mut bindings: Vec<KeyBinding>) -> Option<KeyBinding> {
-        bindings.pop()
-    }
-
-    /// Returns the first binding present in the iterator, which tends to be the
-    /// default binding without any key context. This is useful for cases where no
-    /// key context is available on binding display. Otherwise, bindings with a
-    /// more specific key context would take precedence and result in a
-    /// potentially invalid keybind being returned.
-    pub fn default_binding_from_bindings_iterator<'a>(
-        mut bindings: impl Iterator<Item = &'a KeyBinding>,
-    ) -> Option<&'a KeyBinding> {
-        bindings.next()
     }
 }
 

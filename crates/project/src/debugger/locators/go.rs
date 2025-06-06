@@ -8,6 +8,7 @@ use task::{
     BuildTaskDefinition, DebugScenario, RevealStrategy, RevealTarget, Shell, SpawnInTerminal,
     TaskTemplate,
 };
+use uuid::Uuid;
 
 pub(crate) struct GoLocator;
 
@@ -31,11 +32,7 @@ impl DapLocator for GoLocator {
 
         match go_action.as_str() {
             "test" => {
-                let binary_path = if build_config.env.contains_key("OUT_DIR") {
-                    "${OUT_DIR}/__debug".to_string()
-                } else {
-                    "__debug".to_string()
-                };
+                let binary_path = format!("__debug_{}", Uuid::new_v4().simple());
 
                 let build_task = TaskTemplate {
                     label: "go test debug".into(),
@@ -133,14 +130,15 @@ impl DapLocator for GoLocator {
 
         match go_action.as_str() {
             "test" => {
-                let program = if let Some(out_dir) = build_config.env.get("OUT_DIR") {
-                    format!("{}/__debug", out_dir)
-                } else {
-                    PathBuf::from(&cwd)
-                        .join("__debug")
-                        .to_string_lossy()
-                        .to_string()
-                };
+                let binary_arg = build_config
+                    .args
+                    .get(4)
+                    .ok_or_else(|| anyhow::anyhow!("can't locate debug binary"))?;
+
+                let program = PathBuf::from(&cwd)
+                    .join(binary_arg)
+                    .to_string_lossy()
+                    .into_owned();
 
                 Ok(DebugRequest::Launch(task::LaunchRequest {
                     program,
@@ -171,7 +169,7 @@ impl DapLocator for GoLocator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use task::{HideStrategy, RevealStrategy, RevealTarget, Shell, TaskTemplate};
+    use task::{HideStrategy, RevealStrategy, RevealTarget, Shell, TaskId, TaskTemplate};
 
     #[test]
     fn test_create_scenario_for_go_run() {
@@ -318,7 +316,12 @@ mod tests {
                     .contains(&"-gcflags \"all=-N -l\"".into())
             );
             assert!(task_template.args.contains(&"-o".into()));
-            assert!(task_template.args.contains(&"__debug".into()));
+            assert!(
+                task_template
+                    .args
+                    .iter()
+                    .any(|arg| arg.starts_with("__debug_"))
+            );
         } else {
             panic!("Expected BuildTaskDefinition::Template");
         }
@@ -330,16 +333,14 @@ mod tests {
     }
 
     #[test]
-    fn test_create_scenario_for_go_test_with_out_dir() {
+    fn test_create_scenario_for_go_test_with_cwd_binary() {
         let locator = GoLocator;
-        let mut env = FxHashMap::default();
-        env.insert("OUT_DIR".to_string(), "/tmp/build".to_string());
 
         let task = TaskTemplate {
             label: "go test".into(),
             command: "go".into(),
             args: vec!["test".into(), ".".into()],
-            env,
+            env: Default::default(),
             cwd: Some("${ZED_WORKTREE_ROOT}".into()),
             use_new_terminal: false,
             allow_concurrent_runs: false,
@@ -359,7 +360,12 @@ mod tests {
         let scenario = scenario.unwrap();
 
         if let Some(BuildTaskDefinition::Template { task_template, .. }) = &scenario.build {
-            assert!(task_template.args.contains(&"${OUT_DIR}/__debug".into()));
+            assert!(
+                task_template
+                    .args
+                    .iter()
+                    .any(|arg| arg.starts_with("__debug_"))
+            );
         } else {
             panic!("Expected BuildTaskDefinition::Template");
         }
@@ -388,5 +394,43 @@ mod tests {
         let scenario =
             locator.create_scenario(&task, "test label", DebugAdapterName("Delve".into()));
         assert!(scenario.is_none());
+    }
+
+    #[test]
+    fn test_run_go_test_missing_binary_path() {
+        let locator = GoLocator;
+        let build_config = SpawnInTerminal {
+            id: TaskId("test_task".to_string()),
+            full_label: "go test".to_string(),
+            label: "go test".to_string(),
+            command: "go".into(),
+            args: vec![
+                "test".into(),
+                "-c".into(),
+                "-gcflags \"all=-N -l\"".into(),
+                "-o".into(),
+            ], // Missing the binary path (arg 4)
+            command_label: "go test -c -gcflags \"all=-N -l\" -o".to_string(),
+            env: Default::default(),
+            cwd: Some(PathBuf::from("/test/path")),
+            use_new_terminal: false,
+            allow_concurrent_runs: false,
+            reveal: RevealStrategy::Always,
+            reveal_target: RevealTarget::Dock,
+            hide: HideStrategy::Never,
+            shell: Shell::System,
+            show_summary: true,
+            show_command: true,
+            show_rerun: true,
+        };
+
+        let result = futures::executor::block_on(locator.run(build_config));
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("can't locate debug binary")
+        );
     }
 }
