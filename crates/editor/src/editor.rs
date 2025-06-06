@@ -5046,7 +5046,13 @@ impl Editor {
             return;
         }
 
-        let position = self.selections.newest_anchor().head();
+        let multibuffer_snapshot = self.buffer.read(cx).read(cx);
+
+        let position = self
+            .selections
+            .newest_anchor()
+            .head()
+            .bias_right(&multibuffer_snapshot);
         if position.diff_base_anchor.is_some() {
             return;
         }
@@ -5059,8 +5065,9 @@ impl Editor {
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let query: Option<Arc<String>> =
-            Self::completion_query(&self.buffer.read(cx).read(cx), position)
-                .map(|query| query.into());
+            Self::completion_query(&multibuffer_snapshot, position).map(|query| query.into());
+
+        drop(multibuffer_snapshot);
 
         let provider = match requested_source {
             Some(CompletionsMenuSource::Normal) | None => self.completion_provider.clone(),
