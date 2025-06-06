@@ -17911,6 +17911,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "watch"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "gpui",
+ "parking_lot",
+ "zlog",
+]
+
+[[package]]
 name = "wayland-backend"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
