@@ -1885,11 +1885,14 @@ impl GitPanel {
                 let Some(fetch_options) = fetch_options.await else {
                     return Ok(());
                 };
-                let fetch = repo.update(cx, |repo, cx| repo.fetch(fetch_options, askpass, cx))?;
+                let fetch = repo.update(cx, |repo, cx| repo.fetch(fetch_options.clone(), askpass, cx))?;
 
                 let remote_message = fetch.await?;
                 this.update(cx, |this, cx| {
-                    let action = RemoteAction::Fetch;
+                    let action = match fetch_options {
+                        FetchOptions::All => RemoteAction::Fetch(None),
+                        FetchOptions::Remote(remote) => RemoteAction::Fetch(Some(remote)),
+                    };
                     match remote_message {
                         Ok(remote_message) => this.show_remote_output(action, remote_message, cx),
                         Err(e) => {
