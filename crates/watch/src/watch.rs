@@ -177,8 +177,12 @@ impl<T: Clone> Receiver<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::{FutureExt, select_biased};
     use gpui::{AppContext, TestAppContext};
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+    use std::{
+        pin::pin,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+    };
 
     #[gpui::test]
     async fn test_basic_watch() {
@@ -201,7 +205,7 @@ mod tests {
         assert_eq!(receiver.recv().await, Err(NoSenderError));
     }
 
-    #[gpui::test(iterations = 100)]
+    #[gpui::test(iterations = 1000)]
     async fn test_watch_random(cx: &mut TestAppContext) {
         let next_id = Arc::new(AtomicUsize::new(1));
         let closed = Arc::new(AtomicBool::new(false));
@@ -234,27 +238,34 @@ mod tests {
                     executor.simulate_random_delay().await;
 
                     zlog::info!("{}: receiving", receiver_id);
-                    match rx.recv().await {
-                        Ok(value) => {
-                            zlog::info!("{}: received {}", receiver_id, value);
-                            assert!(!closed.load(SeqCst));
-                            assert_eq!(value, next_id.load(SeqCst) - 1);
-                            assert_ne!(value, prev_observed_value);
-                            prev_observed_value = value;
+                    let mut timeout = executor.simulate_random_delay().fuse();
+                    let mut recv = pin!(rx.recv().fuse());
+                    select_biased! {
+                        _ = timeout => {
+                            zlog::info!("{}: dropping recv future", receiver_id);
                         }
-                        Err(_) => {
-                            zlog::info!("{}: closed", receiver_id);
-                            assert!(closed.load(SeqCst));
-                            break;
+                        result = recv => {
+                            match result {
+                                Ok(value) => {
+                                    zlog::info!("{}: received {}", receiver_id, value);
+                                    assert!(!closed.load(SeqCst));
+                                    assert_eq!(value, next_id.load(SeqCst) - 1);
+                                    assert_ne!(value, prev_observed_value);
+                                    prev_observed_value = value;
+                                }
+                                Err(NoSenderError) => {
+                                    zlog::info!("{}: closed", receiver_id);
+                                    assert!(closed.load(SeqCst));
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
             }));
         }
 
-        for task in tasks {
-            task.await;
-        }
+        futures::future::join_all(tasks).await;
     }
 
     #[ctor::ctor]
