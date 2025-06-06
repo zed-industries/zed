@@ -612,7 +612,7 @@ impl PlatformWindow for WindowsWindow {
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
@@ -620,8 +620,8 @@ impl PlatformWindow for WindowsWindow {
             Some(info) => Some(info.to_string()),
             None => None,
         };
-        let answers = answers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let handle = self.0.hwnd;
+        let answers = answers.to_vec();
         self.0
             .executor
             .spawn(async move {
@@ -657,9 +657,9 @@ impl PlatformWindow for WindowsWindow {
                     let mut button_id_map = Vec::with_capacity(answers.len());
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
-                    for (index, btn_string) in answers.iter().enumerate() {
-                        let encoded = HSTRING::from(btn_string);
-                        let button_id = if btn_string == "Cancel" {
+                    for (index, btn) in answers.iter().enumerate() {
+                        let encoded = HSTRING::from(btn.label().as_ref());
+                        let button_id = if btn.is_cancel() {
                             IDCANCEL.0
                         } else {
                             index as i32 - 100
