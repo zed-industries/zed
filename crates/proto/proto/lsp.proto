@@ -543,6 +543,23 @@ message UpdateLanguageServer {
     }
 }
 
+message LspPosition {
+    uint32 line = 1;
+    uint32 character = 2;
+}
+
+message LspRange {
+    optional LspPosition start = 1;
+    optional LspPosition end = 2;
+}
+
+message ShowDocument {
+    uint64 project_id = 1;
+    string uri = 2;
+    bool take_focus = 3;
+    optional LspRange selection = 4;
+}
+
 message LspWorkStart {
     string token = 1;
     optional string title = 4;

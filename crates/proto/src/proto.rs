@@ -238,6 +238,7 @@ messages!(
     (ShareProject, Foreground),
     (ShareProjectResponse, Foreground),
     (ShowContacts, Foreground),
+    (ShowDocument, Foreground),
     (ShutdownRemoteServer, Foreground),
     (Stage, Background),
     (StartLanguageServer, Foreground),
@@ -601,7 +602,8 @@ entity_messages!(
     GetDebugAdapterBinary,
     LogToDebugConsole,
     GetDocumentDiagnostics,
-    RefreshDocumentsDiagnostics
+    RefreshDocumentsDiagnostics,
+    ShowDocument
 );
 
 entity_messages!(
