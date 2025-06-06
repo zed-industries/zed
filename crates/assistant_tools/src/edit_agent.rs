@@ -8,7 +8,7 @@ use crate::{Template, Templates};
 use anyhow::Result;
 use assistant_tool::ActionLog;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
-use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
+use edit_parser::{EditFormat, EditParser, EditParserEvent, EditParserMetrics};
 use futures::{
     Stream, StreamExt,
     channel::mpsc::{self, UnboundedReceiver},
@@ -353,7 +353,7 @@ impl EditAgent {
         let output = cx.background_spawn(async move {
             pin_mut!(chunks);
 
-            let mut parser = EditParser::new();
+            let mut parser = EditParser::new(EditFormat::XmlTags);
             let mut raw_edits = String::new();
             while let Some(chunk) = chunks.next().await {
                 match chunk {
