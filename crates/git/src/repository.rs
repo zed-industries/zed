@@ -218,7 +218,7 @@ impl FetchOptions {
 
     pub fn name(&self) -> SharedString {
         match self {
-            Self::All => "all".into(),
+            Self::All => "Fetch all remotes".into(),
             Self::Remote(remote) => remote.name.clone(),
         }
     }
