@@ -23,10 +23,7 @@ pub fn channel<T>(value: T) -> (Sender<T>, Receiver<T>) {
         Sender {
             state: state.clone(),
         },
-        Receiver {
-            state,
-            observed_version: 0,
-        },
+        Receiver { state, version: 0 },
     )
 }
 
@@ -55,10 +52,10 @@ pub struct Sender<T> {
 
 impl<T> Sender<T> {
     pub fn receiver(&self) -> Receiver<T> {
-        let observed_version = self.state.read().version;
+        let version = self.state.read().version;
         Receiver {
             state: self.state.clone(),
-            observed_version,
+            version,
         }
     }
 
@@ -97,7 +94,7 @@ impl<T> Drop for Sender<T> {
 #[derive(Clone)]
 pub struct Receiver<T> {
     state: Arc<RwLock<State<T>>>,
-    observed_version: usize,
+    version: usize,
 }
 
 struct Changed<'a, T> {
@@ -112,11 +109,11 @@ impl<T> Future for Changed<'_, T> {
         let this = &mut *self;
 
         let state = this.receiver.state.upgradable_read();
-        if state.version != this.receiver.observed_version {
+        if state.version != this.receiver.version {
             // The sender produced a new value. Avoid unregistering the pending
             // waker, because the sender has already done so.
             this.pending_waker_id = None;
-            this.receiver.observed_version = state.version;
+            this.receiver.version = state.version;
             Poll::Ready(Ok(()))
         } else if state.closed {
             Poll::Ready(Err(NoSenderError))
@@ -153,8 +150,10 @@ impl<T> Drop for Changed<'_, T> {
 }
 
 impl<T> Receiver<T> {
-    pub fn borrow(&self) -> parking_lot::MappedRwLockReadGuard<T> {
-        RwLockReadGuard::map(self.state.read(), |state| &state.value)
+    pub fn borrow(&mut self) -> parking_lot::MappedRwLockReadGuard<T> {
+        let state = self.state.read();
+        self.version = state.version;
+        RwLockReadGuard::map(state, |state| &state.value)
     }
 
     pub fn changed(&mut self) -> impl Future<Output = Result<(), NoSenderError>> {
@@ -199,9 +198,15 @@ mod tests {
         assert_eq!(sender.send(5), Ok(()));
         assert_eq!(receiver.recv().await, Ok(5));
 
+        // Ensure `changed` doesn't resolve if we just read the latest value
+        // using `borrow`.
         assert_eq!(sender.send(6), Ok(()));
+        assert_eq!(*receiver.borrow(), 6);
+        assert_eq!(receiver.changed().now_or_never(), None);
+
+        assert_eq!(sender.send(7), Ok(()));
         drop(sender);
-        assert_eq!(receiver.recv().await, Ok(6));
+        assert_eq!(receiver.recv().await, Ok(7));
         assert_eq!(receiver.recv().await, Err(NoSenderError));
     }
 
