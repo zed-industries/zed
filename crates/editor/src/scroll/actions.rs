@@ -2,8 +2,7 @@ use super::Axis;
 use crate::{
     Autoscroll, Editor, EditorMode, NextScreen, NextScrollCursorCenterTopBottom,
     SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT, ScrollCursorBottom, ScrollCursorCenter,
-    ScrollCursorCenterTopBottom, ScrollCursorLeft, ScrollCursorRight, ScrollCursorTop,
-    display_map::DisplayRow,
+    ScrollCursorCenterTopBottom, ScrollCursorTop, display_map::DisplayRow,
 };
 use gpui::{Context, Point, Window};
 
@@ -106,33 +105,5 @@ impl Editor {
         let new_screen_top =
             new_screen_top.saturating_sub(visible_rows.saturating_sub(scroll_margin_rows));
         self.set_scroll_top_row(DisplayRow(new_screen_top), window, cx);
-    }
-
-    pub fn scroll_cursor_right(
-        &mut self,
-        _: &ScrollCursorRight,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        self.scroll_right(window, cx);
-    }
-
-    pub fn scroll_cursor_left(
-        &mut self,
-        _: &ScrollCursorLeft,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        if let Some(position_map) = &self.last_position_map {
-            let editor_width = position_map.text_hitbox.bounds.size.width.0;
-            let offset = -(editor_width / 2.0);
-            // Update the implementation to:
-            // 1. Leverage the implementation's map `point_for_position`
-            // 2. Maintain the current row, but retrieve a new column, as we'll
-            // need to move the cursor to the new column.
-            // 3. This should return a display point, which we can then use like
-            // we're doing for the top row.
-            self.set_scroll_horizontal(offset, window, cx);
-        }
     }
 }

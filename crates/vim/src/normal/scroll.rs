@@ -10,7 +10,16 @@ use settings::Settings;
 
 actions!(
     vim,
-    [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
+    [
+        LineUp,
+        LineDown,
+        ColumnRight,
+        ColumnLeft,
+        ScrollUp,
+        ScrollDown,
+        PageUp,
+        PageDown
+    ]
 );
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
@@ -19,6 +28,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &LineUp, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Line(-c.unwrap_or(1.)))
+    });
+    Vim::action(editor, cx, |vim, _: &ColumnRight, window, cx| {
+        vim.scroll(false, window, cx, |c| ScrollAmount::Column(c.unwrap_or(1.)))
+    });
+    Vim::action(editor, cx, |vim, _: &ColumnLeft, window, cx| {
+        vim.scroll(false, window, cx, |c| {
+            ScrollAmount::Column(-c.unwrap_or(1.))
+        })
     });
     Vim::action(editor, cx, |vim, _: &PageDown, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Page(c.unwrap_or(1.)))

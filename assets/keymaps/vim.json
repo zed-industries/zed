@@ -184,6 +184,8 @@
       "z f": "editor::FoldSelectedRanges",
       "z shift-m": "editor::FoldAll",
       "z shift-r": "editor::UnfoldAll",
+      "z l": "vim::ColumnRight",
+      "z h": "vim::ColumnLeft",
       "z L": "editor::ScrollCursorRight",
       "z H": "editor::ScrollCursorLeft",
       "shift-z shift-q": ["pane::CloseActiveItem", { "save_intent": "skip" }],
