@@ -61,7 +61,7 @@ fn get_screen_targets(sources_tx: oneshot::Sender<Result<Vec<ScapCaptureSource>>
                         height: DevicePixels(display.height as i32),
                     };
                     Some(ScapCaptureSource {
-                        target: target,
+                        target: display,
                         size,
                     })
                 }
@@ -76,7 +76,7 @@ impl ScreenCaptureSource for ScapCaptureSource {
     fn metadata(&self) -> Result<SourceMetadata> {
         Ok(SourceMetadata {
             resolution: self.size,
-            label: self.target.title.clone().into(),
+            label: self.target.title.into(),
             is_main: None,
             id: self.target.id as u64,
         })
