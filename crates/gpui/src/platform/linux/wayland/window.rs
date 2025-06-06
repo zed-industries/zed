@@ -979,7 +979,6 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
-        unimplemented!()
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
