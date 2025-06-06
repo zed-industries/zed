@@ -4,8 +4,8 @@ pub mod rust_analyzer_ext;
 
 use crate::{
     CodeAction, Completion, CompletionResponse, CompletionSource, CoreCompletion, Hover, InlayHint,
-    LspAction, ProjectItem, ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
-    SemanticToken,
+    LspAction, LspPullDiagnostics, ProjectItem, ProjectPath, ProjectTransaction, ResolveState,
+    SemanticToken, Symbol, ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -40,9 +40,9 @@ use http_client::HttpClient;
 use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, Diff, File as _, Language, LanguageName, LanguageRegistry,
-    LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16,
-    TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
+    LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -253,6 +253,10 @@ impl LocalLspStore {
             let this = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
             let fs = self.fs.clone();
+            let pull_diagnostics = ProjectSettings::get_global(cx)
+                .diagnostics
+                .lsp_pull_diagnostics_debounce_ms
+                .is_some();
             cx.spawn(async move |cx| {
                 let result = async {
                     let toolchains = this.update(cx, |this, cx| this.toolchain_store(cx))?;
@@ -283,7 +287,8 @@ impl LocalLspStore {
                     }
 
                     let initialization_params = cx.update(|cx| {
-                        let mut params = language_server.default_initialize_params(cx);
+                        let mut params =
+                            language_server.default_initialize_params(pull_diagnostics, cx);
                         params.initialization_options = initialization_options;
                         adapter.adapter.prepare_initialize_params(params, cx)
                     })??;
@@ -475,8 +480,14 @@ impl LocalLspStore {
                             this.merge_diagnostics(
                                 server_id,
                                 params,
+                                DiagnosticSourceKind::Pushed,
                                 &adapter.disk_based_diagnostic_sources,
-                                |diagnostic, cx| adapter.retain_old_diagnostic(diagnostic, cx),
+                                |diagnostic, cx| match diagnostic.source_kind {
+                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
+                                        adapter.retain_old_diagnostic(diagnostic, cx)
+                                    }
+                                    DiagnosticSourceKind::Pulled => true,
+                                },
                                 cx,
                             )
                             .log_err();
@@ -863,6 +874,28 @@ impl LocalLspStore {
                             cx.emit(LspStoreEvent::RefreshCodeLens);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshCodeLens {
+                                    project_id: *project_id,
+                                })
+                            })
+                        })?
+                        .transpose()?;
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::WorkspaceDiagnosticRefresh, _, _>({
+                let this = this.clone();
+                move |(), cx| {
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    async move {
+                        this.update(&mut cx, |this, cx| {
+                            cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
+                            this.downstream_client.as_ref().map(|(client, project_id)| {
+                                client.send(proto::RefreshDocumentsDiagnostics {
                                     project_id: *project_id,
                                 })
                             })
@@ -1892,8 +1925,7 @@ impl LocalLspStore {
             );
         }
 
-        let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|()| anyhow!("failed to convert abs path to uri"))?;
+        let uri = file_path_to_lsp_url(abs_path)?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
 
         let lsp_edits = {
@@ -1957,8 +1989,7 @@ impl LocalLspStore {
         let logger = zlog::scoped!("lsp_format");
         zlog::info!(logger => "Formatting via LSP");
 
-        let uri = lsp::Url::from_file_path(abs_path)
-            .map_err(|()| anyhow!("failed to convert abs path to uri"))?;
+        let uri = file_path_to_lsp_url(abs_path)?;
         let text_document = lsp::TextDocumentIdentifier::new(uri);
         let capabilities = &language_server.capabilities();
 
@@ -2285,7 +2316,7 @@ impl LocalLspStore {
         }
 
         let abs_path = file.abs_path(cx);
-        let Some(uri) = lsp::Url::from_file_path(&abs_path).log_err() else {
+        let Some(uri) = file_path_to_lsp_url(&abs_path).log_err() else {
             return;
         };
         let initial_snapshot = buffer.text_snapshot();
@@ -3471,6 +3502,7 @@ pub enum LspStoreEvent {
         edits: Vec<(lsp::Range, Snippet)>,
         most_recent_edit: clock::Lamport,
     },
+    RefreshDocumentsDiagnostics,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -3518,6 +3550,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_entity_request_handler(Self::handle_rename_project_entry);
         client.add_entity_request_handler(Self::handle_language_server_id_for_name);
+        client.add_entity_request_handler(Self::handle_refresh_documents_diagnostics);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetHover>);
@@ -3545,6 +3578,7 @@ impl LspStore {
         client.add_entity_request_handler(
             Self::handle_lsp_command::<lsp_ext_command::SwitchSourceHeader>,
         );
+        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentDiagnostics>);
     }
 
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
@@ -3984,16 +4018,20 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
         let handle = cx.new(|_| buffer.clone());
         if let Some(local) = self.as_local_mut() {
+            let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
+            if !ignore_refcounts {
+                *refcount += 1;
+            }
+
+            // We run early exits on non-existing buffers AFTER we mark the buffer as registered in order to handle buffer saving.
+            // When a new unnamed buffer is created and saved, we will start loading it's language. Once the language is loaded, we go over all "language-less" buffers and try to fit that new language
+            // with them. However, we do that only for the buffers that we think are open in at least one editor; thus, we need to keep tab of unnamed buffers as well, even though they're not actually registered with any language
+            // servers in practice (we don't support non-file URI schemes in our LSP impl).
             let Some(file) = File::from_dyn(buffer.read(cx).file()) else {
                 return handle;
             };
             if !file.is_local() {
                 return handle;
-            }
-
-            let refcount = local.registered_buffers.entry(buffer_id).or_insert(0);
-            if !ignore_refcounts {
-                *refcount += 1;
             }
 
             if ignore_refcounts || *refcount == 1 {
@@ -4063,8 +4101,7 @@ impl LspStore {
                                                 .contains_key(&buffer.read(cx).remote_id())
                                             {
                                                 if let Some(file_url) =
-                                                    lsp::Url::from_file_path(&f.abs_path(cx))
-                                                        .log_err()
+                                                    file_path_to_lsp_url(&f.abs_path(cx)).log_err()
                                                 {
                                                     local.unregister_buffer_from_language_servers(
                                                         &buffer, &file_url, cx,
@@ -4168,7 +4205,7 @@ impl LspStore {
                 if let Some(abs_path) =
                     File::from_dyn(buffer_file.as_ref()).map(|file| file.abs_path(cx))
                 {
-                    if let Some(file_url) = lsp::Url::from_file_path(&abs_path).log_err() {
+                    if let Some(file_url) = file_path_to_lsp_url(&abs_path).log_err() {
                         local_store.unregister_buffer_from_language_servers(
                             buffer_entity,
                             &file_url,
@@ -5864,6 +5901,73 @@ impl LspStore {
         }
     }
 
+    pub fn pull_diagnostics(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+
+        if let Some((client, upstream_project_id)) = self.upstream_client() {
+            let request_task = client.request(proto::MultiLspQuery {
+                buffer_id: buffer_id.into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id: upstream_project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
+                    GetDocumentDiagnostics {}.to_proto(upstream_project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(async move |weak_project, cx| {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let diagnostics = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
+                                response,
+                            ) => Some(response),
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|diagnostics_response| {
+                            GetDocumentDiagnostics {}.response_from_proto(
+                                diagnostics_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(diagnostics
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect())
+            })
+        } else {
+            let all_actions_task = self.request_multiple_lsp_locally(
+                &buffer_handle,
+                None::<PointUtf16>,
+                GetDocumentDiagnostics {},
+                cx,
+            );
+            cx.spawn(async move |_, _| Ok(all_actions_task.await.into_iter().flatten().collect()))
+        }
+    }
+
     pub fn inlay_hints(
         &mut self,
         buffer_handle: Entity<Buffer>,
@@ -6408,7 +6512,7 @@ impl LspStore {
         let worktree_id = file.worktree_id(cx);
         let abs_path = file.as_local()?.abs_path(cx);
         let text_document = lsp::TextDocumentIdentifier {
-            uri: lsp::Url::from_file_path(abs_path).log_err()?,
+            uri: file_path_to_lsp_url(&abs_path).log_err()?,
         };
         let local = self.as_local()?;
 
@@ -6715,15 +6819,15 @@ impl LspStore {
             path: relative_path.into(),
         };
 
-        if let Some(buffer) = self.buffer_store.read(cx).get_by_path(&project_path, cx) {
+        if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path, cx) {
             let snapshot = self
                 .as_local_mut()
                 .unwrap()
-                .buffer_snapshot_for_lsp_version(&buffer, server_id, version, cx)?;
+                .buffer_snapshot_for_lsp_version(&buffer_handle, server_id, version, cx)?;
 
+            let buffer = buffer_handle.read(cx);
             diagnostics.extend(
                 buffer
-                    .read(cx)
                     .get_diagnostics(server_id)
                     .into_iter()
                     .flat_map(|diag| {
@@ -6739,7 +6843,7 @@ impl LspStore {
             );
 
             self.as_local_mut().unwrap().update_buffer_diagnostics(
-                &buffer,
+                &buffer_handle,
                 server_id,
                 version,
                 diagnostics.clone(),
@@ -7257,6 +7361,47 @@ impl LspStore {
                                     cx,
                                 ),
                             )),
+                        })
+                        .collect(),
+                })
+            }
+            Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
+                get_document_diagnostics,
+            )) => {
+                let get_document_diagnostics = GetDocumentDiagnostics::from_proto(
+                    get_document_diagnostics,
+                    this.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let all_diagnostics = this
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            None::<PointUtf16>,
+                            get_document_diagnostics,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                this.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_diagnostics
+                        .map(|lsp_diagnostic| proto::LspResponse {
+                            response: Some(
+                                proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
+                                    GetDocumentDiagnostics::response_to_proto(
+                                        lsp_diagnostic,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
                         })
                         .collect(),
                 })
@@ -7861,7 +8006,7 @@ impl LspStore {
                         PathEventKind::Changed => lsp::FileChangeType::CHANGED,
                     };
                     Some(lsp::FileEvent {
-                        uri: lsp::Url::from_file_path(&event.path).ok()?,
+                        uri: file_path_to_lsp_url(&event.path).log_err()?,
                         typ,
                     })
                 })
@@ -8184,6 +8329,17 @@ impl LspStore {
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |_, cx| {
             cx.emit(LspStoreEvent::RefreshInlayHints);
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_refresh_documents_diagnostics(
+        this: Entity<Self>,
+        _: TypedEnvelope<proto::RefreshDocumentsDiagnostics>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
         })?;
         Ok(proto::Ack {})
     }
@@ -8910,12 +9066,14 @@ impl LspStore {
         &mut self,
         language_server_id: LanguageServerId,
         params: lsp::PublishDiagnosticsParams,
+        source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.merge_diagnostics(
             language_server_id,
             params,
+            source_kind,
             disk_based_sources,
             |_, _| false,
             cx,
@@ -8926,6 +9084,7 @@ impl LspStore {
         &mut self,
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
+        source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         filter: F,
         cx: &mut Context<Self>,
@@ -8990,6 +9149,7 @@ impl LspStore {
                     range,
                     diagnostic: Diagnostic {
                         source: diagnostic.source.clone(),
+                        source_kind,
                         code: diagnostic.code.clone(),
                         code_description: diagnostic
                             .code_description
@@ -9016,6 +9176,7 @@ impl LspStore {
                                 range,
                                 diagnostic: Diagnostic {
                                     source: diagnostic.source.clone(),
+                                    source_kind,
                                     code: diagnostic.code.clone(),
                                     code_description: diagnostic
                                         .code_description

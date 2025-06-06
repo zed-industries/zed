@@ -342,7 +342,7 @@ impl DebugPanel {
             window.defer(cx, move |window, cx| {
                 workspace
                     .update(cx, |workspace, cx| {
-                        NewProcessModal::show(workspace, window, NewProcessMode::Launch, None, cx);
+                        NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
                     })
                     .ok();
             });
