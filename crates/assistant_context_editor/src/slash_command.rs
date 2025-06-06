@@ -238,13 +238,14 @@ impl SlashCommandCompletionProvider {
 
                 Ok(vec![project::CompletionResponse {
                     completions,
-                    is_incomplete: false,
+                    // TODO: Could have slash commands indicate whether their completions are incomplete.
+                    is_incomplete: true,
                 }])
             })
         } else {
             Task::ready(Ok(vec![project::CompletionResponse {
                 completions: Vec::new(),
-                is_incomplete: false,
+                is_incomplete: true,
             }]))
         }
     }
