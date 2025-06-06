@@ -209,13 +209,14 @@ impl Application {
 
     /// Invokes a handler when an already-running application is launched.
     /// On macOS, this can occur when the application icon is double-clicked or the app is launched via the dock.
-    pub fn new_window_for_tab<F>(&self, mut callback: F) -> &Self
+    pub fn new_window_for_tab<F>(&self, callback: F) -> &Self
     where
         F: 'static + FnMut(&mut App),
     {
         #[cfg(target_os = "macos")]
         {
             let this = Rc::downgrade(&self.0);
+            let mut callback = callback;
             self.0
                 .borrow_mut()
                 .platform
@@ -224,6 +225,10 @@ impl Application {
                         callback(&mut app.borrow_mut());
                     }
                 }));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = callback;
         }
         self
     }
