@@ -2102,17 +2102,21 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
         13 => colors.terminal_ansi_bright_magenta,
         14 => colors.terminal_ansi_bright_cyan,
         15 => colors.terminal_ansi_bright_white,
-        // 16-231 are mapped to their RGB colors on a 0-5 range per channel
+        // 16-231 are a 6x6x6 RGB color cube, mapped to 0-255 using steps defined by XTerm.
+        // See: https://github.com/xterm-x11/xterm-snapshots/blob/master/256colres.pl
         16..=231 => {
-            let (r, g, b) = rgb_for_index(index as u8); // Split the index into its ANSI-RGB components
-            let step = (u8::MAX as f32 / 5.).floor() as u8; // Split the RGB range into 5 chunks, with floor so no overflow
-            rgba_color(r * step, g * step, b * step) // Map the ANSI-RGB components to an RGB color
+            let (r, g, b) = rgb_for_index(index as u8);
+            rgba_color(
+                if r == 0 { 0 } else { r * 40 + 55 },
+                if g == 0 { 0 } else { g * 40 + 55 },
+                if b == 0 { 0 } else { b * 40 + 55 },
+            )
         }
-        // 232-255 are a 24 step grayscale from black to white
+        // 232-255 are a 24-step grayscale ramp from (8, 8, 8) to (238, 238, 238).
         232..=255 => {
             let i = index as u8 - 232; // Align index to 0..24
-            let step = (u8::MAX as f32 / 24.).floor() as u8; // Split the RGB grayscale values into 24 chunks
-            rgba_color(i * step, i * step, i * step) // Map the ANSI-grayscale components to the RGB-grayscale
+            let value = i * 10 + 8;
+            rgba_color(value, value, value)
         }
         // For compatibility with the alacritty::Colors interface
         // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs
