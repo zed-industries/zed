@@ -153,7 +153,7 @@ impl<'a> Iterator for TokenChunks<'a> {
             prefix.syntax_highlight_id = None;
             let mut highlight_style = HighlightStyle::default();
             for active_highlight in self.active_highlights.values() {
-                let mut new_highlight = active_highlight.clone();
+                let mut new_highlight = *active_highlight;
                 new_highlight.highlight(highlight_style);
                 highlight_style = new_highlight;
             }
