@@ -1,6 +1,6 @@
 # CodeOrbit - AI-Powered Development Assistant for Zed
 
-![CodeOrbit Logo](./assets/logo.svg)
+![CodeOrbit Logo](./assets/logo.codeorbit.svg)
 
 CodeOrbit is an intelligent code assistant extension for Zed that provides AI-powered development tools, multi-agent collaboration, and context-aware coding assistance.
 

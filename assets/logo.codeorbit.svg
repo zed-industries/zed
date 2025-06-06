@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- CodeOrbit Logo -->
+  <circle cx="256" cy="256" r="240" fill="#4F46E5"/>
+  <path d="M256 64L320 160H192L256 64Z" fill="white"/>
+  <path d="M256 448L192 352H320L256 448Z" fill="white"/>
+  <path d="M256 192L192 320H320L256 192Z" fill="#FCD34D"/>
+  <circle cx="256" cy="256" r="48" fill="white"/>
+  <circle cx="256" cy="256" r="24" fill="#4F46E5"/>
+</svg>

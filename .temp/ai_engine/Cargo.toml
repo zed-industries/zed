@@ -1,0 +1,81 @@
+[package]
+name = "ai_engine"
+version = "0.1.0"
+publish = true
+edition = "2021"
+description = "Multi-model AI engine for CodeOrbit with support for multiple AI providers"
+authors = ["CodeOrbit Team"]
+repository = "https://github.com/yourusername/codeorbit"
+license = "MIT"
+keywords = ["ai", "code", "editor", "llm", "openai", "gemini", "claude"]
+categories = ["text-editors", "api-bindings", "asynchronous"]
+
+[features]
+default = ["openai"]
+
+# Enable specific model providers
+openai = ["dep:reqwest", "dep:tokio", "dep:serde_json"]
+gemini = ["dep:reqwest", "dep:tokio", "dep:serde_json"]
+claude = ["dep:reqwest", "dep:tokio", "dep:serde_json"]
+deepseek = ["dep:reqwest", "dep:tokio", "dep:serde_json"]
+qwen = ["dep:reqwest", "dep:tokio", "dep:serde_json"]
+
+# Enable all providers
+full = ["openai", "gemini", "claude", "deepseek", "qwen"]
+
+[dependencies]
+# Core dependencies
+tokio = { version = "1.0", features = ["full"], optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", optional = true }
+reqwest = { version = "0.11.0", features = ["json", "stream"], optional = true }
+thiserror = "1.0"
+dotenv = "0.15"
+async-trait = "0.1"
+log = "0.4"
+url = "2.3"
+
+# Optional dependencies for specific features
+# (These will be enabled by the corresponding features)
+
+[dev-dependencies]
+tokio-test = { version = "0.4", features = ["macros"] }
+wiremock = { version = "0.5.0", features = ["standalone"] }
+serde_test = "1.0"
+
+[build-dependencies]
+vergen = { version = "8.0", features = ["build", "git"] }
+
+[workspace.dependencies]
+# Workspace dependencies can be listed here
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[lib]
+name = "ai_engine"
+path = "src/lib.rs"
+bench = false
+
+[[test]]
+name = "integration"
+path = "tests/integration_test.rs"
+
+doctest = false
+
+[package.metadata.docs.rs]
+# Document all features
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[package.metadata.release]
+# Configuration for cargo-release
+pre-release-replacements = [
+    {file = "Cargo.toml", search = "version = \"{version}\"", replace = "version = \"{next_version}\""},
+]
+

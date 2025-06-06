@@ -1,0 +1,185 @@
+       Fresh proc-macro2 v1.0.95
+       Fresh autocfg v1.4.0
+       Fresh quote v1.0.40
+       Fresh syn v2.0.101
+       Fresh cfg-if v1.0.0
+       Fresh serde_derive v1.0.219
+       Fresh jobserver v0.1.33
+       Fresh serde v1.0.219
+       Fresh cc v1.2.19
+       Fresh version_check v0.9.5
+       Fresh windows_x86_64_msvc v0.52.6
+       Fresh windows-targets v0.52.6
+       Fresh memchr v2.7.4
+       Fresh typeid v1.0.3
+       Fresh serde_fmt v1.0.3
+       Fresh erased-serde v0.4.6
+       Fresh tokio-macros v2.5.0
+       Fresh value-bag-serde1 v1.11.1
+       Fresh tracing-attributes v0.1.28
+       Fresh value-bag v1.11.1
+       Fresh futures-macro v0.3.31
+       Fresh log v0.4.27
+       Fresh thiserror-impl v2.0.12
+       Fresh once_cell v1.21.3
+       Fresh allocator-api2 v0.2.21
+       Fresh windows-sys v0.59.0
+       Fresh foldhash v0.1.5
+       Fresh equivalent v1.0.2
+       Fresh getrandom v0.2.15
+       Fresh hashbrown v0.15.3
+       Fresh indexmap v2.9.0
+       Fresh pin-project-lite v0.2.16
+       Fresh futures-core v0.3.31
+       Fresh synstructure v0.13.1
+       Fresh itoa v1.0.15
+       Fresh scopeguard v1.2.0
+       Fresh zerofrom-derive v0.1.6
+       Fresh lock_api v0.4.12
+       Fresh smallvec v1.15.0
+       Fresh yoke-derive v0.7.5
+       Fresh futures-io v0.3.31
+       Fresh zerovec-derive v0.10.3
+       Fresh time-macros v0.2.22
+       Fresh bytes v1.10.1
+       Fresh displaydoc v0.2.5
+       Fresh subtle v2.6.1
+       Fresh cmake v0.1.54
+       Fresh fs_extra v1.3.0
+       Fresh typenum v1.18.0
+       Fresh generic-array v0.14.7
+       Fresh icu_provider_macros v1.5.0
+       Fresh parking_lot_core v0.9.10
+       Fresh windows-sys v0.52.0
+       Fresh const-oid v0.9.6
+       Fresh libm v0.2.11
+       Fresh parking_lot v0.12.3
+       Fresh ryu v1.0.20
+       Fresh slab v0.4.9
+       Fresh crypto-common v0.1.6
+       Fresh block-buffer v0.10.4
+       Fresh num-traits v0.2.19
+       Fresh digest v0.10.7
+       Fresh futures-sink v0.3.31
+       Fresh byteorder v1.5.0
+       Fresh pin-utils v0.1.0
+       Fresh pkg-config v0.3.32
+       Fresh socket2 v0.5.9
+       Fresh mio v1.0.3
+       Fresh cpufeatures v0.2.17
+       Fresh iovec v0.1.4
+       Fresh tokio v1.44.2
+       Fresh bytes v0.4.12
+       Fresh bitflags v2.9.0
+       Fresh zeroize v1.8.1
+       Fresh futures v0.1.31
+       Fresh futures-channel v0.3.31
+       Fresh tokio-io v0.1.13
+       Fresh thiserror-impl v1.0.69
+       Fresh fastrand v2.3.0
+       Fresh futures-task v0.3.31
+       Fresh futures-util v0.3.31
+       Fresh tracing-core v0.1.33
+       Fresh tracing v0.1.41
+       Fresh getrandom v0.3.2
+       Fresh sha2 v0.10.8
+       Fresh fnv v1.0.7
+       Fresh crossbeam-utils v0.8.21
+       Fresh either v1.15.0
+       Fresh regex-syntax v0.8.5
+       Fresh stable_deref_trait v1.2.0
+       Fresh num-integer v0.1.46
+   Compiling aws-lc-sys v0.29.0
+     Running `D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\build\aws-lc-sys-dcfe51f5860cf937\build-script-main`
+       Fresh aho-corasick v1.1.3
+       Fresh regex-automata v0.4.9
+       Fresh rustc_version v0.4.1
+       Fresh zerofrom v0.1.6
+       Fresh percent-encoding v2.3.1
+       Fresh serde_json v1.0.140
+       Fresh yoke v0.7.5
+       Fresh libc v0.2.172
+       Fresh untrusted v0.9.0
+       Fresh ring v0.17.14
+   Compiling zerovec v0.10.4
+   Compiling icu_collections v1.5.0
+   Compiling icu_normalizer_data v1.5.1
+     Running `C:\Users\jayas\.rustup\toolchains\1.87-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name zerovec --edition=2021 C:\Users\jayas\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zerovec-0.10.4\src\lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C opt-level=3 -C linker-plugin-lto -C codegen-units=1 -C debuginfo=1 --cfg "feature=\"derive\"" --cfg "feature=\"yoke\"" --check-cfg cfg(docsrs,test) --check-cfg "cfg(feature, values(\"bench\", \"databake\", \"derive\", \"hashmap\", \"serde\", \"std\", \"yoke\"))" -C metadata=f948a82e9c169c6f -C extra-filename=-f09536ef337fbe4c --out-dir D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps -L dependency=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps --extern yoke=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps\libyoke-b59c8cdccf68e45b.rmeta --extern zerofrom=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps\libzerofrom-22d1181358537d43.rmeta --extern zerovec_derive=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps\zerovec_derive-37035ea1f1a2010e.dll --cap-lints allow --cfg windows_slim_errors -C target-feature=+crt-static`
+     Running `D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\build\icu_normalizer_data-f676ade6f5af790a\build-script-build`
+     Running `C:\Users\jayas\.rustup\toolchains\1.87-x86_64-pc-windows-msvc\bin\rustc.exe --crate-name icu_collections --edition=2021 C:\Users\jayas\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\icu_collections-1.5.0\src\lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debug-assertions=off --check-cfg cfg(docsrs,test) --check-cfg "cfg(feature, values(\"bench\", \"databake\", \"serde\", \"std\"))" -C metadata=ae7e6ea97c375eb8 -C extra-filename=-611606342c6600d3 --out-dir D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps -L dependency=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps --extern displaydoc=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps\displaydoc-82e993f7b9ebaa5a.dll --extern yoke=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps\libyoke-aff861d04ca2baa8.rmeta --extern zerofrom=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps\libzerofrom-34324a742596f488.rmeta --extern zerovec=D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\deps\libzerovec-547b31abc3027fe0.rmeta --cap-lints allow --cfg windows_slim_errors -C target-feature=+crt-static`
+error: failed to run custom build command for `aws-lc-sys v0.29.0`
+note: To improve backtraces for build dependencies, set the CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_DEBUG=true environment variable to enable debug information generation.
+
+Caused by:
+  process didn't exit successfully: `D:\AGENT\CodeOrbit\CodeOrbit-1\target\release\build\aws-lc-sys-dcfe51f5860cf937\build-script-main` (exit code: 101)
+  --- stdout
+  cargo:rerun-if-env-changed=AWS_LC_SYS_NO_PREFIX_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_NO_PREFIX
+  cargo:rerun-if-env-changed=AWS_LC_SYS_PREGENERATING_BINDINGS_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_PREGENERATING_BINDINGS
+  cargo:rerun-if-env-changed=AWS_LC_SYS_EXTERNAL_BINDGEN_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_EXTERNAL_BINDGEN
+  cargo:rerun-if-env-changed=AWS_LC_SYS_NO_ASM_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_NO_ASM
+  cargo:rerun-if-env-changed=AWS_LC_SYS_CFLAGS_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_CFLAGS
+  cargo:rerun-if-env-changed=CFLAGS_x86_64-pc-windows-msvc
+  cargo:rerun-if-env-changed=CFLAGS
+  cargo:rerun-if-env-changed=AWS_LC_SYS_PREBUILT_NASM_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_PREBUILT_NASM
+  cargo:rerun-if-env-changed=AWS_LC_SYS_C_STD_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_C_STD
+  cargo:rerun-if-env-changed=AWS_LC_SYS_CMAKE_BUILDER_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_CMAKE_BUILDER
+  cargo:rerun-if-env-changed=AWS_LC_SYS_NO_PREGENERATED_SRC_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_NO_PREGENERATED_SRC
+  cargo:rerun-if-env-changed=AWS_LC_SYS_EFFECTIVE_TARGET_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_EFFECTIVE_TARGET
+  cargo:rustc-cfg=x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_STATIC_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_STATIC
+  default_for Target: 'x86_64-pc-windows-msvc'
+  cargo:rerun-if-env-changed=AWS_LC_SYS_STATIC_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_STATIC
+  cargo:rerun-if-env-changed=AWS_LC_SYS_CMAKE_x86_64_pc_windows_msvc
+  cargo:rerun-if-env-changed=AWS_LC_SYS_CMAKE
+  cargo:rerun-if-env-changed=CMAKE_x86_64-pc-windows-msvc
+  cargo:rerun-if-env-changed=CMAKE
+
+  --- stderr
+  Missing dependency: cmake
+
+  thread 'main' panicked at C:\Users\jayas\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\aws-lc-sys-0.29.0\builder\main.rs:462:40:
+  called `Result::unwrap()` on an `Err` value: "Required build dependency is missing. Halting build."
+  stack backtrace:
+     0: std::panicking::begin_panic_handler
+               at /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library\std\src\panicking.rs:697
+     1: core::panicking::panic_fmt
+               at /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library\core\src\panicking.rs:75
+     2: core::result::unwrap_failed
+               at /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library\core\src\result.rs:1704
+     3: build_script_main::out_dir
+     4: build_script_main::requested_c_std
+     5: core::ops::function::FnOnce::call_once
+     6: std::rt::lang_start::{{closure}}
+     7: std::rt::lang_start::{{closure}}
+     8: std::rt::lang_start_internal::closure$0
+               at /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library\std\src\rt.rs:168
+     9: std::panicking::try::do_call
+               at /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library\std\src\panicking.rs:589
+    10: std::panicking::try
+               at /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library\std\src\panicking.rs:552
+    11: std::panic::catch_unwind
+               at /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library\std\src\panic.rs:359
+    12: std::rt::lang_start_internal
+               at /rustc/17067e9ac6d7ecb70e50f92c1944e545188d2359/library\std\src\rt.rs:164
+    13: std::rt::lang_start
+    14: main
+    15: invoke_main
+               at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:78
+    16: __scrt_common_main_seh
+               at D:\a\_work\1\s\src\vctools\crt\vcstartup\src\startup\exe_common.inl:288
+    17: BaseThreadInitThunk
+    18: RtlUserThreadStart
+  note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+warning: build failed, waiting for other jobs to finish...

@@ -3,19 +3,21 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 
-Welcome to **CodeOrbit**, a next-generation AI-powered code editor with multi-agent collaboration capabilities. Built with modern web technologies and designed for developer productivity.
+Welcome to **CodeOrbit**, a high-performance, AI-powered code editor with multi-agent collaboration capabilities. Built with Rust for maximum performance and designed for developer productivity.
 
 <div align="center">
-  <img src="assets/logo.svg" alt="CodeOrbit Logo" width="300"/>
+  <img src="assets/logo.codeorbit.svg" alt="CodeOrbit Logo" width="300"/>
 </div>
 
 ## ✨ Features
 
-- **AI-Powered Code Completion** - Smart suggestions powered by advanced AI models
+- **Blazing Fast** - Built with Rust for maximum performance
+- **AI-Powered** - Smart code completion and assistance
 - **Multi-Agent System** - Collaborative AI agents for different development tasks
 - **Real-time Collaboration** - Work together with your team in real-time
-- **Extensible Architecture** - Built with plugins and extensions in mind
+- **Extensible** - Built with plugins and extensions in mind
 - **Cross-Platform** - Available on Windows, macOS, and Linux
 
 ## 🚀 Getting Started
