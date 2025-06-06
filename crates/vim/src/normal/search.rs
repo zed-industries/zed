@@ -542,7 +542,7 @@ impl Replacement {
                 if phase == 1 && c.is_ascii_digit() {
                     buffer.push('$')
                 // unescape escaped parens
-                } else if phase == 0 && c == '(' || c == ')' {
+                } else if phase == 0 && (c == '(' || c == ')') {
                 } else if c != delimiter {
                     buffer.push('\\')
                 }
@@ -561,7 +561,7 @@ impl Replacement {
                 }
             } else {
                 // escape unescaped parens
-                if phase == 0 && c == '(' || c == ')' {
+                if phase == 0 && (c == '(' || c == ')') {
                     buffer.push('\\')
                 }
                 buffer.push(c)

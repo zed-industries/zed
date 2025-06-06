@@ -6,7 +6,7 @@ Deno support is available through the [Deno extension](https://github.com/zed-ex
 
 ## Deno Configuration
 
-To use the Deno Language Server with TypeScript and TSX files, you will likely wish to to disable the default language servers and enable deno by adding the following to your settings.json:
+To use the Deno Language Server with TypeScript and TSX files, you will likely wish to disable the default language servers and enable deno by adding the following to your settings.json:
 
 ```json
 {

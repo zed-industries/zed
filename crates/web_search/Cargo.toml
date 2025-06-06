@@ -1,0 +1,20 @@
+[package]
+name = "web_search"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/web_search.rs"
+
+[dependencies]
+anyhow.workspace = true
+collections.workspace = true
+gpui.workspace = true
+serde.workspace = true
+workspace-hack.workspace = true
+zed_llm_client.workspace = true

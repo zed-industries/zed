@@ -7,113 +7,8 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal as _,
 };
 use proto::{Plan, TypedEnvelope};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
-use strum::EnumIter;
 use thiserror::Error;
-
-use crate::{LanguageModelAvailability, LanguageModelToolSchemaFormat};
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "provider", rename_all = "lowercase")]
-pub enum CloudModel {
-    Anthropic(anthropic::Model),
-    OpenAi(open_ai::Model),
-    Google(google_ai::Model),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, EnumIter)]
-pub enum ZedModel {
-    #[serde(rename = "Qwen/Qwen2-7B-Instruct")]
-    Qwen2_7bInstruct,
-}
-
-impl Default for CloudModel {
-    fn default() -> Self {
-        Self::Anthropic(anthropic::Model::default())
-    }
-}
-
-impl CloudModel {
-    pub fn id(&self) -> &str {
-        match self {
-            Self::Anthropic(model) => model.id(),
-            Self::OpenAi(model) => model.id(),
-            Self::Google(model) => model.id(),
-        }
-    }
-
-    pub fn display_name(&self) -> &str {
-        match self {
-            Self::Anthropic(model) => model.display_name(),
-            Self::OpenAi(model) => model.display_name(),
-            Self::Google(model) => model.display_name(),
-        }
-    }
-
-    pub fn max_token_count(&self) -> usize {
-        match self {
-            Self::Anthropic(model) => model.max_token_count(),
-            Self::OpenAi(model) => model.max_token_count(),
-            Self::Google(model) => model.max_token_count(),
-        }
-    }
-
-    /// Returns the availability of this model.
-    pub fn availability(&self) -> LanguageModelAvailability {
-        match self {
-            Self::Anthropic(model) => match model {
-                anthropic::Model::Claude3_5Sonnet
-                | anthropic::Model::Claude3_7Sonnet
-                | anthropic::Model::Claude3_7SonnetThinking => {
-                    LanguageModelAvailability::RequiresPlan(Plan::Free)
-                }
-                anthropic::Model::Claude3Opus
-                | anthropic::Model::Claude3Sonnet
-                | anthropic::Model::Claude3Haiku
-                | anthropic::Model::Claude3_5Haiku
-                | anthropic::Model::Custom { .. } => {
-                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
-                }
-            },
-            Self::OpenAi(model) => match model {
-                open_ai::Model::ThreePointFiveTurbo
-                | open_ai::Model::Four
-                | open_ai::Model::FourTurbo
-                | open_ai::Model::FourOmni
-                | open_ai::Model::FourOmniMini
-                | open_ai::Model::O1Mini
-                | open_ai::Model::O1Preview
-                | open_ai::Model::O1
-                | open_ai::Model::O3Mini
-                | open_ai::Model::Custom { .. } => {
-                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
-                }
-            },
-            Self::Google(model) => match model {
-                google_ai::Model::Gemini15Pro
-                | google_ai::Model::Gemini15Flash
-                | google_ai::Model::Gemini20Pro
-                | google_ai::Model::Gemini20Flash
-                | google_ai::Model::Gemini20FlashThinking
-                | google_ai::Model::Gemini20FlashLite
-                | google_ai::Model::Gemini25ProExp0325
-                | google_ai::Model::Gemini25ProPreview0325
-                | google_ai::Model::Custom { .. } => {
-                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro)
-                }
-            },
-        }
-    }
-
-    pub fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
-        match self {
-            Self::Anthropic(_) | Self::OpenAi(_) => LanguageModelToolSchemaFormat::JsonSchema,
-            Self::Google(_) => LanguageModelToolSchemaFormat::JsonSchemaSubset,
-        }
-    }
-}
 
 #[derive(Error, Debug)]
 pub struct PaymentRequiredError;
@@ -128,14 +23,23 @@ impl fmt::Display for PaymentRequiredError {
 }
 
 #[derive(Error, Debug)]
-pub struct MaxMonthlySpendReachedError;
+pub struct ModelRequestLimitReachedError {
+    pub plan: Plan,
+}
 
-impl fmt::Display for MaxMonthlySpendReachedError {
+impl fmt::Display for ModelRequestLimitReachedError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Maximum spending limit reached for this month. For more usage, increase your spending limit."
-        )
+        let message = match self.plan {
+            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
+            Plan::ZedPro => {
+                "Model request limit reached. Upgrade to usage-based billing for more requests."
+            }
+            Plan::ZedProTrial => {
+                "Model request limit reached. Upgrade to Zed Pro for more requests."
+            }
+        };
+
+        write!(f, "{message}")
     }
 }
 

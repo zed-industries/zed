@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::{
-    Bias, DisplayPoint, Editor, ToOffset,
+    Bias, DisplayPoint, Editor,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement,
     scroll::Autoscroll,
@@ -132,16 +132,26 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         }
 
         vim.update_editor(window, cx, |_, editor, window, cx| {
+            editor.set_clip_at_line_ends(false, cx);
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 let map = s.display_map();
                 let ranges = ranges
                     .into_iter()
                     .map(|(start, end, reversed)| {
-                        let new_end = movement::saturating_right(&map, end.to_display_point(&map));
+                        let mut new_end =
+                            movement::saturating_right(&map, end.to_display_point(&map));
+                        let mut new_start = start.to_display_point(&map);
+                        if new_start >= new_end {
+                            if new_end.column() == 0 {
+                                new_end = movement::right(&map, new_end)
+                            } else {
+                                new_start = movement::saturating_left(&map, new_end);
+                            }
+                        }
                         Selection {
                             id: s.new_selection_id(),
-                            start: start.to_offset(&map.buffer_snapshot),
-                            end: new_end.to_offset(&map, Bias::Left),
+                            start: new_start.to_point(&map),
+                            end: new_end.to_point(&map),
                             reversed,
                             goal: SelectionGoal::None,
                         }
@@ -1728,5 +1738,26 @@ mod test {
             "},
             Mode::Visual,
         );
+    }
+
+    #[gpui::test]
+    async fn test_p_g_v_y(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The
+            quicˇk
+            brown
+            fox"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("y y j shift-v p g v y").await;
+        cx.shared_state().await.assert_eq(indoc! {
+            "The
+            quick
+            ˇquick
+            fox"
+        });
+        cx.shared_clipboard().await.assert_eq("quick\n");
     }
 }

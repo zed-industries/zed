@@ -20,7 +20,7 @@ impl Modal {
     pub fn new(id: impl Into<SharedString>, scroll_handle: Option<ScrollHandle>) -> Self {
         let id = id.into();
 
-        let container_id = ElementId::Name(format!("{}_container", id.clone()).into());
+        let container_id = ElementId::Name(format!("{}_container", id).into());
         Self {
             id: ElementId::Name(id),
             header: ModalHeader::new(),
@@ -249,10 +249,14 @@ impl ModalFooter {
 impl RenderOnce for ModalFooter {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
-            .flex_none()
             .w_full()
+            .mt_4()
             .p(DynamicSpacing::Base08.rems(cx))
+            .flex_none()
             .justify_between()
+            .gap_1()
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
             .child(div().when_some(self.start_slot, |this, start_slot| this.child(start_slot)))
             .child(div().when_some(self.end_slot, |this, end_slot| this.child(end_slot)))
     }

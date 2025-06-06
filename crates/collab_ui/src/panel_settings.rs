@@ -28,6 +28,7 @@ pub struct ChatPanelSettings {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[schemars(deny_unknown_fields)]
 pub struct ChatPanelSettingsContent {
     /// When to show the panel button in the status bar.
     ///
@@ -51,6 +52,7 @@ pub struct NotificationPanelSettings {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[schemars(deny_unknown_fields)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -67,6 +69,7 @@ pub struct PanelSettingsContent {
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[schemars(deny_unknown_fields)]
 pub struct MessageEditorSettings {
     /// Whether to automatically replace emoji shortcodes with emoji characters.
     /// For example: typing `:wave:` gets replaced with `👋`.
@@ -86,6 +89,8 @@ impl Settings for CollaborationPanelSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Settings for ChatPanelSettings {
@@ -99,6 +104,8 @@ impl Settings for ChatPanelSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Settings for NotificationPanelSettings {
@@ -112,6 +119,8 @@ impl Settings for NotificationPanelSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Settings for MessageEditorSettings {
@@ -125,4 +134,6 @@ impl Settings for MessageEditorSettings {
     ) -> anyhow::Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

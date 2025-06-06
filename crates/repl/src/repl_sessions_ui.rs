@@ -178,8 +178,8 @@ impl Focusable for ReplSessionsPage {
 impl Item for ReplSessionsPage {
     type Event = ItemEvent;
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("REPL Sessions".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "REPL Sessions".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

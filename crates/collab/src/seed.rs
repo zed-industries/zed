@@ -46,7 +46,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
     let mut first_user = None;
     let mut others = vec![];
 
-    let flag_names = ["remoting", "language-models"];
+    let flag_names = ["language-models"];
     let mut flags = Vec::new();
 
     let existing_feature_flags = db.list_feature_flags().await?;

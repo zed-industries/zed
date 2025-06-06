@@ -1,5 +1,3 @@
-mod supported_countries;
-
 use std::str::FromStr;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -10,9 +8,6 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
-use util::ResultExt as _;
-
-pub use supported_countries::*;
 
 pub const ANTHROPIC_API_URL: &str = "https://api.anthropic.com";
 
@@ -39,7 +34,6 @@ pub enum AnthropicModelMode {
 pub enum Model {
     #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
-    #[default]
     #[serde(rename = "claude-3-7-sonnet", alias = "claude-3-7-sonnet-latest")]
     Claude3_7Sonnet,
     #[serde(
@@ -47,6 +41,21 @@ pub enum Model {
         alias = "claude-3-7-sonnet-thinking-latest"
     )]
     Claude3_7SonnetThinking,
+    #[serde(rename = "claude-opus-4", alias = "claude-opus-4-latest")]
+    ClaudeOpus4,
+    #[serde(
+        rename = "claude-opus-4-thinking",
+        alias = "claude-opus-4-thinking-latest"
+    )]
+    ClaudeOpus4Thinking,
+    #[default]
+    #[serde(rename = "claude-sonnet-4", alias = "claude-sonnet-4-latest")]
+    ClaudeSonnet4,
+    #[serde(
+        rename = "claude-sonnet-4-thinking",
+        alias = "claude-sonnet-4-thinking-latest"
+    )]
+    ClaudeSonnet4Thinking,
     #[serde(rename = "claude-3-5-haiku", alias = "claude-3-5-haiku-latest")]
     Claude3_5Haiku,
     #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
@@ -75,6 +84,10 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn default_fast() -> Self {
+        Self::Claude3_5Haiku
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         if id.starts_with("claude-3-5-sonnet") {
             Ok(Self::Claude3_5Sonnet)
@@ -90,13 +103,25 @@ impl Model {
             Ok(Self::Claude3Sonnet)
         } else if id.starts_with("claude-3-haiku") {
             Ok(Self::Claude3Haiku)
+        } else if id.starts_with("claude-opus-4-thinking") {
+            Ok(Self::ClaudeOpus4Thinking)
+        } else if id.starts_with("claude-opus-4") {
+            Ok(Self::ClaudeOpus4)
+        } else if id.starts_with("claude-sonnet-4-thinking") {
+            Ok(Self::ClaudeSonnet4Thinking)
+        } else if id.starts_with("claude-sonnet-4") {
+            Ok(Self::ClaudeSonnet4)
         } else {
-            Err(anyhow!("invalid model id"))
+            anyhow::bail!("invalid model id {id}");
         }
     }
 
     pub fn id(&self) -> &str {
         match self {
+            Model::ClaudeOpus4 => "claude-opus-4-latest",
+            Model::ClaudeOpus4Thinking => "claude-opus-4-thinking-latest",
+            Model::ClaudeSonnet4 => "claude-sonnet-4-latest",
+            Model::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking-latest",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Model::Claude3_7Sonnet => "claude-3-7-sonnet-latest",
             Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking-latest",
@@ -111,6 +136,8 @@ impl Model {
     /// The id of the model that should be used for making API requests
     pub fn request_id(&self) -> &str {
         match self {
+            Model::ClaudeOpus4 | Model::ClaudeOpus4Thinking => "claude-opus-4-20250514",
+            Model::ClaudeSonnet4 | Model::ClaudeSonnet4Thinking => "claude-sonnet-4-20250514",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Model::Claude3_7Sonnet | Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-latest",
             Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
@@ -123,6 +150,10 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         match self {
+            Model::ClaudeOpus4 => "Claude Opus 4",
+            Model::ClaudeOpus4Thinking => "Claude Opus 4 Thinking",
+            Model::ClaudeSonnet4 => "Claude Sonnet 4",
+            Model::ClaudeSonnet4Thinking => "Claude Sonnet 4 Thinking",
             Self::Claude3_7Sonnet => "Claude 3.7 Sonnet",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
             Self::Claude3_7SonnetThinking => "Claude 3.7 Sonnet Thinking",
@@ -138,7 +169,11 @@ impl Model {
 
     pub fn cache_configuration(&self) -> Option<AnthropicModelCacheConfiguration> {
         match self {
-            Self::Claude3_5Sonnet
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
+            | Self::Claude3_5Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
@@ -157,7 +192,11 @@ impl Model {
 
     pub fn max_token_count(&self) -> usize {
         match self {
-            Self::Claude3_5Sonnet
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
+            | Self::Claude3_5Sonnet
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
@@ -174,7 +213,11 @@ impl Model {
             Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
-            | Self::Claude3_5Haiku => 8_192,
+            | Self::Claude3_5Haiku
+            | Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking => 8_192,
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
@@ -183,7 +226,11 @@ impl Model {
 
     pub fn default_temperature(&self) -> f32 {
         match self {
-            Self::Claude3_5Sonnet
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4
+            | Self::ClaudeSonnet4Thinking
+            | Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking
             | Self::Claude3_5Haiku
@@ -202,10 +249,14 @@ impl Model {
             Self::Claude3_5Sonnet
             | Self::Claude3_7Sonnet
             | Self::Claude3_5Haiku
+            | Self::ClaudeOpus4
+            | Self::ClaudeSonnet4
             | Self::Claude3Opus
             | Self::Claude3Sonnet
             | Self::Claude3Haiku => AnthropicModelMode::Default,
-            Self::Claude3_7SonnetThinking => AnthropicModelMode::Thinking {
+            Self::Claude3_7SonnetThinking
+            | Self::ClaudeOpus4Thinking
+            | Self::ClaudeSonnet4Thinking => AnthropicModelMode::Thinking {
                 budget_tokens: Some(4_096),
             },
             Self::Custom { mode, .. } => mode.clone(),
@@ -363,19 +414,33 @@ pub struct RateLimitInfo {
 
 impl RateLimitInfo {
     fn from_headers(headers: &HeaderMap<HeaderValue>) -> Self {
+        // Check if any rate limit headers exist
+        let has_rate_limit_headers = headers
+            .keys()
+            .any(|k| k.as_str().starts_with("anthropic-ratelimit-"));
+
+        if !has_rate_limit_headers {
+            return Self {
+                requests: None,
+                tokens: None,
+                input_tokens: None,
+                output_tokens: None,
+            };
+        }
+
         Self {
-            requests: RateLimit::from_headers("requests", headers).log_err(),
-            tokens: RateLimit::from_headers("tokens", headers).log_err(),
-            input_tokens: RateLimit::from_headers("input-tokens", headers).log_err(),
-            output_tokens: RateLimit::from_headers("output-tokens", headers).log_err(),
+            requests: RateLimit::from_headers("requests", headers).ok(),
+            tokens: RateLimit::from_headers("tokens", headers).ok(),
+            input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
+            output_tokens: RateLimit::from_headers("output-tokens", headers).ok(),
         }
     }
 }
 
-fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> Result<&'a str, anyhow::Error> {
+fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> anyhow::Result<&'a str> {
     Ok(headers
         .get(key)
-        .ok_or_else(|| anyhow!("missing header `{key}`"))?
+        .with_context(|| format!("missing header `{key}`"))?
         .to_str()?)
 }
 
@@ -494,6 +559,15 @@ pub enum RequestContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        signature: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
     #[serde(rename = "image")]
     Image {
         source: ImageSource,
@@ -512,10 +586,24 @@ pub enum RequestContent {
     ToolResult {
         tool_use_id: String,
         is_error: bool,
-        content: String,
+        content: ToolResultContent,
         #[serde(skip_serializing_if = "Option::is_none")]
         cache_control: Option<CacheControl>,
     },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolResultContent {
+    Plain(String),
+    Multipart(Vec<ToolResultPart>),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ToolResultPart {
+    Text { text: String },
+    Image { source: ImageSource },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -556,6 +644,7 @@ pub enum ToolChoice {
     Auto,
     Any,
     Tool { name: String },
+    None,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -724,4 +813,54 @@ impl ApiError {
     pub fn is_rate_limit_error(&self) -> bool {
         matches!(self.error_type.as_str(), "rate_limit_error")
     }
+
+    pub fn match_window_exceeded(&self) -> Option<usize> {
+        let Some(ApiErrorCode::InvalidRequestError) = self.code() else {
+            return None;
+        };
+
+        parse_prompt_too_long(&self.message)
+    }
+}
+
+pub fn parse_prompt_too_long(message: &str) -> Option<usize> {
+    message
+        .strip_prefix("prompt is too long: ")?
+        .split_once(" tokens")?
+        .0
+        .parse::<usize>()
+        .ok()
+}
+
+#[test]
+fn test_match_window_exceeded() {
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "prompt is too long: 220000 tokens > 200000".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), Some(220_000));
+
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "prompt is too long: 1234953 tokens".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), Some(1234953));
+
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "not a prompt length error".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), None);
+
+    let error = ApiError {
+        error_type: "rate_limit_error".to_string(),
+        message: "prompt is too long: 12345 tokens".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), None);
+
+    let error = ApiError {
+        error_type: "invalid_request_error".to_string(),
+        message: "prompt is too long: invalid tokens".to_string(),
+    };
+    assert_eq!(error.match_window_exceeded(), None);
 }

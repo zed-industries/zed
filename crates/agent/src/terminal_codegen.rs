@@ -32,7 +32,7 @@ impl TerminalCodegen {
         }
     }
 
-    pub fn start(&mut self, prompt: LanguageModelRequest, cx: &mut Context<Self>) {
+    pub fn start(&mut self, prompt_task: Task<LanguageModelRequest>, cx: &mut Context<Self>) {
         let Some(ConfiguredModel { model, .. }) =
             LanguageModelRegistry::read_global(cx).inline_assistant_model()
         else {
@@ -45,6 +45,7 @@ impl TerminalCodegen {
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(async move |this, cx| {
+            let prompt = prompt_task.await;
             let model_telemetry_id = model.telemetry_id();
             let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
@@ -178,21 +179,21 @@ impl TerminalTransaction {
         // Ensure that the assistant cannot accidentally execute commands that are streamed into the terminal
         let input = Self::sanitize_input(hunk);
         self.terminal
-            .update(cx, |terminal, _| terminal.input(input));
+            .update(cx, |terminal, _| terminal.input(input.into_bytes()));
     }
 
     pub fn undo(&self, cx: &mut App) {
         self.terminal
-            .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.to_string()));
+            .update(cx, |terminal, _| terminal.input(CLEAR_INPUT.as_bytes()));
     }
 
     pub fn complete(&self, cx: &mut App) {
-        self.terminal.update(cx, |terminal, _| {
-            terminal.input(CARRIAGE_RETURN.to_string())
-        });
+        self.terminal
+            .update(cx, |terminal, _| terminal.input(CARRIAGE_RETURN.as_bytes()));
     }
 
-    fn sanitize_input(input: String) -> String {
-        input.replace(['\r', '\n'], "")
+    fn sanitize_input(mut input: String) -> String {
+        input.retain(|c| c != '\r' && c != '\n');
+        input
     }
 }

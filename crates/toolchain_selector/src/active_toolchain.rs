@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use editor::Editor;
 use gpui::{
@@ -6,7 +6,7 @@ use gpui::{
     WeakEntity, Window, div,
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
-use project::{Project, ProjectPath, WorktreeId};
+use project::{Project, ProjectPath, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
@@ -22,6 +22,28 @@ pub struct ActiveToolchain {
 
 impl ActiveToolchain {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        if let Some(store) = workspace.project().read(cx).toolchain_store() {
+            cx.subscribe_in(
+                &store,
+                window,
+                |this, _, _: &ToolchainStoreEvent, window, cx| {
+                    let editor = this
+                        .workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .active_item(cx)
+                                .and_then(|item| item.downcast::<Editor>())
+                        })
+                        .ok()
+                        .flatten();
+                    if let Some(editor) = editor {
+                        this.active_toolchain.take();
+                        this.update_lister(editor, window, cx);
+                    }
+                },
+            )
+            .detach();
+        }
         Self {
             active_toolchain: None,
             active_buffer: None,
@@ -34,16 +56,16 @@ impl ActiveToolchain {
     fn spawn_tracker_task(window: &mut Window, cx: &mut Context<Self>) -> Task<Option<()>> {
         cx.spawn_in(window, async move |this, cx| {
             let active_file = this
-                .update(cx, |this, _| {
+                .read_with(cx, |this, _| {
                     this.active_buffer
                         .as_ref()
                         .map(|(_, buffer, _)| buffer.clone())
                 })
                 .ok()
                 .flatten()?;
-            let workspace = this.update(cx, |this, _| this.workspace.clone()).ok()?;
+            let workspace = this.read_with(cx, |this, _| this.workspace.clone()).ok()?;
             let language_name = active_file
-                .update(cx, |this, _| Some(this.language()?.name()))
+                .read_with(cx, |this, _| Some(this.language()?.name()))
                 .ok()
                 .flatten()?;
             let term = workspace
@@ -57,12 +79,19 @@ impl ActiveToolchain {
                 this.term = term;
                 cx.notify();
             });
-            let worktree_id = active_file
-                .update(cx, |this, cx| Some(this.file()?.worktree_id(cx)))
+            let (worktree_id, path) = active_file
+                .update(cx, |this, cx| {
+                    this.file().and_then(|file| {
+                        Some((
+                            file.worktree_id(cx),
+                            Arc::<Path>::from(file.path().parent()?),
+                        ))
+                    })
+                })
                 .ok()
                 .flatten()?;
             let toolchain =
-                Self::active_toolchain(workspace, worktree_id, language_name, cx).await?;
+                Self::active_toolchain(workspace, worktree_id, path, language_name, cx).await?;
             let _ = this.update(cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
@@ -101,12 +130,13 @@ impl ActiveToolchain {
     fn active_toolchain(
         workspace: WeakEntity<Workspace>,
         worktree_id: WorktreeId,
+        relative_path: Arc<Path>,
         language_name: LanguageName,
         cx: &mut AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
         cx.spawn(async move |cx| {
             let workspace_id = workspace
-                .update(cx, |this, _| this.database_id())
+                .read_with(cx, |this, _| this.database_id())
                 .ok()
                 .flatten()?;
             let selected_toolchain = workspace
@@ -114,7 +144,7 @@ impl ActiveToolchain {
                     this.project().read(cx).active_toolchain(
                         ProjectPath {
                             worktree_id,
-                            path: Arc::from("".as_ref()),
+                            path: relative_path.clone(),
                         },
                         language_name.clone(),
                         cx,
@@ -126,14 +156,14 @@ impl ActiveToolchain {
                 Some(toolchain)
             } else {
                 let project = workspace
-                    .update(cx, |this, _| this.project().clone())
+                    .read_with(cx, |this, _| this.project().clone())
                     .ok()?;
-                let toolchains = cx
+                let (toolchains, relative_path) = cx
                     .update(|_, cx| {
                         project.read(cx).available_toolchains(
                             ProjectPath {
                                 worktree_id,
-                                path: Arc::from("".as_ref()),
+                                path: relative_path.clone(),
                             },
                             language_name,
                             cx,
@@ -144,7 +174,12 @@ impl ActiveToolchain {
                 if let Some(toolchain) = toolchains.toolchains.first() {
                     // Since we don't have a selected toolchain, pick one for user here.
                     workspace::WORKSPACE_DB
-                        .set_toolchain(workspace_id, worktree_id, "".to_owned(), toolchain.clone())
+                        .set_toolchain(
+                            workspace_id,
+                            worktree_id,
+                            relative_path.to_string_lossy().into_owned(),
+                            toolchain.clone(),
+                        )
                         .await
                         .ok()?;
                     project
@@ -152,7 +187,7 @@ impl ActiveToolchain {
                             this.activate_toolchain(
                                 ProjectPath {
                                     worktree_id,
-                                    path: Arc::from("".as_ref()),
+                                    path: relative_path,
                                 },
                                 toolchain.clone(),
                                 cx,

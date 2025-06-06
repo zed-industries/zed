@@ -1,12 +1,12 @@
 use crate::FakeFs;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture};
 use git::{
     blame::Blame,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, GitRepository, GitRepositoryCheckpoint,
-        PushOptions, Remote, RepoPath, ResetMode,
+        AskPassDelegate, Branch, CommitDetails, CommitOptions, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
@@ -35,6 +35,7 @@ pub struct FakeGitRepositoryState {
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
     pub simulated_index_write_error_message: Option<String>,
+    pub refs: HashMap<String, String>,
 }
 
 impl FakeGitRepositoryState {
@@ -48,6 +49,7 @@ impl FakeGitRepositoryState {
             current_branch_name: Default::default(),
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
+            refs: HashMap::from_iter([("HEAD".into(), "abc".into())]),
         }
     }
 }
@@ -78,7 +80,7 @@ impl GitRepository for FakeGitRepository {
                 state
                     .index_contents
                     .get(path.as_ref())
-                    .ok_or_else(|| anyhow!("not present in index"))
+                    .context("not present in index")
                     .cloned()
             })
             .await
@@ -93,7 +95,7 @@ impl GitRepository for FakeGitRepository {
                 state
                     .head_contents
                     .get(path.as_ref())
-                    .ok_or_else(|| anyhow!("not present in HEAD"))
+                    .context("not present in HEAD")
                     .cloned()
             })
             .await
@@ -117,8 +119,8 @@ impl GitRepository for FakeGitRepository {
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<anyhow::Result<()>> {
         self.with_state_async(true, move |state| {
-            if let Some(message) = state.simulated_index_write_error_message.clone() {
-                return Err(anyhow!("{}", message));
+            if let Some(message) = &state.simulated_index_write_error_message {
+                anyhow::bail!("{message}");
             } else if let Some(content) = content {
                 state.index_contents.insert(path, content);
             } else {
@@ -132,16 +134,23 @@ impl GitRepository for FakeGitRepository {
         None
     }
 
-    fn head_sha(&self) -> Option<String> {
-        None
+    fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<Result<Vec<Option<String>>>> {
+        self.with_state_async(false, |state| {
+            Ok(revs
+                .into_iter()
+                .map(|rev| state.refs.get(&rev).cloned())
+                .collect())
+        })
     }
 
-    fn merge_head_shas(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn show(&self, _commit: String) -> BoxFuture<Result<CommitDetails>> {
-        unimplemented!()
+    fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>> {
+        async {
+            Ok(CommitDetails {
+                sha: commit.into(),
+                ..Default::default()
+            })
+        }
+        .boxed()
     }
 
     fn reset(
@@ -313,7 +322,7 @@ impl GitRepository for FakeGitRepository {
                 .iter()
                 .map(|branch_name| Branch {
                     is_head: Some(branch_name) == current_branch.as_ref(),
-                    name: branch_name.into(),
+                    ref_name: branch_name.into(),
                     most_recent_commit: None,
                     upstream: None,
                 })
@@ -365,6 +374,7 @@ impl GitRepository for FakeGitRepository {
         &self,
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
+        _options: CommitOptions,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         unimplemented!()
@@ -427,10 +437,6 @@ impl GitRepository for FakeGitRepository {
         _left: GitRepositoryCheckpoint,
         _right: GitRepositoryCheckpoint,
     ) -> BoxFuture<Result<bool>> {
-        unimplemented!()
-    }
-
-    fn delete_checkpoint(&self, _checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>> {
         unimplemented!()
     }
 

@@ -35,6 +35,7 @@ actions!(
         Quit,
         OpenKeymap,
         About,
+        OpenDocs,
         OpenLicenses,
         OpenTelemetryLog,
     ]
@@ -110,6 +111,12 @@ impl_actions!(
     ]
 );
 
+pub mod dev {
+    use gpui::actions;
+
+    actions!(dev, [ToggleInspector]);
+}
+
 pub mod workspace {
     use gpui::action_with_deprecated_aliases;
 
@@ -141,6 +148,12 @@ pub mod git {
     action_with_deprecated_aliases!(git, Branch, ["branches::OpenRecent"]);
 }
 
+pub mod jj {
+    use gpui::actions;
+
+    actions!(jj, [BookmarkList]);
+}
+
 pub mod command_palette {
     use gpui::actions;
 
@@ -150,7 +163,7 @@ pub mod command_palette {
 pub mod feedback {
     use gpui::actions;
 
-    actions!(feedback, [GiveFeedback]);
+    actions!(feedback, [FileBugReport, GiveFeedback]);
 }
 
 pub mod theme_selector {
@@ -186,20 +199,38 @@ pub mod icon_theme_selector {
 pub mod agent {
     use gpui::actions;
 
-    actions!(agent, [OpenConfiguration]);
+    actions!(
+        agent,
+        [OpenConfiguration, OpenOnboardingModal, ResetOnboarding]
+    );
 }
 
 pub mod assistant {
-    use gpui::{action_with_deprecated_aliases, actions, impl_actions};
+    use gpui::{
+        action_with_deprecated_aliases, actions, impl_action_with_deprecated_aliases, impl_actions,
+    };
     use schemars::JsonSchema;
     use serde::Deserialize;
+    use uuid::Uuid;
 
-    actions!(assistant, [ToggleFocus, ShowConfiguration]);
+    action_with_deprecated_aliases!(agent, ToggleFocus, ["assistant::ToggleFocus"]);
 
-    action_with_deprecated_aliases!(
-        assistant,
-        OpenPromptLibrary,
-        ["assistant::DeployPromptLibrary"]
+    actions!(assistant, [ShowConfiguration]);
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct OpenRulesLibrary {
+        #[serde(skip)]
+        pub prompt_to_select: Option<Uuid>,
+    }
+
+    impl_action_with_deprecated_aliases!(
+        agent,
+        OpenRulesLibrary,
+        [
+            "assistant::OpenRulesLibrary",
+            "assistant::DeployPromptLibrary"
+        ]
     );
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
@@ -218,8 +249,16 @@ pub struct OpenRecent {
     pub create_new_window: bool,
 }
 
-impl_actions!(projects, [OpenRecent]);
-actions!(projects, [OpenRemote]);
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenRemote {
+    #[serde(default)]
+    pub from_existing_connection: bool,
+    #[serde(default)]
+    pub create_new_window: bool,
+}
+
+impl_actions!(projects, [OpenRecent, OpenRemote]);
 
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -302,3 +341,5 @@ pub mod outline {
 
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
 actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
+
+actions!(debugger, [ToggleEnableBreakpoint, UnsetBreakpoint]);

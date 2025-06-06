@@ -74,10 +74,20 @@ pub struct SelectToEndOfLine {
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToggleCodeActions {
-    // Display row from which the action was deployed.
+    // Source from which the action was deployed.
     #[serde(default)]
     #[serde(skip)]
-    pub deployed_from_indicator: Option<DisplayRow>,
+    pub deployed_from: Option<CodeActionSource>,
+    // Run first available task if there is only one.
+    #[serde(default)]
+    #[serde(skip)]
+    pub quick_launch: bool,
+}
+
+#[derive(PartialEq, Clone, Debug)]
+pub enum CodeActionSource {
+    Indicator(DisplayRow),
+    QuickActionBar,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
@@ -245,7 +255,9 @@ actions!(
         ApplyDiffHunk,
         Backspace,
         Cancel,
+        CancelFlycheck,
         CancelLanguageServerWork,
+        ClearFlycheck,
         ConfirmRename,
         ConfirmCompletionInsert,
         ConfirmCompletionReplace,
@@ -303,6 +315,9 @@ actions!(
         GoToPreviousHunk,
         GoToImplementation,
         GoToImplementationSplit,
+        GoToNextChange,
+        GoToParentModule,
+        GoToPreviousChange,
         GoToPreviousDiagnostic,
         GoToTypeDefinition,
         GoToTypeDefinitionSplit,
@@ -365,6 +380,7 @@ actions!(
         RevertFile,
         ReloadFile,
         Rewrap,
+        RunFlycheck,
         ScrollCursorBottom,
         ScrollCursorCenter,
         ScrollCursorCenterTopBottom,
@@ -415,11 +431,14 @@ actions!(
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         OpenGitBlameCommit,
+        ToggleDiagnostics,
         ToggleIndentGuides,
         ToggleInlayHints,
+        ToggleInlineValues,
         ToggleInlineDiagnostics,
         ToggleEditPrediction,
         ToggleLineNumbers,
+        ToggleMinimap,
         SwapSelectionEnds,
         SetMark,
         ToggleRelativeLineNumbers,
