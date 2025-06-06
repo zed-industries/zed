@@ -2838,7 +2838,7 @@ impl From<usize> for Pixels {
     Deserialize,
 )]
 #[repr(transparent)]
-pub struct PhysicalPixels<T>(T);
+pub struct PhysicalPixels<T>(pub T);
 
 /// Deprecated alias to physical pixels.
 pub type DevicePixels = PhysicalPixels<i32>;
@@ -2885,9 +2885,23 @@ impl DevicePixels {
     }
 }
 
-impl fmt::Debug for DevicePixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} px (device)", self.0)
+impl ScaledPixels {
+    /// Floors the `ScaledPixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `ScaledPixels` instance with the floored value.
+    pub fn floor(&self) -> Self {
+        Self(self.0.floor())
+    }
+
+    /// Rounds the `ScaledPixels` value to the nearest whole number.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `ScaledPixels` instance with the rounded value.
+    pub fn ceil(&self) -> Self {
+        Self(self.0.ceil())
     }
 }
 
@@ -2936,32 +2950,6 @@ impl From<DevicePixels> for usize {
 impl From<usize> for DevicePixels {
     fn from(device_pixels: usize) -> Self {
         DevicePixels(device_pixels as i32)
-    }
-}
-
-impl ScaledPixels {
-    /// Floors the `ScaledPixels` value to the nearest whole number.
-    ///
-    /// # Returns
-    ///
-    /// Returns a new `ScaledPixels` instance with the floored value.
-    pub fn floor(&self) -> Self {
-        Self(self.0.floor())
-    }
-
-    /// Rounds the `ScaledPixels` value to the nearest whole number.
-    ///
-    /// # Returns
-    ///
-    /// Returns a new `ScaledPixels` instance with the rounded value.
-    pub fn ceil(&self) -> Self {
-        Self(self.0.ceil())
-    }
-}
-
-impl Debug for ScaledPixels {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}px (scaled)", self.0)
     }
 }
 
@@ -3052,6 +3040,12 @@ impl Mul<ScaledPixels> for usize {
 impl MulAssign<f32> for ScaledPixels {
     fn mul_assign(&mut self, rhs: f32) {
         self.0 *= rhs;
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for PhysicalPixels<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?} px (physical)", self.0)
     }
 }
 
