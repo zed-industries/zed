@@ -115,6 +115,9 @@ the UI is sent to the orchestrator, which forwards it to the `UiPlannerAgent`.
 The agent returns a UI component plan and the orchestrator delivers this back to
 the prompt panel for display.
 
+Submit a prompt by pressing **Enter** inside the panel's input area or by
+clicking the *Send* button. Any agent errors are shown inline.
+
 Main files involved:
 
 - `ui/prompt_panel.rs` – gathers user input and renders responses.

@@ -129,6 +129,11 @@ impl PromptPanel {
                                 this.handle_input(&input).ok();
                                 cx.notify();
                             }))
+                            .on_key_down(cx.listener(|this, event: KeyDownEvent, _, cx| {
+                                if event.keystroke.key == "enter" || event.keystroke.key == "return" {
+                                    this.submit(cx);
+                                }
+                            }))
                     )
                     .child(
                         div()

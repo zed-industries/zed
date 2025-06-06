@@ -45,6 +45,7 @@ impl Orchestrator {
 
         // Delegate to the UI planner agent for now.
         let response = self.ui_planner.plan_from_prompt(prompt).await?;
+        log::info!("UI plan generated: {}", response);
         Ok(response)
     }
 
