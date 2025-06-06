@@ -480,6 +480,7 @@ impl LocalLspStore {
                             this.merge_diagnostics(
                                 server_id,
                                 params,
+                                None,
                                 DiagnosticSourceKind::Pushed,
                                 &adapter.disk_based_diagnostic_sources,
                                 |diagnostic, cx| match diagnostic.source_kind {
@@ -2142,6 +2143,7 @@ impl LocalLspStore {
                     buffer_handle,
                     server_id,
                     None,
+                    None,
                     diagnostics,
                     Vec::new(),
                     cx,
@@ -2215,6 +2217,7 @@ impl LocalLspStore {
         &mut self,
         buffer: &Entity<Buffer>,
         server_id: LanguageServerId,
+        result_id: Option<String>,
         version: Option<i32>,
         new_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         reused_diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -2287,6 +2290,7 @@ impl LocalLspStore {
 
         let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
         buffer.update(cx, |buffer, cx| {
+            buffer.set_result_id(result_id);
             buffer.update_diagnostics(server_id, set, cx)
         });
         Ok(())
@@ -6613,17 +6617,27 @@ impl LspStore {
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
+        result_id: Option<String>,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
-        self.merge_diagnostic_entries(server_id, abs_path, version, diagnostics, |_, _| false, cx)
+        self.merge_diagnostic_entries(
+            server_id,
+            abs_path,
+            result_id,
+            version,
+            diagnostics,
+            |_, _| false,
+            cx,
+        )
     }
 
     pub fn merge_diagnostic_entries<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,
         server_id: LanguageServerId,
         abs_path: PathBuf,
+        result_id: Option<String>,
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         filter: F,
@@ -6666,6 +6680,7 @@ impl LspStore {
             self.as_local_mut().unwrap().update_buffer_diagnostics(
                 &buffer_handle,
                 server_id,
+                result_id,
                 version,
                 diagnostics.clone(),
                 reused_diagnostics.clone(),
@@ -8889,6 +8904,7 @@ impl LspStore {
         &mut self,
         language_server_id: LanguageServerId,
         params: lsp::PublishDiagnosticsParams,
+        result_id: Option<String>,
         source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
@@ -8896,6 +8912,7 @@ impl LspStore {
         self.merge_diagnostics(
             language_server_id,
             params,
+            result_id,
             source_kind,
             disk_based_sources,
             |_, _| false,
@@ -8907,6 +8924,7 @@ impl LspStore {
         &mut self,
         language_server_id: LanguageServerId,
         mut params: lsp::PublishDiagnosticsParams,
+        result_id: Option<String>,
         source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         filter: F,
@@ -9044,6 +9062,7 @@ impl LspStore {
         self.merge_diagnostic_entries(
             language_server_id,
             abs_path,
+            result_id,
             params.version,
             diagnostics,
             filter,

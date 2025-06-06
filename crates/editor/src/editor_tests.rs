@@ -13940,6 +13940,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
                             },
                         ],
                     },
+                    None,
                     DiagnosticSourceKind::Pushed,
                     &[],
                     cx,

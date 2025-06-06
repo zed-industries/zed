@@ -125,7 +125,7 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath,
+    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath, PulledDiagnostics,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -20992,7 +20992,7 @@ impl SemanticsProvider for Entity<Project> {
                         let LspPullDiagnostics::Response {
                             server_id,
                             uri,
-                            diagnostics: project::PulledDiagnostics::Changed { diagnostics, .. },
+                            diagnostics,
                         } = diagnostics_set
                         else {
                             continue;
@@ -21003,25 +21003,49 @@ impl SemanticsProvider for Entity<Project> {
                             .as_ref()
                             .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
                             .unwrap_or(&[]);
-                        lsp_store
-                            .merge_diagnostics(
-                                server_id,
-                                lsp::PublishDiagnosticsParams {
-                                    uri: uri.clone(),
-                                    diagnostics,
-                                    version: None,
-                                },
-                                DiagnosticSourceKind::Pulled,
-                                disk_based_sources,
-                                |old_diagnostic, _| match old_diagnostic.source_kind {
-                                    DiagnosticSourceKind::Pulled => false,
-                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
-                                        true
-                                    }
-                                },
-                                cx,
-                            )
-                            .log_err();
+                        match diagnostics {
+                            PulledDiagnostics::Unchanged { result_id } => {
+                                lsp_store
+                                    .merge_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: uri.clone(),
+                                            diagnostics: Vec::new(),
+                                            version: None,
+                                        },
+                                        Some(result_id),
+                                        DiagnosticSourceKind::Pulled,
+                                        disk_based_sources,
+                                        |_, _| true,
+                                        cx,
+                                    )
+                                    .log_err();
+                            }
+                            PulledDiagnostics::Changed {
+                                diagnostics,
+                                result_id,
+                            } => {
+                                lsp_store
+                                    .merge_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: uri.clone(),
+                                            diagnostics,
+                                            version: None,
+                                        },
+                                        result_id,
+                                        DiagnosticSourceKind::Pulled,
+                                        disk_based_sources,
+                                        |old_diagnostic, _| match old_diagnostic.source_kind {
+                                            DiagnosticSourceKind::Pulled => false,
+                                            DiagnosticSourceKind::Other
+                                            | DiagnosticSourceKind::Pushed => true,
+                                        },
+                                        cx,
+                                    )
+                                    .log_err();
+                            }
+                        }
                     }
                 })
             })
