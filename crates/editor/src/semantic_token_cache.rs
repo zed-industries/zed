@@ -33,7 +33,6 @@ const INVISIBLE_RANGES_TOKENS_REQUEST_DELAY_MILLIS: u64 = 400;
 
 pub struct SemanticTokensCache {
     pub(crate) enabled: bool,
-    lsp_request_cache: Option<Vec<SemanticToken>>,
     tokens: HashMap<ExcerptId, Arc<RwLock<CachedExcerptTokens>>>,
     enabled_in_settings: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
@@ -79,7 +78,6 @@ struct ExcerptTokensUpdate {
 impl SemanticTokensCache {
     pub(super) fn new(semantic_tokens_settings: SemanticTokensSettings) -> Self {
         Self {
-            lsp_request_cache: None,
             enabled: semantic_tokens_settings.enabled,
             version: 0,
             enabled_in_settings: semantic_tokens_settings.enabled,
@@ -227,7 +225,6 @@ impl SemanticTokensCache {
             None
         } else {
             self.version += 1;
-            self.lsp_request_cache = None;
             Some(TokenSplice {
                 to_remove,
                 to_insert: Vec::new(),
@@ -237,7 +234,6 @@ impl SemanticTokensCache {
 
     pub(super) fn clear(&mut self) {
         if !self.update_tasks.is_empty() || !self.tokens.is_empty() {
-            self.lsp_request_cache = None;
             self.version += 1;
         }
         self.update_tasks.clear();
@@ -475,23 +471,10 @@ async fn fetch_semantic_tokens(
 
         let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
 
-        match (invalidate, &editor.semantic_tokens_cache.lsp_request_cache) {
-            // (InvalidationStrategy::BufferEdited, None)=> {
-            //     editor
-            //         .semantics_provider
-            //         .as_ref()?
-            //         .semantic_tokens_full(buffer, fetch_range.clone(), cx)
-            // }
-            // (InvalidationStrategy::None, Some(tokens)) => {
-            //     Some(Task::ready(Ok::<_, anyhow::Error>(tokens.clone())))
-            // },
-            _ => {
-                editor
-                    .semantics_provider
-                    .as_ref()?
-                    .semantic_tokens_full(buffer, fetch_range.clone(), cx)
-            }
-        }
+        editor
+            .semantics_provider
+            .as_ref()?
+            .semantic_tokens_full(buffer, fetch_range.clone(), cx)
     });
 
     let cached_excerpt_tokens = editor.update(cx, |editor, _| {
@@ -516,13 +499,6 @@ async fn fetch_semantic_tokens(
         }
         None => return Ok(None),
     };
-    editor.update(cx, |editor, _| match invalidate {
-        InvalidationStrategy::RefreshRequested => {
-            editor.semantic_tokens_cache.lsp_request_cache = Some(new_tokens.clone());
-        }
-        InvalidationStrategy::BufferEdited => editor.semantic_tokens_cache.lsp_request_cache = None,
-        InvalidationStrategy::None => {}
-    })?;
     log::debug!(
         "Fetched {} semantic tokens for range {fetch_range_to_log:?}",
         new_tokens.len()
@@ -737,6 +713,10 @@ fn apply_token_update(
     splice.to_remove.extend(new_update.remove_from_visible);
     for new_token in new_update.add_to_cache {
         let Some(mut token_highlight) = cx.theme().tokens().get(new_token.r#type.as_str()) else {
+            log::warn!(
+                "unable to find semantic highlight for {:?}",
+                new_token.r#type
+            );
             continue;
         };
         for r#mod in new_token.modifiers.iter() {
@@ -774,7 +754,6 @@ fn apply_token_update(
         cached_excerpt_tokens
             .tokens_by_id
             .insert(new_token_id, new_token);
-        cached_excerpt_tokens.ordered_tokens.push(new_token_id);
         if cached_excerpt_tokens.ordered_tokens.len() <= insert_position {
             cached_excerpt_tokens.ordered_tokens.push(new_token_id);
         } else {
@@ -883,16 +862,16 @@ mod tests {
                                             delta_line: 0,
                                             delta_start: i, // position will change slightly with each request
                                             length: 4,
-                                            token_type: 0,             // FUNCTION
-                                            token_modifiers_bitset: 1, // DECLARATION
+                                            token_type: 0,
+                                            token_modifiers_bitset: 1,
                                         },
                                         // let x
                                         lsp::SemanticToken {
                                             delta_line: 0,
                                             delta_start: 10,
                                             length: 1,
-                                            token_type: 1,             // VARIABLE
-                                            token_modifiers_bitset: 1, // DECLARATION
+                                            token_type: 1,
+                                            token_modifiers_bitset: 1,
                                         },
                                     ],
                                 },
@@ -903,11 +882,17 @@ mod tests {
             })
             .await;
 
+        fake_server
+            .request::<lsp::request::SemanticTokensRefresh>(())
+            .await
+            .into_response()
+            .expect("semantic tokens refresh request failed");
+
         cx.executor().run_until_parked();
 
         editor
             .update(cx, |editor, _, cx| {
-                let expected_tokens = vec!["1"];
+                let expected_tokens = vec!["0:1:5", "1:11:12"];
                 assert_eq!(
                     expected_tokens,
                     cached_semantic_tokens(editor),
@@ -927,7 +912,7 @@ mod tests {
 
         editor
             .update(cx, |editor, _, cx| {
-                let expected_tokens = vec!["2"];
+                let expected_tokens = vec!["2:2:6", "3:12:0"];
                 assert_eq!(
                     expected_tokens,
                     cached_semantic_tokens(editor),
@@ -937,19 +922,196 @@ mod tests {
             })
             .unwrap();
 
-        // fake_server
-        //     .request::<lsp::request::SemanticTokensRefresh>(())
-        //     .await
-        //     .expect("semantic tokens refresh request failed");
+        fake_server
+            .request::<lsp::request::SemanticTokensRefresh>(())
+            .await
+            .into_response()
+            .expect("semantic tokens refresh request failed");
         cx.executor().run_until_parked();
 
         editor
             .update(cx, |editor, _, cx| {
-                let expected_tokens = vec!["3"];
+                let expected_tokens = vec!["4:3:7", "5:13:1"];
                 assert_eq!(
                     expected_tokens,
                     cached_semantic_tokens(editor),
                     "Should get new tokens when refresh/ request"
+                );
+                assert_eq!(expected_tokens, visible_semantic_tokens(editor, cx));
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_token_setting_changes(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |settings| {
+            settings.defaults.semantic_tokens = Some(SemanticTokensSettings {
+                enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
+            });
+        });
+
+        let (_, editor, fake_server) =
+            prepare_test_objects(cx, |fake_server, file_with_semantic_tokens| {
+                fake_server.set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>(
+                    move |params, _| {
+                        async move {
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Url::from_file_path(file_with_semantic_tokens).unwrap(),
+                            );
+
+                            Ok(Some(lsp::SemanticTokensResult::Tokens(
+                                lsp::SemanticTokens {
+                                    result_id: None,
+                                    data: vec![
+                                        // fn main
+                                        lsp::SemanticToken {
+                                            delta_line: 0,
+                                            delta_start: 0,
+                                            length: 4,
+                                            token_type: 0,
+                                            token_modifiers_bitset: 1,
+                                        },
+                                        // let x
+                                        lsp::SemanticToken {
+                                            delta_line: 0,
+                                            delta_start: 10,
+                                            length: 1,
+                                            token_type: 1,
+                                            token_modifiers_bitset: 1,
+                                        },
+                                    ],
+                                },
+                            )))
+                        }
+                    },
+                );
+            })
+            .await;
+
+        fake_server
+            .request::<lsp::request::SemanticTokensRefresh>(())
+            .await
+            .into_response()
+            .expect("semantic tokens refresh request failed");
+
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_tokens = vec!["0:0:4", "1:10:11"];
+                assert_eq!(
+                    expected_tokens,
+                    cached_semantic_tokens(editor),
+                    "Should have tokens when enabled"
+                );
+                assert_eq!(expected_tokens, visible_semantic_tokens(editor, cx));
+            })
+            .unwrap();
+
+        // Disable semantic tokens in settings
+        update_test_language_settings(cx, |settings| {
+            settings.defaults.semantic_tokens = Some(SemanticTokensSettings {
+                enabled: false,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
+            });
+        });
+
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                assert!(
+                    cached_semantic_tokens(editor).is_empty(),
+                    "Cache should be cleared when tokens are disabled"
+                );
+                assert!(
+                    visible_semantic_tokens(editor, cx).is_empty(),
+                    "No tokens should be visible when disabled"
+                );
+                assert!(
+                    !editor.semantic_tokens_cache.enabled,
+                    "Tokens should be disabled"
+                );
+            })
+            .unwrap();
+
+        // Enable semantic tokens in settings again
+        update_test_language_settings(cx, |settings| {
+            settings.defaults.semantic_tokens = Some(SemanticTokensSettings {
+                enabled: true,
+                edit_debounce_ms: 0,
+                scroll_debounce_ms: 0,
+            });
+        });
+
+        fake_server
+            .request::<lsp::request::SemanticTokensRefresh>(())
+            .await
+            .into_response()
+            .expect("semantic tokens refresh request failed");
+
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_tokens = vec!["2:0:4", "3:10:11"];
+                assert_eq!(
+                    expected_tokens,
+                    cached_semantic_tokens(editor),
+                    "Should have tokens again when re-enabled"
+                );
+                assert_eq!(expected_tokens, visible_semantic_tokens(editor, cx));
+                assert!(
+                    editor.semantic_tokens_cache.enabled,
+                    "Tokens should be enabled"
+                );
+            })
+            .unwrap();
+
+        // Test toggle method
+        editor
+            .update(cx, |editor, _, _| {
+                editor.semantic_tokens_cache.toggle(false);
+                assert!(
+                    !editor.semantic_tokens_cache.enabled,
+                    "Tokens should be disabled after toggle"
+                );
+                assert!(
+                    cached_semantic_tokens(editor).is_empty(),
+                    "Cache should be cleared when toggled off"
+                );
+            })
+            .unwrap();
+
+        editor
+            .update(cx, |editor, _, _| {
+                editor.semantic_tokens_cache.toggle(true);
+                assert!(
+                    editor.semantic_tokens_cache.enabled,
+                    "Tokens should be enabled after toggle"
+                );
+            })
+            .unwrap();
+
+        fake_server
+            .request::<lsp::request::SemanticTokensRefresh>(())
+            .await
+            .into_response()
+            .expect("semantic tokens refresh request failed");
+
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _, cx| {
+                let expected_tokens = vec!["4:0:4", "5:10:11"];
+                assert_eq!(
+                    expected_tokens,
+                    cached_semantic_tokens(editor),
+                    "Should have tokens after toggle on"
                 );
                 assert_eq!(expected_tokens, visible_semantic_tokens(editor, cx));
             })
@@ -1079,10 +1241,8 @@ mod tests {
             for id in &excerpt_tokens.ordered_tokens {
                 let semantic_token = &excerpt_tokens.tokens_by_id[id];
                 semantic_tokens.push(format!(
-                    "{}:{}:{}",
-                    semantic_token.r#type.as_str(),
-                    semantic_token.range.start.offset,
-                    semantic_token.range.end.offset
+                    "{id}:{}:{}",
+                    semantic_token.range.start.offset, semantic_token.range.end.offset
                 ))
             }
         }
@@ -1093,7 +1253,14 @@ mod tests {
         editor
             .visible_semantic_tokens(cx)
             .into_iter()
-            .map(|token| token.text.to_string())
+            .map(|token| {
+                format!(
+                    "{}:{}:{}",
+                    token.id,
+                    token.range.start.text_anchor.offset,
+                    token.range.end.text_anchor.offset
+                )
+            })
             .collect()
     }
 }

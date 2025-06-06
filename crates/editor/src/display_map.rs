@@ -569,7 +569,6 @@ impl DisplayMap {
         to_insert: Vec<Token>,
         cx: &mut Context<Self>,
     ) {
-        log::info!("splice_tokens({}, {})", to_remove.len(), to_insert.len());
         if to_remove.is_empty() && to_insert.is_empty() {
             return;
         }

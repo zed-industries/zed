@@ -60,7 +60,6 @@ pub struct TokenChunks<'a> {
     buffer_chunk: Option<Chunk<'a>>,
     endpoints: std::iter::Peekable<std::vec::IntoIter<HighlightEndpoint>>,
     active_highlights: BTreeMap<usize, HighlightStyle>,
-    buffer: &'a MultiBufferSnapshot,
 }
 
 impl<'a> TokenChunks<'a> {
@@ -103,7 +102,6 @@ impl<'a> TokenChunks<'a> {
             buffer_chunk: None,
             offset: buffer_range.start,
             active_highlights: Default::default(),
-            buffer,
         }
     }
 

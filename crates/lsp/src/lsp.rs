@@ -798,7 +798,7 @@ impl LanguageServer {
                     }),
                     semantic_tokens: Some(SemanticTokensClientCapabilities {
                         augments_syntax_tokens: Some(true),
-                        overlapping_token_support: Some(false),
+                        overlapping_token_support: Some(true),
                         server_cancel_support: Some(true),
                         requests: SemanticTokensClientCapabilitiesRequests {
                             range: Some(true),
