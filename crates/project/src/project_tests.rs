@@ -7689,6 +7689,9 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _| {
@@ -7729,6 +7732,9 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     std::fs::remove_file(work_dir.join("b.txt")).unwrap();
     tree.flush_fs_events(cx).await;
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
