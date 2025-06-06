@@ -761,12 +761,14 @@ impl SyntaxSnapshot {
                             Ordering::Greater => {}
                         }
                     }
+                    prev_range = Some(layer.range.clone());
                 }
-                Ordering::Greater => {}
+                Ordering::Greater => {
+                    prev_range = None;
+                }
             }
 
             max_depth = layer.depth;
-            prev_range = Some(layer.range.clone());
         }
     }
 
