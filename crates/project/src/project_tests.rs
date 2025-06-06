@@ -7815,7 +7815,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_repository_subfolder_git_status(
     executor: gpui::BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
