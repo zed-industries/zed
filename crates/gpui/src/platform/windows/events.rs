@@ -691,32 +691,6 @@ fn handle_ime_composition_inner(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut ime_input = None;
-    if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let comp_string = parse_ime_composition_string(ctx)?;
-        with_input_handler(&state_ptr, |input_handler| {
-            input_handler.replace_and_mark_text_in_range(None, &comp_string, None);
-        })?;
-        ime_input = Some(comp_string);
-    }
-    if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-        let comp_string = &ime_input?;
-        let caret_pos = retrieve_composition_cursor_position(ctx);
-        with_input_handler(&state_ptr, |input_handler| {
-            input_handler.replace_and_mark_text_in_range(
-                None,
-                comp_string,
-                Some(caret_pos..caret_pos),
-            );
-        })?;
-    }
-    if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-        let comp_result = parse_ime_composition_result(ctx)?;
-        with_input_handler(&state_ptr, |input_handler| {
-            input_handler.replace_text_in_range(None, &comp_result);
-        })?;
-        return Some(0);
-    }
     if lparam.0 == 0 {
         // Japanese IME may send this message with lparam = 0, which indicates that
         // there is no composition string.
@@ -724,10 +698,37 @@ fn handle_ime_composition_inner(
             input_handler.replace_text_in_range(None, "");
         })?;
         return Some(0);
-    }
+    } else {
+        let mut ime_input = None;
+        if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
+            let comp_string = parse_ime_composition_string(ctx)?;
+            with_input_handler(&state_ptr, |input_handler| {
+                input_handler.replace_and_mark_text_in_range(None, &comp_string, None);
+            })?;
+            ime_input = Some(comp_string);
+        }
+        if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
+            let comp_string = &ime_input?;
+            let caret_pos = retrieve_composition_cursor_position(ctx);
+            with_input_handler(&state_ptr, |input_handler| {
+                input_handler.replace_and_mark_text_in_range(
+                    None,
+                    comp_string,
+                    Some(caret_pos..caret_pos),
+                );
+            })?;
+        }
+        if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
+            let comp_result = parse_ime_composition_result(ctx)?;
+            with_input_handler(&state_ptr, |input_handler| {
+                input_handler.replace_text_in_range(None, &comp_result);
+            })?;
+            return Some(0);
+        }
 
-    // currently, we don't care other stuff
-    None
+        // currently, we don't care other stuff
+        None
+    }
 }
 
 /// SEE: https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-nccalcsize
