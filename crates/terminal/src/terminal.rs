@@ -724,12 +724,13 @@ impl Terminal {
                         // The terminal only supports pasting strings, not images.
                         Some(text) => format(text),
                         _ => format(""),
-                    },
+                    }
+                    .into_bytes(),
                 )
             }
-            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out),
+            AlacTermEvent::PtyWrite(out) => self.write_to_pty(out.into_bytes()),
             AlacTermEvent::TextAreaSizeRequest(format) => {
-                self.write_to_pty(format(self.last_content.terminal_bounds.into()))
+                self.write_to_pty(format(self.last_content.terminal_bounds.into()).into_bytes())
             }
             AlacTermEvent::CursorBlinkingChange => {
                 let terminal = self.term.lock();
@@ -761,7 +762,7 @@ impl Terminal {
                 // followed by a color request sequence.
                 let color = self.term.lock().colors()[index]
                     .unwrap_or_else(|| to_alac_rgb(get_color_at_index(index, cx.theme().as_ref())));
-                self.write_to_pty(format(color));
+                self.write_to_pty(format(color).into_bytes());
             }
             AlacTermEvent::ChildExit(error_code) => {
                 self.register_task_finished(Some(error_code), cx);
@@ -1227,11 +1228,11 @@ impl Terminal {
     }
 
     ///Write the Input payload to the tty.
-    fn write_to_pty(&self, input: impl Into<Vec<u8>>) {
+    fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
         self.pty_tx.notify(input.into());
     }
 
-    pub fn input(&mut self, input: impl Into<Vec<u8>>) {
+    pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.events
             .push_back(InternalEvent::Scroll(AlacScroll::Bottom));
         self.events.push_back(InternalEvent::SetSelection(None));
@@ -1345,7 +1346,10 @@ impl Terminal {
         // Keep default terminal behavior
         let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
         if let Some(esc) = esc {
-            self.input(esc);
+            match esc {
+                Cow::Borrowed(string) => self.input(string.as_bytes()),
+                Cow::Owned(string) => self.input(string.into_bytes()),
+            };
             true
         } else {
             false
@@ -1378,7 +1382,7 @@ impl Terminal {
             text.replace("\r\n", "\r").replace('\n', "\r")
         };
 
-        self.input(paste_text);
+        self.input(paste_text.into_bytes());
     }
 
     pub fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1487,13 +1491,13 @@ impl Terminal {
 
     pub fn focus_in(&self) {
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.write_to_pty("\x1b[I".to_string());
+            self.write_to_pty("\x1b[I".as_bytes());
         }
     }
 
     pub fn focus_out(&mut self) {
         if self.last_content.mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.write_to_pty("\x1b[O".to_string());
+            self.write_to_pty("\x1b[O".as_bytes());
         }
     }
 
@@ -1660,7 +1664,7 @@ impl Terminal {
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default().to_string();
-                        self.input(text);
+                        self.input(text.into_bytes());
                     }
                 }
                 _ => {}
@@ -1832,7 +1836,7 @@ impl Terminal {
                                 .map(|name| name.to_string_lossy().to_string())
                                 .unwrap_or_default();
 
-                            let argv = fpi.argv.clone();
+                            let argv = fpi.argv.as_slice();
                             let process_name = format!(
                                 "{}{}",
                                 fpi.name,
@@ -2098,17 +2102,21 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
         13 => colors.terminal_ansi_bright_magenta,
         14 => colors.terminal_ansi_bright_cyan,
         15 => colors.terminal_ansi_bright_white,
-        // 16-231 are mapped to their RGB colors on a 0-5 range per channel
+        // 16-231 are a 6x6x6 RGB color cube, mapped to 0-255 using steps defined by XTerm.
+        // See: https://github.com/xterm-x11/xterm-snapshots/blob/master/256colres.pl
         16..=231 => {
-            let (r, g, b) = rgb_for_index(index as u8); // Split the index into its ANSI-RGB components
-            let step = (u8::MAX as f32 / 5.).floor() as u8; // Split the RGB range into 5 chunks, with floor so no overflow
-            rgba_color(r * step, g * step, b * step) // Map the ANSI-RGB components to an RGB color
+            let (r, g, b) = rgb_for_index(index as u8);
+            rgba_color(
+                if r == 0 { 0 } else { r * 40 + 55 },
+                if g == 0 { 0 } else { g * 40 + 55 },
+                if b == 0 { 0 } else { b * 40 + 55 },
+            )
         }
-        // 232-255 are a 24 step grayscale from black to white
+        // 232-255 are a 24-step grayscale ramp from (8, 8, 8) to (238, 238, 238).
         232..=255 => {
             let i = index as u8 - 232; // Align index to 0..24
-            let step = (u8::MAX as f32 / 24.).floor() as u8; // Split the RGB grayscale values into 24 chunks
-            rgba_color(i * step, i * step, i * step) // Map the ANSI-grayscale components to the RGB-grayscale
+            let value = i * 10 + 8;
+            rgba_color(value, value, value)
         }
         // For compatibility with the alacritty::Colors interface
         // See: https://github.com/alacritty/alacritty/blob/master/alacritty_terminal/src/term/color.rs

@@ -37,8 +37,6 @@ smol.workspace = true
 take-until.workspace = true
 tempfile.workspace = true
 unicase.workspace = true
-unicode-script.workspace = true
-unicode-segmentation.workspace = true
 util_macros = { workspace = true, optional = true }
 walkdir.workspace = true
 workspace-hack.workspace = true
@@ -52,5 +50,6 @@ dunce = "1.0"
 
 [dev-dependencies]
 git2.workspace = true
+indoc.workspace = true
 rand.workspace = true
 util_macros.workspace = true

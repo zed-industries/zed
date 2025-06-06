@@ -165,7 +165,7 @@ pub fn hover_at_inlay(
                     this.hover_state.diagnostic_popover = None;
                 })?;
 
-                let language_registry = project.update(cx, |p, _| p.languages().clone())?;
+                let language_registry = project.read_with(cx, |p, _| p.languages().clone())?;
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content = parse_blocks(&blocks, &language_registry, None, cx).await;
 
@@ -583,13 +583,6 @@ async fn parse_blocks(
     language: Option<Arc<Language>>,
     cx: &mut AsyncWindowContext,
 ) -> Option<Entity<Markdown>> {
-    let fallback_language_name = if let Some(ref l) = language {
-        let l = Arc::clone(l);
-        Some(l.lsp_id().clone())
-    } else {
-        None
-    };
-
     let combined_text = blocks
         .iter()
         .map(|block| match &block.kind {
@@ -607,7 +600,7 @@ async fn parse_blocks(
             Markdown::new(
                 combined_text.into(),
                 Some(language_registry.clone()),
-                fallback_language_name,
+                language.map(|language| language.name()),
                 cx,
             )
         })
@@ -1057,7 +1050,9 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     match event {
-                        MarkdownEvent::SubstitutedText(parsed) => rendered_text.push_str(parsed),
+                        MarkdownEvent::SubstitutedText(parsed) => {
+                            rendered_text.push_str(parsed.as_str())
+                        }
                         MarkdownEvent::Text | MarkdownEvent::Code => {
                             rendered_text.push_str(&text[range.clone()])
                         }
@@ -1100,14 +1095,15 @@ mod tests {
         //prompt autocompletion menu
         cx.simulate_keystroke(".");
         handle_completion_request(
-            &mut cx,
             indoc! {"
                         one.|<>
                         two
                         three
                     "},
             vec!["first_completion", "second_completion"],
+            true,
             counter.clone(),
+            &mut cx,
         )
         .await;
         cx.condition(|editor, _| editor.context_menu_visible()) // wait until completion menu is visible

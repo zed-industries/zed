@@ -1,8 +1,8 @@
 #[cfg(test)]
 mod context_tests;
 
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, bail};
-use assistant_settings::AssistantSettings;
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
     SlashCommandResult, SlashCommandWorkingSet,
@@ -29,6 +29,7 @@ use paths::contexts_dir;
 use project::Project;
 use prompt_store::PromptBuilder;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::{
     cmp::{Ordering, max},
@@ -44,6 +45,7 @@ use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
+use zed_llm_client::CompletionIntent;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -682,6 +684,7 @@ pub struct AssistantContext {
     language_registry: Arc<LanguageRegistry>,
     project: Option<Entity<Project>>,
     prompt_builder: Arc<PromptBuilder>,
+    completion_mode: agent_settings::CompletionMode,
 }
 
 trait ContextAnnotation {
@@ -716,6 +719,14 @@ impl AssistantContext {
             telemetry,
             cx,
         )
+    }
+
+    pub fn completion_mode(&self) -> agent_settings::CompletionMode {
+        self.completion_mode
+    }
+
+    pub fn set_completion_mode(&mut self, completion_mode: agent_settings::CompletionMode) {
+        self.completion_mode = completion_mode;
     }
 
     pub fn new(
@@ -764,6 +775,7 @@ impl AssistantContext {
             pending_cache_warming_task: Task::ready(None),
             _subscriptions: vec![cx.subscribe(&buffer, Self::handle_buffer_event)],
             pending_save: Task::ready(Ok(())),
+            completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             path: None,
             buffer,
             telemetry,
@@ -1730,9 +1742,8 @@ impl AssistantContext {
                                 merge_same_roles,
                             } => {
                                 if !merge_same_roles && Some(role) != last_role {
-                                    let offset = this.buffer.read_with(cx, |buffer, _cx| {
-                                        insert_position.to_offset(buffer)
-                                    });
+                                    let buffer = this.buffer.read(cx);
+                                    let offset = insert_position.to_offset(buffer);
                                     this.insert_message_at_offset(
                                         offset,
                                         role,
@@ -2262,13 +2273,13 @@ impl AssistantContext {
         let mut completion_request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
+            intent: Some(CompletionIntent::UserPrompt),
             mode: None,
             messages: Vec::new(),
             tools: Vec::new(),
             tool_choice: None,
             stop: Vec::new(),
-            temperature: model
-                .and_then(|model| AssistantSettings::temperature_for_model(model, cx)),
+            temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {
@@ -2323,7 +2334,15 @@ impl AssistantContext {
                 completion_request.messages.push(request_message);
             }
         }
+        let supports_max_mode = if let Some(model) = model {
+            model.supports_max_mode()
+        } else {
+            false
+        };
 
+        if supports_max_mode {
+            completion_request.mode = Some(self.completion_mode.into());
+        }
         completion_request
     }
 

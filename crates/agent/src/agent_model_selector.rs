@@ -1,21 +1,16 @@
-use assistant_settings::AssistantSettings;
+use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
+use picker::popover_menu::PickerPopoverMenu;
 
-use crate::Thread;
+use crate::ModelUsageContext;
 use assistant_context_editor::language_model_selector::{
-    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
+    LanguageModelSelector, ToggleModelSelector, language_model_selector,
 };
 use language_model::{ConfiguredModel, LanguageModelRegistry};
 use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{PopoverMenuHandle, Tooltip, prelude::*};
-
-#[derive(Clone)]
-pub enum ModelType {
-    Default(Entity<Thread>),
-    InlineAssistant,
-}
 
 pub struct AgentModelSelector {
     selector: Entity<LanguageModelSelector>,
@@ -28,28 +23,23 @@ impl AgentModelSelector {
         fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<LanguageModelSelector>,
         focus_handle: FocusHandle,
-        model_type: ModelType,
+        model_usage_context: ModelUsageContext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             selector: cx.new(move |cx| {
                 let fs = fs.clone();
-                LanguageModelSelector::new(
+                language_model_selector(
                     {
-                        let model_type = model_type.clone();
-                        move |cx| match &model_type {
-                            ModelType::Default(thread) => thread.read(cx).configured_model(),
-                            ModelType::InlineAssistant => {
-                                LanguageModelRegistry::read_global(cx).inline_assistant_model()
-                            }
-                        }
+                        let model_context = model_usage_context.clone();
+                        move |cx| model_context.configured_model(cx)
                     },
                     move |model, cx| {
                         let provider = model.provider_id().0.to_string();
                         let model_id = model.id().0.to_string();
-                        match &model_type {
-                            ModelType::Default(thread) => {
+                        match &model_usage_context {
+                            ModelUsageContext::Thread(thread) => {
                                 thread.update(cx, |thread, cx| {
                                     let registry = LanguageModelRegistry::read_global(cx);
                                     if let Some(provider) = registry.provider(&model.provider_id())
@@ -63,7 +53,7 @@ impl AgentModelSelector {
                                         );
                                     }
                                 });
-                                update_settings_file::<AssistantSettings>(
+                                update_settings_file::<AgentSettings>(
                                     fs.clone(),
                                     cx,
                                     move |settings, _cx| {
@@ -71,8 +61,8 @@ impl AgentModelSelector {
                                     },
                                 );
                             }
-                            ModelType::InlineAssistant => {
-                                update_settings_file::<AssistantSettings>(
+                            ModelUsageContext::InlineAssistant => {
+                                update_settings_file::<AgentSettings>(
                                     fs.clone(),
                                     cx,
                                     move |settings, _cx| {
@@ -100,15 +90,14 @@ impl AgentModelSelector {
 }
 
 impl Render for AgentModelSelector {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
 
-        let model = self.selector.read(cx).active_model(cx);
+        let model = self.selector.read(cx).delegate.active_model(cx);
         let model_name = model
             .map(|model| model.model.name().0)
             .unwrap_or_else(|| SharedString::from("No model selected"));
-
-        LanguageModelSelectorPopoverMenu::new(
+        PickerPopoverMenu::new(
             self.selector.clone(),
             Button::new("active-model", model_name)
                 .label_size(LabelSize::Small)
@@ -127,7 +116,9 @@ impl Render for AgentModelSelector {
                 )
             },
             gpui::Corner::BottomRight,
+            cx,
         )
         .with_handle(self.menu_handle.clone())
+        .render(window, cx)
     }
 }

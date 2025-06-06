@@ -322,6 +322,9 @@ impl MacPlatform {
                     action,
                     os_action,
                 } => {
+                    // Note that this is intentionally using earlier bindings, whereas typically
+                    // later ones take display precedence. See the discussion on
+                    // https://github.com/zed-industries/zed/issues/23621
                     let keystrokes = keymap
                         .bindings_for_action(action.as_ref())
                         .find_or_first(|binding| {

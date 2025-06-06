@@ -52,7 +52,7 @@ pub fn send_telemetry(scenario: &DebugScenario, location: TelemetrySpawnLocation
         return;
     };
     let kind = adapter
-        .validate_config(&scenario.config)
+        .request_kind(&scenario.config)
         .ok()
         .map(serde_json::to_value)
         .and_then(Result::ok);

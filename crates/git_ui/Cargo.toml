@@ -17,9 +17,9 @@ default = []
 test-support = ["multi_buffer/test-support"]
 
 [dependencies]
+agent_settings.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
-assistant_settings.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true
@@ -56,9 +56,10 @@ time.workspace = true
 time_format.workspace = true
 ui.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-workspace-hack.workspace = true
+zed_llm_client.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

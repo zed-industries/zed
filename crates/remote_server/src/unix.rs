@@ -257,7 +257,7 @@ fn start_server(
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
 ) -> Arc<ChannelClient> {
-    // This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
+    // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
     let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();

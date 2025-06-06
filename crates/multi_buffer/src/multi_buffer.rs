@@ -1575,7 +1575,7 @@ impl MultiBuffer {
         context_line_count: u32,
         cx: &mut Context<Self>,
     ) -> (Vec<Range<Anchor>>, bool) {
-        let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+        let buffer_snapshot = buffer.read(cx).snapshot();
         let excerpt_ranges = build_excerpt_ranges(ranges, context_line_count, &buffer_snapshot);
 
         let (new, counts) = Self::merge_excerpt_ranges(&excerpt_ranges);
@@ -1690,7 +1690,9 @@ impl MultiBuffer {
                     last_range.context.start <= range.context.start,
                     "Last range: {last_range:?} Range: {range:?}"
                 );
-                if last_range.context.end >= range.context.start {
+                if last_range.context.end >= range.context.start
+                    || last_range.context.end.row + 1 == range.context.start.row
+                {
                     last_range.context.end = range.context.end.max(last_range.context.end);
                     *counts.last_mut().unwrap() += 1;
                     continue;
@@ -4180,6 +4182,20 @@ impl MultiBufferSnapshot {
         (start..end, word_kind)
     }
 
+    pub fn char_kind_before<T: ToOffset>(
+        &self,
+        start: T,
+        for_completion: bool,
+    ) -> Option<CharKind> {
+        let start = start.to_offset(self);
+        let classifier = self
+            .char_classifier_at(start)
+            .for_completion(for_completion);
+        self.reversed_chars_at(start)
+            .next()
+            .map(|ch| classifier.kind(ch))
+    }
+
     pub fn is_singleton(&self) -> bool {
         self.singleton
     }
@@ -5753,21 +5769,34 @@ impl MultiBufferSnapshot {
         let mut result = Vec::new();
         let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
 
+        let mut prev_settings = None;
         while let Some((first_row, mut line_indent, buffer)) = row_indents.next() {
             if first_row > end_row {
                 break;
             }
             let current_depth = indent_stack.len() as u32;
 
-            let settings =
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx);
-            let tab_size = settings.tab_size.get() as u32;
+            // Avoid retrieving the language settings repeatedly for every buffer row.
+            if let Some((prev_buffer_id, _)) = &prev_settings {
+                if prev_buffer_id != &buffer.remote_id() {
+                    prev_settings.take();
+                }
+            }
+            let settings = &prev_settings
+                .get_or_insert_with(|| {
+                    (
+                        buffer.remote_id(),
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx),
+                    )
+                })
+                .1;
+            let tab_size = settings.tab_size.get();
 
             // When encountering empty, continue until found useful line indent
             // then add to the indent stack with the depth found
             let mut found_indent = false;
             let mut last_row = first_row;
-            if line_indent.is_line_empty() {
+            if line_indent.is_line_blank() {
                 while !found_indent {
                     let Some((target_row, new_line_indent, _)) = row_indents.next() else {
                         break;
@@ -5777,7 +5806,7 @@ impl MultiBufferSnapshot {
                         break;
                     }
 
-                    if new_line_indent.is_line_empty() {
+                    if new_line_indent.is_line_blank() {
                         continue;
                     }
                     last_row = target_row.min(end_row);
@@ -6198,7 +6227,7 @@ impl MultiBufferSnapshot {
         cursor.seek_to_start_of_current_excerpt();
         let region = cursor.region()?;
         let offset = region.range.start;
-        let buffer_offset = region.buffer_range.start;
+        let buffer_offset = start_excerpt.buffer_start_offset();
         let excerpt_offset = cursor.excerpts.start().clone();
         Some(MultiBufferExcerpt {
             diff_transforms: cursor.diff_transforms,

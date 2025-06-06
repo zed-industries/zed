@@ -3,11 +3,12 @@ use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
-    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, Pause, Restart,
-    ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop, ToggleIgnoreBreakpoints,
-    ToggleSessionPicker, ToggleThreadPicker, persistence,
+    FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewProcessModal,
+    NewProcessMode, Pause, Restart, ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop,
+    ToggleExpandItem, ToggleIgnoreBreakpoints, ToggleSessionPicker, ToggleThreadPicker,
+    persistence, spawn_task_or_modal,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
 use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
@@ -24,7 +25,7 @@ use gpui::{
 
 use language::Buffer;
 use project::debugger::session::{Session, SessionStateEvent};
-use project::{Fs, ProjectPath, WorktreeId};
+use project::{Fs, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
@@ -65,9 +66,11 @@ pub struct DebugPanel {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    debug_scenario_scheduled_last: bool,
     pub(crate) thread_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub(crate) session_picker_menu_handle: PopoverMenuHandle<ContextMenu>,
     fs: Arc<dyn Fs>,
+    is_zoomed: bool,
     _subscriptions: [Subscription; 1],
 }
 
@@ -102,7 +105,9 @@ impl DebugPanel {
                 fs: workspace.app_state().fs.clone(),
                 thread_picker_menu_handle,
                 session_picker_menu_handle,
+                is_zoomed: false,
                 _subscriptions: [focus_subscription],
+                debug_scenario_scheduled_last: true,
             }
         })
     }
@@ -264,6 +269,7 @@ impl DebugPanel {
                 cx,
             )
         });
+        self.debug_scenario_scheduled_last = true;
         if let Some(inventory) = self
             .project
             .read(cx)
@@ -295,7 +301,6 @@ impl DebugPanel {
                         })
                     })?
                     .await?;
-
                 dap_store
                     .update(cx, |dap_store, cx| {
                         dap_store.boot_session(session.clone(), definition, cx)
@@ -320,6 +325,52 @@ impl DebugPanel {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    pub(crate) fn rerun_last_session(
+        &mut self,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let task_store = workspace.project().read(cx).task_store().clone();
+        let Some(task_inventory) = task_store.read(cx).task_inventory() else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let Some(scenario) = task_inventory.read(cx).last_scheduled_scenario().cloned() else {
+            window.defer(cx, move |window, cx| {
+                workspace
+                    .update(cx, |workspace, cx| {
+                        NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
+                    })
+                    .ok();
+            });
+            return;
+        };
+
+        cx.spawn_in(window, async move |this, cx| {
+            let task_contexts = workspace
+                .update_in(cx, |workspace, window, cx| {
+                    tasks_ui::task_contexts(workspace, window, cx)
+                })?
+                .await;
+
+            let task_context = task_contexts.active_context().cloned().unwrap_or_default();
+            let worktree_id = task_contexts.worktree();
+
+            this.update_in(cx, |this, window, cx| {
+                this.start_session(
+                    scenario.clone(),
+                    task_context,
+                    None,
+                    worktree_id,
+                    window,
+                    cx,
+                );
+            })
+        })
+        .detach();
     }
 
     pub(crate) async fn register_session(
@@ -394,7 +445,10 @@ impl DebugPanel {
         };
 
         let dap_store_handle = self.project.read(cx).dap_store().clone();
-        let label = parent_session.read(cx).label().clone();
+        let mut label = parent_session.read(cx).label().clone();
+        if !label.ends_with("(child)") {
+            label = format!("{label} (child)").into();
+        }
         let adapter = parent_session.read(cx).adapter().clone();
         let mut binary = parent_session.read(cx).binary().clone();
         binary.request_args = request.clone();
@@ -898,68 +952,69 @@ impl DebugPanel {
         cx.notify();
     }
 
-    pub(crate) fn save_scenario(
-        &self,
-        scenario: &DebugScenario,
-        worktree_id: WorktreeId,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<ProjectPath>> {
-        self.workspace
-            .update(cx, |workspace, cx| {
-                let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
-                    return Task::ready(Err(anyhow!("Couldn't get worktree path")));
-                };
+    // TODO: restore once we have proper comment preserving file edits
+    // pub(crate) fn save_scenario(
+    //     &self,
+    //     scenario: &DebugScenario,
+    //     worktree_id: WorktreeId,
+    //     window: &mut Window,
+    //     cx: &mut App,
+    // ) -> Task<Result<ProjectPath>> {
+    //     self.workspace
+    //         .update(cx, |workspace, cx| {
+    //             let Some(mut path) = workspace.absolute_path_of_worktree(worktree_id, cx) else {
+    //                 return Task::ready(Err(anyhow!("Couldn't get worktree path")));
+    //             };
 
-                let serialized_scenario = serde_json::to_value(scenario);
+    //             let serialized_scenario = serde_json::to_value(scenario);
 
-                cx.spawn_in(window, async move |workspace, cx| {
-                    let serialized_scenario = serialized_scenario?;
-                    let fs =
-                        workspace.update(cx, |workspace, _| workspace.app_state().fs.clone())?;
+    //             cx.spawn_in(window, async move |workspace, cx| {
+    //                 let serialized_scenario = serialized_scenario?;
+    //                 let fs =
+    //                     workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
-                    path.push(paths::local_settings_folder_relative_path());
-                    if !fs.is_dir(path.as_path()).await {
-                        fs.create_dir(path.as_path()).await?;
-                    }
-                    path.pop();
+    //                 path.push(paths::local_settings_folder_relative_path());
+    //                 if !fs.is_dir(path.as_path()).await {
+    //                     fs.create_dir(path.as_path()).await?;
+    //                 }
+    //                 path.pop();
 
-                    path.push(paths::local_debug_file_relative_path());
-                    let path = path.as_path();
+    //                 path.push(paths::local_debug_file_relative_path());
+    //                 let path = path.as_path();
 
-                    if !fs.is_file(path).await {
-                        let content =
-                            serde_json::to_string_pretty(&serde_json::Value::Array(vec![
-                                serialized_scenario,
-                            ]))?;
+    //                 if !fs.is_file(path).await {
+    //                     fs.create_file(path, Default::default()).await?;
+    //                     fs.write(
+    //                         path,
+    //                         initial_local_debug_tasks_content().to_string().as_bytes(),
+    //                     )
+    //                     .await?;
+    //                 }
 
-                        fs.create_file(path, Default::default()).await?;
-                        fs.save(path, &content.into(), Default::default()).await?;
-                    } else {
-                        let content = fs.load(path).await?;
-                        let mut values = serde_json::from_str::<Vec<serde_json::Value>>(&content)?;
-                        values.push(serialized_scenario);
-                        fs.save(
-                            path,
-                            &serde_json::to_string_pretty(&values).map(Into::into)?,
-                            Default::default(),
-                        )
-                        .await?;
-                    }
+    //                 let content = fs.load(path).await?;
+    //                 let mut values =
+    //                     serde_json_lenient::from_str::<Vec<serde_json::Value>>(&content)?;
+    //                 values.push(serialized_scenario);
+    //                 fs.save(
+    //                     path,
+    //                     &serde_json_lenient::to_string_pretty(&values).map(Into::into)?,
+    //                     Default::default(),
+    //                 )
+    //                 .await?;
 
-                    workspace.update(cx, |workspace, cx| {
-                        workspace
-                            .project()
-                            .read(cx)
-                            .project_path_for_absolute_path(&path, cx)
-                            .context(
-                                "Couldn't get project path for .zed/debug.json in active worktree",
-                            )
-                    })?
-                })
-            })
-            .unwrap_or_else(|err| Task::ready(Err(err)))
-    }
+    //                 workspace.update(cx, |workspace, cx| {
+    //                     workspace
+    //                         .project()
+    //                         .read(cx)
+    //                         .project_path_for_absolute_path(&path, cx)
+    //                         .context(
+    //                             "Couldn't get project path for .zed/debug.json in active worktree",
+    //                         )
+    //                 })?
+    //             })
+    //         })
+    //         .unwrap_or_else(|err| Task::ready(Err(err)))
+    // }
 
     pub(crate) fn toggle_thread_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.thread_picker_menu_handle.toggle(window, cx);
@@ -968,6 +1023,22 @@ impl DebugPanel {
     pub(crate) fn toggle_session_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.session_picker_menu_handle.toggle(window, cx);
     }
+
+    fn toggle_zoom(
+        &mut self,
+        _: &workspace::ToggleZoom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_zoomed {
+            cx.emit(PanelEvent::ZoomOut);
+        } else {
+            if !self.focus_handle(cx).contains_focused(window, cx) {
+                cx.focus_self(window);
+            }
+            cx.emit(PanelEvent::ZoomIn);
+        }
+    }
 }
 
 async fn register_session_inner(
@@ -975,7 +1046,7 @@ async fn register_session_inner(
     session: Entity<Session>,
     cx: &mut AsyncWindowContext,
 ) -> Result<Entity<DebugSession>> {
-    let adapter_name = session.update(cx, |session, _| session.adapter())?;
+    let adapter_name = session.read_with(cx, |session, _| session.adapter())?;
     this.update_in(cx, |_, window, cx| {
         cx.subscribe_in(
             &session,
@@ -1123,6 +1194,15 @@ impl Panel for DebugPanel {
     }
 
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}
+
+    fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
+        self.is_zoomed
+    }
+
+    fn set_zoomed(&mut self, zoomed: bool, _window: &mut Window, cx: &mut Context<Self>) {
+        self.is_zoomed = zoomed;
+        cx.notify();
+    }
 }
 
 impl Render for DebugPanel {
@@ -1263,6 +1343,23 @@ impl Render for DebugPanel {
                     .ok();
                 }
             })
+            .on_action(cx.listener(Self::toggle_zoom))
+            .on_action(cx.listener(|panel, _: &ToggleExpandItem, _, cx| {
+                let Some(session) = panel.active_session() else {
+                    return;
+                };
+                let active_pane = session
+                    .read(cx)
+                    .running_state()
+                    .read(cx)
+                    .active_pane()
+                    .clone();
+                active_pane.update(cx, |pane, cx| {
+                    let is_zoomed = pane.is_zoomed();
+                    pane.set_zoomed(!is_zoomed, cx);
+                });
+                cx.notify();
+            }))
             .when(self.active_session.is_some(), |this| {
                 this.on_mouse_down(
                     MouseButton::Right,
@@ -1339,5 +1436,37 @@ impl workspace::DebuggerProvider for DebuggerProvider {
                 this.start_session(definition, context, buffer, None, window, cx);
             })
         })
+    }
+
+    fn spawn_task_or_modal(
+        &self,
+        workspace: &mut Workspace,
+        action: &tasks_ui::Spawn,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        spawn_task_or_modal(workspace, action, window, cx);
+    }
+
+    fn debug_scenario_scheduled(&self, cx: &mut App) {
+        self.0.update(cx, |this, _| {
+            this.debug_scenario_scheduled_last = true;
+        });
+    }
+
+    fn task_scheduled(&self, cx: &mut App) {
+        self.0.update(cx, |this, _| {
+            this.debug_scenario_scheduled_last = false;
+        })
+    }
+
+    fn debug_scenario_scheduled_last(&self, cx: &App) -> bool {
+        self.0.read(cx).debug_scenario_scheduled_last
+    }
+
+    fn active_thread_state(&self, cx: &App) -> Option<ThreadStatus> {
+        let session = self.0.read(cx).active_session()?;
+        let thread = session.read(cx).running_state().read(cx).thread_id()?;
+        session.read(cx).session(cx).read(cx).thread_state(thread)
     }
 }

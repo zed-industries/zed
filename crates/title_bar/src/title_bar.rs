@@ -186,7 +186,14 @@ impl Render for TitleBar {
                     .justify_between()
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
-                    .when(self.platform_style != PlatformStyle::Windows, |this| {
+                    .when(self.platform_style == PlatformStyle::Mac, |this| {
+                        this.on_click(|event, window, _| {
+                            if event.up.click_count == 2 {
+                                window.titlebar_double_click();
+                            }
+                        })
+                    })
+                    .when(self.platform_style == PlatformStyle::Linux, |this| {
                         this.on_click(|event, window, _| {
                             if event.up.click_count == 2 {
                                 window.zoom_window();
@@ -442,6 +449,7 @@ impl TitleBar {
                         "Remote Project",
                         Some(&OpenRemote {
                             from_existing_connection: false,
+                            create_new_window: false,
                         }),
                         meta.clone(),
                         window,
@@ -452,6 +460,7 @@ impl TitleBar {
                     window.dispatch_action(
                         OpenRemote {
                             from_existing_connection: false,
+                            create_new_window: false,
                         }
                         .boxed_clone(),
                         cx,
@@ -657,8 +666,8 @@ impl TitleBar {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
                     Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
-                    Some(AutoUpdateStatus::Installing)
-                    | Some(AutoUpdateStatus::Downloading)
+                    Some(AutoUpdateStatus::Installing { .. })
+                    | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
                     Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
                         "Please update Zed to Collaborate"
