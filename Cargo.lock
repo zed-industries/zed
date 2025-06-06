@@ -59,6 +59,7 @@ dependencies = [
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
+ "assistant_tools",
  "async-watch",
  "audio",
  "buffer_diff",
@@ -147,7 +148,6 @@ dependencies = [
  "deepseek",
  "fs",
  "gpui",
- "indexmap",
  "language_model",
  "lmstudio",
  "log",
@@ -2987,7 +2987,6 @@ dependencies = [
  "anyhow",
  "assistant_context_editor",
  "assistant_slash_command",
- "assistant_tool",
  "async-stripe",
  "async-trait",
  "async-tungstenite",
@@ -4234,6 +4233,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "log",
  "menu",
@@ -10205,6 +10205,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -11063,7 +11064,8 @@ dependencies = [
 [[package]]
 name = "pathfinder_simd"
 version = "0.5.4"
-source = "git+https://github.com/theoparis/pathfinder.git#05f19143e21a96027de7cf2d60fa47ecd8899d21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cf07ef4804cfa9aea3b04a7bbdd5a40031dbb6b4f2cbaf2b011666c80c5b4f2"
 dependencies = [
  "rustc_version",
 ]
@@ -15731,6 +15733,7 @@ dependencies = [
  "task",
  "theme",
  "thiserror 2.0.12",
+ "url",
  "util",
  "windows 0.61.1",
  "workspace-hack",
