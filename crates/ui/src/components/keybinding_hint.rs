@@ -1,7 +1,6 @@
 use crate::KeyBinding;
 use crate::{h_flex, prelude::*};
 use gpui::{AnyElement, App, BoxShadow, FontStyle, Hsla, IntoElement, Window, point};
-use smallvec::smallvec;
 use theme::Appearance;
 
 /// Represents a hint for a keybinding, optionally with a prefix and suffix.
@@ -18,7 +17,7 @@ use theme::Appearance;
 ///     .prefix("Save:")
 ///     .size(Pixels::from(14.0));
 /// ```
-#[derive(Debug, IntoElement, IntoComponent)]
+#[derive(Debug, IntoElement, RegisterComponent)]
 pub struct KeybindingHint {
     prefix: Option<SharedString>,
     suffix: Option<SharedString>,
@@ -193,7 +192,7 @@ impl RenderOnce for KeybindingHint {
                     .border_1()
                     .border_color(border_color)
                     .bg(bg_color)
-                    .shadow(smallvec![BoxShadow {
+                    .shadow(vec![BoxShadow {
                         color: shadow_color,
                         offset: point(px(0.), px(1.)),
                         blur_radius: px(0.),
@@ -205,68 +204,81 @@ impl RenderOnce for KeybindingHint {
     }
 }
 
-// View this component preview using `workspace: open component-preview`
-impl ComponentPreview for KeybindingHint {
-    fn preview(window: &mut Window, cx: &mut App) -> AnyElement {
+impl Component for KeybindingHint {
+    fn scope() -> ComponentScope {
+        ComponentScope::None
+    }
+
+    fn description() -> Option<&'static str> {
+        Some("Displays a keyboard shortcut hint with optional prefix and suffix text")
+    }
+
+    fn preview(window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let enter_fallback = gpui::KeyBinding::new("enter", menu::Confirm, None);
         let enter = KeyBinding::for_action(&menu::Confirm, window, cx)
             .unwrap_or(KeyBinding::new(enter_fallback, cx));
 
         let bg_color = cx.theme().colors().surface_background;
 
-        v_flex()
-            .gap_6()
-            .children(vec![
-                example_group_with_title(
-                    "Basic",
-                    vec![
-                        single_example(
-                            "With Prefix",
-                            KeybindingHint::with_prefix("Go to Start:", enter.clone(), bg_color)
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "Basic",
+                        vec![
+                            single_example(
+                                "With Prefix",
+                                KeybindingHint::with_prefix(
+                                    "Go to Start:",
+                                    enter.clone(),
+                                    bg_color,
+                                )
                                 .into_any_element(),
-                        ),
-                        single_example(
-                            "With Suffix",
-                            KeybindingHint::with_suffix(enter.clone(), "Go to End", bg_color)
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "With Prefix and Suffix",
-                            KeybindingHint::new(enter.clone(), bg_color)
-                                .prefix("Confirm:")
-                                .suffix("Execute selected action")
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-                example_group_with_title(
-                    "Sizes",
-                    vec![
-                        single_example(
-                            "Small",
-                            KeybindingHint::new(enter.clone(), bg_color)
-                                .size(Pixels::from(12.0))
-                                .prefix("Small:")
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Medium",
-                            KeybindingHint::new(enter.clone(), bg_color)
-                                .size(Pixels::from(16.0))
-                                .suffix("Medium")
-                                .into_any_element(),
-                        ),
-                        single_example(
-                            "Large",
-                            KeybindingHint::new(enter.clone(), bg_color)
-                                .size(Pixels::from(20.0))
-                                .prefix("Large:")
-                                .suffix("Size")
-                                .into_any_element(),
-                        ),
-                    ],
-                ),
-            ])
-            .into_any_element()
+                            ),
+                            single_example(
+                                "With Suffix",
+                                KeybindingHint::with_suffix(enter.clone(), "Go to End", bg_color)
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "With Prefix and Suffix",
+                                KeybindingHint::new(enter.clone(), bg_color)
+                                    .prefix("Confirm:")
+                                    .suffix("Execute selected action")
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Sizes",
+                        vec![
+                            single_example(
+                                "Small",
+                                KeybindingHint::new(enter.clone(), bg_color)
+                                    .size(Pixels::from(12.0))
+                                    .prefix("Small:")
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Medium",
+                                KeybindingHint::new(enter.clone(), bg_color)
+                                    .size(Pixels::from(16.0))
+                                    .suffix("Medium")
+                                    .into_any_element(),
+                            ),
+                            single_example(
+                                "Large",
+                                KeybindingHint::new(enter.clone(), bg_color)
+                                    .size(Pixels::from(20.0))
+                                    .prefix("Large:")
+                                    .suffix("Size")
+                                    .into_any_element(),
+                            ),
+                        ],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }

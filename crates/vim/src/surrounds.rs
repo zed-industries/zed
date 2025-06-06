@@ -27,6 +27,7 @@ impl Vim {
     ) {
         self.stop_recording(cx);
         let count = Vim::take_count(cx);
+        let forced_motion = Vim::take_forced_motion(cx);
         let mode = self.mode;
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -55,7 +56,13 @@ impl Vim {
                         }
                         SurroundsType::Motion(motion) => {
                             motion
-                                .range(&display_map, selection.clone(), count, &text_layout_details)
+                                .range(
+                                    &display_map,
+                                    selection.clone(),
+                                    count,
+                                    &text_layout_details,
+                                    forced_motion,
+                                )
                                 .map(|(mut range, _)| {
                                     // The Motion::CurrentLine operation will contain the newline of the current line and leading/trailing whitespace
                                     if let Motion::CurrentLine = motion {

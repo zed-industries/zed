@@ -29,12 +29,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, action: &Increment, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let step = if action.step { count as i32 } else { 0 };
         vim.increment(count as i64, step, window, cx)
     });
     Vim::action(editor, cx, |vim, action: &Decrement, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let step = if action.step { -1 * (count as i32) } else { 0 };
         vim.increment(-(count as i64), step, window, cx)
     });

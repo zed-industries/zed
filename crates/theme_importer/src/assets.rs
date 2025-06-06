@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use gpui::{AssetSource, SharedString};
 use rust_embed::RustEmbed;
 
@@ -14,7 +14,7 @@ impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         Self::get(path)
             .map(|f| f.data)
-            .ok_or_else(|| anyhow!("could not find asset at path \"{}\"", path))
+            .with_context(|| format!("could not find asset at path {path:?}"))
             .map(Some)
     }
 

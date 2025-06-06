@@ -1,5 +1,5 @@
 use crate::{Envelope, PeerId};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use serde::Serialize;
 use std::{
     any::{Any, TypeId},
@@ -31,10 +31,9 @@ pub trait RequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
 }
 
-pub trait AnyTypedEnvelope: 'static + Send + Sync {
+pub trait AnyTypedEnvelope: Any + Send + Sync {
     fn payload_type_id(&self) -> TypeId;
     fn payload_type_name(&self) -> &'static str;
-    fn as_any(&self) -> &dyn Any;
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
     fn is_background(&self) -> bool;
     fn original_sender_id(&self) -> Option<PeerId>;
@@ -54,10 +53,6 @@ impl<T: EnvelopedMessage> AnyTypedEnvelope for TypedEnvelope<T> {
 
     fn payload_type_name(&self) -> &'static str {
         T::NAME
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync> {
@@ -206,7 +201,7 @@ pub struct TypedEnvelope<T> {
 impl<T> TypedEnvelope<T> {
     pub fn original_sender_id(&self) -> Result<PeerId> {
         self.original_sender_id
-            .ok_or_else(|| anyhow!("missing original_sender_id"))
+            .context("missing original_sender_id")
     }
 }
 

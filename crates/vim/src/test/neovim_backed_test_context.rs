@@ -13,7 +13,7 @@ use super::{VimTestContext, neovim_connection::NeovimConnection};
 use crate::state::{Mode, VimGlobals};
 
 pub struct NeovimBackedTestContext {
-    cx: VimTestContext,
+    pub(crate) cx: VimTestContext,
     pub(crate) neovim: NeovimConnection,
 
     last_set_state: Option<String>,
@@ -176,6 +176,30 @@ impl NeovimBackedTestContext {
             .to_string();
         Self {
             cx: VimTestContext::new_html(cx).await,
+            neovim: NeovimConnection::new(test_name).await,
+
+            last_set_state: None,
+            recent_keystrokes: Default::default(),
+        }
+    }
+
+    pub async fn new_typescript(cx: &mut gpui::TestAppContext) -> NeovimBackedTestContext {
+        #[cfg(feature = "neovim")]
+        cx.executor().allow_parking();
+        // rust stores the name of the test on the current thread.
+        // We use this to automatically name a file that will store
+        // the neovim connection's requests/responses so that we can
+        // run without neovim on CI.
+        let thread = thread::current();
+        let test_name = thread
+            .name()
+            .expect("thread is not named")
+            .split(':')
+            .next_back()
+            .unwrap()
+            .to_string();
+        Self {
+            cx: VimTestContext::new_typescript(cx).await,
             neovim: NeovimConnection::new(test_name).await,
 
             last_set_state: None,

@@ -766,6 +766,50 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "      .dockerignore",
         ]
     );
+
+    // Test empty filename and filename with only whitespace
+    panel.update_in(cx, |panel, window, cx| panel.new_file(&NewFile, window, cx));
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          [EDITOR: '']  <== selected",
+            "          a-different-filename.tar.gz",
+            "    > C",
+        ]
+    );
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("   ", window, cx);
+        });
+        assert!(panel.confirm_edit(window, cx).is_none());
+        panel.cancel(&menu::Cancel, window, cx)
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root1",
+            "    > .git",
+            "    > a",
+            "    v b",
+            "        > 3",
+            "        > 4",
+            "        > new-dir",
+            "          a-different-filename.tar.gz  <== selected",
+            "    > C",
+            "      .dockerignore",
+        ]
+    );
 }
 
 #[gpui::test(iterations = 10)]
@@ -1124,6 +1168,91 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.confirm_edit(window, cx).is_none())
     });
+}
+
+#[gpui::test]
+async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "one.txt": "",
+            "two.txt": "",
+            "a": {},
+            "b": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    select_path_with_mark(&panel, "root/one.txt", cx);
+    select_path_with_mark(&panel, "root/two.txt", cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > a",
+            "    > b",
+            "      one.txt  <== marked",
+            "      two.txt  <== selected  <== marked",
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cut(&Default::default(), window, cx);
+    });
+
+    select_path(&panel, "root/a", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v a",
+            "          one.txt  <== marked",
+            "          two.txt  <== selected  <== marked",
+            "    > b",
+        ],
+        "Cut entries should be moved on first paste."
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel(&menu::Cancel {}, window, cx)
+    });
+    cx.executor().run_until_parked();
+
+    select_path(&panel, "root/b", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v a",
+            "          one.txt",
+            "          two.txt",
+            "    v b",
+            "          one.txt",
+            "          two.txt  <== selected",
+        ],
+        "Cut entries should only be copied for the second paste!"
+    );
 }
 
 #[gpui::test]
@@ -2026,6 +2155,20 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
+
+    let (scan1_complete, scan2_complete) = project.update(cx, |project, cx| {
+        let mut worktrees = project.worktrees(cx);
+        let worktree1 = worktrees.next().unwrap();
+        let worktree2 = worktrees.next().unwrap();
+        (
+            worktree1.read(cx).as_local().unwrap().scan_complete(),
+            worktree2.read(cx).as_local().unwrap().scan_complete(),
+        )
+    });
+    scan1_complete.await;
+    scan2_complete.await;
+    cx.run_until_parked();
+
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
@@ -2692,6 +2835,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         shift: true,
         ..Default::default()
     };
+    cx.run_until_parked();
     cx.simulate_modifiers_change(modifiers_with_shift);
     cx.update(|window, cx| {
         panel.update(cx, |this, cx| {
@@ -4889,6 +5033,270 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     }
 }
 
+#[gpui::test]
+async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "file1.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    > dir1"),
+        ],
+        "Initial state with nothing selected"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("hello_from_no_selections", window, cx)
+            });
+            panel.confirm_edit(window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            separator!("v root"),
+            separator!("    > dir1"),
+            separator!("      hello_from_no_selections  <== selected  <== marked"),
+        ],
+        "A new file is created under the root directory"
+    );
+}
+
+#[gpui::test]
+async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir1": {
+                "file1.txt": "",
+                "dir2": {
+                    "file2.txt": ""
+                }
+            },
+            "file3.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+
+        // Test 1: Target is a directory, should highlight the directory itself
+        let dir_entry = worktree.entry_for_path("dir1").unwrap();
+        let result = panel.highlight_entry_for_external_drag(dir_entry, worktree);
+        assert_eq!(
+            result,
+            Some(dir_entry.id),
+            "Should highlight directory itself"
+        );
+
+        // Test 2: Target is nested file, should highlight immediate parent
+        let nested_file = worktree.entry_for_path("dir1/dir2/file2.txt").unwrap();
+        let nested_parent = worktree.entry_for_path("dir1/dir2").unwrap();
+        let result = panel.highlight_entry_for_external_drag(nested_file, worktree);
+        assert_eq!(
+            result,
+            Some(nested_parent.id),
+            "Should highlight immediate parent"
+        );
+
+        // Test 3: Target is root level file, should highlight root
+        let root_file = worktree.entry_for_path("file3.txt").unwrap();
+        let result = panel.highlight_entry_for_external_drag(root_file, worktree);
+        assert_eq!(
+            result,
+            Some(worktree.root_entry().unwrap().id),
+            "Root level file should return None"
+        );
+
+        // Test 4: Target is root itself, should highlight root
+        let root_entry = worktree.root_entry().unwrap();
+        let result = panel.highlight_entry_for_external_drag(root_entry, worktree);
+        assert_eq!(
+            result,
+            Some(root_entry.id),
+            "Root level file should return None"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "parent_dir": {
+                "child_file.txt": "",
+                "sibling_file.txt": "",
+                "child_dir": {
+                    "nested_file.txt": ""
+                }
+            },
+            "other_dir": {
+                "other_file.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let worktree_id = worktree.read(cx).id();
+        let worktree = worktree.read(cx);
+
+        let parent_dir = worktree.entry_for_path("parent_dir").unwrap();
+        let child_file = worktree
+            .entry_for_path("parent_dir/child_file.txt")
+            .unwrap();
+        let sibling_file = worktree
+            .entry_for_path("parent_dir/sibling_file.txt")
+            .unwrap();
+        let child_dir = worktree.entry_for_path("parent_dir/child_dir").unwrap();
+        let other_dir = worktree.entry_for_path("other_dir").unwrap();
+        let other_file = worktree.entry_for_path("other_dir/other_file.txt").unwrap();
+
+        // Test 1: Single item drag, don't highlight parent directory
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new(BTreeSet::from([SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            }])),
+        };
+        let result =
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+        assert_eq!(result, None, "Should not highlight parent of dragged item");
+
+        // Test 2: Single item drag, don't highlight sibling files
+        let result = panel.highlight_entry_for_selection_drag(
+            sibling_file,
+            worktree,
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(result, None, "Should not highlight sibling files");
+
+        // Test 3: Single item drag, highlight unrelated directory
+        let result =
+            panel.highlight_entry_for_selection_drag(other_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(other_dir.id),
+            "Should highlight unrelated directory"
+        );
+
+        // Test 4: Single item drag, highlight sibling directory
+        let result =
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(child_dir.id),
+            "Should highlight sibling directory"
+        );
+
+        // Test 5: Multiple items drag, highlight parent directory
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new(BTreeSet::from([
+                SelectedEntry {
+                    worktree_id,
+                    entry_id: child_file.id,
+                },
+                SelectedEntry {
+                    worktree_id,
+                    entry_id: sibling_file.id,
+                },
+            ])),
+        };
+        let result =
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(parent_dir.id),
+            "Should highlight parent with multiple items"
+        );
+
+        // Test 6: Target is file in different directory, highlight parent
+        let result =
+            panel.highlight_entry_for_selection_drag(other_file, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(other_dir.id),
+            "Should highlight parent of target file"
+        );
+
+        // Test 7: Target is directory, always highlight
+        let result =
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(child_dir.id),
+            "Should always highlight directories"
+        );
+    });
+}
+
 fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
     let path = path.as_ref();
     panel.update(cx, |panel, cx| {
@@ -5144,7 +5552,7 @@ impl project::ProjectItem for TestProjectItem {
         _project: &Entity<Project>,
         path: &ProjectPath,
         cx: &mut App,
-    ) -> Option<Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
         let path = path.clone();
         Some(cx.spawn(async move |cx| cx.new(|_| Self { path })))
     }
@@ -5167,7 +5575,7 @@ impl ProjectItem for TestProjectItemView {
 
     fn for_project_item(
         _: Entity<Project>,
-        _: &Pane,
+        _: Option<&Pane>,
         project_item: Entity<Self::Item>,
         _: &mut Window,
         cx: &mut Context<Self>,
@@ -5184,6 +5592,10 @@ impl ProjectItem for TestProjectItemView {
 
 impl Item for TestProjectItemView {
     type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Test".into()
+    }
 }
 
 impl EventEmitter<()> for TestProjectItemView {}

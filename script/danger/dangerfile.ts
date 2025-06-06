@@ -1,7 +1,8 @@
-import { danger, message, warn } from "danger";
+import { danger, message, warn, fail } from "danger";
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
 prHygiene({
+  prefixPattern: /^([a-z\d\(\)_\s]+):(.*)/g,
   rules: {
     // Don't enable this rule just yet, as it can have false positives.
     useImperativeMood: "off",
@@ -37,7 +38,7 @@ if (!hasReleaseNotes) {
 }
 
 const ISSUE_LINK_PATTERN =
-  /(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed]|Follow-up of|Part of)\s+)https:\/\/github\.com\/[\w-]+\/[\w-]+\/issues\/\d+/gi;
+  /(?:- )?(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed]|Follow-up of|Part of):?\s+)https:\/\/github\.com\/[\w-]+\/[\w-]+\/issues\/\d+/gi;
 
 const bodyWithoutReleaseNotes = hasReleaseNotes ? body.split(/Release Notes:/)[0] : body;
 const includesIssueUrl = ISSUE_LINK_PATTERN.test(bodyWithoutReleaseNotes);
@@ -55,4 +56,40 @@ if (includesIssueUrl) {
       "If this PR aims to close an issue, please include a `Closes #ISSUE` line at the top of the PR body.",
     ].join("\n"),
   );
+}
+
+const PROMPT_PATHS = [
+  "assets/prompts/content_prompt.hbs",
+  "assets/prompts/terminal_assistant_prompt.hbs",
+  "crates/agent/src/prompts/stale_files_prompt_header.txt",
+  "crates/agent/src/prompts/summarize_thread_detailed_prompt.txt",
+  "crates/agent/src/prompts/summarize_thread_prompt.txt",
+  "crates/assistant_tools/src/templates/create_file_prompt.hbs",
+  "crates/assistant_tools/src/templates/edit_file_prompt.hbs",
+  "crates/git_ui/src/commit_message_prompt.txt",
+];
+
+const PROMPT_CHANGE_ATTESTATION = "I have ensured the LLM Worker works with these prompt changes.";
+
+const modifiedPrompts = danger.git.modified_files.filter((file) =>
+  PROMPT_PATHS.some((promptPath) => file.includes(promptPath)),
+);
+
+for (const promptPath of modifiedPrompts) {
+  if (body.includes(PROMPT_CHANGE_ATTESTATION)) {
+    message(
+      [
+        `This PR contains changes to "${promptPath}".`,
+        "The author has attested the LLM Worker works with the changes to this prompt.",
+      ].join("\n"),
+    );
+  } else {
+    fail(
+      [
+        `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
+        "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
+        `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
+      ].join("\n"),
+    );
+  }
 }

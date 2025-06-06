@@ -47,7 +47,7 @@ For example:
 
 You can see all of Zed's default bindings in the default keymaps for [MacOS](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-macos.json) or [Linux](https://github.com/zed-industries/zed/blob/main/assets/keymaps/default-linux.json).
 
-If you want to debug problems with custom keymaps you can use `debug: Open Key Context View` from the command palette. Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
+If you want to debug problems with custom keymaps you can use `dev: Open Key Context View` from the command palette. Please file [an issue](https://github.com/zed-industries/zed) if you run into something you think should work but isn't.
 
 ### Keybinding syntax
 
@@ -62,7 +62,7 @@ Each keypress is a sequence of modifiers followed by a key. The modifiers are:
 - `fn-` The function key
 - `secondary-` Equivalent to `cmd` when Zed is running on macOS and `ctrl` when on Windows and Linux
 
-The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`). If you are using a non-Latin layout (e.g. Cyrillic), you can bind either to the cyrillic character, or the latin character that that key generates with `cmd` pressed.
+The keys can be any single unicode codepoint that your keyboard generates (for example `a`, `0`, `£` or `ç`), or any named key (`tab`, `f1`, `shift`, or `cmd`). If you are using a non-Latin layout (e.g. Cyrillic), you can bind either to the cyrillic character, or the latin character that key generates with `cmd` pressed.
 
 A few examples:
 
@@ -85,7 +85,7 @@ It is possible to match against typing a modifier key on its own. For example `s
 
 If a binding group has a `"context"` key it will be matched against the currently active contexts in Zed.
 
-Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with `debug: Open Key Context View` in the command palette.
+Zed's contexts make up a tree, with the root being `Workspace`. Workspaces contain Panes and Panels, and Panes contain Editors, etc. The easiest way to see what contexts are active at a given moment is the key context view, which you can get to with `dev: Open Key Context View` in the command palette.
 
 Contexts can contain extra attributes in addition to the name, so that you can (for example) match only in markdown files with `"context": "Editor && extension==md"`. It's worth noting that you can only use attributes at the level they are defined.
 
@@ -168,14 +168,39 @@ If you are defining shortcuts in your personal keymap, you can opt into the key 
 If you'd like a given binding to do nothing in a given context you can use
 `null` as the action. This is useful if you hit the keybinding by accident and
 want to disable it, or if you want to type the character that would be typed by
-the sequence (for example to disable the builtin `alt-t` binding), or if you
-want to disable multikey bindings starting with that key.
+the sequence, or if you want to disable multikey bindings starting with that key.
 
-```
-"bindings": { "cmd-k": null }
+```json
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-r": null // cmd-r will do nothing when the Workspace context is active
+    }
+  }
+]
 ```
 
-A `null` has the same precedence rules as normal actions. So disables all bindings that would match further up in the tree too. If you'd like a binding that matches further up in the tree to take precedence over a lower binding, you need to rebind it to the action you want in the context you want.
+A `null` binding follows the same precedence rules as normal actions. So disables all bindings that would match further up in the tree too. If you'd like a binding that matches further up in the tree to take precedence over a lower binding, you need to rebind it to the action you want in the context you want.
+
+This is useful for preventing Zed from falling back to a default keybinding when the action you specified is conditional and propagates. For example, `buffer_search::DeployReplace` only triggers when the search bar is not in view. If the search bar is in view, it would propagate and trigger the default action set for that binding, such as opening the right dock. To prevent this from happening:
+
+```json
+[
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-r": null // cmd-r will do nothing when the search bar is in view
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-r": "buffer_search::DeployReplace" // cmd-r will deploy replace when the search bar is not in view
+    }
+  }
+]
+```
 
 ### Remapping keys
 

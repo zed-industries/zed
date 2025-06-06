@@ -6,7 +6,7 @@
 /// with a keymap context:
 ///
 /// ```rust
-/// actions!(editor,[Undo, Redo]);;
+/// actions!(editor,[Undo, Redo]);
 ///
 /// impl Editor {
 ///   fn undo(&mut self, _: &Undo, _window: &mut Window, _cx: &mut Context<Self>) { ... }
@@ -17,7 +17,7 @@
 ///   fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
 ///     div()
 ///       .track_focus(&self.focus_handle(cx))
-///       .keymap_context("Editor")
+///       .key_context("Editor")
 ///       .on_action(cx.listener(Editor::undo))
 ///       .on_action(cx.listener(Editor::redo))
 ///     ...
@@ -27,7 +27,7 @@
 ///
 /// The keybindings themselves are managed independently by calling cx.bind_keys().
 /// (Though mostly when developing Zed itself, you just need to add a new line to
-///  assets/keymaps/default.json).
+///  assets/keymaps/default-{platform}.json).
 ///
 /// ```rust
 /// cx.bind_keys([
@@ -50,8 +50,8 @@
 ///  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
 ///
 use crate::{
-    Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
-    Keystroke, ModifiersChangedEvent, Window,
+    Action, ActionRegistry, App, BindingIndex, DispatchPhase, EntityId, FocusId, KeyBinding,
+    KeyContext, Keymap, Keystroke, ModifiersChangedEvent, Window,
 };
 use collections::FxHashMap;
 use smallvec::SmallVec;
@@ -121,6 +121,7 @@ pub(crate) struct DispatchResult {
     pub(crate) pending: SmallVec<[Keystroke; 1]>,
     pub(crate) bindings: SmallVec<[KeyBinding; 1]>,
     pub(crate) to_replay: SmallVec<[Replay; 1]>,
+    pub(crate) context_stack: Vec<KeyContext>,
 }
 
 type KeyListener = Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Window, &mut App)>;
@@ -391,35 +392,82 @@ impl DispatchTree {
 
     /// Returns key bindings that invoke an action on the currently focused element. Bindings are
     /// returned in the order they were added. For display, the last binding should take precedence.
+    ///
+    /// Bindings are only included if they are the highest precedence match for their keystrokes, so
+    /// shadowed bindings are not included.
     pub fn bindings_for_action(
         &self,
         action: &dyn Action,
         context_stack: &[KeyContext],
     ) -> Vec<KeyBinding> {
+        // Ideally this would return a `DoubleEndedIterator` to avoid `highest_precedence_*`
+        // methods, but this can't be done very cleanly since keymap must be borrowed.
         let keymap = self.keymap.borrow();
         keymap
-            .bindings_for_action(action)
-            .filter(|binding| {
-                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
-                bindings.iter().any(|b| b.action.partial_eq(action))
+            .bindings_for_action_with_indices(action)
+            .filter(|(binding_index, binding)| {
+                Self::binding_matches_predicate_and_not_shadowed(
+                    &keymap,
+                    *binding_index,
+                    &binding.keystrokes,
+                    context_stack,
+                )
             })
-            .cloned()
+            .map(|(_, binding)| binding.clone())
             .collect()
+    }
+
+    /// Returns the highest precedence binding for the given action and context stack. This is the
+    /// same as the last result of `bindings_for_action`, but more efficient than getting all bindings.
+    pub fn highest_precedence_binding_for_action(
+        &self,
+        action: &dyn Action,
+        context_stack: &[KeyContext],
+    ) -> Option<KeyBinding> {
+        let keymap = self.keymap.borrow();
+        keymap
+            .bindings_for_action_with_indices(action)
+            .rev()
+            .find_map(|(binding_index, binding)| {
+                let found = Self::binding_matches_predicate_and_not_shadowed(
+                    &keymap,
+                    binding_index,
+                    &binding.keystrokes,
+                    context_stack,
+                );
+                if found { Some(binding.clone()) } else { None }
+            })
+    }
+
+    fn binding_matches_predicate_and_not_shadowed(
+        keymap: &Keymap,
+        binding_index: BindingIndex,
+        keystrokes: &[Keystroke],
+        context_stack: &[KeyContext],
+    ) -> bool {
+        let (bindings, _) = keymap.bindings_for_input_with_indices(&keystrokes, context_stack);
+        if let Some((highest_precedence_index, _)) = bindings.iter().next() {
+            binding_index == *highest_precedence_index
+        } else {
+            false
+        }
     }
 
     fn bindings_for_input(
         &self,
         input: &[Keystroke],
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
-    ) -> (SmallVec<[KeyBinding; 1]>, bool) {
-        let context_stack: SmallVec<[KeyContext; 4]> = dispatch_path
+    ) -> (SmallVec<[KeyBinding; 1]>, bool, Vec<KeyContext>) {
+        let context_stack: Vec<KeyContext> = dispatch_path
             .iter()
             .filter_map(|node_id| self.node(*node_id).context.clone())
             .collect();
 
-        self.keymap
+        let (bindings, partial) = self
+            .keymap
             .borrow()
-            .bindings_for_input(input, &context_stack)
+            .bindings_for_input(input, &context_stack);
+        return (bindings, partial, context_stack);
     }
 
     /// dispatch_key processes the keystroke
@@ -436,20 +484,25 @@ impl DispatchTree {
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> DispatchResult {
         input.push(keystroke.clone());
-        let (bindings, pending) = self.bindings_for_input(&input, dispatch_path);
+        let (bindings, pending, context_stack) = self.bindings_for_input(&input, dispatch_path);
 
         if pending {
             return DispatchResult {
                 pending: input,
+                context_stack,
                 ..Default::default()
             };
         } else if !bindings.is_empty() {
             return DispatchResult {
                 bindings,
+                context_stack,
                 ..Default::default()
             };
         } else if input.len() == 1 {
-            return DispatchResult::default();
+            return DispatchResult {
+                context_stack,
+                ..Default::default()
+            };
         }
         input.pop();
 
@@ -485,7 +538,7 @@ impl DispatchTree {
     ) -> (SmallVec<[Keystroke; 1]>, SmallVec<[Replay; 1]>) {
         let mut to_replay: SmallVec<[Replay; 1]> = Default::default();
         for last in (0..input.len()).rev() {
-            let (bindings, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
+            let (bindings, _, _) = self.bindings_for_input(&input[0..=last], dispatch_path);
             if !bindings.is_empty() {
                 to_replay.push(Replay {
                     keystroke: input.drain(0..=last).next_back().unwrap(),
@@ -595,10 +648,6 @@ mod tests {
 
         fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {
             Box::new(TestAction)
-        }
-
-        fn as_any(&self) -> &dyn ::std::any::Any {
-            self
         }
 
         fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>

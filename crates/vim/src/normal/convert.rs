@@ -25,6 +25,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         mode: ConvertTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -39,7 +40,13 @@ impl Vim {
                     s.move_with(|map, selection| {
                         let anchor = map.display_point_to_anchor(selection.head(), Bias::Left);
                         selection_starts.insert(selection.id, anchor);
-                        motion.expand_selection(map, selection, times, &text_layout_details);
+                        motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
                     });
                 });
                 match mode {
@@ -185,6 +192,7 @@ impl Vim {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1) as u32;
+        Vim::take_forced_motion(cx);
 
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let mut ranges = Vec::new();

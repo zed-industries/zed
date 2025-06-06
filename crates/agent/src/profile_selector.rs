@@ -1,32 +1,33 @@
 use std::sync::Arc;
 
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings};
+use agent_settings::{AgentDockPosition, AgentProfileId, AgentSettings, builtin_profiles};
 use fs::Fs;
-use gpui::{Action, Entity, FocusHandle, Subscription, WeakEntity, prelude::*};
-use indexmap::IndexMap;
+use gpui::{Action, Empty, Entity, FocusHandle, Subscription, prelude::*};
 use language_model::LanguageModelRegistry;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use ui::{
-    ButtonLike, ContextMenu, ContextMenuEntry, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip,
+    ContextMenu, ContextMenuEntry, DocumentationSide, PopoverMenu, PopoverMenuHandle, Tooltip,
     prelude::*,
 };
-use util::ResultExt as _;
 
-use crate::{ManageProfiles, ThreadStore, ToggleProfileSelector};
+use crate::{
+    ManageProfiles, Thread, ToggleProfileSelector,
+    agent_profile::{AgentProfile, AvailableProfiles},
+};
 
 pub struct ProfileSelector {
-    profiles: IndexMap<AgentProfileId, AgentProfile>,
+    profiles: AvailableProfiles,
     fs: Arc<dyn Fs>,
-    thread_store: WeakEntity<ThreadStore>,
-    focus_handle: FocusHandle,
+    thread: Entity<Thread>,
     menu_handle: PopoverMenuHandle<ContextMenu>,
+    focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ProfileSelector {
     pub fn new(
         fs: Arc<dyn Fs>,
-        thread_store: WeakEntity<ThreadStore>,
+        thread: Entity<Thread>,
         focus_handle: FocusHandle,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -34,17 +35,14 @@ impl ProfileSelector {
             this.refresh_profiles(cx);
         });
 
-        let mut this = Self {
-            profiles: IndexMap::default(),
+        Self {
+            profiles: AgentProfile::available_profiles(cx),
             fs,
-            thread_store,
-            focus_handle,
+            thread,
             menu_handle: PopoverMenuHandle::default(),
+            focus_handle,
             _subscriptions: vec![settings_subscription],
-        };
-        this.refresh_profiles(cx);
-
-        this
+        }
     }
 
     pub fn menu_handle(&self) -> PopoverMenuHandle<ContextMenu> {
@@ -52,9 +50,7 @@ impl ProfileSelector {
     }
 
     fn refresh_profiles(&mut self, cx: &mut Context<Self>) {
-        let settings = AssistantSettings::get_global(cx);
-
-        self.profiles = settings.profiles.clone();
+        self.profiles = AgentProfile::available_profiles(cx);
     }
 
     fn build_context_menu(
@@ -63,48 +59,36 @@ impl ProfileSelector {
         cx: &mut Context<Self>,
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |mut menu, _window, cx| {
-            let settings = AssistantSettings::get_global(cx);
-            let icon_position = IconPosition::End;
+            let settings = AgentSettings::get_global(cx);
 
-            menu = menu.header("Profiles");
-            for (profile_id, profile) in self.profiles.clone() {
-                menu = menu.toggleable_entry(
-                    profile.name.clone(),
-                    profile_id == settings.default_profile,
-                    icon_position,
-                    None,
-                    {
-                        let fs = self.fs.clone();
-                        let thread_store = self.thread_store.clone();
-                        move |_window, cx| {
-                            update_settings_file::<AssistantSettings>(fs.clone(), cx, {
-                                let profile_id = profile_id.clone();
-                                move |settings, _cx| {
-                                    settings.set_profile(profile_id.clone());
-                                }
-                            });
-
-                            thread_store
-                                .update(cx, |this, cx| {
-                                    this.load_profile_by_id(&profile_id, cx);
-                                })
-                                .log_err();
-                        }
-                    },
-                );
+            let mut found_non_builtin = false;
+            for (profile_id, profile_name) in self.profiles.iter() {
+                if !builtin_profiles::is_builtin(profile_id) {
+                    found_non_builtin = true;
+                    continue;
+                }
+                menu = menu.item(self.menu_entry_for_profile(
+                    profile_id.clone(),
+                    profile_name,
+                    settings,
+                    cx,
+                ));
             }
 
-            menu = menu.separator();
-            menu = menu.header("Customize Current Profile");
-            menu = menu.item(ContextMenuEntry::new("Tools…").handler({
-                let profile_id = settings.default_profile.clone();
-                move |window, cx| {
-                    window.dispatch_action(
-                        ManageProfiles::customize_tools(profile_id.clone()).boxed_clone(),
+            if found_non_builtin {
+                menu = menu.separator().header("Custom Profiles");
+                for (profile_id, profile_name) in self.profiles.iter() {
+                    if builtin_profiles::is_builtin(profile_id) {
+                        continue;
+                    }
+                    menu = menu.item(self.menu_entry_for_profile(
+                        profile_id.clone(),
+                        profile_name,
+                        settings,
                         cx,
-                    );
+                    ));
                 }
-            }));
+            }
 
             menu = menu.separator();
             menu = menu.item(ContextMenuEntry::new("Configure Profiles…").handler(
@@ -116,74 +100,122 @@ impl ProfileSelector {
             menu
         })
     }
+
+    fn menu_entry_for_profile(
+        &self,
+        profile_id: AgentProfileId,
+        profile_name: &SharedString,
+        settings: &AgentSettings,
+        cx: &App,
+    ) -> ContextMenuEntry {
+        let documentation = match profile_name.to_lowercase().as_str() {
+            builtin_profiles::WRITE => Some("Get help to write anything."),
+            builtin_profiles::ASK => Some("Chat about your codebase."),
+            builtin_profiles::MINIMAL => Some("Chat about anything with no tools."),
+            _ => None,
+        };
+        let thread_profile_id = self.thread.read(cx).profile().id();
+
+        let entry = ContextMenuEntry::new(profile_name.clone())
+            .toggleable(IconPosition::End, &profile_id == thread_profile_id);
+
+        let entry = if let Some(doc_text) = documentation {
+            entry.documentation_aside(documentation_side(settings.dock), move |_| {
+                Label::new(doc_text).into_any_element()
+            })
+        } else {
+            entry
+        };
+
+        entry.handler({
+            let fs = self.fs.clone();
+            let thread = self.thread.clone();
+            let profile_id = profile_id.clone();
+            move |_window, cx| {
+                update_settings_file::<AgentSettings>(fs.clone(), cx, {
+                    let profile_id = profile_id.clone();
+                    move |settings, _cx| {
+                        settings.set_profile(profile_id.clone());
+                    }
+                });
+
+                thread.update(cx, |this, cx| {
+                    this.set_profile(profile_id.clone(), cx);
+                });
+            }
+        })
+    }
 }
 
 impl Render for ProfileSelector {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = AssistantSettings::get_global(cx);
-        let profile_id = &settings.default_profile;
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let settings = AgentSettings::get_global(cx);
+        let profile_id = self.thread.read(cx).profile().id();
         let profile = settings.profiles.get(profile_id);
 
         let selected_profile = profile
             .map(|profile| profile.name.clone())
             .unwrap_or_else(|| "Unknown".into());
 
-        let model_registry = LanguageModelRegistry::read_global(cx);
-        let supports_tools = model_registry
-            .default_model()
-            .map_or(false, |default| default.model.supports_tools());
-
-        let icon = match profile_id.as_str() {
-            "write" => IconName::Pencil,
-            "ask" => IconName::MessageBubbles,
-            _ => IconName::UserRoundPen,
+        let configured_model = self.thread.read(cx).configured_model().or_else(|| {
+            let model_registry = LanguageModelRegistry::read_global(cx);
+            model_registry.default_model()
+        });
+        let Some(configured_model) = configured_model else {
+            return Empty.into_any_element();
         };
 
-        let this = cx.entity().clone();
-        let focus_handle = self.focus_handle.clone();
-        PopoverMenu::new("profile-selector")
-            .menu(move |window, cx| {
-                Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
-            })
-            .trigger(if supports_tools {
-                ButtonLike::new("profile-selector-button").child(
-                    h_flex()
-                        .gap_1()
-                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
-                        .child(
-                            Label::new(selected_profile)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+        if configured_model.model.supports_tools() {
+            let this = cx.entity().clone();
+            let focus_handle = self.focus_handle.clone();
+            let trigger_button = Button::new("profile-selector-model", selected_profile)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .icon(IconName::ChevronDown)
+                .icon_size(IconSize::XSmall)
+                .icon_position(IconPosition::End)
+                .icon_color(Color::Muted);
+
+            PopoverMenu::new("profile-selector")
+                .trigger_with_tooltip(trigger_button, {
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            "Toggle Profile Menu",
+                            &ToggleProfileSelector,
+                            &focus_handle,
+                            window,
+                            cx,
                         )
-                        .child(
-                            Icon::new(IconName::ChevronDown)
-                                .size(IconSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                        .child(div().opacity(0.5).children({
-                            let focus_handle = focus_handle.clone();
-                            KeyBinding::for_action_in(
-                                &ToggleProfileSelector,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(10.)))
-                        })),
+                    }
+                })
+                .anchor(
+                    if documentation_side(settings.dock) == DocumentationSide::Left {
+                        gpui::Corner::BottomRight
+                    } else {
+                        gpui::Corner::BottomLeft
+                    },
                 )
-            } else {
-                ButtonLike::new("tools-not-supported-button")
-                    .disabled(true)
-                    .child(
-                        h_flex().gap_1().child(
-                            Label::new("No Tools")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .tooltip(Tooltip::text("The current model does not support tools."))
-            })
-            .anchor(gpui::Corner::BottomLeft)
-            .with_handle(self.menu_handle.clone())
+                .with_handle(self.menu_handle.clone())
+                .menu(move |window, cx| {
+                    Some(this.update(cx, |this, cx| this.build_context_menu(window, cx)))
+                })
+                .into_any_element()
+        } else {
+            Button::new("tools-not-supported-button", "Tools Unsupported")
+                .disabled(true)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .tooltip(Tooltip::text("This model does not support tools."))
+                .into_any_element()
+        }
+    }
+}
+
+fn documentation_side(position: AgentDockPosition) -> DocumentationSide {
+    match position {
+        AgentDockPosition::Left => DocumentationSide::Right,
+        AgentDockPosition::Bottom => DocumentationSide::Left,
+        AgentDockPosition::Right => DocumentationSide::Left,
     }
 }

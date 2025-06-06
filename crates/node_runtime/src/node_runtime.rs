@@ -1,25 +1,24 @@
-mod archive;
-
-use anyhow::{Context, Result, anyhow, bail};
-pub use archive::extract_zip;
+use anyhow::{Context as _, Result, anyhow, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
-use futures::AsyncReadExt;
-use http_client::{HttpClient, Uri};
+use futures::{AsyncReadExt, FutureExt as _, channel::oneshot, future::Shared};
+use http_client::{HttpClient, Url};
+use log::Level;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
 use smol::{fs, lock::Mutex};
-use std::env;
-use std::ffi::OsString;
-use std::io;
-use std::process::{Output, Stdio};
+use std::fmt::Display;
 use std::{
-    env::consts,
+    env::{self, consts},
+    ffi::OsString,
+    io,
     path::{Path, PathBuf},
+    process::Output,
     sync::Arc,
 };
 use util::ResultExt;
+use util::archive::extract_zip;
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
@@ -38,11 +37,13 @@ struct NodeRuntimeState {
     instance: Option<Box<dyn NodeRuntimeTrait>>,
     last_options: Option<NodeBinaryOptions>,
     options: async_watch::Receiver<Option<NodeBinaryOptions>>,
+    shell_env_loaded: Shared<oneshot::Receiver<()>>,
 }
 
 impl NodeRuntime {
     pub fn new(
         http: Arc<dyn HttpClient>,
+        shell_env_loaded: Option<oneshot::Receiver<()>>,
         options: async_watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
@@ -50,6 +51,7 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options,
+            shell_env_loaded: shell_env_loaded.unwrap_or(oneshot::channel().1).shared(),
         })))
     }
 
@@ -59,48 +61,140 @@ impl NodeRuntime {
             instance: None,
             last_options: None,
             options: async_watch::channel(Some(NodeBinaryOptions::default())).1,
+            shell_env_loaded: oneshot::channel().1.shared(),
         })))
     }
 
-    async fn instance(&self) -> Result<Box<dyn NodeRuntimeTrait>> {
+    async fn instance(&self) -> Box<dyn NodeRuntimeTrait> {
         let mut state = self.0.lock().await;
 
-        while state.options.borrow().is_none() {
-            state.options.changed().await?;
-        }
-        let options = state.options.borrow().clone().unwrap();
+        let options = loop {
+            match state.options.borrow().as_ref() {
+                Some(options) => break options.clone(),
+                None => {}
+            }
+            match state.options.changed().await {
+                Ok(()) => {}
+                // failure case not cached
+                Err(err) => {
+                    return Box::new(UnavailableNodeRuntime {
+                        error_message: err.to_string().into(),
+                    });
+                }
+            }
+        };
+
         if state.last_options.as_ref() != Some(&options) {
             state.instance.take();
         }
         if let Some(instance) = state.instance.as_ref() {
-            return Ok(instance.boxed_clone());
+            return instance.boxed_clone();
         }
 
         if let Some((node, npm)) = options.use_paths.as_ref() {
-            let instance = SystemNodeRuntime::new(node.clone(), npm.clone()).await?;
+            let instance = match SystemNodeRuntime::new(node.clone(), npm.clone()).await {
+                Ok(instance) => {
+                    log::info!("using Node.js from `node.path` in settings: {:?}", instance);
+                    Box::new(instance)
+                }
+                Err(err) => {
+                    // failure case not cached, since it's cheap to check again
+                    return Box::new(UnavailableNodeRuntime {
+                        error_message: format!(
+                            "failure checking Node.js from `node.path` in settings ({}): {:?}",
+                            node.display(),
+                            err
+                        )
+                        .into(),
+                    });
+                }
+            };
             state.instance = Some(instance.boxed_clone());
-            return Ok(instance);
+            state.last_options = Some(options);
+            return instance;
         }
 
-        if options.allow_path_lookup {
-            if let Some(instance) = SystemNodeRuntime::detect().await {
-                state.instance = Some(instance.boxed_clone());
-                return Ok(instance);
+        let system_node_error = if options.allow_path_lookup {
+            state.shell_env_loaded.clone().await.ok();
+            match SystemNodeRuntime::detect().await {
+                Ok(instance) => {
+                    log::info!("using Node.js found on PATH: {:?}", instance);
+                    state.instance = Some(instance.boxed_clone());
+                    state.last_options = Some(options);
+                    return Box::new(instance);
+                }
+                Err(err) => Some(err),
             }
-        }
+        } else {
+            None
+        };
 
         let instance = if options.allow_binary_download {
-            ManagedNodeRuntime::install_if_needed(&state.http).await?
+            let (log_level, why_using_managed) = match system_node_error {
+                Some(err @ DetectError::Other(_)) => (Level::Warn, err.to_string()),
+                Some(err @ DetectError::NotInPath(_)) => (Level::Info, err.to_string()),
+                None => (
+                    Level::Info,
+                    "`node.ignore_system_version` is `true` in settings".to_string(),
+                ),
+            };
+            match ManagedNodeRuntime::install_if_needed(&state.http).await {
+                Ok(instance) => {
+                    log::log!(
+                        log_level,
+                        "using Zed managed Node.js at {} since {}",
+                        instance.installation_path.display(),
+                        why_using_managed
+                    );
+                    Box::new(instance) as Box<dyn NodeRuntimeTrait>
+                }
+                Err(err) => {
+                    // failure case is cached, since downloading + installing may be expensive. The
+                    // downside of this is that it may fail due to an intermittent network issue.
+                    //
+                    // TODO: Have `install_if_needed` indicate which failure cases are retryable
+                    // and/or have shared tracking of when internet is available.
+                    Box::new(UnavailableNodeRuntime {
+                        error_message: format!(
+                            "failure while downloading and/or installing Zed managed Node.js, \
+                            restart Zed to retry: {}",
+                            err
+                        )
+                        .into(),
+                    }) as Box<dyn NodeRuntimeTrait>
+                }
+            }
+        } else if let Some(system_node_error) = system_node_error {
+            // failure case not cached, since it's cheap to check again
+            //
+            // TODO: When support is added for setting `options.allow_binary_download`, update this
+            // error message.
+            return Box::new(UnavailableNodeRuntime {
+                error_message: format!(
+                    "failure while checking system Node.js from PATH: {}",
+                    system_node_error
+                )
+                .into(),
+            });
         } else {
-            Box::new(UnavailableNodeRuntime)
+            // failure case is cached because it will always happen with these options
+            //
+            // TODO: When support is added for setting `options.allow_binary_download`, update this
+            // error message.
+            Box::new(UnavailableNodeRuntime {
+                error_message: "`node` settings do not allow any way to use Node.js"
+                    .to_string()
+                    .into(),
+            })
         };
 
         state.instance = Some(instance.boxed_clone());
-        return Ok(instance);
+        state.last_options = Some(options);
+        return instance;
     }
 
     pub async fn binary_path(&self) -> Result<PathBuf> {
-        self.instance().await?.binary_path()
+        self.instance().await.binary_path()
     }
 
     pub async fn run_npm_subcommand(
@@ -111,7 +205,7 @@ impl NodeRuntime {
     ) -> Result<Output> {
         let http = self.0.lock().await.http.clone();
         self.instance()
-            .await?
+            .await
             .run_npm_subcommand(Some(directory), http.proxy(), subcommand, args)
             .await
     }
@@ -122,7 +216,7 @@ impl NodeRuntime {
         name: &str,
     ) -> Result<Option<String>> {
         self.instance()
-            .await?
+            .await
             .npm_package_installed_version(local_package_directory, name)
             .await
     }
@@ -131,7 +225,7 @@ impl NodeRuntime {
         let http = self.0.lock().await.http.clone();
         let output = self
             .instance()
-            .await?
+            .await
             .run_npm_subcommand(
                 None,
                 http.proxy(),
@@ -153,7 +247,7 @@ impl NodeRuntime {
         info.dist_tags
             .latest
             .or_else(|| info.versions.pop())
-            .ok_or_else(|| anyhow!("no version found for npm package {}", name))
+            .with_context(|| format!("no version found for npm package {name}"))
     }
 
     pub async fn npm_install_packages(
@@ -247,7 +341,7 @@ trait NodeRuntimeTrait: Send + Sync {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output>;
@@ -277,24 +371,7 @@ impl ManagedNodeRuntime {
     #[cfg(windows)]
     const NPM_PATH: &str = "node_modules/npm/bin/npm-cli.js";
 
-    async fn node_environment_path(&self) -> Result<OsString> {
-        let node_binary = self.installation_path.join(Self::NODE_PATH);
-        let mut env_path = vec![
-            node_binary
-                .parent()
-                .expect("invalid node binary path")
-                .to_path_buf(),
-        ];
-
-        if let Some(existing_path) = std::env::var_os("PATH") {
-            let mut paths = std::env::split_paths(&existing_path).collect::<Vec<_>>();
-            env_path.append(&mut paths);
-        }
-
-        std::env::join_paths(env_path).context("failed to create PATH env variable")
-    }
-
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Box<dyn NodeRuntimeTrait>> {
+    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Self> {
         log::info!("Node runtime install_if_needed");
 
         let os = match consts::OS {
@@ -312,26 +389,49 @@ impl ManagedNodeRuntime {
 
         let version = Self::VERSION;
         let folder_name = format!("node-{version}-{os}-{arch}");
-        let node_containing_dir = paths::support_dir().join("node");
+        let node_containing_dir = paths::data_dir().join("node");
         let node_dir = node_containing_dir.join(folder_name);
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
-        let result = util::command::new_smol_command(&node_binary)
-            .env_clear()
-            .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
-            .arg(npm_file)
-            .arg("--version")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .args(["--cache".into(), node_dir.join("cache")])
-            .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
-            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")])
-            .status()
-            .await;
-        let valid = matches!(result, Ok(status) if status.success());
+        let valid = if fs::metadata(&node_binary).await.is_ok() {
+            let result = util::command::new_smol_command(&node_binary)
+                .env_clear()
+                .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
+                .arg(npm_file)
+                .arg("--version")
+                .args(["--cache".into(), node_dir.join("cache")])
+                .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
+                .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")])
+                .output()
+                .await;
+            match result {
+                Ok(output) => {
+                    if output.status.success() {
+                        true
+                    } else {
+                        log::warn!(
+                            "Zed managed Node.js binary at {} failed check with output: {:?}",
+                            node_binary.display(),
+                            output
+                        );
+                        false
+                    }
+                }
+                Err(err) => {
+                    log::warn!(
+                        "Zed managed Node.js binary at {} failed check, so re-downloading it. \
+                        Error: {}",
+                        node_binary.display(),
+                        err
+                    );
+                    false
+                }
+            }
+        } else {
+            false
+        };
 
         if !valid {
             _ = fs::remove_dir_all(&node_containing_dir).await;
@@ -353,11 +453,14 @@ impl ManagedNodeRuntime {
                     ArchiveType::Zip => "zip",
                 }
             );
+
             let url = format!("https://nodejs.org/dist/{version}/{file_name}");
+            log::info!("Downloading Node.js binary from {url}");
             let mut response = http
                 .get(&url, Default::default(), true)
                 .await
                 .context("error downloading Node binary tarball")?;
+            log::info!("Download of Node.js complete, extracting...");
 
             let body = response.body_mut();
             match archive_type {
@@ -366,8 +469,9 @@ impl ManagedNodeRuntime {
                     let archive = Archive::new(decompressed_bytes);
                     archive.unpack(&node_containing_dir).await?;
                 }
-                ArchiveType::Zip => archive::extract_zip(&node_containing_dir, body).await?,
+                ArchiveType::Zip => extract_zip(&node_containing_dir, body).await?,
             }
+            log::info!("Extracted Node.js to {}", node_containing_dir.display())
         }
 
         // Note: Not in the `if !valid {}` so we can populate these for existing installations
@@ -375,9 +479,30 @@ impl ManagedNodeRuntime {
         _ = fs::write(node_dir.join("blank_user_npmrc"), []).await;
         _ = fs::write(node_dir.join("blank_global_npmrc"), []).await;
 
-        anyhow::Ok(Box::new(ManagedNodeRuntime {
+        anyhow::Ok(ManagedNodeRuntime {
             installation_path: node_dir,
-        }))
+        })
+    }
+}
+
+fn path_with_node_binary_prepended(node_binary: &Path) -> Option<OsString> {
+    let existing_path = env::var_os("PATH");
+    let node_bin_dir = node_binary.parent().map(|dir| dir.as_os_str());
+    match (existing_path, node_bin_dir) {
+        (Some(existing_path), Some(node_bin_dir)) => {
+            if let Ok(joined) = env::join_paths(
+                [PathBuf::from(node_bin_dir)]
+                    .into_iter()
+                    .chain(env::split_paths(&existing_path)),
+            ) {
+                Some(joined)
+            } else {
+                Some(existing_path)
+            }
+        }
+        (Some(existing_path), None) => Some(existing_path),
+        (None, Some(node_bin_dir)) => Some(node_bin_dir.to_owned()),
+        _ => None,
     }
 }
 
@@ -394,22 +519,23 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
         let attempt = || async move {
             let node_binary = self.installation_path.join(Self::NODE_PATH);
             let npm_file = self.installation_path.join(Self::NPM_PATH);
-            let env_path = self.node_environment_path().await?;
+            let env_path = path_with_node_binary_prepended(&node_binary).unwrap_or_default();
 
-            if smol::fs::metadata(&node_binary).await.is_err() {
-                return Err(anyhow!("missing node binary file"));
-            }
-
-            if smol::fs::metadata(&npm_file).await.is_err() {
-                return Err(anyhow!("missing npm file"));
-            }
+            anyhow::ensure!(
+                smol::fs::metadata(&node_binary).await.is_ok(),
+                "missing node binary file"
+            );
+            anyhow::ensure!(
+                smol::fs::metadata(&npm_file).await.is_ok(),
+                "missing npm file"
+            );
 
             let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
 
@@ -435,22 +561,20 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
         let mut output = attempt().await;
         if output.is_err() {
             output = attempt().await;
-            if output.is_err() {
-                return Err(anyhow!(
-                    "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
-                    output.err()
-                ));
-            }
+            anyhow::ensure!(
+                output.is_ok(),
+                "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
+                output.err()
+            );
         }
 
         if let Ok(output) = &output {
-            if !output.status.success() {
-                return Err(anyhow!(
-                    "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-                    String::from_utf8_lossy(&output.stdout),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
+            anyhow::ensure!(
+                output.status.success(),
+                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
 
         output.map_err(|e| anyhow!("{e}"))
@@ -464,7 +588,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct SystemNodeRuntime {
     node: PathBuf,
     npm: PathBuf,
@@ -474,7 +598,7 @@ pub struct SystemNodeRuntime {
 
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
-    async fn new(node: PathBuf, npm: PathBuf) -> Result<Box<dyn NodeRuntimeTrait>> {
+    async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
         let output = util::command::new_smol_command(&node)
             .arg("--version")
             .output()
@@ -498,7 +622,7 @@ impl SystemNodeRuntime {
             )
         }
 
-        let scratch_dir = paths::support_dir().join("node");
+        let scratch_dir = paths::data_dir().join("node");
         fs::create_dir(&scratch_dir).await.ok();
         fs::create_dir(scratch_dir.join("cache")).await.ok();
 
@@ -512,13 +636,31 @@ impl SystemNodeRuntime {
         this.global_node_modules =
             PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
 
-        Ok(Box::new(this))
+        Ok(this)
     }
 
-    async fn detect() -> Option<Box<dyn NodeRuntimeTrait>> {
-        let node = which::which("node").ok()?;
-        let npm = which::which("npm").ok()?;
-        Self::new(node, npm).await.log_err()
+    async fn detect() -> std::result::Result<Self, DetectError> {
+        let node = which::which("node").map_err(DetectError::NotInPath)?;
+        let npm = which::which("npm").map_err(DetectError::NotInPath)?;
+        Self::new(node, npm).await.map_err(DetectError::Other)
+    }
+}
+
+enum DetectError {
+    NotInPath(which::Error),
+    Other(anyhow::Error),
+}
+
+impl Display for DetectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DetectError::NotInPath(err) => {
+                write!(f, "system Node.js wasn't found on PATH: {}", err)
+            }
+            DetectError::Other(err) => {
+                write!(f, "checking system Node.js failed with error: {}", err)
+            }
+        }
     }
 }
 
@@ -535,29 +677,28 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        proxy: Option<&Url>,
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
         let node_ca_certs = env::var(NODE_CA_CERTS_ENV_VAR).unwrap_or_else(|_| String::new());
         let mut command = util::command::new_smol_command(self.npm.clone());
+        let path = path_with_node_binary_prepended(&self.node).unwrap_or_default();
         command
             .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("PATH", path)
             .env(NODE_CA_CERTS_ENV_VAR, node_ca_certs)
             .arg(subcommand)
             .args(["--cache".into(), self.scratch_dir.join("cache")])
             .args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;
-        if !output.status.success() {
-            return Err(anyhow!(
-                "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-
+        anyhow::ensure!(
+            output.status.success(),
+            "failed to execute npm {subcommand} subcommand:\nstdout: {:?}\nstderr: {:?}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(output)
     }
 
@@ -599,25 +740,28 @@ pub async fn read_package_installed_version(
     Ok(Some(package_json.version))
 }
 
-pub struct UnavailableNodeRuntime;
+#[derive(Clone)]
+pub struct UnavailableNodeRuntime {
+    error_message: Arc<String>,
+}
 
 #[async_trait::async_trait]
 impl NodeRuntimeTrait for UnavailableNodeRuntime {
     fn boxed_clone(&self) -> Box<dyn NodeRuntimeTrait> {
-        Box::new(UnavailableNodeRuntime)
+        Box::new(self.clone())
     }
     fn binary_path(&self) -> Result<PathBuf> {
-        bail!("binary_path: no node runtime available")
+        bail!("{}", self.error_message)
     }
 
     async fn run_npm_subcommand(
         &self,
         _: Option<&Path>,
-        _: Option<&Uri>,
+        _: Option<&Url>,
         _: &str,
         _: &[&str],
     ) -> anyhow::Result<Output> {
-        bail!("run_npm_subcommand: no node runtime available")
+        bail!("{}", self.error_message)
     }
 
     async fn npm_package_installed_version(
@@ -625,14 +769,14 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
         _local_package_directory: &Path,
         _: &str,
     ) -> Result<Option<String>> {
-        bail!("npm_package_installed_version: no node runtime available")
+        bail!("{}", self.error_message)
     }
 }
 
 fn configure_npm_command(
     command: &mut smol::process::Command,
     directory: Option<&Path>,
-    proxy: Option<&Uri>,
+    proxy: Option<&Url>,
 ) {
     if let Some(directory) = directory {
         command.current_dir(directory);
@@ -655,14 +799,14 @@ fn configure_npm_command(
     #[cfg(windows)]
     {
         // SYSTEMROOT is a critical environment variables for Windows.
-        if let Some(val) = std::env::var("SYSTEMROOT")
+        if let Some(val) = env::var("SYSTEMROOT")
             .context("Missing environment variable: SYSTEMROOT!")
             .log_err()
         {
             command.env("SYSTEMROOT", val);
         }
         // Without ComSpec, the post-install will always fail.
-        if let Some(val) = std::env::var("ComSpec")
+        if let Some(val) = env::var("ComSpec")
             .context("Missing environment variable: ComSpec!")
             .log_err()
         {

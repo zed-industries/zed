@@ -8,9 +8,9 @@ mod tests;
 
 use collections::HashMap;
 pub use ids::*;
-use rpc::LanguageModelProvider;
 pub use seed::*;
 pub use tables::*;
+use zed_llm_client::LanguageModelProvider;
 
 #[cfg(test)]
 pub use tests::TestLlmDb;
@@ -19,8 +19,7 @@ use usage_measure::UsageMeasure;
 use std::future::Future;
 use std::sync::Arc;
 
-use anyhow::anyhow;
-pub use queries::usages::{ActiveUserCount, TokenUsage};
+use anyhow::Context;
 pub use sea_orm::ConnectOptions;
 use sea_orm::prelude::*;
 use sea_orm::{
@@ -94,7 +93,7 @@ impl LlmDatabase {
         Ok(self
             .models
             .get(&(provider, name.to_string()))
-            .ok_or_else(|| anyhow!("unknown model {provider:?}:{name}"))?)
+            .with_context(|| format!("unknown model {provider:?}:{name}"))?)
     }
 
     pub fn model_by_id(&self, id: ModelId) -> Result<&model::Model> {
@@ -102,7 +101,7 @@ impl LlmDatabase {
             .models
             .values()
             .find(|model| model.id == id)
-            .ok_or_else(|| anyhow!("no model for ID {id:?}"))?)
+            .with_context(|| format!("no model for ID {id:?}"))?)
     }
 
     pub fn options(&self) -> &ConnectOptions {
@@ -143,11 +142,9 @@ impl LlmDatabase {
 
         let mut tx = Arc::new(Some(tx));
         let result = f(TransactionHandle(tx.clone())).await;
-        let Some(tx) = Arc::get_mut(&mut tx).and_then(|tx| tx.take()) else {
-            return Err(anyhow!(
-                "couldn't complete transaction because it's still in use"
-            ))?;
-        };
+        let tx = Arc::get_mut(&mut tx)
+            .and_then(|tx| tx.take())
+            .context("couldn't complete transaction because it's still in use")?;
 
         Ok((tx, result))
     }

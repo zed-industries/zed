@@ -1,14 +1,14 @@
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
+use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use lsp::LanguageServerBinary;
@@ -23,8 +23,8 @@ use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
 
+use parking_lot::Mutex;
 use std::str::FromStr;
-use std::sync::Mutex;
 use std::{
     any::Any,
     borrow::Cow,
@@ -106,6 +106,24 @@ impl LspAdapter for PythonLspAdapter {
         Self::SERVER_NAME.clone()
     }
 
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        // Provide minimal initialization options
+        // Virtual environment configuration will be handled through workspace configuration
+        Ok(Some(json!({
+            "python": {
+                "analysis": {
+                    "autoSearchPaths": true,
+                    "useLibraryCodeForTypes": true,
+                    "autoImportCompletions": true
+                }
+            }
+        })))
+    }
+
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -128,9 +146,10 @@ impl LspAdapter for PythonLspAdapter {
 
             let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
 
+            let env = delegate.shell_env().await;
             Some(LanguageServerBinary {
                 path: node,
-                env: None,
+                env: Some(env),
                 arguments: server_binary_arguments(&path),
             })
         }
@@ -151,7 +170,7 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         latest_version: Box<dyn 'static + Send + Any>,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
@@ -163,9 +182,10 @@ impl LspAdapter for PythonLspAdapter {
             )
             .await?;
 
+        let env = delegate.shell_env().await;
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
-            env: None,
+            env: Some(env),
             arguments: server_binary_arguments(&server_path),
         })
     }
@@ -174,7 +194,7 @@ impl LspAdapter for PythonLspAdapter {
         &self,
         version: &(dyn 'static + Send + Any),
         container_dir: &PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let version = version.downcast_ref::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
@@ -192,9 +212,10 @@ impl LspAdapter for PythonLspAdapter {
         if should_install_language_server {
             None
         } else {
+            let env = delegate.shell_env().await;
             Some(LanguageServerBinary {
                 path: self.node.binary_path().await.ok()?,
-                env: None,
+                env: Some(env),
                 arguments: server_binary_arguments(&server_path),
             })
         }
@@ -203,9 +224,11 @@ impl LspAdapter for PythonLspAdapter {
     async fn cached_server_binary(
         &self,
         container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &self.node).await
+        let mut binary = get_cached_server_binary(container_dir, &self.node).await?;
+        binary.env = Some(delegate.shell_env().await);
+        Some(binary)
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
@@ -308,22 +331,64 @@ impl LspAdapter for PythonLspAdapter {
                     .and_then(|s| s.settings.clone())
                     .unwrap_or_default();
 
-            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            // If we have a detected toolchain, configure Pyright to use it
             if let Some(toolchain) = toolchain {
                 if user_settings.is_null() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
-                if let Some(python) = object
+
+                let interpreter_path = toolchain.path.to_string();
+
+                // Detect if this is a virtual environment
+                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
+                    if let Some(venv_dir) = interpreter_dir.parent() {
+                        // Check if this looks like a virtual environment
+                        if venv_dir.join("pyvenv.cfg").exists()
+                            || venv_dir.join("bin/activate").exists()
+                            || venv_dir.join("Scripts/activate.bat").exists()
+                        {
+                            // Set venvPath and venv at the root level
+                            // This matches the format of a pyrightconfig.json file
+                            if let Some(parent) = venv_dir.parent() {
+                                // Use relative path if the venv is inside the workspace
+                                let venv_path = if parent == adapter.worktree_root_path() {
+                                    ".".to_string()
+                                } else {
+                                    parent.to_string_lossy().into_owned()
+                                };
+                                object.insert("venvPath".to_string(), Value::String(venv_path));
+                            }
+
+                            if let Some(venv_name) = venv_dir.file_name() {
+                                object.insert(
+                                    "venv".to_owned(),
+                                    Value::String(venv_name.to_string_lossy().into_owned()),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Always set the python interpreter path
+                // Get or create the python section
+                let python = object
                     .entry("python")
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
-                {
-                    python
-                        .entry("pythonPath")
-                        .or_insert(Value::String(toolchain.path.into()));
-                }
+                    .unwrap();
+
+                // Set both pythonPath and defaultInterpreterPath for compatibility
+                python.insert(
+                    "pythonPath".to_owned(),
+                    Value::String(interpreter_path.clone()),
+                );
+                python.insert(
+                    "defaultInterpreterPath".to_owned(),
+                    Value::String(interpreter_path),
+                );
             }
+
             user_settings
         })
     }
@@ -357,6 +422,9 @@ const PYTHON_TEST_TARGET_TASK_VARIABLE: VariableName =
 const PYTHON_ACTIVE_TOOLCHAIN_PATH: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN"));
 
+const PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW: VariableName =
+    VariableName::Custom(Cow::Borrowed("PYTHON_ACTIVE_ZED_TOOLCHAIN_RAW"));
+
 const PYTHON_MODULE_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("PYTHON_MODULE_NAME"));
 
@@ -364,38 +432,49 @@ impl ContextProvider for PythonContextProvider {
     fn build_context(
         &self,
         variables: &task::TaskVariables,
-        location: &project::Location,
+        location: ContextLocation<'_>,
         _: Option<HashMap<String, String>>,
         toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<task::TaskVariables>> {
-        let test_target = match selected_test_runner(location.buffer.read(cx).file(), cx) {
-            TestRunner::UNITTEST => self.build_unittest_target(variables),
-            TestRunner::PYTEST => self.build_pytest_target(variables),
-        };
+        let test_target =
+            match selected_test_runner(location.file_location.buffer.read(cx).file(), cx) {
+                TestRunner::UNITTEST => self.build_unittest_target(variables),
+                TestRunner::PYTEST => self.build_pytest_target(variables),
+            };
 
         let module_target = self.build_module_target(variables);
-        let worktree_id = location.buffer.read(cx).file().map(|f| f.worktree_id(cx));
+        let location_file = location.file_location.buffer.read(cx).file().cloned();
+        let worktree_id = location_file.as_ref().map(|f| f.worktree_id(cx));
 
         cx.spawn(async move |cx| {
-            let active_toolchain = if let Some(worktree_id) = worktree_id {
+            let raw_toolchain = if let Some(worktree_id) = worktree_id {
+                let file_path = location_file
+                    .as_ref()
+                    .and_then(|f| f.path().parent())
+                    .map(Arc::from)
+                    .unwrap_or_else(|| Arc::from("".as_ref()));
+
                 toolchains
-                    .active_toolchain(worktree_id, Arc::from("".as_ref()), "Python".into(), cx)
+                    .active_toolchain(worktree_id, file_path, "Python".into(), cx)
                     .await
                     .map_or_else(
-                        || "python3".to_owned(),
-                        |toolchain| format!("\"{}\"", toolchain.path),
+                        || String::from("python3"),
+                        |toolchain| toolchain.path.to_string(),
                     )
             } else {
                 String::from("python3")
             };
+
+            let active_toolchain = format!("\"{raw_toolchain}\"");
             let toolchain = (PYTHON_ACTIVE_TOOLCHAIN_PATH, active_toolchain);
+            let raw_toolchain_var = (PYTHON_ACTIVE_TOOLCHAIN_PATH_RAW, raw_toolchain);
 
             Ok(task::TaskVariables::from_iter(
                 test_target
                     .into_iter()
                     .chain(module_target.into_iter())
-                    .chain([toolchain]),
+                    .chain([toolchain, raw_toolchain_var]),
             ))
         })
     }
@@ -416,6 +495,7 @@ impl ContextProvider for PythonContextProvider {
                     "-c".to_owned(),
                     VariableName::SelectedText.template_value_with_whitespace(),
                 ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
             // Execute an entire file
@@ -423,6 +503,7 @@ impl ContextProvider for PythonContextProvider {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 ..TaskTemplate::default()
             },
             // Execute a file as module
@@ -433,6 +514,7 @@ impl ContextProvider for PythonContextProvider {
                     "-m".to_owned(),
                     PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
                 ],
+                cwd: Some("$ZED_WORKTREE_ROOT".into()),
                 tags: vec!["python-module-main-method".to_owned()],
                 ..TaskTemplate::default()
             },
@@ -450,6 +532,7 @@ impl ContextProvider for PythonContextProvider {
                             "unittest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
@@ -465,6 +548,7 @@ impl ContextProvider for PythonContextProvider {
                             "python-unittest-class".to_owned(),
                             "python-unittest-method".to_owned(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                 ]
@@ -480,6 +564,7 @@ impl ContextProvider for PythonContextProvider {
                             "pytest".to_owned(),
                             VariableName::File.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         ..TaskTemplate::default()
                     },
                     // Run test(s) for a specific target within a file
@@ -491,6 +576,7 @@ impl ContextProvider for PythonContextProvider {
                             "pytest".to_owned(),
                             PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
+                        cwd: Some("$ZED_WORKTREE_ROOT".into()),
                         tags: vec![
                             "python-pytest-class".to_owned(),
                             "python-pytest-method".to_owned(),
@@ -672,9 +758,13 @@ fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
 
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
+    fn manifest_name(&self) -> language::ManifestName {
+        ManifestName::from(SharedString::new_static("pyproject.toml"))
+    }
     async fn list(
         &self,
         worktree_root: PathBuf,
+        subroot_relative_path: Option<Arc<Path>>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();
@@ -685,7 +775,14 @@ impl ToolchainLister for PythonToolchainProvider {
             &environment,
         );
         let mut config = Configuration::default();
-        config.workspace_directories = Some(vec![worktree_root.clone()]);
+
+        let mut directories = vec![worktree_root.clone()];
+        if let Some(subroot_relative_path) = subroot_relative_path {
+            debug_assert!(subroot_relative_path.is_relative());
+            directories.push(worktree_root.join(subroot_relative_path));
+        }
+
+        config.workspace_directories = Some(directories);
         for locator in locators.iter() {
             locator.configure(&config);
         }
@@ -696,7 +793,6 @@ impl ToolchainLister for PythonToolchainProvider {
         let mut toolchains = reporter
             .environments
             .lock()
-            .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
 
         let wr = worktree_root;
@@ -848,7 +944,7 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
     }
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        if self.global_search_locations.lock().unwrap().is_empty() {
+        if self.global_search_locations.lock().is_empty() {
             let mut paths =
                 std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .collect::<Vec<PathBuf>>();
@@ -865,12 +961,9 @@ impl pet_core::os_environment::Environment for EnvironmentApi<'_> {
                 .filter(|p| p.exists())
                 .collect::<Vec<PathBuf>>();
 
-            self.global_search_locations
-                .lock()
-                .unwrap()
-                .append(&mut paths);
+            self.global_search_locations.lock().append(&mut paths);
         }
-        self.global_search_locations.lock().unwrap().clone()
+        self.global_search_locations.lock().clone()
     }
 }
 
@@ -887,11 +980,11 @@ impl PyLspAdapter {
     async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
         let python_path = Self::find_base_python(delegate)
             .await
-            .ok_or_else(|| anyhow!("Could not find Python installation for PyLSP"))?;
+            .context("Could not find Python installation for PyLSP")?;
         let work_dir = delegate
             .language_server_download_dir(&Self::SERVER_NAME)
             .await
-            .ok_or_else(|| anyhow!("Could not get working directory for PyLSP"))?;
+            .context("Could not get working directory for PyLSP")?;
         let mut path = PathBuf::from(work_dir.as_ref());
         path.push("pylsp-venv");
         if !path.exists() {
@@ -991,6 +1084,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1001,6 +1095,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1011,6 +1106,7 @@ impl LspAdapter for PyLspAdapter {
             util::command::new_smol_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
+                .arg("-U")
                 .output()
                 .await?
                 .status
@@ -1237,7 +1333,7 @@ mod tests {
                 "def a():\n  \n  if a:\n    b()\n  else:\n    "
             );
 
-            // indent after an open paren. the closing  paren is not indented
+            // indent after an open paren. the closing paren is not indented
             // because there is another token before it on the same line.
             append(&mut buffer, "foo(\n1)", cx);
             assert_eq!(
@@ -1288,7 +1384,7 @@ mod tests {
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);
-            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
+            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n");
 
             buffer
         });

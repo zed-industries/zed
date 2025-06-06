@@ -2,7 +2,7 @@ use crate::{
     call_settings::CallSettings,
     participant::{LocalParticipant, ParticipantLocation, RemoteParticipant},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use audio::{Audio, Sound};
 use client::{
     ChannelId, Client, ParticipantIndex, TypedEnvelope, User, UserStore,
@@ -165,7 +165,7 @@ impl Room {
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
             let response = client.request(proto::CreateRoom {}).await?;
-            let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+            let room_proto = response.room.context("invalid room")?;
             let room = cx.new(|cx| {
                 let mut room = Self::new(
                     room_proto.id,
@@ -270,7 +270,7 @@ impl Room {
         user_store: Entity<UserStore>,
         mut cx: AsyncApp,
     ) -> Result<Entity<Self>> {
-        let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+        let room_proto = response.room.context("invalid room")?;
         let room = cx.new(|cx| {
             Self::new(
                 room_proto.id,
@@ -360,7 +360,7 @@ impl Room {
                 log::info!("detected client disconnection");
 
                 this.upgrade()
-                    .ok_or_else(|| anyhow!("room was dropped"))?
+                    .context("room was dropped")?
                     .update(cx, |this, cx| {
                         this.status = RoomStatus::Rejoining;
                         cx.notify();
@@ -428,9 +428,7 @@ impl Room {
             log::info!("reconnection failed, leaving room");
             this.update(cx, |this, cx| this.leave(cx))?.await?;
         }
-        Err(anyhow!(
-            "can't reconnect to room: client failed to re-establish connection"
-        ))
+        anyhow::bail!("can't reconnect to room: client failed to re-establish connection");
     }
 
     fn rejoin(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -494,7 +492,7 @@ impl Room {
             let response = response.await?;
             let message_id = response.message_id;
             let response = response.payload;
-            let room_proto = response.room.ok_or_else(|| anyhow!("invalid room"))?;
+            let room_proto = response.room.context("invalid room")?;
             this.update(cx, |this, cx| {
                 this.status = RoomStatus::Online;
                 this.apply_room_update(room_proto, cx)?;
@@ -645,10 +643,7 @@ impl Room {
         envelope: TypedEnvelope<proto::RoomUpdated>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let room = envelope
-            .payload
-            .room
-            .ok_or_else(|| anyhow!("invalid room"))?;
+        let room = envelope.payload.room.context("invalid room")?;
         this.update(&mut cx, |this, cx| this.apply_room_update(room, cx))?
     }
 
@@ -937,15 +932,18 @@ impl Room {
             } => {
                 let user_id = participant.identity().0.parse()?;
                 let track_id = track.sid();
-                let participant = self.remote_participants.get_mut(&user_id).ok_or_else(|| {
-                    anyhow!(
-                        "{:?} subscribed to track by unknown participant {user_id}",
-                        self.client.user_id()
-                    )
-                })?;
+                let participant =
+                    self.remote_participants
+                        .get_mut(&user_id)
+                        .with_context(|| {
+                            format!(
+                                "{:?} subscribed to track by unknown participant {user_id}",
+                                self.client.user_id()
+                            )
+                        })?;
                 if self.live_kit.as_ref().map_or(true, |kit| kit.deafened) {
-                    if matches!(track, livekit_client::RemoteTrack::Audio(_)) {
-                        track.set_enabled(false, cx);
+                    if publication.is_audio() {
+                        publication.set_enabled(false, cx);
                     }
                 }
                 match track {
@@ -972,12 +970,15 @@ impl Room {
                 track, participant, ..
             } => {
                 let user_id = participant.identity().0.parse()?;
-                let participant = self.remote_participants.get_mut(&user_id).ok_or_else(|| {
-                    anyhow!(
-                        "{:?}, unsubscribed from track by unknown participant {user_id}",
-                        self.client.user_id()
-                    )
-                })?;
+                let participant =
+                    self.remote_participants
+                        .get_mut(&user_id)
+                        .with_context(|| {
+                            format!(
+                                "{:?}, unsubscribed from track by unknown participant {user_id}",
+                                self.client.user_id()
+                            )
+                        })?;
                 match track {
                     livekit_client::RemoteTrack::Audio(track) => {
                         participant.audio_tracks.remove(&track.sid());
@@ -1324,7 +1325,7 @@ impl Room {
                 let live_kit = this
                     .live_kit
                     .as_mut()
-                    .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
+                    .context("live-kit was not initialized")?;
 
                 let canceled = if let LocalTrack::Pending {
                     publish_id: cur_publish_id,
@@ -1389,7 +1390,7 @@ impl Room {
 
         cx.spawn(async move |this, cx| {
             let sources = sources.await??;
-            let source = sources.first().ok_or_else(|| anyhow!("no display found"))?;
+            let source = sources.first().context("no display found")?;
 
             let publication = participant.publish_screenshare_track(&**source, cx).await;
 
@@ -1397,7 +1398,7 @@ impl Room {
                 let live_kit = this
                     .live_kit
                     .as_mut()
-                    .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
+                    .context("live-kit was not initialized")?;
 
                 let canceled = if let LocalTrack::Pending {
                     publish_id: cur_publish_id,
@@ -1485,16 +1486,14 @@ impl Room {
     }
 
     pub fn unshare_screen(&mut self, cx: &mut Context<Self>) -> Result<()> {
-        if self.status.is_offline() {
-            return Err(anyhow!("room is offline"));
-        }
+        anyhow::ensure!(!self.status.is_offline(), "room is offline");
 
         let live_kit = self
             .live_kit
             .as_mut()
-            .ok_or_else(|| anyhow!("live-kit was not initialized"))?;
+            .context("live-kit was not initialized")?;
         match mem::take(&mut live_kit.screen_track) {
-            LocalTrack::None => Err(anyhow!("screen was not shared")),
+            LocalTrack::None => anyhow::bail!("screen was not shared"),
             LocalTrack::Pending { .. } => {
                 cx.notify();
                 Ok(())

@@ -2,12 +2,12 @@
 
 pub use ::proto::*;
 
-use anyhow::anyhow;
 use async_tungstenite::tungstenite::Message as WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
 use proto::Message as _;
 use std::time::Instant;
 use std::{fmt::Debug, io};
+use zstd::zstd_safe::WriteBuf;
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -19,7 +19,6 @@ pub struct MessageStream<S> {
     encoding_buffer: Vec<u8>,
 }
 
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum Message {
     Envelope(Envelope),
@@ -40,7 +39,7 @@ impl<S> MessageStream<S>
 where
     S: futures::Sink<WebSocketMessage, Error = anyhow::Error> + Unpin,
 {
-    pub async fn write(&mut self, message: Message) -> Result<(), anyhow::Error> {
+    pub async fn write(&mut self, message: Message) -> anyhow::Result<()> {
         #[cfg(any(test, feature = "test-support"))]
         const COMPRESSION_LEVEL: i32 = -7;
 
@@ -59,7 +58,9 @@ where
 
                 self.encoding_buffer.clear();
                 self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
-                self.stream.send(WebSocketMessage::Binary(buffer)).await?;
+                self.stream
+                    .send(WebSocketMessage::Binary(buffer.into()))
+                    .await?;
             }
             Message::Ping => {
                 self.stream
@@ -79,9 +80,9 @@ where
 
 impl<S> MessageStream<S>
 where
-    S: futures::Stream<Item = Result<WebSocketMessage, anyhow::Error>> + Unpin,
+    S: futures::Stream<Item = anyhow::Result<WebSocketMessage>> + Unpin,
 {
-    pub async fn read(&mut self) -> Result<(Message, Instant), anyhow::Error> {
+    pub async fn read(&mut self) -> anyhow::Result<(Message, Instant)> {
         while let Some(bytes) = self.stream.next().await {
             let received_at = Instant::now();
             match bytes? {
@@ -100,7 +101,7 @@ where
                 _ => {}
             }
         }
-        Err(anyhow!("connection closed"))
+        anyhow::bail!("connection closed");
     }
 }
 
@@ -111,7 +112,7 @@ mod tests {
     #[gpui::test]
     async fn test_buffer_size() {
         let (tx, rx) = futures::channel::mpsc::unbounded();
-        let mut sink = MessageStream::new(tx.sink_map_err(|_| anyhow!("")));
+        let mut sink = MessageStream::new(tx.sink_map_err(|_| anyhow::anyhow!("")));
         sink.write(Message::Envelope(Envelope {
             payload: Some(envelope::Payload::UpdateWorktree(UpdateWorktree {
                 root_name: "abcdefg".repeat(10),

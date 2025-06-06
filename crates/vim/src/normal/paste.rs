@@ -28,6 +28,7 @@ impl Vim {
         self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
 
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
@@ -123,7 +124,20 @@ impl Vim {
                     }
 
                     let display_range = if !selection.is_empty() {
-                        selection.start..selection.end
+                        // If vim is in VISUAL LINE mode and the column for the
+                        // selection's end point is 0, that means that the
+                        // cursor is at the newline character (\n) at the end of
+                        // the line. In this situation we'll want to move one
+                        // position to the left, ensuring we don't join the last
+                        // line of the selection with the line directly below.
+                        let end_point =
+                            if vim.mode == Mode::VisualLine && selection.end.column() == 0 {
+                                movement::left(&display_map, selection.end)
+                            } else {
+                                selection.end
+                            };
+
+                        selection.start..end_point
                     } else if line_mode {
                         let point = if before {
                             movement::line_beginning(&display_map, selection.start, false)
@@ -203,7 +217,8 @@ impl Vim {
                 })
             });
         });
-        self.switch_mode(Mode::Normal, true, window, cx);
+
+        self.switch_mode(self.default_mode(cx), true, window, cx);
     }
 
     pub fn replace_with_register_object(
@@ -246,6 +261,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -257,7 +273,13 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
-                        motion.expand_selection(map, selection, times, &text_layout_details);
+                        motion.expand_selection(
+                            map,
+                            selection,
+                            times,
+                            &text_layout_details,
+                            forced_motion,
+                        );
                     });
                 });
 
@@ -544,6 +566,17 @@ mod test {
             ˇfox jumps over
             the lazy dog"});
         cx.shared_clipboard().await.assert_eq("The quick brown\n");
+
+        // Copy line and paste in visual mode, with cursor on newline character.
+        cx.set_shared_state(indoc! {"
+            ˇThe quick brown
+            fox jumps over
+            the lazy dog"})
+            .await;
+        cx.simulate_shared_keystrokes("y y shift-v j $ p").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            ˇThe quick brown
+            the lazy dog"});
     }
 
     #[gpui::test]
@@ -908,7 +941,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("g r i w");
+        cx.simulate_keystrokes("g shift-r i w");
         cx.assert_state(
             indoc! {"
                 fish fisˇh
@@ -916,7 +949,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("j b g r e");
+        cx.simulate_keystrokes("j b g shift-r e");
         cx.assert_state(
             indoc! {"
             fish fish
@@ -936,7 +969,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("v i w g r");
+        cx.simulate_keystrokes("v i w g shift-r");
         cx.assert_state(
             indoc! {"
                 fish fisˇh
@@ -944,7 +977,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("g r r");
+        cx.simulate_keystrokes("g shift-r r");
         cx.assert_state(
             indoc! {"
                 fisˇh
@@ -952,7 +985,7 @@ mod test {
                 "},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("j w g r $");
+        cx.simulate_keystrokes("j w g shift-r $");
         cx.assert_state(
             indoc! {"
                 fish
@@ -977,7 +1010,7 @@ mod test {
         );
         cx.simulate_keystrokes("y i w");
         cx.simulate_keystrokes("w");
-        cx.simulate_keystrokes("g r i w");
+        cx.simulate_keystrokes("g shift-r i w");
         cx.assert_state(
             indoc! {"
                 fish fisˇh

@@ -106,7 +106,17 @@ impl PlatformDispatcher for LinuxDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        self.main_sender.send(runnable).ok();
+        self.main_sender.send(runnable).unwrap_or_else(|runnable| {
+            // NOTE: Runnable may wrap a Future that is !Send.
+            //
+            // This is usually safe because we only poll it on the main thread.
+            // However if the send fails, we know that:
+            // 1. main_receiver has been dropped (which implies the app is shutting down)
+            // 2. we are on a background thread.
+            // It is not safe to drop something !Send on the wrong thread, and
+            // the app will exit soon anyway, so we must forget the runnable.
+            std::mem::forget(runnable);
+        });
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {

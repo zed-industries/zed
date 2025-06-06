@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 /// The mappings defined in this file where created from reading the alacritty source
 use alacritty_terminal::term::TermMode;
 use gpui::Keystroke;
@@ -41,162 +43,138 @@ impl AlacModifiers {
     }
 }
 
-pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> Option<String> {
+pub fn to_esc_str(
+    keystroke: &Keystroke,
+    mode: &TermMode,
+    alt_is_meta: bool,
+) -> Option<Cow<'static, str>> {
     let modifiers = AlacModifiers::new(keystroke);
 
     // Manual Bindings including modifiers
-    let manual_esc_str = match (keystroke.key.as_ref(), &modifiers) {
+    let manual_esc_str: Option<&'static str> = match (keystroke.key.as_ref(), &modifiers) {
         //Basic special keys
-        ("tab", AlacModifiers::None) => Some("\x09".to_string()),
-        ("escape", AlacModifiers::None) => Some("\x1b".to_string()),
-        ("enter", AlacModifiers::None) => Some("\x0d".to_string()),
-        ("enter", AlacModifiers::Shift) => Some("\x0d".to_string()),
-        ("enter", AlacModifiers::Alt) => Some("\x1b\x0d".to_string()),
-        ("backspace", AlacModifiers::None) => Some("\x7f".to_string()),
+        ("tab", AlacModifiers::None) => Some("\x09"),
+        ("escape", AlacModifiers::None) => Some("\x1b"),
+        ("enter", AlacModifiers::None) => Some("\x0d"),
+        ("enter", AlacModifiers::Shift) => Some("\x0d"),
+        ("enter", AlacModifiers::Alt) => Some("\x1b\x0d"),
+        ("backspace", AlacModifiers::None) => Some("\x7f"),
         //Interesting escape codes
-        ("tab", AlacModifiers::Shift) => Some("\x1b[Z".to_string()),
-        ("backspace", AlacModifiers::Ctrl) => Some("\x08".to_string()),
-        ("backspace", AlacModifiers::Alt) => Some("\x1b\x7f".to_string()),
-        ("backspace", AlacModifiers::Shift) => Some("\x7f".to_string()),
-        ("space", AlacModifiers::Ctrl) => Some("\x00".to_string()),
-        ("home", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
-            Some("\x1b[1;2H".to_string())
-        }
-        ("end", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
-            Some("\x1b[1;2F".to_string())
-        }
+        ("tab", AlacModifiers::Shift) => Some("\x1b[Z"),
+        ("backspace", AlacModifiers::Ctrl) => Some("\x08"),
+        ("backspace", AlacModifiers::Alt) => Some("\x1b\x7f"),
+        ("backspace", AlacModifiers::Shift) => Some("\x7f"),
+        ("space", AlacModifiers::Ctrl) => Some("\x00"),
+        ("home", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => Some("\x1b[1;2H"),
+        ("end", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => Some("\x1b[1;2F"),
         ("pageup", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
-            Some("\x1b[5;2~".to_string())
+            Some("\x1b[5;2~")
         }
         ("pagedown", AlacModifiers::Shift) if mode.contains(TermMode::ALT_SCREEN) => {
-            Some("\x1b[6;2~".to_string())
+            Some("\x1b[6;2~")
         }
-        ("home", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1bOH".to_string())
-        }
-        ("home", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1b[H".to_string())
-        }
-        ("end", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1bOF".to_string())
-        }
-        ("end", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1b[F".to_string())
-        }
-        ("up", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1bOA".to_string())
-        }
-        ("up", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1b[A".to_string())
-        }
-        ("down", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1bOB".to_string())
-        }
-        ("down", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1b[B".to_string())
-        }
-        ("right", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1bOC".to_string())
-        }
-        ("right", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1b[C".to_string())
-        }
-        ("left", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1bOD".to_string())
-        }
-        ("left", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => {
-            Some("\x1b[D".to_string())
-        }
-        ("back", AlacModifiers::None) => Some("\x7f".to_string()),
-        ("insert", AlacModifiers::None) => Some("\x1b[2~".to_string()),
-        ("delete", AlacModifiers::None) => Some("\x1b[3~".to_string()),
-        ("pageup", AlacModifiers::None) => Some("\x1b[5~".to_string()),
-        ("pagedown", AlacModifiers::None) => Some("\x1b[6~".to_string()),
-        ("f1", AlacModifiers::None) => Some("\x1bOP".to_string()),
-        ("f2", AlacModifiers::None) => Some("\x1bOQ".to_string()),
-        ("f3", AlacModifiers::None) => Some("\x1bOR".to_string()),
-        ("f4", AlacModifiers::None) => Some("\x1bOS".to_string()),
-        ("f5", AlacModifiers::None) => Some("\x1b[15~".to_string()),
-        ("f6", AlacModifiers::None) => Some("\x1b[17~".to_string()),
-        ("f7", AlacModifiers::None) => Some("\x1b[18~".to_string()),
-        ("f8", AlacModifiers::None) => Some("\x1b[19~".to_string()),
-        ("f9", AlacModifiers::None) => Some("\x1b[20~".to_string()),
-        ("f10", AlacModifiers::None) => Some("\x1b[21~".to_string()),
-        ("f11", AlacModifiers::None) => Some("\x1b[23~".to_string()),
-        ("f12", AlacModifiers::None) => Some("\x1b[24~".to_string()),
-        ("f13", AlacModifiers::None) => Some("\x1b[25~".to_string()),
-        ("f14", AlacModifiers::None) => Some("\x1b[26~".to_string()),
-        ("f15", AlacModifiers::None) => Some("\x1b[28~".to_string()),
-        ("f16", AlacModifiers::None) => Some("\x1b[29~".to_string()),
-        ("f17", AlacModifiers::None) => Some("\x1b[31~".to_string()),
-        ("f18", AlacModifiers::None) => Some("\x1b[32~".to_string()),
-        ("f19", AlacModifiers::None) => Some("\x1b[33~".to_string()),
-        ("f20", AlacModifiers::None) => Some("\x1b[34~".to_string()),
+        ("home", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => Some("\x1bOH"),
+        ("home", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => Some("\x1b[H"),
+        ("end", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => Some("\x1bOF"),
+        ("end", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => Some("\x1b[F"),
+        ("up", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => Some("\x1bOA"),
+        ("up", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => Some("\x1b[A"),
+        ("down", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => Some("\x1bOB"),
+        ("down", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => Some("\x1b[B"),
+        ("right", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => Some("\x1bOC"),
+        ("right", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => Some("\x1b[C"),
+        ("left", AlacModifiers::None) if mode.contains(TermMode::APP_CURSOR) => Some("\x1bOD"),
+        ("left", AlacModifiers::None) if !mode.contains(TermMode::APP_CURSOR) => Some("\x1b[D"),
+        ("back", AlacModifiers::None) => Some("\x7f"),
+        ("insert", AlacModifiers::None) => Some("\x1b[2~"),
+        ("delete", AlacModifiers::None) => Some("\x1b[3~"),
+        ("pageup", AlacModifiers::None) => Some("\x1b[5~"),
+        ("pagedown", AlacModifiers::None) => Some("\x1b[6~"),
+        ("f1", AlacModifiers::None) => Some("\x1bOP"),
+        ("f2", AlacModifiers::None) => Some("\x1bOQ"),
+        ("f3", AlacModifiers::None) => Some("\x1bOR"),
+        ("f4", AlacModifiers::None) => Some("\x1bOS"),
+        ("f5", AlacModifiers::None) => Some("\x1b[15~"),
+        ("f6", AlacModifiers::None) => Some("\x1b[17~"),
+        ("f7", AlacModifiers::None) => Some("\x1b[18~"),
+        ("f8", AlacModifiers::None) => Some("\x1b[19~"),
+        ("f9", AlacModifiers::None) => Some("\x1b[20~"),
+        ("f10", AlacModifiers::None) => Some("\x1b[21~"),
+        ("f11", AlacModifiers::None) => Some("\x1b[23~"),
+        ("f12", AlacModifiers::None) => Some("\x1b[24~"),
+        ("f13", AlacModifiers::None) => Some("\x1b[25~"),
+        ("f14", AlacModifiers::None) => Some("\x1b[26~"),
+        ("f15", AlacModifiers::None) => Some("\x1b[28~"),
+        ("f16", AlacModifiers::None) => Some("\x1b[29~"),
+        ("f17", AlacModifiers::None) => Some("\x1b[31~"),
+        ("f18", AlacModifiers::None) => Some("\x1b[32~"),
+        ("f19", AlacModifiers::None) => Some("\x1b[33~"),
+        ("f20", AlacModifiers::None) => Some("\x1b[34~"),
         // NumpadEnter, Action::Esc("\n".into());
         //Mappings for caret notation keys
-        ("a", AlacModifiers::Ctrl) => Some("\x01".to_string()), //1
-        ("A", AlacModifiers::CtrlShift) => Some("\x01".to_string()), //1
-        ("b", AlacModifiers::Ctrl) => Some("\x02".to_string()), //2
-        ("B", AlacModifiers::CtrlShift) => Some("\x02".to_string()), //2
-        ("c", AlacModifiers::Ctrl) => Some("\x03".to_string()), //3
-        ("C", AlacModifiers::CtrlShift) => Some("\x03".to_string()), //3
-        ("d", AlacModifiers::Ctrl) => Some("\x04".to_string()), //4
-        ("D", AlacModifiers::CtrlShift) => Some("\x04".to_string()), //4
-        ("e", AlacModifiers::Ctrl) => Some("\x05".to_string()), //5
-        ("E", AlacModifiers::CtrlShift) => Some("\x05".to_string()), //5
-        ("f", AlacModifiers::Ctrl) => Some("\x06".to_string()), //6
-        ("F", AlacModifiers::CtrlShift) => Some("\x06".to_string()), //6
-        ("g", AlacModifiers::Ctrl) => Some("\x07".to_string()), //7
-        ("G", AlacModifiers::CtrlShift) => Some("\x07".to_string()), //7
-        ("h", AlacModifiers::Ctrl) => Some("\x08".to_string()), //8
-        ("H", AlacModifiers::CtrlShift) => Some("\x08".to_string()), //8
-        ("i", AlacModifiers::Ctrl) => Some("\x09".to_string()), //9
-        ("I", AlacModifiers::CtrlShift) => Some("\x09".to_string()), //9
-        ("j", AlacModifiers::Ctrl) => Some("\x0a".to_string()), //10
-        ("J", AlacModifiers::CtrlShift) => Some("\x0a".to_string()), //10
-        ("k", AlacModifiers::Ctrl) => Some("\x0b".to_string()), //11
-        ("K", AlacModifiers::CtrlShift) => Some("\x0b".to_string()), //11
-        ("l", AlacModifiers::Ctrl) => Some("\x0c".to_string()), //12
-        ("L", AlacModifiers::CtrlShift) => Some("\x0c".to_string()), //12
-        ("m", AlacModifiers::Ctrl) => Some("\x0d".to_string()), //13
-        ("M", AlacModifiers::CtrlShift) => Some("\x0d".to_string()), //13
-        ("n", AlacModifiers::Ctrl) => Some("\x0e".to_string()), //14
-        ("N", AlacModifiers::CtrlShift) => Some("\x0e".to_string()), //14
-        ("o", AlacModifiers::Ctrl) => Some("\x0f".to_string()), //15
-        ("O", AlacModifiers::CtrlShift) => Some("\x0f".to_string()), //15
-        ("p", AlacModifiers::Ctrl) => Some("\x10".to_string()), //16
-        ("P", AlacModifiers::CtrlShift) => Some("\x10".to_string()), //16
-        ("q", AlacModifiers::Ctrl) => Some("\x11".to_string()), //17
-        ("Q", AlacModifiers::CtrlShift) => Some("\x11".to_string()), //17
-        ("r", AlacModifiers::Ctrl) => Some("\x12".to_string()), //18
-        ("R", AlacModifiers::CtrlShift) => Some("\x12".to_string()), //18
-        ("s", AlacModifiers::Ctrl) => Some("\x13".to_string()), //19
-        ("S", AlacModifiers::CtrlShift) => Some("\x13".to_string()), //19
-        ("t", AlacModifiers::Ctrl) => Some("\x14".to_string()), //20
-        ("T", AlacModifiers::CtrlShift) => Some("\x14".to_string()), //20
-        ("u", AlacModifiers::Ctrl) => Some("\x15".to_string()), //21
-        ("U", AlacModifiers::CtrlShift) => Some("\x15".to_string()), //21
-        ("v", AlacModifiers::Ctrl) => Some("\x16".to_string()), //22
-        ("V", AlacModifiers::CtrlShift) => Some("\x16".to_string()), //22
-        ("w", AlacModifiers::Ctrl) => Some("\x17".to_string()), //23
-        ("W", AlacModifiers::CtrlShift) => Some("\x17".to_string()), //23
-        ("x", AlacModifiers::Ctrl) => Some("\x18".to_string()), //24
-        ("X", AlacModifiers::CtrlShift) => Some("\x18".to_string()), //24
-        ("y", AlacModifiers::Ctrl) => Some("\x19".to_string()), //25
-        ("Y", AlacModifiers::CtrlShift) => Some("\x19".to_string()), //25
-        ("z", AlacModifiers::Ctrl) => Some("\x1a".to_string()), //26
-        ("Z", AlacModifiers::CtrlShift) => Some("\x1a".to_string()), //26
-        ("@", AlacModifiers::Ctrl) => Some("\x00".to_string()), //0
-        ("[", AlacModifiers::Ctrl) => Some("\x1b".to_string()), //27
-        ("\\", AlacModifiers::Ctrl) => Some("\x1c".to_string()), //28
-        ("]", AlacModifiers::Ctrl) => Some("\x1d".to_string()), //29
-        ("^", AlacModifiers::Ctrl) => Some("\x1e".to_string()), //30
-        ("_", AlacModifiers::Ctrl) => Some("\x1f".to_string()), //31
-        ("?", AlacModifiers::Ctrl) => Some("\x7f".to_string()), //127
+        ("a", AlacModifiers::Ctrl) => Some("\x01"), //1
+        ("A", AlacModifiers::CtrlShift) => Some("\x01"), //1
+        ("b", AlacModifiers::Ctrl) => Some("\x02"), //2
+        ("B", AlacModifiers::CtrlShift) => Some("\x02"), //2
+        ("c", AlacModifiers::Ctrl) => Some("\x03"), //3
+        ("C", AlacModifiers::CtrlShift) => Some("\x03"), //3
+        ("d", AlacModifiers::Ctrl) => Some("\x04"), //4
+        ("D", AlacModifiers::CtrlShift) => Some("\x04"), //4
+        ("e", AlacModifiers::Ctrl) => Some("\x05"), //5
+        ("E", AlacModifiers::CtrlShift) => Some("\x05"), //5
+        ("f", AlacModifiers::Ctrl) => Some("\x06"), //6
+        ("F", AlacModifiers::CtrlShift) => Some("\x06"), //6
+        ("g", AlacModifiers::Ctrl) => Some("\x07"), //7
+        ("G", AlacModifiers::CtrlShift) => Some("\x07"), //7
+        ("h", AlacModifiers::Ctrl) => Some("\x08"), //8
+        ("H", AlacModifiers::CtrlShift) => Some("\x08"), //8
+        ("i", AlacModifiers::Ctrl) => Some("\x09"), //9
+        ("I", AlacModifiers::CtrlShift) => Some("\x09"), //9
+        ("j", AlacModifiers::Ctrl) => Some("\x0a"), //10
+        ("J", AlacModifiers::CtrlShift) => Some("\x0a"), //10
+        ("k", AlacModifiers::Ctrl) => Some("\x0b"), //11
+        ("K", AlacModifiers::CtrlShift) => Some("\x0b"), //11
+        ("l", AlacModifiers::Ctrl) => Some("\x0c"), //12
+        ("L", AlacModifiers::CtrlShift) => Some("\x0c"), //12
+        ("m", AlacModifiers::Ctrl) => Some("\x0d"), //13
+        ("M", AlacModifiers::CtrlShift) => Some("\x0d"), //13
+        ("n", AlacModifiers::Ctrl) => Some("\x0e"), //14
+        ("N", AlacModifiers::CtrlShift) => Some("\x0e"), //14
+        ("o", AlacModifiers::Ctrl) => Some("\x0f"), //15
+        ("O", AlacModifiers::CtrlShift) => Some("\x0f"), //15
+        ("p", AlacModifiers::Ctrl) => Some("\x10"), //16
+        ("P", AlacModifiers::CtrlShift) => Some("\x10"), //16
+        ("q", AlacModifiers::Ctrl) => Some("\x11"), //17
+        ("Q", AlacModifiers::CtrlShift) => Some("\x11"), //17
+        ("r", AlacModifiers::Ctrl) => Some("\x12"), //18
+        ("R", AlacModifiers::CtrlShift) => Some("\x12"), //18
+        ("s", AlacModifiers::Ctrl) => Some("\x13"), //19
+        ("S", AlacModifiers::CtrlShift) => Some("\x13"), //19
+        ("t", AlacModifiers::Ctrl) => Some("\x14"), //20
+        ("T", AlacModifiers::CtrlShift) => Some("\x14"), //20
+        ("u", AlacModifiers::Ctrl) => Some("\x15"), //21
+        ("U", AlacModifiers::CtrlShift) => Some("\x15"), //21
+        ("v", AlacModifiers::Ctrl) => Some("\x16"), //22
+        ("V", AlacModifiers::CtrlShift) => Some("\x16"), //22
+        ("w", AlacModifiers::Ctrl) => Some("\x17"), //23
+        ("W", AlacModifiers::CtrlShift) => Some("\x17"), //23
+        ("x", AlacModifiers::Ctrl) => Some("\x18"), //24
+        ("X", AlacModifiers::CtrlShift) => Some("\x18"), //24
+        ("y", AlacModifiers::Ctrl) => Some("\x19"), //25
+        ("Y", AlacModifiers::CtrlShift) => Some("\x19"), //25
+        ("z", AlacModifiers::Ctrl) => Some("\x1a"), //26
+        ("Z", AlacModifiers::CtrlShift) => Some("\x1a"), //26
+        ("@", AlacModifiers::Ctrl) => Some("\x00"), //0
+        ("[", AlacModifiers::Ctrl) => Some("\x1b"), //27
+        ("\\", AlacModifiers::Ctrl) => Some("\x1c"), //28
+        ("]", AlacModifiers::Ctrl) => Some("\x1d"), //29
+        ("^", AlacModifiers::Ctrl) => Some("\x1e"), //30
+        ("_", AlacModifiers::Ctrl) => Some("\x1f"), //31
+        ("?", AlacModifiers::Ctrl) => Some("\x7f"), //127
         _ => None,
     };
-    if manual_esc_str.is_some() {
-        return manual_esc_str;
+    if let Some(esc_str) = manual_esc_str {
+        return Some(Cow::Borrowed(esc_str));
     }
 
     // Automated bindings applying modifiers
@@ -235,8 +213,8 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
             "home" => Some(format!("\x1b[1;{}H", modifier_code)),
             _ => None,
         };
-        if modified_esc_str.is_some() {
-            return modified_esc_str;
+        if let Some(esc_str) = modified_esc_str {
+            return Some(Cow::Owned(esc_str));
         }
     }
 
@@ -250,7 +228,7 @@ pub fn to_esc_str(keystroke: &Keystroke, mode: &TermMode, alt_is_meta: bool) -> 
             } else {
                 &keystroke.key
             };
-            return Some(format!("\x1b{}", key));
+            return Some(Cow::Owned(format!("\x1b{}", key)));
         }
     }
 
@@ -306,33 +284,27 @@ mod test {
         let alt_screen = TermMode::ALT_SCREEN;
         assert_eq!(
             to_esc_str(&shift_pageup, &alt_screen, false),
-            Some("\x1b[5;2~".to_string())
+            Some("\x1b[5;2~".into())
         );
         assert_eq!(
             to_esc_str(&shift_pagedown, &alt_screen, false),
-            Some("\x1b[6;2~".to_string())
+            Some("\x1b[6;2~".into())
         );
         assert_eq!(
             to_esc_str(&shift_home, &alt_screen, false),
-            Some("\x1b[1;2H".to_string())
+            Some("\x1b[1;2H".into())
         );
         assert_eq!(
             to_esc_str(&shift_end, &alt_screen, false),
-            Some("\x1b[1;2F".to_string())
+            Some("\x1b[1;2F".into())
         );
 
         let pageup = Keystroke::parse("pageup").unwrap();
         let pagedown = Keystroke::parse("pagedown").unwrap();
         let any = TermMode::ANY;
 
-        assert_eq!(
-            to_esc_str(&pageup, &any, false),
-            Some("\x1b[5~".to_string())
-        );
-        assert_eq!(
-            to_esc_str(&pagedown, &any, false),
-            Some("\x1b[6~".to_string())
-        );
+        assert_eq!(to_esc_str(&pageup, &any, false), Some("\x1b[5~".into()));
+        assert_eq!(to_esc_str(&pagedown, &any, false), Some("\x1b[6~".into()));
     }
 
     #[test]
@@ -361,27 +333,18 @@ mod test {
         let left = Keystroke::parse("left").unwrap();
         let right = Keystroke::parse("right").unwrap();
 
-        assert_eq!(to_esc_str(&up, &none, false), Some("\x1b[A".to_string()));
-        assert_eq!(to_esc_str(&down, &none, false), Some("\x1b[B".to_string()));
-        assert_eq!(to_esc_str(&right, &none, false), Some("\x1b[C".to_string()));
-        assert_eq!(to_esc_str(&left, &none, false), Some("\x1b[D".to_string()));
+        assert_eq!(to_esc_str(&up, &none, false), Some("\x1b[A".into()));
+        assert_eq!(to_esc_str(&down, &none, false), Some("\x1b[B".into()));
+        assert_eq!(to_esc_str(&right, &none, false), Some("\x1b[C".into()));
+        assert_eq!(to_esc_str(&left, &none, false), Some("\x1b[D".into()));
 
-        assert_eq!(
-            to_esc_str(&up, &app_cursor, false),
-            Some("\x1bOA".to_string())
-        );
-        assert_eq!(
-            to_esc_str(&down, &app_cursor, false),
-            Some("\x1bOB".to_string())
-        );
+        assert_eq!(to_esc_str(&up, &app_cursor, false), Some("\x1bOA".into()));
+        assert_eq!(to_esc_str(&down, &app_cursor, false), Some("\x1bOB".into()));
         assert_eq!(
             to_esc_str(&right, &app_cursor, false),
-            Some("\x1bOC".to_string())
+            Some("\x1bOC".into())
         );
-        assert_eq!(
-            to_esc_str(&left, &app_cursor, false),
-            Some("\x1bOD".to_string())
-        );
+        assert_eq!(to_esc_str(&left, &app_cursor, false), Some("\x1bOD".into()));
     }
 
     #[test]

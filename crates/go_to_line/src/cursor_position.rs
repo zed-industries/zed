@@ -39,15 +39,32 @@ pub struct UserCaretPosition {
 }
 
 impl UserCaretPosition {
-    pub fn at_selection_end(selection: &Selection<Point>, snapshot: &MultiBufferSnapshot) -> Self {
+    pub(crate) fn at_selection_end(
+        selection: &Selection<Point>,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Self {
         let selection_end = selection.head();
-        let line_start = Point::new(selection_end.row, 0);
-        let chars_to_last_position = snapshot
-            .text_summary_for_range::<text::TextSummary, _>(line_start..selection_end)
-            .chars as u32;
+        let (line, character) = if let Some((buffer_snapshot, point, _)) =
+            snapshot.point_to_buffer_point(selection_end)
+        {
+            let line_start = Point::new(point.row, 0);
+
+            let chars_to_last_position = buffer_snapshot
+                .text_summary_for_range::<text::TextSummary, _>(line_start..point)
+                .chars as u32;
+            (line_start.row, chars_to_last_position)
+        } else {
+            let line_start = Point::new(selection_end.row, 0);
+
+            let chars_to_last_position = snapshot
+                .text_summary_for_range::<text::TextSummary, _>(line_start..selection_end)
+                .chars as u32;
+            (selection_end.row, chars_to_last_position)
+        };
+
         Self {
-            line: NonZeroU32::new(selection_end.row + 1).expect("added 1"),
-            character: NonZeroU32::new(chars_to_last_position + 1).expect("added 1"),
+            line: NonZeroU32::new(line + 1).expect("added 1"),
+            character: NonZeroU32::new(character + 1).expect("added 1"),
         }
     }
 }
@@ -91,15 +108,16 @@ impl CursorPosition {
                         cursor_position.selected_count.selections = editor.selections.count();
                         match editor.mode() {
                             editor::EditorMode::AutoHeight { .. }
-                            | editor::EditorMode::SingleLine { .. } => {
+                            | editor::EditorMode::SingleLine { .. }
+                            | editor::EditorMode::Minimap { .. } => {
                                 cursor_position.position = None;
                                 cursor_position.context = None;
                             }
-                            editor::EditorMode::Full => {
+                            editor::EditorMode::Full { .. } => {
                                 let mut last_selection = None::<Selection<Point>>;
                                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                                 if snapshot.excerpts().count() > 0 {
-                                    for selection in editor.selections.all::<Point>(cx) {
+                                    for selection in editor.selections.all_adjusted(cx) {
                                         let selection_summary = snapshot
                                             .text_summary_for_range::<text::TextSummary, _>(
                                                 selection.start..selection.end,
@@ -280,10 +298,6 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-/// Whether or not to automatically check for updates.
-///
-/// Values: short, long
-/// Default: short
 #[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
 #[serde(transparent)]
 pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
@@ -301,4 +315,6 @@ impl Settings for LineIndicatorFormat {
 
         Ok(format.0)
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

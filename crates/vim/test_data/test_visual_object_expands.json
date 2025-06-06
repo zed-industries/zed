@@ -1,0 +1,10 @@
+{"Put":{"state":"{\n    {\n   ˇ }\n}\n{\n}\n"}}
+{"Key":"v"}
+{"Key":"l"}
+{"Get":{"state":"{\n    {\n   « }ˇ»\n}\n{\n}\n","mode":"Visual"}}
+{"Key":"a"}
+{"Key":"{"}
+{"Get":{"state":"{\n    «{\n    }ˇ»\n}\n{\n}\n","mode":"Visual"}}
+{"Key":"a"}
+{"Key":"{"}
+{"Get":{"state":"«{\n    {\n    }\n}ˇ»\n{\n}\n","mode":"Visual"}}

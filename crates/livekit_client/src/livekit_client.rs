@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use futures::{SinkExt, channel::mpsc};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
@@ -160,7 +160,7 @@ impl LocalParticipant {
         })?
         .await?
         .map(LocalTrackPublication)
-        .map_err(|error| anyhow::anyhow!("failed to publish track: {error}"))
+        .context("publishing a track")
     }
 
     pub async fn unpublish_track(
@@ -172,7 +172,7 @@ impl LocalParticipant {
         Tokio::spawn(cx, async move { participant.unpublish_track(&sid).await })?
             .await?
             .map(LocalTrackPublication)
-            .map_err(|error| anyhow::anyhow!("failed to unpublish track: {error}"))
+            .context("unpublishing a track")
     }
 }
 
@@ -252,23 +252,6 @@ impl RemoteTrackPublication {
 
     pub fn sid(&self) -> TrackSid {
         self.0.sid()
-    }
-}
-
-impl RemoteTrack {
-    pub fn set_enabled(&self, enabled: bool, cx: &App) {
-        let this = self.clone();
-        Tokio::spawn(cx, async move {
-            match this {
-                RemoteTrack::Audio(remote_audio_track) => {
-                    remote_audio_track.0.rtc_track().set_enabled(enabled)
-                }
-                RemoteTrack::Video(remote_video_track) => {
-                    remote_video_track.0.rtc_track().set_enabled(enabled)
-                }
-            }
-        })
-        .detach();
     }
 }
 
