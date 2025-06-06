@@ -28,15 +28,15 @@ These adapters enable Zed to provide a consistent debugging experience across mu
 
 ## Getting Started
 
-For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
+For basic debugging you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or clicking the plus icon at the top right of the debug panel.
 
-For more advanced use cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
+For more advanced use cases you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
 
-You can then use the `New Session Modal` to select a configuration and start debugging.
+You can then use the `New Session Modal` to select a configuration then start debugging.
 
 ### Configuration
 
-While configuration fields are debug adapter-dependent, most adapters support the following fields:
+While configuration fields are debug adapter dependent, most adapters support the following fields.
 
 ```json
 [
@@ -58,114 +58,22 @@ While configuration fields are debug adapter-dependent, most adapters support th
 ]
 ```
 
-#### Tasks
+#### Task Variables
 
-All configuration fields support task variables. See [Tasks Variables](./tasks.md#variables)
-
-Zed also allows embedding a task that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
-
-See an example [here](#build-binary-then-debug)
-
-#### Python Examples
-
-##### Python Active File
-
-```json
-[
-  {
-    "label": "Active File",
-    "adapter": "Debugpy",
-    "program": "$ZED_FILE",
-    "request": "launch"
-  }
-]
-```
-
-##### Flask App
-
-For a common Flask Application with a file structure similar to the following:
-
-- .venv/
-- app/
-  - **init**.py
-  - **main**.py
-  - routes.py
-- templates/
-  - index.html
-- static/
-  - style.css
-- requirements.txt
-
-```json
-[
-  {
-    "label": "Python: Flask",
-    "adapter": "Debugpy",
-    "request": "launch",
-    "module": "app",
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "env": {
-      "FLASK_APP": "app",
-      "FLASK_DEBUG": "1"
-    },
-    "args": [
-      "run",
-      "--reload", // Enables Flask reloader that watches for file changes
-      "--debugger" // Enables Flask debugger
-    ],
-    "autoReload": {
-      "enable": true
-    },
-    "jinja": true,
-    "justMyCode": true
-  }
-]
-```
-
-#### Rust/C++/C
-
-##### Using pre-built binary
-
-```json
-[
-  {
-    "label": "Debug native binary",
-    "program": "$ZED_WORKTREE_ROOT/build/binary",
-    "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
-  }
-]
-```
-
-##### Build binary then debug
-
-```json
-[
-  {
-    "label": "Build & Debug native binary",
-    "build": {
-      "command": "cargo",
-      "args": ["build"]
-    },
-    "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
-    "request": "launch",
-    "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
-  }
-]
-```
+All configuration fields support task variables. See [Tasks](./tasks.md)
 
 ## Breakpoints
 
-Zed currently supports these types of breakpoints:
+Zed currently supports these types of breakpoints
 
 - Standard Breakpoints: Stop at the breakpoint when it's hit
 - Log Breakpoints: Output a log message instead of stopping at the breakpoint when it's hit
 - Conditional Breakpoints: Stop at the breakpoint when it's hit if the condition is met
 - Hit Breakpoints: Stop at the breakpoint when it's hit a certain number of times
 
-Standard breakpoints can be toggled by left-clicking on the editor gutter or using the Toggle Breakpoint action. Right-clicking on a breakpoint or on a code runner symbol brings up the breakpoint context menu. This has options for toggling breakpoints and editing log breakpoints.
+Standard breakpoints can be toggled by left clicking on the editor gutter or using the Toggle Breakpoint action. Right clicking on a breakpoint or on a code runner symbol brings up the breakpoint context menu. This has options for toggling breakpoints and editing log breakpoints.
 
-Other kinds of breakpoints can be toggled/edited by right-clicking on the breakpoint icon in the gutter and selecting the desired option.
+Other kinds of breakpoints can be toggled/edited by right clicking on the breakpoint icon in the gutter and selecting the desired option.
 
 ## Settings
 
@@ -173,8 +81,8 @@ Other kinds of breakpoints can be toggled/edited by right-clicking on the breakp
 - `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
 - `button`: Whether to show the debug button in the status bar.
 - `timeout`: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
-- `log_dap_communications`: Whether to log messages between active debug adapters and Zed.
-- `format_dap_log_messages`: Whether to format DAP messages when adding them to the debug adapter logger.
+- `log_dap_communications`: Whether to log messages between active debug adapters and Zed
+- `format_dap_log_messages`: Whether to format dap messages in when adding them to debug adapter logger
 
 ### Stepping granularity
 
@@ -255,7 +163,7 @@ Other kinds of breakpoints can be toggled/edited by right-clicking on the breakp
 ### Timeout
 
 - Description: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
-- Default: 2000
+- Default: 2000ms
 - Setting: debugger.timeout
 
 **Options**
@@ -290,7 +198,7 @@ Other kinds of breakpoints can be toggled/edited by right-clicking on the breakp
 
 ### Format Dap Log Messages
 
-- Description: Whether to format DAP messages when adding them to the debug adapter logger. (Used for DAP development)
+- Description: Whether to format dap messages in when adding them to debug adapter logger. (Used for DAP development)
 - Default: false
 - Setting: debugger.format_dap_log_messages
 
@@ -310,5 +218,8 @@ Other kinds of breakpoints can be toggled/edited by right-clicking on the breakp
 
 The Debugger supports the following theme options:
 
-**debugger.accent**: Color used to accent breakpoint & breakpoint-related symbols
+    /// Color used to accent some of the debugger's elements
+    /// Only accents breakpoint & breakpoint related symbols right now
+
+**debugger.accent**: Color used to accent breakpoint & breakpoint related symbols
 **editor.debugger_active_line.background**: Background color of active debug line

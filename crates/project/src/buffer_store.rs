@@ -622,7 +622,7 @@ impl LocalBufferStore {
                 Ok(buffer) => Ok(buffer),
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
-                    let text_buffer = text::Buffer::new(0, buffer_id, "");
+                    let text_buffer = text::Buffer::new(0, buffer_id, "".into());
                     Buffer::build(
                         text_buffer,
                         Some(Arc::new(File {

@@ -182,8 +182,9 @@ impl Tool for TerminalTool {
                 let mut child = pair.slave.spawn_command(cmd)?;
                 let mut reader = pair.master.try_clone_reader()?;
                 drop(pair);
-                let mut content = String::new();
-                reader.read_to_string(&mut content)?;
+                let mut content = Vec::new();
+                reader.read_to_end(&mut content)?;
+                let mut content = String::from_utf8(content)?;
                 // Massage the pty output a bit to try to match what the terminal codepath gives us
                 LineEnding::normalize(&mut content);
                 content = content

@@ -1527,6 +1527,7 @@ impl PickerDelegate for FileFinderDelegate {
                 )
                 .child(
                     h_flex()
+                        .p_2()
                         .gap_2()
                         .child(
                             Button::new("open-selection", "Open").on_click(|_, window, cx| {

@@ -1,6 +1,4 @@
-use std::time::Duration;
-
-use gpui::{Animation, AnimationExt as _, Entity, Transformation, percentage};
+use gpui::Entity;
 use project::debugger::session::{ThreadId, ThreadStatus};
 use ui::{ContextMenu, DropdownMenu, DropdownStyle, Indicator, prelude::*};
 
@@ -25,40 +23,31 @@ impl DebugPanel {
             let sessions = self.sessions().clone();
             let weak = cx.weak_entity();
             let running_state = running_state.read(cx);
-            let label = if let Some(active_session) = active_session.clone() {
+            let label = if let Some(active_session) = active_session {
                 active_session.read(cx).session(cx).read(cx).label()
             } else {
                 SharedString::new_static("Unknown Session")
             };
 
             let is_terminated = running_state.session().read(cx).is_terminated();
-            let is_started = active_session
-                .is_some_and(|session| session.read(cx).session(cx).read(cx).is_started());
-
-            let session_state_indicator = if is_terminated {
-                Indicator::dot().color(Color::Error).into_any_element()
-            } else if !is_started {
-                Icon::new(IconName::ArrowCircle)
-                    .size(IconSize::Small)
-                    .color(Color::Muted)
-                    .with_animation(
-                        "arrow-circle",
-                        Animation::new(Duration::from_secs(2)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    )
-                    .into_any_element()
-            } else {
-                match running_state.thread_status(cx).unwrap_or_default() {
-                    ThreadStatus::Stopped => {
-                        Indicator::dot().color(Color::Conflict).into_any_element()
+            let session_state_indicator = {
+                if is_terminated {
+                    Some(Indicator::dot().color(Color::Error))
+                } else {
+                    match running_state.thread_status(cx).unwrap_or_default() {
+                        project::debugger::session::ThreadStatus::Stopped => {
+                            Some(Indicator::dot().color(Color::Conflict))
+                        }
+                        _ => Some(Indicator::dot().color(Color::Success)),
                     }
-                    _ => Indicator::dot().color(Color::Success).into_any_element(),
                 }
             };
 
             let trigger = h_flex()
                 .gap_2()
-                .child(session_state_indicator)
+                .when_some(session_state_indicator, |this, indicator| {
+                    this.child(indicator)
+                })
                 .justify_between()
                 .child(
                     DebugPanel::dropdown_label(label)

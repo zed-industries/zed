@@ -1,12 +1,10 @@
 use anyhow::{Context as _, Result};
 use collections::FxHashMap;
 use gpui::SharedString;
-use log as _;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use util::debug_panic;
 
 use crate::{TaskTemplate, adapter_schema::AdapterSchemas};
 
@@ -184,7 +182,7 @@ impl From<AttachRequest> for DebugRequest {
     }
 }
 
-#[derive(Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+#[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(untagged)]
 pub enum BuildTaskDefinition {
     ByName(SharedString),
@@ -194,47 +192,6 @@ pub enum BuildTaskDefinition {
         #[serde(skip)]
         locator_name: Option<SharedString>,
     },
-}
-
-impl<'de> Deserialize<'de> for BuildTaskDefinition {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        struct TemplateHelper {
-            #[serde(default)]
-            label: Option<String>,
-            #[serde(flatten)]
-            rest: serde_json::Value,
-        }
-
-        let value = serde_json::Value::deserialize(deserializer)?;
-
-        if let Ok(name) = serde_json::from_value::<SharedString>(value.clone()) {
-            return Ok(BuildTaskDefinition::ByName(name));
-        }
-
-        let helper: TemplateHelper =
-            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
-
-        let mut template_value = helper.rest;
-        if let serde_json::Value::Object(ref mut map) = template_value {
-            map.insert(
-                "label".to_string(),
-                serde_json::to_value(helper.label.unwrap_or_else(|| "debug-build".to_owned()))
-                    .map_err(serde::de::Error::custom)?,
-            );
-        }
-
-        let task_template: TaskTemplate =
-            serde_json::from_value(template_value).map_err(serde::de::Error::custom)?;
-
-        Ok(BuildTaskDefinition::Template {
-            task_template,
-            locator_name: None,
-        })
-    }
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
@@ -286,96 +243,9 @@ pub struct DebugScenario {
 pub struct DebugTaskFile(pub Vec<DebugScenario>);
 
 impl DebugTaskFile {
+    /// Generates JSON schema of Tasks JSON template format.
     pub fn generate_json_schema(schemas: &AdapterSchemas) -> serde_json_lenient::Value {
-        let build_task_schema = schemars::schema_for!(BuildTaskDefinition);
-        let mut build_task_value =
-            serde_json_lenient::to_value(&build_task_schema).unwrap_or_default();
-
-        if let Some(template_object) = build_task_value
-            .get_mut("anyOf")
-            .and_then(|array| array.as_array_mut())
-            .and_then(|array| array.get_mut(1))
-        {
-            if let Some(properties) = template_object
-                .get_mut("properties")
-                .and_then(|value| value.as_object_mut())
-            {
-                properties.remove("label");
-            }
-
-            if let Some(arr) = template_object
-                .get_mut("required")
-                .and_then(|array| array.as_array_mut())
-            {
-                arr.retain(|v| v.as_str() != Some("label"));
-            }
-        } else {
-            debug_panic!("Task Template schema in debug scenario's needs to be updated");
-        }
-
-        let task_definitions = build_task_value
-            .get("definitions")
-            .cloned()
-            .unwrap_or_default();
-
-        let adapter_conditions = schemas
-            .0
-            .iter()
-            .map(|adapter_schema| {
-                let adapter_name = adapter_schema.adapter.to_string();
-                serde_json::json!({
-                    "if": {
-                        "properties": {
-                            "adapter": { "const": adapter_name }
-                        }
-                    },
-                    "then": adapter_schema.schema
-                })
-            })
-            .collect::<Vec<_>>();
-
-        serde_json_lenient::json!({
-            "$schema": "http://json-schema.org/draft-07/schema#",
-            "title": "Debug Configurations",
-            "description": "Configuration for debug scenarios",
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["adapter", "label"],
-                "properties": {
-                    "adapter": {
-                        "type": "string",
-                        "description": "The name of the debug adapter"
-                    },
-                    "label": {
-                        "type": "string",
-                        "description": "The name of the debug configuration"
-                    },
-                    "build": build_task_value,
-                    "tcp_connection": {
-                        "type": "object",
-                        "description": "Optional TCP connection information for connecting to an already running debug adapter",
-                        "properties": {
-                            "port": {
-                                "type": "integer",
-                                "description": "The port that the debug adapter is listening on (default: auto-find open port)"
-                            },
-                            "host": {
-                                "type": "string",
-                                "pattern": "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$",
-                                "description": "The host that the debug adapter is listening to (default: 127.0.0.1)"
-                            },
-                            "timeout": {
-                                "type": "integer",
-                                "description": "The max amount of time in milliseconds to connect to a tcp DAP before returning an error (default: 2000ms)"
-                            }
-                        }
-                    }
-                },
-                "allOf": adapter_conditions
-            },
-            "definitions": task_definitions
-        })
+        schemas.generate_json_schema().unwrap_or_default()
     }
 }
 
@@ -383,32 +253,6 @@ impl DebugTaskFile {
 mod tests {
     use crate::DebugScenario;
     use serde_json::json;
-
-    #[test]
-    fn test_just_build_args() {
-        let json = r#"{
-            "label": "Build & debug rust",
-            "adapter": "CodeLLDB",
-            "build": {
-                "command": "rust",
-                "args": ["build"]
-            }
-        }"#;
-
-        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
-        assert!(deserialized.build.is_some());
-        match deserialized.build.as_ref().unwrap() {
-            crate::BuildTaskDefinition::Template { task_template, .. } => {
-                assert_eq!("debug-build", task_template.label);
-                assert_eq!("rust", task_template.command);
-                assert_eq!(vec!["build"], task_template.args);
-            }
-            _ => panic!("Expected Template variant"),
-        }
-        assert_eq!(json!({}), deserialized.config);
-        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
-        assert_eq!("Build & debug rust", deserialized.label.as_ref());
-    }
 
     #[test]
     fn test_empty_scenario_has_none_request() {
@@ -462,46 +306,5 @@ mod tests {
         );
         assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
         assert_eq!("Attach to process", deserialized.label.as_ref());
-    }
-
-    #[test]
-    fn test_build_task_definition_without_label() {
-        use crate::BuildTaskDefinition;
-
-        let json = r#""my_build_task""#;
-        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
-        match deserialized {
-            BuildTaskDefinition::ByName(name) => assert_eq!("my_build_task", name.as_ref()),
-            _ => panic!("Expected ByName variant"),
-        }
-
-        let json = r#"{
-            "command": "cargo",
-            "args": ["build", "--release"]
-        }"#;
-        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
-        match deserialized {
-            BuildTaskDefinition::Template { task_template, .. } => {
-                assert_eq!("debug-build", task_template.label);
-                assert_eq!("cargo", task_template.command);
-                assert_eq!(vec!["build", "--release"], task_template.args);
-            }
-            _ => panic!("Expected Template variant"),
-        }
-
-        let json = r#"{
-            "label": "Build Release",
-            "command": "cargo",
-            "args": ["build", "--release"]
-        }"#;
-        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
-        match deserialized {
-            BuildTaskDefinition::Template { task_template, .. } => {
-                assert_eq!("Build Release", task_template.label);
-                assert_eq!("cargo", task_template.command);
-                assert_eq!(vec!["build", "--release"], task_template.args);
-            }
-            _ => panic!("Expected Template variant"),
-        }
     }
 }

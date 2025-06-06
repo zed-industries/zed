@@ -67,4 +67,3 @@ unindent.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true

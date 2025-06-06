@@ -177,35 +177,34 @@ a > .hljs {
   display: none;
 }
 
-.footer-buttons {
+.nav-wrapper {
+  margin-block-start: 50px;
+  display: block;
+}
+
+.nav-buttons {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem;
-  padding: 24px 0;
+  margin: 20px 0;
+  padding: 0 10px;
 }
 
-.footer-button {
-  width: 100%;
-  padding: 12px;
-  display: flex;
+.nav-button {
   align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  background-color: var(--footer-btn-bg);
-  border: 1px solid var(--footer-btn-border);
-  border-radius: 0.5rem;
-  font-size: 0.9em;
+  padding: 8px 12px;
+  background-color: var(--bg);
+  color: var(--fg) !important;
+  text-decoration: none;
 }
 
-.footer-button:hover {
-  background-color: var(--footer-btn-bg-hover);
-  border-color: var(--footer-btn-border-hover);
+.nav-button:hover {
+  background-color: var(--theme-hover);
+  color: var(--icons-hover) !important;
 }
 
-.footer-button i {
-  text-decoration: underline !important;
-  text-decoration-color: transparent !important;
+.nav-button i {
+  padding: 0 6px;
 }
 
 .mobile-nav-chapters {

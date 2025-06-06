@@ -42,7 +42,7 @@ pub struct Model {
 
 fn get_max_tokens(name: &str) -> usize {
     /// Default context length for unknown models.
-    const DEFAULT_TOKENS: usize = 4096;
+    const DEFAULT_TOKENS: usize = 2048;
     /// Magic number. Lets many Ollama models work with ~16GB of ram.
     const MAXIMUM_TOKENS: usize = 16384;
 

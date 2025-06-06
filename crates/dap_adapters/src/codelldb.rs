@@ -1,8 +1,11 @@
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
-use dap::adapters::{DebugTaskDefinition, latest_github_release};
+use dap::{
+    StartDebuggingRequestArgumentsRequest,
+    adapters::{DebugTaskDefinition, latest_github_release},
+};
 use futures::StreamExt;
 use gpui::AsyncApp;
 use serde_json::Value;
@@ -34,7 +37,7 @@ impl CodeLldbDebugAdapter {
                 Value::String(String::from(task_definition.label.as_ref())),
             );
 
-        let request = self.request_kind(&configuration)?;
+        let request = self.validate_config(&configuration)?;
 
         Ok(dap::StartDebuggingRequestArguments {
             request,
@@ -84,6 +87,48 @@ impl CodeLldbDebugAdapter {
 impl DebugAdapter for CodeLldbDebugAdapter {
     fn name(&self) -> DebugAdapterName {
         DebugAdapterName(Self::ADAPTER_NAME.into())
+    }
+
+    fn validate_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        let map = config
+            .as_object()
+            .ok_or_else(|| anyhow!("Config isn't an object"))?;
+
+        let request_variant = map
+            .get("request")
+            .and_then(|r| r.as_str())
+            .ok_or_else(|| anyhow!("request field is required and must be a string"))?;
+
+        match request_variant {
+            "launch" => {
+                // For launch, verify that one of the required configs exists
+                if !(map.contains_key("program")
+                    || map.contains_key("targetCreateCommands")
+                    || map.contains_key("cargo"))
+                {
+                    return Err(anyhow!(
+                        "launch request requires either 'program', 'targetCreateCommands', or 'cargo' field"
+                    ));
+                }
+                Ok(StartDebuggingRequestArgumentsRequest::Launch)
+            }
+            "attach" => {
+                // For attach, verify that either pid or program exists
+                if !(map.contains_key("pid") || map.contains_key("program")) {
+                    return Err(anyhow!(
+                        "attach request requires either 'pid' or 'program' field"
+                    ));
+                }
+                Ok(StartDebuggingRequestArgumentsRequest::Attach)
+            }
+            _ => Err(anyhow!(
+                "request must be either 'launch' or 'attach', got '{}'",
+                request_variant
+            )),
+        }
     }
 
     fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {

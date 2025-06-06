@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::Editor;
 use collections::HashMap;
@@ -17,12 +16,10 @@ use project::LocationLink;
 use project::Project;
 use project::TaskSourceKind;
 use project::lsp_store::lsp_ext_command::GetLspRunnables;
-use smol::future::FutureExt as _;
 use smol::stream::StreamExt;
 use task::ResolvedTask;
 use task::TaskContext;
 use text::BufferId;
-use ui::SharedString;
 use util::ResultExt as _;
 
 pub(crate) fn find_specific_language_server_in_selection<F>(
@@ -133,70 +130,44 @@ pub fn lsp_tasks(
         .collect::<FuturesUnordered<_>>();
 
     cx.spawn(async move |cx| {
-        cx.spawn(async move |cx| {
-            let mut lsp_tasks = HashMap::default();
-            while let Some(server_to_query) = lsp_task_sources.next().await {
-                if let Some((server_id, buffers)) = server_to_query {
-                    let mut new_lsp_tasks = Vec::new();
-                    for buffer in buffers {
-                        let source_kind = match buffer.update(cx, |buffer, _| {
-                            buffer.language().map(|language| language.name())
-                        }) {
-                            Ok(Some(language_name)) => TaskSourceKind::Lsp {
-                                server: server_id,
-                                language_name: SharedString::from(language_name),
-                            },
-                            Ok(None) => continue,
-                            Err(_) => return Vec::new(),
-                        };
-                        let id_base = source_kind.to_id_base();
-                        let lsp_buffer_context = lsp_task_context(&project, &buffer, cx)
-                            .await
-                            .unwrap_or_default();
+        let mut lsp_tasks = Vec::new();
+        while let Some(server_to_query) = lsp_task_sources.next().await {
+            if let Some((server_id, buffers)) = server_to_query {
+                let source_kind = TaskSourceKind::Lsp(server_id);
+                let id_base = source_kind.to_id_base();
+                let mut new_lsp_tasks = Vec::new();
+                for buffer in buffers {
+                    let lsp_buffer_context = lsp_task_context(&project, &buffer, cx)
+                        .await
+                        .unwrap_or_default();
 
-                        if let Ok(runnables_task) = project.update(cx, |project, cx| {
-                            let buffer_id = buffer.read(cx).remote_id();
-                            project.request_lsp(
-                                buffer,
-                                LanguageServerToQuery::Other(server_id),
-                                GetLspRunnables {
-                                    buffer_id,
-                                    position: for_position,
+                    if let Ok(runnables_task) = project.update(cx, |project, cx| {
+                        let buffer_id = buffer.read(cx).remote_id();
+                        project.request_lsp(
+                            buffer,
+                            LanguageServerToQuery::Other(server_id),
+                            GetLspRunnables {
+                                buffer_id,
+                                position: for_position,
+                            },
+                            cx,
+                        )
+                    }) {
+                        if let Some(new_runnables) = runnables_task.await.log_err() {
+                            new_lsp_tasks.extend(new_runnables.runnables.into_iter().filter_map(
+                                |(location, runnable)| {
+                                    let resolved_task =
+                                        runnable.resolve_task(&id_base, &lsp_buffer_context)?;
+                                    Some((location, resolved_task))
                                 },
-                                cx,
-                            )
-                        }) {
-                            if let Some(new_runnables) = runnables_task.await.log_err() {
-                                new_lsp_tasks.extend(
-                                    new_runnables.runnables.into_iter().filter_map(
-                                        |(location, runnable)| {
-                                            let resolved_task = runnable
-                                                .resolve_task(&id_base, &lsp_buffer_context)?;
-                                            Some((location, resolved_task))
-                                        },
-                                    ),
-                                );
-                            }
+                            ));
                         }
-                        lsp_tasks
-                            .entry(source_kind)
-                            .or_insert_with(Vec::new)
-                            .append(&mut new_lsp_tasks);
                     }
                 }
+                lsp_tasks.push((source_kind, new_lsp_tasks));
             }
-            lsp_tasks.into_iter().collect()
-        })
-        .race({
-            // `lsp::LSP_REQUEST_TIMEOUT` is larger than we want for the modal to open fast
-            let timer = cx.background_executor().timer(Duration::from_millis(200));
-            async move {
-                timer.await;
-                log::info!("Timed out waiting for LSP tasks");
-                Vec::new()
-            }
-        })
-        .await
+        }
+        lsp_tasks
     })
 }
 

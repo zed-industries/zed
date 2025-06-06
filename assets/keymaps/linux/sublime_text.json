@@ -51,11 +51,7 @@
       "ctrl-k ctrl-l": "editor::ConvertToLowerCase",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd",
-      "ctrl-right": "editor::MoveToNextSubwordEnd",
-      "ctrl-left": "editor::MoveToPreviousSubwordStart",
-      "ctrl-shift-right": "editor::SelectToNextSubwordEnd",
-      "ctrl-shift-left": "editor::SelectToPreviousSubwordStart"
+      "ctrl-delete": "editor::DeleteToNextWordEnd"
     }
   },
   {

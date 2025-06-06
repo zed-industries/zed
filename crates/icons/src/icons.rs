@@ -179,8 +179,6 @@ pub enum IconName {
     PhoneIncoming,
     Pin,
     Play,
-    PlayAlt,
-    PlayBug,
     Plus,
     PocketKnife,
     Power,

@@ -1,6 +1,6 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::{borrow::Cow, cell::RefCell};
 
 use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -39,11 +39,10 @@ impl FetchTool {
     }
 
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
-        let url = if !url.starts_with("https://") && !url.starts_with("http://") {
-            Cow::Owned(format!("https://{url}"))
-        } else {
-            Cow::Borrowed(url)
-        };
+        let mut url = url.to_owned();
+        if !url.starts_with("https://") && !url.starts_with("http://") {
+            url = format!("https://{url}");
+        }
 
         let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
 
@@ -157,7 +156,8 @@ impl Tool for FetchTool {
 
         let text = cx.background_spawn({
             let http_client = self.http_client.clone();
-            async move { Self::build_message(http_client, &input.url).await }
+            let url = input.url.clone();
+            async move { Self::build_message(http_client, &url).await }
         });
 
         cx.foreground_executor()

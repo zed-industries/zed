@@ -178,7 +178,7 @@ impl DebugAdapter for GdbDebugAdapter {
         let gdb_path = user_setting_path.unwrap_or(gdb_path?);
 
         let request_args = StartDebuggingRequestArguments {
-            request: self.request_kind(&config.config)?,
+            request: self.validate_config(&config.config)?,
             configuration: config.config.clone(),
         };
 

@@ -16,9 +16,9 @@ eval = []
 
 [dependencies]
 agent_settings.workspace = true
+aho-corasick.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
-async-watch.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 collections.workspace = true
@@ -36,7 +36,6 @@ itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 log.workspace = true
-lsp.workspace = true
 markdown.workspace = true
 open.workspace = true
 paths.workspace = true
@@ -65,7 +64,6 @@ workspace.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
-lsp = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }

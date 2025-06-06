@@ -1,11 +1,10 @@
 use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
-use picker::popover_menu::PickerPopoverMenu;
 
 use crate::Thread;
 use assistant_context_editor::language_model_selector::{
-    LanguageModelSelector, ToggleModelSelector, language_model_selector,
+    LanguageModelSelector, LanguageModelSelectorPopoverMenu, ToggleModelSelector,
 };
 use language_model::{ConfiguredModel, LanguageModelRegistry};
 use settings::update_settings_file;
@@ -36,7 +35,7 @@ impl AgentModelSelector {
         Self {
             selector: cx.new(move |cx| {
                 let fs = fs.clone();
-                language_model_selector(
+                LanguageModelSelector::new(
                     {
                         let model_type = model_type.clone();
                         move |cx| match &model_type {
@@ -101,14 +100,15 @@ impl AgentModelSelector {
 }
 
 impl Render for AgentModelSelector {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
 
-        let model = self.selector.read(cx).delegate.active_model(cx);
+        let model = self.selector.read(cx).active_model(cx);
         let model_name = model
             .map(|model| model.model.name().0)
             .unwrap_or_else(|| SharedString::from("No model selected"));
-        PickerPopoverMenu::new(
+
+        LanguageModelSelectorPopoverMenu::new(
             self.selector.clone(),
             Button::new("active-model", model_name)
                 .label_size(LabelSize::Small)
@@ -127,9 +127,7 @@ impl Render for AgentModelSelector {
                 )
             },
             gpui::Corner::BottomRight,
-            cx,
         )
         .with_handle(self.menu_handle.clone())
-        .render(window, cx)
     }
 }

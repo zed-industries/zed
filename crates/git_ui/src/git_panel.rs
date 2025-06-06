@@ -13,6 +13,7 @@ use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
+
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
     scroll::ScrollbarAutoHide,
@@ -41,7 +42,6 @@ use language_model::{
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
-use notifications::status_toast::{StatusToast, ToastIcon};
 use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
@@ -54,6 +54,7 @@ use project::{
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::future::Future;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
@@ -62,14 +63,15 @@ use ui::{
     Checkbox, ContextMenu, ElevationIndex, PopoverMenu, Scrollbar, ScrollbarState, SplitButton,
     Tooltip, prelude::*,
 };
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, TryFutureExt, maybe, wrap_with_prefix};
 use workspace::AppState;
+
+use notifications::status_toast::{StatusToast, ToastIcon};
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
 };
-use zed_llm_client::CompletionIntent;
 
 actions!(
     git_panel,
@@ -383,7 +385,6 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_gutter(false, cx);
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
-    commit_editor.set_hard_wrap(Some(72), cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
     commit_editor.set_placeholder_text(placeholder, cx);
     commit_editor
@@ -1485,8 +1486,22 @@ impl GitPanel {
 
     fn custom_or_suggested_commit_message(&self, cx: &mut Context<Self>) -> Option<String> {
         let message = self.commit_editor.read(cx).text(cx);
+        let width = self
+            .commit_editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .language_settings(cx)
+            .preferred_line_length as usize;
 
         if !message.trim().is_empty() {
+            let message = wrap_with_prefix(
+                String::new(),
+                message,
+                width,
+                NonZeroU32::new(8).unwrap(), // tab size doesn't matter when prefix is empty
+                false,
+            );
             return Some(message);
         }
 
@@ -1766,7 +1781,6 @@ impl GitPanel {
                 let request = LanguageModelRequest {
                     thread_id: None,
                     prompt_id: None,
-                    intent: Some(CompletionIntent::GenerateGitCommitMessage),
                     mode: None,
                     messages: vec![LanguageModelRequestMessage {
                         role: Role::User,

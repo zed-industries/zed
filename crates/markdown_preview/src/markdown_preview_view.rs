@@ -36,7 +36,7 @@ pub struct MarkdownPreviewView {
     contents: Option<ParsedMarkdown>,
     selected_block: usize,
     list_state: ListState,
-    tab_content_text: Option<SharedString>,
+    tab_content_text: SharedString,
     language_registry: Arc<LanguageRegistry>,
     parsing_markdown_task: Option<Task<Result<()>>>,
 }
@@ -130,7 +130,7 @@ impl MarkdownPreviewView {
             editor,
             workspace_handle,
             language_registry,
-            None,
+            "Markdown Preview".into(),
             window,
             cx,
         )
@@ -141,7 +141,7 @@ impl MarkdownPreviewView {
         active_editor: Entity<Editor>,
         workspace: WeakEntity<Workspace>,
         language_registry: Arc<LanguageRegistry>,
-        tab_content_text: Option<SharedString>,
+        tab_content_text: SharedString,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
@@ -343,9 +343,7 @@ impl MarkdownPreviewView {
         );
 
         let tab_content = editor.read(cx).tab_content_text(0, cx);
-        if self.tab_content_text.is_none() {
-            self.tab_content_text = Some(format!("Preview {}", tab_content).into());
-        }
+        self.tab_content_text = format!("Preview {}", tab_content).into();
 
         self.active_editor = Some(EditorState {
             editor,
@@ -496,9 +494,7 @@ impl Item for MarkdownPreviewView {
     }
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
-        self.tab_content_text
-            .clone()
-            .unwrap_or_else(|| SharedString::from("Markdown Preview"))
+        self.tab_content_text.clone()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

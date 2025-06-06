@@ -304,7 +304,7 @@ impl AddedContext {
             AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
             AgentContextHandle::TextThread(handle) => Some(Self::pending_text_thread(handle, cx)),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
-            AgentContextHandle::Image(handle) => Some(Self::image(handle, cx)),
+            AgentContextHandle::Image(handle) => Some(Self::image(handle)),
         }
     }
 
@@ -318,7 +318,7 @@ impl AddedContext {
             AgentContext::Thread(context) => Self::attached_thread(context),
             AgentContext::TextThread(context) => Self::attached_text_thread(context),
             AgentContext::Rules(context) => Self::attached_rules(context),
-            AgentContext::Image(context) => Self::image(context.clone(), cx),
+            AgentContext::Image(context) => Self::image(context.clone()),
         }
     }
 
@@ -333,8 +333,14 @@ impl AddedContext {
 
     fn file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
         let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let (name, parent) =
-            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
+        let name = full_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned().into())
+            .unwrap_or_else(|| full_path_string.clone());
+        let parent = full_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned().into());
         AddedContext {
             kind: ContextKind::File,
             name,
@@ -364,8 +370,14 @@ impl AddedContext {
 
     fn directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
         let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let (name, parent) =
-            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
+        let name = full_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned().into())
+            .unwrap_or_else(|| full_path_string.clone());
+        let parent = full_path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned().into());
         AddedContext {
             kind: ContextKind::Directory,
             name,
@@ -593,23 +605,13 @@ impl AddedContext {
         }
     }
 
-    fn image(context: ImageContext, cx: &App) -> AddedContext {
-        let (name, parent, icon_path) = if let Some(full_path) = context.full_path.as_ref() {
-            let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-            let (name, parent) =
-                extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
-            let icon_path = FileIcons::get_icon(&full_path, cx);
-            (name, parent, icon_path)
-        } else {
-            ("Image".into(), None, None)
-        };
-
+    fn image(context: ImageContext) -> AddedContext {
         AddedContext {
             kind: ContextKind::Image,
-            name,
-            parent,
+            name: "Image".into(),
+            parent: None,
             tooltip: None,
-            icon_path,
+            icon_path: None,
             status: match context.status() {
                 ImageStatus::Loading => ContextStatus::Loading {
                     message: "Loading…".into(),
@@ -635,22 +637,6 @@ impl AddedContext {
             handle: AgentContextHandle::Image(context),
         }
     }
-}
-
-fn extract_file_name_and_directory_from_full_path(
-    path: &Path,
-    name_fallback: &SharedString,
-) -> (SharedString, Option<SharedString>) {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned().into())
-        .unwrap_or_else(|| name_fallback.clone());
-    let parent = path
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().into_owned().into());
-
-    (name, parent)
 }
 
 #[derive(Debug, Clone)]
@@ -779,49 +765,37 @@ impl Component for AddedContext {
         let mut next_context_id = ContextId::zero();
         let image_ready = (
             "Ready",
-            AddedContext::image(
-                ImageContext {
-                    context_id: next_context_id.post_inc(),
-                    project_path: None,
-                    full_path: None,
-                    original_image: Arc::new(Image::empty()),
-                    image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
-                },
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                project_path: None,
+                original_image: Arc::new(Image::empty()),
+                image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+            }),
         );
 
         let image_loading = (
             "Loading",
-            AddedContext::image(
-                ImageContext {
-                    context_id: next_context_id.post_inc(),
-                    project_path: None,
-                    full_path: None,
-                    original_image: Arc::new(Image::empty()),
-                    image_task: cx
-                        .background_spawn(async move {
-                            smol::Timer::after(Duration::from_secs(60 * 5)).await;
-                            Some(LanguageModelImage::empty())
-                        })
-                        .shared(),
-                },
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                project_path: None,
+                original_image: Arc::new(Image::empty()),
+                image_task: cx
+                    .background_spawn(async move {
+                        smol::Timer::after(Duration::from_secs(60 * 5)).await;
+                        Some(LanguageModelImage::empty())
+                    })
+                    .shared(),
+            }),
         );
 
         let image_error = (
             "Error",
-            AddedContext::image(
-                ImageContext {
-                    context_id: next_context_id.post_inc(),
-                    project_path: None,
-                    full_path: None,
-                    original_image: Arc::new(Image::empty()),
-                    image_task: Task::ready(None).shared(),
-                },
-                cx,
-            ),
+            AddedContext::image(ImageContext {
+                context_id: next_context_id.post_inc(),
+                project_path: None,
+                original_image: Arc::new(Image::empty()),
+                image_task: Task::ready(None).shared(),
+            }),
         );
 
         Some(

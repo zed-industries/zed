@@ -298,7 +298,6 @@ pub async fn download_adapter_from_github(
         response.status().to_string()
     );
 
-    delegate.output_to_console("Download complete".to_owned());
     match file_type {
         DownloadedFileType::GzipTar => {
             let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
@@ -370,19 +369,21 @@ pub trait DebugAdapter: 'static + Send + Sync {
         None
     }
 
-    /// Extracts the kind (attach/launch) of debug configuration from the given JSON config.
-    /// This method should only return error when the kind cannot be determined for a given configuration;
-    /// in particular, it *should not* validate whether the request as a whole is valid, because that's best left to the debug adapter itself to decide.
-    fn request_kind(
+    fn validate_config(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        match config.get("request") {
-            Some(val) if val == "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
-            Some(val) if val == "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
-            _ => Err(anyhow!(
-                "missing or invalid `request` field in config. Expected 'launch' or 'attach'"
-            )),
+        let map = config.as_object().context("Config isn't an object")?;
+
+        let request_variant = map
+            .get("request")
+            .and_then(|val| val.as_str())
+            .context("request argument is not found or invalid")?;
+
+        match request_variant {
+            "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
+            "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
+            _ => Err(anyhow!("request must be either 'launch' or 'attach'")),
         }
     }
 
@@ -412,7 +413,7 @@ impl DebugAdapter for FakeAdapter {
         serde_json::Value::Null
     }
 
-    fn request_kind(
+    fn validate_config(
         &self,
         config: &serde_json::Value,
     ) -> Result<StartDebuggingRequestArgumentsRequest> {
@@ -457,7 +458,7 @@ impl DebugAdapter for FakeAdapter {
             envs: HashMap::default(),
             cwd: None,
             request_args: StartDebuggingRequestArguments {
-                request: self.request_kind(&task_definition.config)?,
+                request: self.validate_config(&task_definition.config)?,
                 configuration: task_definition.config.clone(),
             },
         })

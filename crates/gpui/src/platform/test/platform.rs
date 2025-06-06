@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    Size, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task,
+    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -165,10 +165,10 @@ impl TestPlatform {
         &self,
         msg: &str,
         detail: Option<&str>,
-        answers: &[PromptButton],
+        answers: &[&str],
     ) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
-        let answers: Vec<String> = answers.iter().map(|s| s.label().to_string()).collect();
+        let answers: Vec<String> = answers.iter().map(|&s| s.to_string()).collect();
         self.background_executor()
             .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
         self.prompts

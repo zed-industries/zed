@@ -21,7 +21,7 @@ const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
 const ENTER_KEY: u16 = 0x0d;
 const NUMPAD_ENTER_KEY: u16 = 0x03;
-pub(crate) const ESCAPE_KEY: u16 = 0x1b;
+const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 

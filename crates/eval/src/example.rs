@@ -19,7 +19,6 @@ use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
-use zed_llm_client::CompletionIntent;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
@@ -50,7 +49,6 @@ pub struct ExampleMetadata {
     pub max_assertions: Option<usize>,
     pub profile_id: AgentProfileId,
     pub existing_thread_json: Option<String>,
-    pub max_turns: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -309,7 +307,7 @@ impl ExampleContext {
 
         let message_count_before = self.app.update_entity(&self.agent_thread, |thread, cx| {
             thread.set_remaining_turns(iterations);
-            thread.send_to_model(model, CompletionIntent::UserPrompt, None, cx);
+            thread.send_to_model(model, None, cx);
             thread.messages().len()
         })?;
 

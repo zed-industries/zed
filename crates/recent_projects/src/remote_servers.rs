@@ -289,18 +289,15 @@ struct DefaultState {
     scrollbar: ScrollbarState,
     add_new_server: NavigableEntry,
     servers: Vec<RemoteEntry>,
+    handle: ScrollHandle,
 }
 
 impl DefaultState {
-    fn new(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
+    fn new(cx: &mut App) -> Self {
         let handle = ScrollHandle::new();
         let scrollbar = ScrollbarState::new(handle.clone());
         let add_new_server = NavigableEntry::new(&handle, cx);
-
-        let ssh_settings = SshSettings::get_global(cx);
-        let read_ssh_config = ssh_settings.read_ssh_config;
-
-        let mut servers: Vec<RemoteEntry> = ssh_settings
+        let servers = SshSettings::get_global(cx)
             .ssh_connections()
             .map(|connection| {
                 let open_folder = NavigableEntry::new(&handle, cx);
@@ -319,25 +316,11 @@ impl DefaultState {
             })
             .collect();
 
-        if read_ssh_config {
-            let mut extra_servers_from_config = ssh_config_servers.clone();
-            for server in &servers {
-                if let RemoteEntry::Project { connection, .. } = server {
-                    extra_servers_from_config.remove(&connection.host);
-                }
-            }
-            servers.extend(extra_servers_from_config.into_iter().map(|host| {
-                RemoteEntry::SshConfig {
-                    open_folder: NavigableEntry::new(&handle, cx),
-                    host,
-                }
-            }));
-        }
-
         Self {
             scrollbar,
             add_new_server,
             servers,
+            handle,
         }
     }
 }
@@ -357,8 +340,8 @@ enum Mode {
 }
 
 impl Mode {
-    fn default_mode(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
-        Self::Default(DefaultState::new(ssh_config_servers, cx))
+    fn default_mode(cx: &mut App) -> Self {
+        Self::Default(DefaultState::new(cx))
     }
 }
 impl RemoteServerProjects {
@@ -421,7 +404,7 @@ impl RemoteServerProjects {
             });
 
         Self {
-            mode: Mode::default_mode(&BTreeSet::new(), cx),
+            mode: Mode::default_mode(cx),
             focus_handle,
             workspace,
             retained_connections: Vec::new(),
@@ -491,15 +474,14 @@ impl RemoteServerProjects {
         .prompt_err("Failed to connect", window, cx, |_, _, _| None);
 
         let address_editor = editor.clone();
-        let creating = cx.spawn_in(window, async move |this, cx| {
+        let creating = cx.spawn(async move |this, cx| {
             match connection.await {
                 Some(Some(client)) => this
-                    .update_in(cx, |this, window, cx| {
+                    .update(cx, |this, cx| {
                         telemetry::event!("SSH Server Created");
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
-                        this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                        this.focus_handle(cx).focus(window);
+                        this.mode = Mode::default_mode(cx);
                         cx.notify()
                     })
                     .log_err(),
@@ -665,7 +647,7 @@ impl RemoteServerProjects {
                         }
                     }
                 });
-                self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+                self.mode = Mode::default_mode(cx);
                 self.focus_handle.focus(window);
             }
         }
@@ -685,7 +667,7 @@ impl RemoteServerProjects {
                 cx.notify();
             }
             _ => {
-                self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+                self.mode = Mode::default_mode(cx);
                 self.focus_handle(cx).focus(window);
                 cx.notify();
             }
@@ -1246,10 +1228,7 @@ impl RemoteServerProjects {
                                             .ok();
                                         remote_servers
                                             .update(cx, |this, cx| {
-                                                this.mode = Mode::default_mode(
-                                                    &this.ssh_config_servers,
-                                                    cx,
-                                                );
+                                                this.mode = Mode::default_mode(cx);
                                                 cx.notify();
                                             })
                                             .ok();
@@ -1301,7 +1280,7 @@ impl RemoteServerProjects {
                                 .id("ssh-options-copy-server-address")
                                 .track_focus(&entries[3].focus_handle)
                                 .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                    this.mode = Mode::default_mode(cx);
                                     cx.focus_self(window);
                                     cx.notify();
                                 }))
@@ -1317,8 +1296,7 @@ impl RemoteServerProjects {
                                         )
                                         .child(Label::new("Go Back"))
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.mode =
-                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            this.mode = Mode::default_mode(cx);
                                             cx.focus_self(window);
                                             cx.notify()
                                         })),
@@ -1379,8 +1357,7 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ssh_settings = SshSettings::get_global(cx);
-        let mut should_rebuild = false;
-
+        let read_ssh_config = ssh_settings.read_ssh_config;
         if ssh_settings
             .ssh_connections
             .as_ref()
@@ -1395,33 +1372,31 @@ impl RemoteServerProjects {
                     .ne(connections.iter())
             })
         {
-            should_rebuild = true;
-        };
-
-        if !should_rebuild && ssh_settings.read_ssh_config {
-            let current_ssh_hosts: BTreeSet<SharedString> = state
-                .servers
-                .iter()
-                .filter_map(|server| match server {
-                    RemoteEntry::SshConfig { host, .. } => Some(host.clone()),
-                    _ => None,
-                })
-                .collect();
-            let mut expected_ssh_hosts = self.ssh_config_servers.clone();
-            for server in &state.servers {
-                if let RemoteEntry::Project { connection, .. } = server {
-                    expected_ssh_hosts.remove(&connection.host);
-                }
-            }
-            should_rebuild = current_ssh_hosts != expected_ssh_hosts;
-        }
-
-        if should_rebuild {
-            self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+            self.mode = Mode::default_mode(cx);
             if let Mode::Default(new_state) = &self.mode {
                 state = new_state.clone();
             }
         }
+
+        let mut extra_servers_from_config = if read_ssh_config {
+            self.ssh_config_servers.clone()
+        } else {
+            BTreeSet::new()
+        };
+        let mut servers = state.servers.clone();
+        for server in &servers {
+            if let RemoteEntry::Project { connection, .. } = server {
+                extra_servers_from_config.remove(&connection.host);
+            }
+        }
+        servers.extend(
+            extra_servers_from_config
+                .into_iter()
+                .map(|host| RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&state.handle, cx),
+                    host,
+                }),
+        );
 
         let scroll_state = state.scrollbar.parent_entity(&cx.entity());
         let connect_button = div()
@@ -1479,7 +1454,7 @@ impl RemoteServerProjects {
                                 )
                                 .into_any_element(),
                         )
-                        .children(state.servers.iter().enumerate().map(|(ix, connection)| {
+                        .children(servers.iter().enumerate().map(|(ix, connection)| {
                             self.render_ssh_connection(ix, connection.clone(), window, cx)
                                 .into_any_element()
                         })),
@@ -1488,7 +1463,7 @@ impl RemoteServerProjects {
         )
         .entry(state.add_new_server.clone());
 
-        for server in &state.servers {
+        for server in &servers {
             match server {
                 RemoteEntry::Project {
                     open_folder,
@@ -1580,7 +1555,7 @@ impl RemoteServerProjects {
             },
             cx,
         );
-        self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+        self.mode = Mode::default_mode(cx);
         new_ix.load(atomic::Ordering::Acquire)
     }
 }

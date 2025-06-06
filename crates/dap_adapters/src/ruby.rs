@@ -265,7 +265,7 @@ impl DebugAdapter for RubyDebugAdapter {
             cwd: None,
             envs: std::collections::HashMap::default(),
             request_args: StartDebuggingRequestArguments {
-                request: self.request_kind(&definition.config)?,
+                request: self.validate_config(&definition.config)?,
                 configuration: definition.config.clone(),
             },
         })

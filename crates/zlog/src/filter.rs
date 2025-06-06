@@ -39,9 +39,9 @@ pub static LEVEL_ENABLED_MAX_CONFIG: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_
 const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     ("zbus", log::LevelFilter::Off),
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
-    ("blade_graphics", log::LevelFilter::Off),
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    ("blade_graphics::hal::resource", log::LevelFilter::Off),
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     ("naga::back::spv::writer", log::LevelFilter::Off),
 ];
 
@@ -166,14 +166,14 @@ fn scope_alloc_from_scope_str(scope_str: &str) -> Option<ScopeAlloc> {
     return Some(scope);
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct ScopeMap {
     entries: Vec<ScopeMapEntry>,
     modules: Vec<(String, log::LevelFilter)>,
     root_count: usize,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct ScopeMapEntry {
     scope: String,
     enabled: Option<log::LevelFilter>,

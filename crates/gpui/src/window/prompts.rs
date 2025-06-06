@@ -4,7 +4,7 @@ use futures::channel::oneshot;
 
 use crate::{
     AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, ParentElement, PromptButton, PromptLevel, Render,
+    InteractiveElement, IntoElement, ParentElement, PromptLevel, Render,
     StatefulInteractiveElement, Styled, div, opaque_grey, white,
 };
 
@@ -74,7 +74,7 @@ pub fn fallback_prompt_renderer(
     level: PromptLevel,
     message: &str,
     detail: Option<&str>,
-    actions: &[PromptButton],
+    actions: &[&str],
     handle: PromptHandle,
     window: &mut Window,
     cx: &mut App,
@@ -83,7 +83,7 @@ pub fn fallback_prompt_renderer(
         _level: level,
         message: message.to_string(),
         detail: detail.map(ToString::to_string),
-        actions: actions.to_vec(),
+        actions: actions.iter().map(ToString::to_string).collect(),
         focus: cx.focus_handle(),
     });
 
@@ -95,7 +95,7 @@ pub struct FallbackPromptRenderer {
     _level: PromptLevel,
     message: String,
     detail: Option<String>,
-    actions: Vec<PromptButton>,
+    actions: Vec<String>,
     focus: FocusHandle,
 }
 
@@ -138,7 +138,7 @@ impl Render for FallbackPromptRenderer {
                     .rounded_xs()
                     .cursor_pointer()
                     .text_sm()
-                    .child(action.label().clone())
+                    .child(action.clone())
                     .id(ix)
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(PromptResponse(ix));
@@ -202,7 +202,7 @@ pub(crate) enum PromptBuilder {
                 PromptLevel,
                 &str,
                 Option<&str>,
-                &[PromptButton],
+                &[&str],
                 PromptHandle,
                 &mut Window,
                 &mut App,
@@ -216,7 +216,7 @@ impl Deref for PromptBuilder {
         PromptLevel,
         &str,
         Option<&str>,
-        &[PromptButton],
+        &[&str],
         PromptHandle,
         &mut Window,
         &mut App,

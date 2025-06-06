@@ -1183,15 +1183,19 @@ pub fn handle_settings_file_changes(
             };
 
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let migrating_in_memory = process_settings(content, is_user, store, cx);
-                if let Some(notifier) = MigrationNotification::try_global(cx) {
-                    notifier.update(cx, |_, cx| {
-                        cx.emit(MigrationEvent::ContentChanged {
-                            migration_type: MigrationType::Settings,
-                            migrating_in_memory,
+                let content_migrated = process_settings(content, is_user, store, cx);
+
+                if content_migrated {
+                    if let Some(notifier) = MigrationNotification::try_global(cx) {
+                        notifier.update(cx, |_, cx| {
+                            cx.emit(MigrationEvent::ContentChanged {
+                                migration_type: MigrationType::Settings,
+                                migrated: true,
+                            });
                         });
-                    });
+                    }
                 }
+
                 cx.refresh_windows();
             });
 
@@ -1243,7 +1247,7 @@ pub fn handle_keymap_file_changes(
 
     cx.spawn(async move |cx| {
         let mut user_keymap_content = String::new();
-        let mut migrating_in_memory = false;
+        let mut content_migrated = false;
         loop {
             select_biased! {
                 _ = base_keymap_rx.next() => {},
@@ -1252,10 +1256,10 @@ pub fn handle_keymap_file_changes(
                     if let Some(content) = content {
                         if let Ok(Some(migrated_content)) = migrate_keymap(&content) {
                             user_keymap_content = migrated_content;
-                            migrating_in_memory = true;
+                            content_migrated = true;
                         } else {
                             user_keymap_content = content;
-                            migrating_in_memory = false;
+                            content_migrated = false;
                         }
                     }
                 }
@@ -1265,7 +1269,7 @@ pub fn handle_keymap_file_changes(
                     notifier.update(cx, |_, cx| {
                         cx.emit(MigrationEvent::ContentChanged {
                             migration_type: MigrationType::Keymap,
-                            migrating_in_memory,
+                            migrated: content_migrated,
                         });
                     });
                 }
@@ -2126,6 +2130,7 @@ mod tests {
                 pane.update(cx, |pane, cx| {
                     drop(editor);
                     pane.close_active_item(&Default::default(), window, cx)
+                        .unwrap()
                 })
             })
             .unwrap();

@@ -1076,7 +1076,7 @@ fn test_edit_sequence(language_name: &str, steps: &[&str], cx: &mut App) -> (Buf
         .now_or_never()
         .unwrap()
         .unwrap();
-    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "");
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), Default::default());
 
     let mut mutated_syntax_map = SyntaxMap::new(&buffer);
     mutated_syntax_map.set_language_registry(registry.clone());

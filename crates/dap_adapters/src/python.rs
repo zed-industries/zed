@@ -1,6 +1,9 @@
 use crate::*;
-use anyhow::Context as _;
-use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
+use anyhow::{Context as _, anyhow};
+use dap::{
+    DebugRequest, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
+    adapters::DebugTaskDefinition,
+};
 use gpui::{AsyncApp, SharedString};
 use json_dotpath::DotPaths;
 use language::{LanguageName, Toolchain};
@@ -83,7 +86,7 @@ impl PythonDebugAdapter {
         &self,
         task_definition: &DebugTaskDefinition,
     ) -> Result<StartDebuggingRequestArguments> {
-        let request = self.request_kind(&task_definition.config)?;
+        let request = self.validate_config(&task_definition.config)?;
 
         let mut configuration = task_definition.config.clone();
         if let Ok(console) = configuration.dot_get_mut("console") {
@@ -249,6 +252,24 @@ impl DebugAdapter for PythonDebugAdapter {
             build: None,
             tcp_connection: None,
         })
+    }
+
+    fn validate_config(
+        &self,
+        config: &serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest> {
+        let map = config.as_object().context("Config isn't an object")?;
+
+        let request_variant = map
+            .get("request")
+            .and_then(|val| val.as_str())
+            .context("request is not valid")?;
+
+        match request_variant {
+            "launch" => Ok(StartDebuggingRequestArgumentsRequest::Launch),
+            "attach" => Ok(StartDebuggingRequestArgumentsRequest::Attach),
+            _ => Err(anyhow!("request must be either 'launch' or 'attach'")),
+        }
     }
 
     async fn dap_schema(&self) -> serde_json::Value {
@@ -639,7 +660,7 @@ impl DebugAdapter for PythonDebugAdapter {
             }
         }
 
-        self.get_installed_binary(delegate, &config, None, toolchain, false)
+        self.get_installed_binary(delegate, &config, None, None, false)
             .await
     }
 }

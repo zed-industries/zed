@@ -1,5 +1,3 @@
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering::SeqCst;
 #[cfg(any(test, feature = "test-support"))]
 use std::time::Duration;
 
@@ -108,20 +106,5 @@ impl std::fmt::Debug for CwdBacktrace<'_> {
             }
         }
         fmt.finish()
-    }
-}
-
-/// Increment the given atomic counter if it is not zero.
-/// Return the new value of the counter.
-pub(crate) fn atomic_incr_if_not_zero(counter: &AtomicUsize) -> usize {
-    let mut loaded = counter.load(SeqCst);
-    loop {
-        if loaded == 0 {
-            return 0;
-        }
-        match counter.compare_exchange_weak(loaded, loaded + 1, SeqCst, SeqCst) {
-            Ok(x) => return x + 1,
-            Err(actual) => loaded = actual,
-        }
     }
 }

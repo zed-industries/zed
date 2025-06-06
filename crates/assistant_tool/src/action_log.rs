@@ -415,38 +415,14 @@ impl ActionLog {
                     self.project
                         .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
                 } else {
-                    // For a file created by AI with no pre-existing content,
-                    // only delete the file if we're certain it contains only AI content
-                    // with no edits from the user.
-
-                    let initial_version = tracked_buffer.version.clone();
-                    let current_version = buffer.read(cx).version();
-
-                    let current_content = buffer.read(cx).text();
-                    let tracked_content = tracked_buffer.snapshot.text();
-
-                    let is_ai_only_content =
-                        initial_version == current_version && current_content == tracked_content;
-
-                    if is_ai_only_content {
-                        buffer
-                            .read(cx)
-                            .entry_id(cx)
-                            .and_then(|entry_id| {
-                                self.project.update(cx, |project, cx| {
-                                    project.delete_entry(entry_id, false, cx)
-                                })
-                            })
-                            .unwrap_or(Task::ready(Ok(())))
-                    } else {
-                        // Not sure how to disentangle edits made by the user
-                        // from edits made by the AI at this point.
-                        // For now, preserve both to avoid data loss.
-                        //
-                        // TODO: Better solution (disable "Reject" after user makes some
-                        // edit or find a way to differentiate between AI and user edits)
-                        Task::ready(Ok(()))
-                    }
+                    buffer
+                        .read(cx)
+                        .entry_id(cx)
+                        .and_then(|entry_id| {
+                            self.project
+                                .update(cx, |project, cx| project.delete_entry(entry_id, false, cx))
+                        })
+                        .unwrap_or(Task::ready(Ok(())))
                 };
 
                 self.tracked_buffers.remove(&buffer);
@@ -1600,6 +1576,7 @@ mod tests {
                 project.find_project_path("dir/new_file", cx)
             })
             .unwrap();
+
         let buffer = project
             .update(cx, |project, cx| project.open_buffer(file_path, cx))
             .await
@@ -1640,72 +1617,6 @@ mod tests {
         cx.run_until_parked();
         assert!(!fs.is_file(path!("/dir/new_file").as_ref()).await);
         assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
-    }
-
-    #[gpui::test]
-    async fn test_reject_created_file_with_user_edits(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let action_log = cx.new(|_| ActionLog::new(project.clone()));
-
-        let file_path = project
-            .read_with(cx, |project, cx| {
-                project.find_project_path("dir/new_file", cx)
-            })
-            .unwrap();
-        let buffer = project
-            .update(cx, |project, cx| project.open_buffer(file_path, cx))
-            .await
-            .unwrap();
-
-        // AI creates file with initial content
-        cx.update(|cx| {
-            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
-            buffer.update(cx, |buffer, cx| buffer.set_text("ai content", cx));
-            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
-        });
-
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .await
-            .unwrap();
-
-        cx.run_until_parked();
-
-        // User makes additional edits
-        cx.update(|cx| {
-            buffer.update(cx, |buffer, cx| {
-                buffer.edit([(10..10, "\nuser added this line")], None, cx);
-            });
-        });
-
-        project
-            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
-            .await
-            .unwrap();
-
-        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
-
-        // Reject all
-        action_log
-            .update(cx, |log, cx| {
-                log.reject_edits_in_ranges(
-                    buffer.clone(),
-                    vec![Point::new(0, 0)..Point::new(100, 0)],
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        cx.run_until_parked();
-
-        // File should still contain all the content
-        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
-
-        let content = buffer.read_with(cx, |buffer, _| buffer.text());
-        assert_eq!(content, "ai content\nuser added this line");
     }
 
     #[gpui::test(iterations = 100)]

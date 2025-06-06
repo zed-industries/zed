@@ -89,7 +89,6 @@ actions!(
         ResetTrialEndUpsell,
         ContinueThread,
         ContinueWithBurnMode,
-        ToggleBurnMode,
     ]
 );
 

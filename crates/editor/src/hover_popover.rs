@@ -1050,9 +1050,7 @@ mod tests {
 
                 for (range, event) in slice.iter() {
                     match event {
-                        MarkdownEvent::SubstitutedText(parsed) => {
-                            rendered_text.push_str(parsed.as_str())
-                        }
+                        MarkdownEvent::SubstitutedText(parsed) => rendered_text.push_str(parsed),
                         MarkdownEvent::Text | MarkdownEvent::Code => {
                             rendered_text.push_str(&text[range.clone()])
                         }

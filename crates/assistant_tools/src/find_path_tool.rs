@@ -119,16 +119,14 @@ impl Tool for FindPathTool {
                     )
                     .unwrap();
                 }
-
-                for mat in matches.iter().skip(offset).take(RESULTS_PER_PAGE) {
-                    write!(&mut message, "\n{}", mat.display()).unwrap();
-                }
-
                 let output = FindPathToolOutput {
                     glob,
-                    paths: matches,
+                    paths: matches.clone(),
                 };
 
+                for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
+                    write!(&mut message, "\n{}", mat.display()).unwrap();
+                }
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Text(message),
                     output: Some(serde_json::to_value(output)?),
@@ -237,6 +235,8 @@ impl ToolCard for FindPathToolCard {
             format!("{} matches", self.paths.len()).into()
         };
 
+        let glob_label = self.glob.to_string();
+
         let content = if !self.paths.is_empty() && self.expanded {
             Some(
                 v_flex()
@@ -310,7 +310,7 @@ impl ToolCard for FindPathToolCard {
             .gap_1()
             .child(
                 ToolCallCardHeader::new(IconName::SearchCode, matches_label)
-                    .with_code_path(&self.glob)
+                    .with_code_path(glob_label)
                     .disclosure_slot(
                         Disclosure::new("path-search-disclosure", self.expanded)
                             .opened_icon(IconName::ChevronUp)

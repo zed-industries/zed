@@ -101,11 +101,7 @@ impl DapStore {
     pub fn init(client: &AnyProtoClient, cx: &mut App) {
         static ADD_LOCATORS: Once = Once::new();
         ADD_LOCATORS.call_once(|| {
-            let registry = DapRegistry::global(cx);
-            registry.add_locator(Arc::new(locators::cargo::CargoLocator {}));
-            registry.add_locator(Arc::new(locators::go::GoLocator {}));
-            registry.add_locator(Arc::new(locators::node::NodeLocator));
-            registry.add_locator(Arc::new(locators::python::PythonLocator));
+            DapRegistry::global(cx).add_locator(Arc::new(locators::cargo::CargoLocator {}))
         });
         client.add_entity_request_handler(Self::handle_run_debug_locator);
         client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
@@ -416,6 +412,7 @@ impl DapStore {
                         this.get_debug_adapter_binary(definition.clone(), session_id, console, cx)
                     })?
                     .await?;
+
                 session
                     .update(cx, |session, cx| {
                         session.boot(binary, worktree, dap_store, cx)

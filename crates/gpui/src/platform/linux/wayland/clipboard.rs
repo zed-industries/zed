@@ -15,9 +15,7 @@ use crate::{
     platform::linux::platform::read_fd,
 };
 
-/// Text mime types that we'll offer to other programs.
-pub(crate) const TEXT_MIME_TYPES: [&str; 3] =
-    ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"];
+pub(crate) const TEXT_MIME_TYPE: &str = "text/plain;charset=utf-8";
 pub(crate) const FILE_LIST_MIME_TYPE: &str = "text/uri-list";
 
 /// Text mime types that we'll accept from other programs.

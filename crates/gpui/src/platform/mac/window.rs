@@ -1,9 +1,9 @@
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
-    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ScaledPixels, Size,
+    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformWindow, Point, PromptLevel, RequestFrameOptions, ScaledPixels, Size,
     Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
     platform::PlatformInputHandler, point, px, size,
 };
@@ -19,7 +19,6 @@ use cocoa::{
     foundation::{
         NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
         NSOperatingSystemVersion, NSPoint, NSProcessInfo, NSRect, NSSize, NSString, NSUInteger,
-        NSUserDefaults,
     },
 };
 use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
@@ -913,7 +912,7 @@ impl PlatformWindow for MacWindow {
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
-        answers: &[PromptButton],
+        answers: &[&str],
     ) -> Option<oneshot::Receiver<usize>> {
         // macOs applies overrides to modal window buttons after they are added.
         // Two most important for this logic are:
@@ -937,7 +936,7 @@ impl PlatformWindow for MacWindow {
             .iter()
             .enumerate()
             .rev()
-            .find(|(_, label)| !label.is_cancel())
+            .find(|(_, label)| **label != "Cancel")
             .filter(|&(label_index, _)| label_index > 0);
 
         unsafe {
@@ -959,19 +958,11 @@ impl PlatformWindow for MacWindow {
                 .enumerate()
                 .filter(|&(ix, _)| Some(ix) != latest_non_cancel_label.map(|(ix, _)| ix))
             {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
+                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
-
-                if answer.is_cancel() {
-                    // Bind Escape Key to Cancel Button
-                    if let Some(key) = std::char::from_u32(super::events::ESCAPE_KEY as u32) {
-                        let _: () =
-                            msg_send![button, setKeyEquivalent: ns_string(&key.to_string())];
-                    }
-                }
             }
             if let Some((ix, answer)) = latest_non_cancel_label {
-                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer.label())];
+                let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
             }
 
@@ -1187,49 +1178,6 @@ impl PlatformWindow for MacWindow {
                 }
             })
             .detach()
-    }
-
-    fn titlebar_double_click(&self) {
-        let this = self.0.lock();
-        let window = this.native_window;
-        this.executor
-            .spawn(async move {
-                unsafe {
-                    let defaults: id = NSUserDefaults::standardUserDefaults();
-                    let domain = NSString::alloc(nil).init_str("NSGlobalDomain");
-                    let key = NSString::alloc(nil).init_str("AppleActionOnDoubleClick");
-
-                    let dict: id = msg_send![defaults, persistentDomainForName: domain];
-                    let action: id = if !dict.is_null() {
-                        msg_send![dict, objectForKey: key]
-                    } else {
-                        nil
-                    };
-
-                    let action_str = if !action.is_null() {
-                        CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
-                    } else {
-                        "".into()
-                    };
-
-                    match action_str.as_ref() {
-                        "Minimize" => {
-                            window.miniaturize_(nil);
-                        }
-                        "Maximize" => {
-                            window.zoom_(nil);
-                        }
-                        "Fill" => {
-                            // There is no documented API for "Fill" action, so we'll just zoom the window
-                            window.zoom_(nil);
-                        }
-                        _ => {
-                            window.zoom_(nil);
-                        }
-                    }
-                }
-            })
-            .detach();
     }
 }
 

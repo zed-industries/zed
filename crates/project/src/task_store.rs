@@ -5,10 +5,9 @@ use std::{
 
 use anyhow::Context as _;
 use collections::HashMap;
-use fs::Fs;
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Task, WeakEntity};
 use language::{
-    ContextLocation, ContextProvider as _, LanguageToolchainStore, Location,
+    ContextProvider as _, LanguageToolchainStore, Location,
     proto::{deserialize_anchor, serialize_anchor},
 };
 use rpc::{AnyProtoClient, TypedEnvelope, proto};
@@ -312,7 +311,6 @@ fn local_task_context_for_location(
     let worktree_abs_path = worktree_id
         .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
         .and_then(|worktree| worktree.read(cx).root_dir());
-    let fs = worktree_store.read(cx).fs();
 
     cx.spawn(async move |cx| {
         let project_env = environment
@@ -326,8 +324,6 @@ fn local_task_context_for_location(
             .update(|cx| {
                 combine_task_variables(
                     captured_variables,
-                    fs,
-                    worktree_store.clone(),
                     location,
                     project_env.clone(),
                     BasicContextProvider::new(worktree_store),
@@ -362,15 +358,9 @@ fn remote_task_context_for_location(
         // We need to gather a client context, as the headless one may lack certain information (e.g. tree-sitter parsing is disabled there, so symbols are not available).
         let mut remote_context = cx
             .update(|cx| {
-                let worktree_root = worktree_root(&worktree_store, &location, cx);
-
                 BasicContextProvider::new(worktree_store).build_context(
                     &TaskVariables::default(),
-                    ContextLocation {
-                        fs: None,
-                        worktree_root,
-                        file_location: &location,
-                    },
+                    &location,
                     None,
                     toolchain_store,
                     cx,
@@ -418,34 +408,8 @@ fn remote_task_context_for_location(
     })
 }
 
-fn worktree_root(
-    worktree_store: &Entity<WorktreeStore>,
-    location: &Location,
-    cx: &mut App,
-) -> Option<PathBuf> {
-    location
-        .buffer
-        .read(cx)
-        .file()
-        .map(|f| f.worktree_id(cx))
-        .and_then(|worktree_id| worktree_store.read(cx).worktree_for_id(worktree_id, cx))
-        .and_then(|worktree| {
-            let worktree = worktree.read(cx);
-            if !worktree.is_visible() {
-                return None;
-            }
-            let root_entry = worktree.root_entry()?;
-            if !root_entry.is_dir() {
-                return None;
-            }
-            worktree.absolutize(&root_entry.path).ok()
-        })
-}
-
 fn combine_task_variables(
     mut captured_variables: TaskVariables,
-    fs: Option<Arc<dyn Fs>>,
-    worktree_store: Entity<WorktreeStore>,
     location: Location,
     project_env: Option<HashMap<String, String>>,
     baseline: BasicContextProvider,
@@ -460,14 +424,9 @@ fn combine_task_variables(
     cx.spawn(async move |cx| {
         let baseline = cx
             .update(|cx| {
-                let worktree_root = worktree_root(&worktree_store, &location, cx);
                 baseline.build_context(
                     &captured_variables,
-                    ContextLocation {
-                        fs: fs.clone(),
-                        worktree_root,
-                        file_location: &location,
-                    },
+                    &location,
                     project_env.clone(),
                     toolchain_store.clone(),
                     cx,
@@ -479,14 +438,9 @@ fn combine_task_variables(
         if let Some(provider) = language_context_provider {
             captured_variables.extend(
                 cx.update(|cx| {
-                    let worktree_root = worktree_root(&worktree_store, &location, cx);
                     provider.build_context(
                         &captured_variables,
-                        ContextLocation {
-                            fs,
-                            worktree_root,
-                            file_location: &location,
-                        },
+                        &location,
                         project_env,
                         toolchain_store,
                         cx,

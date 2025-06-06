@@ -201,7 +201,7 @@ use ui::{
     ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
 };
-use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc, wrap_with_prefix};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -932,13 +932,10 @@ pub struct Editor {
     /// typing enters text into each of them, even the ones that aren't focused.
     pub(crate) show_cursor_when_unfocused: bool,
     columnar_selection_tail: Option<Anchor>,
-    columnar_display_point: Option<DisplayPoint>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
     select_prev_state: Option<SelectNextState>,
     selection_history: SelectionHistory,
-    defer_selection_effects: bool,
-    deferred_selection_effects_state: Option<DeferredSelectionEffectsState>,
     autoclose_regions: Vec<AutocloseRegion>,
     snippet_stack: InvalidationStack<SnippetState>,
     select_syntax_node_history: SelectSyntaxNodeHistory,
@@ -1196,14 +1193,6 @@ impl Default for SelectionHistoryMode {
     fn default() -> Self {
         Self::Normal
     }
-}
-
-struct DeferredSelectionEffectsState {
-    changed: bool,
-    show_completions: bool,
-    autoscroll: Option<Autoscroll>,
-    old_cursor_position: Anchor,
-    history_entry: SelectionHistoryEntry,
 }
 
 #[derive(Default)]
@@ -1681,13 +1670,6 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
-                        project::Event::LanguageServerAdded(..)
-                        | project::Event::LanguageServerRemoved(..) => {
-                            if editor.tasks_update_task.is_none() {
-                                editor.tasks_update_task =
-                                    Some(editor.refresh_runnables(window, cx));
-                            }
-                        }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
@@ -1798,13 +1780,10 @@ impl Editor {
             selections,
             scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
-            columnar_display_point: None,
             add_selections_state: None,
             select_next_state: None,
             select_prev_state: None,
             selection_history: SelectionHistory::default(),
-            defer_selection_effects: false,
-            deferred_selection_effects_state: None,
             autoclose_regions: Vec::new(),
             snippet_stack: InvalidationStack::default(),
             select_syntax_node_history: SelectSyntaxNodeHistory::default(),
@@ -2968,9 +2947,6 @@ impl Editor {
         Subscription::join(other_subscription, this_subscription)
     }
 
-    /// Changes selections using the provided mutation function. Changes to `self.selections` occur
-    /// immediately, but when run within `transact` or `with_selection_effects_deferred` other
-    /// effects of selection change occur at the end of the transaction.
     pub fn change_selections<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,
@@ -2978,105 +2954,39 @@ impl Editor {
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        self.change_selections_inner(true, autoscroll, window, cx, change)
-    }
-
-    pub(crate) fn change_selections_without_showing_completions<R>(
-        &mut self,
-        autoscroll: Option<Autoscroll>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
-    ) -> R {
-        self.change_selections_inner(false, autoscroll, window, cx, change)
+        self.change_selections_inner(autoscroll, true, window, cx, change)
     }
 
     fn change_selections_inner<R>(
         &mut self,
-        show_completions: bool,
         autoscroll: Option<Autoscroll>,
+        request_completions: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
         change: impl FnOnce(&mut MutableSelectionsCollection<'_>) -> R,
     ) -> R {
-        if let Some(state) = &mut self.deferred_selection_effects_state {
-            state.autoscroll = autoscroll.or(state.autoscroll);
-            state.show_completions = show_completions;
-            let (changed, result) = self.selections.change_with(cx, change);
-            state.changed |= changed;
-            return result;
-        }
-        let mut state = DeferredSelectionEffectsState {
-            changed: false,
-            show_completions,
-            autoscroll,
-            old_cursor_position: self.selections.newest_anchor().head(),
-            history_entry: SelectionHistoryEntry {
-                selections: self.selections.disjoint_anchors(),
-                select_next_state: self.select_next_state.clone(),
-                select_prev_state: self.select_prev_state.clone(),
-                add_selections_state: self.add_selections_state.clone(),
-            },
-        };
+        let old_cursor_position = self.selections.newest_anchor().head();
+        self.push_to_selection_history();
+
         let (changed, result) = self.selections.change_with(cx, change);
-        state.changed = state.changed || changed;
-        if self.defer_selection_effects {
-            self.deferred_selection_effects_state = Some(state);
-        } else {
-            self.apply_selection_effects(state, window, cx);
-        }
-        result
-    }
 
-    /// Defers the effects of selection change, so that the effects of multiple calls to
-    /// `change_selections` are applied at the end. This way these intermediate states aren't added
-    /// to selection history and the state of popovers based on selection position aren't
-    /// erroneously updated.
-    pub fn with_selection_effects_deferred<R>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        update: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> R,
-    ) -> R {
-        let already_deferred = self.defer_selection_effects;
-        self.defer_selection_effects = true;
-        let result = update(self, window, cx);
-        if !already_deferred {
-            self.defer_selection_effects = false;
-            if let Some(state) = self.deferred_selection_effects_state.take() {
-                self.apply_selection_effects(state, window, cx);
-            }
-        }
-        result
-    }
-
-    fn apply_selection_effects(
-        &mut self,
-        state: DeferredSelectionEffectsState,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if state.changed {
-            self.selection_history.push(state.history_entry);
-
-            if let Some(autoscroll) = state.autoscroll {
+        if changed {
+            if let Some(autoscroll) = autoscroll {
                 self.request_autoscroll(autoscroll, cx);
             }
+            self.selections_did_change(true, &old_cursor_position, request_completions, window, cx);
 
-            let old_cursor_position = &state.old_cursor_position;
-
-            self.selections_did_change(
-                true,
+            if self.should_open_signature_help_automatically(
                 &old_cursor_position,
-                state.show_completions,
-                window,
+                self.signature_help_state.backspace_pressed(),
                 cx,
-            );
-
-            if self.should_open_signature_help_automatically(&old_cursor_position, cx) {
+            ) {
                 self.show_signature_help(&ShowSignatureHelp, window, cx);
             }
+            self.signature_help_state.set_backspace_pressed(false);
         }
+
+        result
     }
 
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
@@ -3321,18 +3231,12 @@ impl Editor {
                     SelectMode::Character,
                 );
             });
-            if position.column() != goal_column {
-                self.columnar_display_point = Some(DisplayPoint::new(position.row(), goal_column));
-            } else {
-                self.columnar_display_point = None;
-            }
         }
 
         let tail = self.selections.newest::<Point>(cx).tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
         if !reset {
-            self.columnar_display_point = None;
             self.select_columns(
                 tail.to_display_point(&display_map),
                 position,
@@ -3355,9 +3259,7 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
-            let tail = self
-                .columnar_display_point
-                .unwrap_or_else(|| tail.to_display_point(&display_map));
+            let tail = tail.to_display_point(&display_map);
             self.select_columns(tail, position, goal_column, &display_map, window, cx);
         } else if let Some(mut pending) = self.selections.pending_anchor() {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -3473,7 +3375,7 @@ impl Editor {
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
-                if !display_map.is_block_line(row) {
+                if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
                     let start = display_map
                         .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
                         .to_point(display_map);
@@ -3491,19 +3393,8 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
-        let mut non_empty_ranges = selection_ranges
-            .iter()
-            .filter(|selection_range| selection_range.start != selection_range.end)
-            .peekable();
-
-        let ranges = if non_empty_ranges.peek().is_some() {
-            non_empty_ranges.cloned().collect()
-        } else {
-            selection_ranges
-        };
-
         self.change_selections(None, window, cx, |s| {
-            s.select_ranges(ranges);
+            s.select_ranges(selection_ranges);
         });
         cx.notify();
     }
@@ -3979,12 +3870,9 @@ impl Editor {
             }
 
             let had_active_inline_completion = this.has_active_inline_completion();
-            this.change_selections_without_showing_completions(
-                Some(Autoscroll::fit()),
-                window,
-                cx,
-                |s| s.select(new_selections),
-            );
+            this.change_selections_inner(Some(Autoscroll::fit()), false, window, cx, |s| {
+                s.select(new_selections)
+            });
 
             if !bracket_inserted {
                 if let Some(on_type_format_task) =
@@ -5389,6 +5277,7 @@ impl Editor {
             mat.candidate_id
         };
 
+        let buffer_handle = completions_menu.buffer;
         let completion = completions_menu
             .completions
             .borrow()
@@ -5396,23 +5285,34 @@ impl Editor {
             .clone();
         cx.stop_propagation();
 
-        let buffer_handle = completions_menu.buffer;
-
-        let CompletionEdit {
-            new_text,
-            snippet,
-            replace_range,
-        } = process_completion_for_edit(
-            &completion,
-            intent,
-            &buffer_handle,
-            &completions_menu.initial_position.text_anchor,
-            cx,
-        );
-
-        let buffer = buffer_handle.read(cx);
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let newest_anchor = self.selections.newest_anchor();
+
+        let snippet;
+        let new_text;
+        if completion.is_snippet() {
+            let mut snippet_source = completion.new_text.clone();
+            if let Some(scope) = snapshot.language_scope_at(newest_anchor.head()) {
+                if scope.prefers_label_for_snippet_in_completion() {
+                    if let Some(label) = completion.label() {
+                        if matches!(
+                            completion.kind(),
+                            Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD)
+                        ) {
+                            snippet_source = label;
+                        }
+                    }
+                }
+            }
+            snippet = Some(Snippet::parse(&snippet_source).log_err()?);
+            new_text = snippet.as_ref().unwrap().text.clone();
+        } else {
+            snippet = None;
+            new_text = completion.new_text.clone();
+        };
+
+        let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
+        let buffer = buffer_handle.read(cx);
         let replace_range_multibuffer = {
             let excerpt = snapshot.excerpt_containing(newest_anchor.range()).unwrap();
             let multibuffer_anchor = snapshot
@@ -9126,6 +9026,7 @@ impl Editor {
                 }
             }
 
+            this.signature_help_state.set_backspace_pressed(true);
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select(selections)
             });
@@ -12847,6 +12748,7 @@ impl Editor {
     ) -> Result<()> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
+        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         self.select_next_match_internal(&display_map, false, None, window, cx)?;
@@ -12899,6 +12801,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
+        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         self.select_next_match_internal(
             &display_map,
@@ -12917,6 +12820,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
+        self.push_to_selection_history();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.selections.all::<usize>(cx);
@@ -13639,7 +13543,6 @@ impl Editor {
         }
         let project = self.project.as_ref().map(Entity::downgrade);
         let task_sources = self.lsp_task_sources(cx);
-        let multi_buffer = self.buffer.downgrade();
         cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let Some(project) = project.and_then(|p| p.upgrade()) else {
@@ -13723,19 +13626,7 @@ impl Editor {
                 return;
             };
 
-            let Ok(prefer_lsp) = multi_buffer.update(cx, |buffer, cx| {
-                buffer.language_settings(cx).tasks.prefer_lsp
-            }) else {
-                return;
-            };
-
-            let rows = Self::runnable_rows(
-                project,
-                display_snapshot,
-                prefer_lsp && !lsp_tasks_by_rows.is_empty(),
-                new_rows,
-                cx.clone(),
-            );
+            let rows = Self::runnable_rows(project, display_snapshot, new_rows, cx.clone());
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();
@@ -13763,21 +13654,15 @@ impl Editor {
     fn runnable_rows(
         project: Entity<Project>,
         snapshot: DisplaySnapshot,
-        prefer_lsp: bool,
         runnable_ranges: Vec<RunnableRange>,
         mut cx: AsyncWindowContext,
     ) -> Vec<((BufferId, BufferRow), RunnableTasks)> {
         runnable_ranges
             .into_iter()
             .filter_map(|mut runnable| {
-                let mut tasks = cx
+                let tasks = cx
                     .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
                     .ok()?;
-                if prefer_lsp {
-                    tasks.retain(|(task_kind, _)| {
-                        !matches!(task_kind, TaskSourceKind::Language { .. })
-                    });
-                }
                 if tasks.is_empty() {
                     return None;
                 }
@@ -15110,7 +14995,7 @@ impl Editor {
                                         text_style = text_style.highlight(highlight_style);
                                     }
                                     div()
-                                        .block_mouse_except_scroll()
+                                        .block_mouse_down()
                                         .pl(cx.anchor_x)
                                         .child(EditorElement::new(
                                             &rename_editor,
@@ -15712,14 +15597,15 @@ impl Editor {
             None
         };
         self.inline_diagnostics_update = cx.spawn_in(window, async move |editor, cx| {
+            let editor = editor.upgrade().unwrap();
+
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
-            let Some(snapshot) = editor.upgrade().and_then(|editor| {
-                editor
-                    .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
-                    .ok()
-            }) else {
+            let Some(snapshot) = editor
+                .update(cx, |editor, cx| editor.buffer().read(cx).snapshot(cx))
+                .ok()
+            else {
                 return;
             };
 
@@ -15785,17 +15671,24 @@ impl Editor {
         self.selections_did_change(false, &old_cursor_position, true, window, cx);
     }
 
+    fn push_to_selection_history(&mut self) {
+        self.selection_history.push(SelectionHistoryEntry {
+            selections: self.selections.disjoint_anchors(),
+            select_next_state: self.select_next_state.clone(),
+            select_prev_state: self.select_prev_state.clone(),
+            add_selections_state: self.add_selections_state.clone(),
+        });
+    }
+
     pub fn transact(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
         update: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>),
     ) -> Option<TransactionId> {
-        self.with_selection_effects_deferred(window, cx, |this, window, cx| {
-            this.start_transaction_at(Instant::now(), window, cx);
-            update(this, window, cx);
-            this.end_transaction_at(Instant::now(), cx)
-        })
+        self.start_transaction_at(Instant::now(), window, cx);
+        update(self, window, cx);
+        self.end_transaction_at(Instant::now(), cx)
     }
 
     pub fn start_transaction_at(
@@ -18716,20 +18609,16 @@ impl Editor {
             }
 
             let minimap_settings = EditorSettings::get_global(cx).minimap;
-            if self.minimap_visibility != MinimapVisibility::Disabled {
-                if self.minimap_visibility.settings_visibility()
-                    != minimap_settings.minimap_enabled()
-                {
-                    self.set_minimap_visibility(
-                        MinimapVisibility::for_mode(self.mode(), cx),
-                        window,
-                        cx,
-                    );
-                } else if let Some(minimap_entity) = self.minimap.as_ref() {
-                    minimap_entity.update(cx, |minimap_editor, cx| {
-                        minimap_editor.update_minimap_configuration(minimap_settings, cx)
-                    })
-                }
+            if self.minimap_visibility.settings_visibility() != minimap_settings.minimap_enabled() {
+                self.set_minimap_visibility(
+                    MinimapVisibility::for_mode(self.mode(), cx),
+                    window,
+                    cx,
+                );
+            } else if let Some(minimap_entity) = self.minimap.as_ref() {
+                minimap_entity.update(cx, |minimap_editor, cx| {
+                    minimap_editor.update_minimap_configuration(minimap_settings, cx)
+                })
             }
         }
 
@@ -19523,152 +19412,79 @@ fn vim_enabled(cx: &App) -> bool {
         == Some(&serde_json::Value::Bool(true))
 }
 
-fn process_completion_for_edit(
+// Consider user intent and default settings
+fn choose_completion_range(
     completion: &Completion,
     intent: CompletionIntent,
     buffer: &Entity<Buffer>,
-    cursor_position: &text::Anchor,
     cx: &mut Context<Editor>,
-) -> CompletionEdit {
+) -> Range<usize> {
+    fn should_replace(
+        completion: &Completion,
+        insert_range: &Range<text::Anchor>,
+        intent: CompletionIntent,
+        completion_mode_setting: LspInsertMode,
+        buffer: &Buffer,
+    ) -> bool {
+        // specific actions take precedence over settings
+        match intent {
+            CompletionIntent::CompleteWithInsert => return false,
+            CompletionIntent::CompleteWithReplace => return true,
+            CompletionIntent::Complete | CompletionIntent::Compose => {}
+        }
+
+        match completion_mode_setting {
+            LspInsertMode::Insert => false,
+            LspInsertMode::Replace => true,
+            LspInsertMode::ReplaceSubsequence => {
+                let mut text_to_replace = buffer.chars_for_range(
+                    buffer.anchor_before(completion.replace_range.start)
+                        ..buffer.anchor_after(completion.replace_range.end),
+                );
+                let mut completion_text = completion.new_text.chars();
+
+                // is `text_to_replace` a subsequence of `completion_text`
+                text_to_replace
+                    .all(|needle_ch| completion_text.any(|haystack_ch| haystack_ch == needle_ch))
+            }
+            LspInsertMode::ReplaceSuffix => {
+                let range_after_cursor = insert_range.end..completion.replace_range.end;
+
+                let text_after_cursor = buffer
+                    .text_for_range(
+                        buffer.anchor_before(range_after_cursor.start)
+                            ..buffer.anchor_after(range_after_cursor.end),
+                    )
+                    .collect::<String>();
+                completion.new_text.ends_with(&text_after_cursor)
+            }
+        }
+    }
+
     let buffer = buffer.read(cx);
-    let buffer_snapshot = buffer.snapshot();
-    let (snippet, new_text) = if completion.is_snippet() {
-        let mut snippet_source = completion.new_text.clone();
-        if let Some(scope) = buffer_snapshot.language_scope_at(cursor_position) {
-            if scope.prefers_label_for_snippet_in_completion() {
-                if let Some(label) = completion.label() {
-                    if matches!(
-                        completion.kind(),
-                        Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD)
-                    ) {
-                        snippet_source = label;
-                    }
-                }
-            }
-        }
-        match Snippet::parse(&snippet_source).log_err() {
-            Some(parsed_snippet) => (Some(parsed_snippet.clone()), parsed_snippet.text),
-            None => (None, completion.new_text.clone()),
-        }
-    } else {
-        (None, completion.new_text.clone())
-    };
 
-    let mut range_to_replace = {
-        let replace_range = &completion.replace_range;
-        if let CompletionSource::Lsp {
-            insert_range: Some(insert_range),
-            ..
-        } = &completion.source
-        {
-            debug_assert_eq!(
-                insert_range.start, replace_range.start,
-                "insert_range and replace_range should start at the same position"
-            );
-            debug_assert!(
-                insert_range
-                    .start
-                    .cmp(&cursor_position, &buffer_snapshot)
-                    .is_le(),
-                "insert_range should start before or at cursor position"
-            );
-            debug_assert!(
-                replace_range
-                    .start
-                    .cmp(&cursor_position, &buffer_snapshot)
-                    .is_le(),
-                "replace_range should start before or at cursor position"
-            );
-            debug_assert!(
-                insert_range
-                    .end
-                    .cmp(&cursor_position, &buffer_snapshot)
-                    .is_le(),
-                "insert_range should end before or at cursor position"
-            );
-
-            let should_replace = match intent {
-                CompletionIntent::CompleteWithInsert => false,
-                CompletionIntent::CompleteWithReplace => true,
-                CompletionIntent::Complete | CompletionIntent::Compose => {
-                    let insert_mode =
-                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                            .completions
-                            .lsp_insert_mode;
-                    match insert_mode {
-                        LspInsertMode::Insert => false,
-                        LspInsertMode::Replace => true,
-                        LspInsertMode::ReplaceSubsequence => {
-                            let mut text_to_replace = buffer.chars_for_range(
-                                buffer.anchor_before(replace_range.start)
-                                    ..buffer.anchor_after(replace_range.end),
-                            );
-                            let mut current_needle = text_to_replace.next();
-                            for haystack_ch in completion.label.text.chars() {
-                                if let Some(needle_ch) = current_needle {
-                                    if haystack_ch.eq_ignore_ascii_case(&needle_ch) {
-                                        current_needle = text_to_replace.next();
-                                    }
-                                }
-                            }
-                            current_needle.is_none()
-                        }
-                        LspInsertMode::ReplaceSuffix => {
-                            if replace_range
-                                .end
-                                .cmp(&cursor_position, &buffer_snapshot)
-                                .is_gt()
-                            {
-                                let range_after_cursor = *cursor_position..replace_range.end;
-                                let text_after_cursor = buffer
-                                    .text_for_range(
-                                        buffer.anchor_before(range_after_cursor.start)
-                                            ..buffer.anchor_after(range_after_cursor.end),
-                                    )
-                                    .collect::<String>()
-                                    .to_ascii_lowercase();
-                                completion
-                                    .label
-                                    .text
-                                    .to_ascii_lowercase()
-                                    .ends_with(&text_after_cursor)
-                            } else {
-                                true
-                            }
-                        }
-                    }
-                }
-            };
-
-            if should_replace {
-                replace_range.clone()
-            } else {
-                insert_range.clone()
-            }
-        } else {
-            replace_range.clone()
-        }
-    };
-
-    if range_to_replace
-        .end
-        .cmp(&cursor_position, &buffer_snapshot)
-        .is_lt()
+    if let CompletionSource::Lsp {
+        insert_range: Some(insert_range),
+        ..
+    } = &completion.source
     {
-        range_to_replace.end = *cursor_position;
+        let completion_mode_setting =
+            language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                .completions
+                .lsp_insert_mode;
+
+        if !should_replace(
+            completion,
+            &insert_range,
+            intent,
+            completion_mode_setting,
+            buffer,
+        ) {
+            return insert_range.to_offset(buffer);
+        }
     }
 
-    CompletionEdit {
-        new_text,
-        replace_range: range_to_replace.to_offset(&buffer),
-        snippet,
-    }
-}
-
-struct CompletionEdit {
-    new_text: String,
-    replace_range: Range<usize>,
-    snippet: Option<Snippet>,
+    completion.replace_range.to_offset(buffer)
 }
 
 fn insert_extra_newline_brackets(
@@ -19769,347 +19585,6 @@ fn update_uncommitted_diff_for_buffer(
             })
             .ok();
     })
-}
-
-fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
-    let tab_size = tab_size.get() as usize;
-    let mut width = offset;
-
-    for ch in text.chars() {
-        width += if ch == '\t' {
-            tab_size - (width % tab_size)
-        } else {
-            1
-        };
-    }
-
-    width - offset
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_string_size_with_expanded_tabs() {
-        let nz = |val| NonZeroU32::new(val).unwrap();
-        assert_eq!(char_len_with_expanded_tabs(0, "", nz(4)), 0);
-        assert_eq!(char_len_with_expanded_tabs(0, "hello", nz(4)), 5);
-        assert_eq!(char_len_with_expanded_tabs(0, "\thello", nz(4)), 9);
-        assert_eq!(char_len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
-        assert_eq!(char_len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
-        assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
-        assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
-        assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
-    }
-}
-
-/// Tokenizes a string into runs of text that should stick together, or that is whitespace.
-struct WordBreakingTokenizer<'a> {
-    input: &'a str,
-}
-
-impl<'a> WordBreakingTokenizer<'a> {
-    fn new(input: &'a str) -> Self {
-        Self { input }
-    }
-}
-
-fn is_char_ideographic(ch: char) -> bool {
-    use unicode_script::Script::*;
-    use unicode_script::UnicodeScript;
-    matches!(ch.script(), Han | Tangut | Yi)
-}
-
-fn is_grapheme_ideographic(text: &str) -> bool {
-    text.chars().any(is_char_ideographic)
-}
-
-fn is_grapheme_whitespace(text: &str) -> bool {
-    text.chars().any(|x| x.is_whitespace())
-}
-
-fn should_stay_with_preceding_ideograph(text: &str) -> bool {
-    text.chars().next().map_or(false, |ch| {
-        matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…')
-    })
-}
-
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
-enum WordBreakToken<'a> {
-    Word { token: &'a str, grapheme_len: usize },
-    InlineWhitespace { token: &'a str, grapheme_len: usize },
-    Newline,
-}
-
-impl<'a> Iterator for WordBreakingTokenizer<'a> {
-    /// Yields a span, the count of graphemes in the token, and whether it was
-    /// whitespace. Note that it also breaks at word boundaries.
-    type Item = WordBreakToken<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        use unicode_segmentation::UnicodeSegmentation;
-        if self.input.is_empty() {
-            return None;
-        }
-
-        let mut iter = self.input.graphemes(true).peekable();
-        let mut offset = 0;
-        let mut grapheme_len = 0;
-        if let Some(first_grapheme) = iter.next() {
-            let is_newline = first_grapheme == "\n";
-            let is_whitespace = is_grapheme_whitespace(first_grapheme);
-            offset += first_grapheme.len();
-            grapheme_len += 1;
-            if is_grapheme_ideographic(first_grapheme) && !is_whitespace {
-                if let Some(grapheme) = iter.peek().copied() {
-                    if should_stay_with_preceding_ideograph(grapheme) {
-                        offset += grapheme.len();
-                        grapheme_len += 1;
-                    }
-                }
-            } else {
-                let mut words = self.input[offset..].split_word_bound_indices().peekable();
-                let mut next_word_bound = words.peek().copied();
-                if next_word_bound.map_or(false, |(i, _)| i == 0) {
-                    next_word_bound = words.next();
-                }
-                while let Some(grapheme) = iter.peek().copied() {
-                    if next_word_bound.map_or(false, |(i, _)| i == offset) {
-                        break;
-                    };
-                    if is_grapheme_whitespace(grapheme) != is_whitespace
-                        || (grapheme == "\n") != is_newline
-                    {
-                        break;
-                    };
-                    offset += grapheme.len();
-                    grapheme_len += 1;
-                    iter.next();
-                }
-            }
-            let token = &self.input[..offset];
-            self.input = &self.input[offset..];
-            if token == "\n" {
-                Some(WordBreakToken::Newline)
-            } else if is_whitespace {
-                Some(WordBreakToken::InlineWhitespace {
-                    token,
-                    grapheme_len,
-                })
-            } else {
-                Some(WordBreakToken::Word {
-                    token,
-                    grapheme_len,
-                })
-            }
-        } else {
-            None
-        }
-    }
-}
-
-#[test]
-fn test_word_breaking_tokenizer() {
-    let tests: &[(&str, &[WordBreakToken<'static>])] = &[
-        ("", &[]),
-        ("  ", &[whitespace("  ", 2)]),
-        ("Ʒ", &[word("Ʒ", 1)]),
-        ("Ǽ", &[word("Ǽ", 1)]),
-        ("⋑", &[word("⋑", 1)]),
-        ("⋑⋑", &[word("⋑⋑", 2)]),
-        (
-            "原理，进而",
-            &[word("原", 1), word("理，", 2), word("进", 1), word("而", 1)],
-        ),
-        (
-            "hello world",
-            &[word("hello", 5), whitespace(" ", 1), word("world", 5)],
-        ),
-        (
-            "hello, world",
-            &[word("hello,", 6), whitespace(" ", 1), word("world", 5)],
-        ),
-        (
-            "  hello world",
-            &[
-                whitespace("  ", 2),
-                word("hello", 5),
-                whitespace(" ", 1),
-                word("world", 5),
-            ],
-        ),
-        (
-            "这是什么 \n 钢笔",
-            &[
-                word("这", 1),
-                word("是", 1),
-                word("什", 1),
-                word("么", 1),
-                whitespace(" ", 1),
-                newline(),
-                whitespace(" ", 1),
-                word("钢", 1),
-                word("笔", 1),
-            ],
-        ),
-        (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
-    ];
-
-    fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
-        WordBreakToken::Word {
-            token,
-            grapheme_len,
-        }
-    }
-
-    fn whitespace(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
-        WordBreakToken::InlineWhitespace {
-            token,
-            grapheme_len,
-        }
-    }
-
-    fn newline() -> WordBreakToken<'static> {
-        WordBreakToken::Newline
-    }
-
-    for (input, result) in tests {
-        assert_eq!(
-            WordBreakingTokenizer::new(input)
-                .collect::<Vec<_>>()
-                .as_slice(),
-            *result,
-        );
-    }
-}
-
-fn wrap_with_prefix(
-    line_prefix: String,
-    unwrapped_text: String,
-    wrap_column: usize,
-    tab_size: NonZeroU32,
-    preserve_existing_whitespace: bool,
-) -> String {
-    let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
-    let mut wrapped_text = String::new();
-    let mut current_line = line_prefix.clone();
-
-    let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
-    let mut current_line_len = line_prefix_len;
-    let mut in_whitespace = false;
-    for token in tokenizer {
-        let have_preceding_whitespace = in_whitespace;
-        match token {
-            WordBreakToken::Word {
-                token,
-                grapheme_len,
-            } => {
-                in_whitespace = false;
-                if current_line_len + grapheme_len > wrap_column
-                    && current_line_len != line_prefix_len
-                {
-                    wrapped_text.push_str(current_line.trim_end());
-                    wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
-                }
-                current_line.push_str(token);
-                current_line_len += grapheme_len;
-            }
-            WordBreakToken::InlineWhitespace {
-                mut token,
-                mut grapheme_len,
-            } => {
-                in_whitespace = true;
-                if have_preceding_whitespace && !preserve_existing_whitespace {
-                    continue;
-                }
-                if !preserve_existing_whitespace {
-                    token = " ";
-                    grapheme_len = 1;
-                }
-                if current_line_len + grapheme_len > wrap_column {
-                    wrapped_text.push_str(current_line.trim_end());
-                    wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
-                } else if current_line_len != line_prefix_len || preserve_existing_whitespace {
-                    current_line.push_str(token);
-                    current_line_len += grapheme_len;
-                }
-            }
-            WordBreakToken::Newline => {
-                in_whitespace = true;
-                if preserve_existing_whitespace {
-                    wrapped_text.push_str(current_line.trim_end());
-                    wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
-                } else if have_preceding_whitespace {
-                    continue;
-                } else if current_line_len + 1 > wrap_column && current_line_len != line_prefix_len
-                {
-                    wrapped_text.push_str(current_line.trim_end());
-                    wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                    current_line_len = line_prefix_len;
-                } else if current_line_len != line_prefix_len {
-                    current_line.push(' ');
-                    current_line_len += 1;
-                }
-            }
-        }
-    }
-
-    if !current_line.is_empty() {
-        wrapped_text.push_str(&current_line);
-    }
-    wrapped_text
-}
-
-#[test]
-fn test_wrap_with_prefix() {
-    assert_eq!(
-        wrap_with_prefix(
-            "# ".to_string(),
-            "abcdefg".to_string(),
-            4,
-            NonZeroU32::new(4).unwrap(),
-            false,
-        ),
-        "# abcdefg"
-    );
-    assert_eq!(
-        wrap_with_prefix(
-            "".to_string(),
-            "\thello world".to_string(),
-            8,
-            NonZeroU32::new(4).unwrap(),
-            false,
-        ),
-        "hello\nworld"
-    );
-    assert_eq!(
-        wrap_with_prefix(
-            "// ".to_string(),
-            "xx \nyy zz aa bb cc".to_string(),
-            12,
-            NonZeroU32::new(4).unwrap(),
-            false,
-        ),
-        "// xx yy zz\n// aa bb cc"
-    );
-    assert_eq!(
-        wrap_with_prefix(
-            String::new(),
-            "这是什么 \n 钢笔".to_string(),
-            3,
-            NonZeroU32::new(4).unwrap(),
-            false,
-        ),
-        "这是什\n么 钢\n笔"
-    );
 }
 
 pub trait CollaborationHub {
@@ -22061,7 +21536,7 @@ fn render_diff_hunk_controls(
         .rounded_b_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
-        .block_mouse_except_scroll()
+        .stop_mouse_events_except_scroll()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")

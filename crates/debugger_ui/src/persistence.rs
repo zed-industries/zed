@@ -61,28 +61,6 @@ impl DebuggerPaneItem {
             DebuggerPaneItem::Terminal => SharedString::new_static("Terminal"),
         }
     }
-    pub(crate) fn tab_tooltip(self) -> SharedString {
-        let tooltip = match self {
-            DebuggerPaneItem::Console => {
-                "Displays program output and allows manual input of debugger commands."
-            }
-            DebuggerPaneItem::Variables => {
-                "Shows current values of local and global variables in the current stack frame."
-            }
-            DebuggerPaneItem::BreakpointList => "Lists all active breakpoints set in the code.",
-            DebuggerPaneItem::Frames => {
-                "Displays the call stack, letting you navigate between function calls."
-            }
-            DebuggerPaneItem::Modules => "Shows all modules or libraries loaded by the program.",
-            DebuggerPaneItem::LoadedSources => {
-                "Lists all source files currently loaded and used by the debugger."
-            }
-            DebuggerPaneItem::Terminal => {
-                "Provides an interactive terminal session within the debugging environment."
-            }
-        };
-        SharedString::new_static(tooltip)
-    }
 }
 
 impl From<DebuggerPaneItem> for SharedString {

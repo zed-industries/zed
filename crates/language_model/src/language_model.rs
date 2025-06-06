@@ -242,7 +242,7 @@ pub trait LanguageModel: Send + Sync {
     /// Whether this model supports choosing which tool to use.
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool;
 
-    /// Returns whether this model supports "burn mode";
+    /// Returns whether this model supports "max mode";
     fn supports_max_mode(&self) -> bool {
         false
     }

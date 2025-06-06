@@ -29,7 +29,7 @@ pub struct MigrationBanner {
 pub enum MigrationEvent {
     ContentChanged {
         migration_type: MigrationType,
-        migrating_in_memory: bool,
+        migrated: bool,
     },
 }
 
@@ -74,9 +74,9 @@ impl MigrationBanner {
         match event {
             MigrationEvent::ContentChanged {
                 migration_type,
-                migrating_in_memory,
+                migrated,
             } => {
-                if *migrating_in_memory {
+                if *migrated {
                     self.migration_type = Some(*migration_type);
                     self.show(cx);
                 } else {

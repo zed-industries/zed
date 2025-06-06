@@ -1,8 +1,8 @@
-name: Bug Report (AI Related)
+name: Bug Report (Agent Panel)
 description: Zed Agent Panel Bugs
 type: "Bug"
-labels: ["ai"]
-title: "AI: <a short description of the AI Related bug>"
+labels: ["agent", "ai"]
+title: "Agent Panel: <a short description of the Agent Panel bug>"
 body:
   - type: textarea
     attributes:
@@ -14,6 +14,7 @@ body:
 
         ### Description
         <!--  Describe with sufficient detail to reproduce from a clean Zed install. -->
+        <!--  Please include the LLM provider and model name you are using -->
         Steps to trigger the problem:
         1.
         2.
@@ -21,13 +22,6 @@ body:
 
         Actual Behavior:
         Expected Behavior:
-
-        ### Model Provider Details
-        - Provider: (Anthropic via ZedPro, Anthropic via API key, Copilot Chat, Mistral, OpenAI, etc)
-        - Model Name:
-        - Mode: (Agent Panel, Inline Assistant, Terminal Assistant or Text Threads)
-        - MCP Servers in-use:
-        - Other Details:
     validations:
       required: true
 

@@ -1,8 +1,8 @@
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    InteractiveElement, IntoElement, ParentElement, PromptButton, PromptHandle, PromptLevel,
-    PromptResponse, Refineable, Render, RenderablePromptHandle, SharedString, Styled,
-    TextStyleRefinement, Window, div,
+    InteractiveElement, IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse,
+    Refineable, Render, RenderablePromptHandle, SharedString, Styled, TextStyleRefinement, Window,
+    div,
 };
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use settings::{Settings, SettingsStore};
@@ -35,7 +35,7 @@ fn zed_prompt_renderer(
     level: PromptLevel,
     message: &str,
     detail: Option<&str>,
-    actions: &[PromptButton],
+    actions: &[&str],
     handle: PromptHandle,
     window: &mut Window,
     cx: &mut App,
@@ -44,7 +44,7 @@ fn zed_prompt_renderer(
         |cx| ZedPromptRenderer {
             _level: level,
             message: message.to_string(),
-            actions: actions.iter().map(|a| a.label().to_string()).collect(),
+            actions: actions.iter().map(ToString::to_string).collect(),
             focus: cx.focus_handle(),
             active_action_id: 0,
             detail: detail

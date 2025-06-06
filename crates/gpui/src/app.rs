@@ -37,10 +37,10 @@ use crate::{
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
     EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
-    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptHandle, PromptLevel,
+    Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1578,14 +1578,14 @@ impl App {
             PromptLevel,
             &str,
             Option<&str>,
-            &[PromptButton],
+            &[&str],
             PromptHandle,
             &mut Window,
             &mut App,
         ) -> RenderablePromptHandle
         + 'static,
     ) {
-        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)));
+        self.prompt_builder = Some(PromptBuilder::Custom(Box::new(renderer)))
     }
 
     /// Reset the prompt builder to the default implementation.

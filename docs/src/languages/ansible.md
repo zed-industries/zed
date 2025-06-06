@@ -9,7 +9,7 @@ Support for Ansible in Zed is provided via a community-maintained [Ansible exten
 
 ### File detection
 
-To avoid mishandling non-Ansible YAML files, the Ansible Language is not associated with any file extensions by default. To change this behavior you can add a `"file_types"` section to Zed settings inside your project (`.zed/settings.json`) or your Zed user settings (`~/.config/zed/settings.json`) to match your folder/naming conventions. For example:
+By default, to avoid mishandling non-Ansible YAML files, the Ansible Language is not associated with any file extensions by default. To change this behavior you can add a `"file_types"` section to the Zed settings inside your project (`.zed/settings.json`) or your Zed user settings (`~/.config/zed/settings.json`) to match your folder/naming conventions. For example:
 
 ```json
 "file_types": {
@@ -26,8 +26,6 @@ To avoid mishandling non-Ansible YAML files, the Ansible Language is not associa
       "**/handlers/*.yaml",
       "**/group_vars/*.yml",
       "**/group_vars/*.yaml",
-      "**/host_vars/*.yml",
-      "**/host_vars/*.yaml",
       "**/playbooks/*.yml",
       "**/playbooks/*.yaml",
       "**playbook*.yml",
@@ -38,66 +36,9 @@ To avoid mishandling non-Ansible YAML files, the Ansible Language is not associa
 
 Feel free to modify this list as per your needs.
 
-#### Inventory
-
-If your inventory file is in the YAML format, you can either:
-
-- Append the `ansible-lint` inventory json schema to it via the following comment at the top of your inventory file:
-
-```yml
-# yaml-language-server: $schema=https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/inventory.json
-```
-
-- Or configure the yaml language server settings to set this schema for all your inventory files, that match your inventory pattern, under your Zed settings ([ref](https://zed.dev/docs/languages/yaml)):
-
-```json
-"lsp": {
-    "yaml-language-server": {
-      "settings": {
-        "yaml": {
-          "schemas": {
-            "https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/inventory.json": [
-              "./inventory/*.yaml",
-              "hosts.yml",
-            ]
-          }
-        }
-      }
-    }
-},
-```
-
 ### LSP Configuration
 
-By default, the following default config is passed to the Ansible language server. It conveniently mirrors the defaults set by [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig/blob/03bc581e05e81d33808b42b2d7e76d70adb3b595/lua/lspconfig/configs/ansiblels.lua) for the Ansible language server:
-
-```json
-{
-  "ansible": {
-    "ansible": {
-      "path": "ansible"
-    },
-    "executionEnvironment": {
-      "enabled": false
-    },
-    "python": {
-      "interpreterPath": "python3"
-    },
-    "validation": {
-      "enabled": true,
-      "lint": {
-        "enabled": true,
-        "path": "ansible-lint"
-      }
-    }
-  }
-}
-```
-
-> [!NOTE]
-> In order for linting to work, ensure that `ansible-lint` is installed and discoverable on your PATH
-
-When desired, any of the above default settings can be overridden under the `"lsp"` section of your Zed settings file. For example:
+LSP options for this extension can be configured under Zed's settings file. To get the best experience, add the following configuration under the `"lsp"` section in your `~/.zed/settings.json`:
 
 ```json
 "lsp": {
@@ -115,9 +56,10 @@ When desired, any of the above default settings can be overridden under the `"ls
         "interpreterPath": "python3"
       },
       "validation": {
-        "enabled": false, // disable validation
+        "enabled": true,
+        // To enable linting, manually install ansible-lint and make sure it is your PATH
         "lint": {
-          "enabled": false, // disable ansible-lint
+          "enabled": true,
           "path": "ansible-lint"
         }
       }
@@ -125,6 +67,8 @@ When desired, any of the above default settings can be overridden under the `"ls
   }
 }
 ```
+
+This config was conveniently adopted from [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig/blob/ad32182cc4a03c8826a64e9ced68046c575fdb7d/lua/lspconfig/server_configurations/ansiblels.lua#L6-L23).
 
 A full list of options/settings, that can be passed to the server, can be found at the project's page [here](https://github.com/ansible/vscode-ansible/blob/5a89836d66d470fb9d20e7ea8aa2af96f12f61fb/docs/als/settings.md).
 Feel free to modify option values as needed.

@@ -4,9 +4,9 @@ use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowKind, WindowParams, X11ClientStatePtr, px, size,
+    Point, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowParams, X11ClientStatePtr, px, size,
 };
 
 use blade_graphics as gpu;
@@ -1238,7 +1238,7 @@ impl PlatformWindow for X11Window {
         _level: PromptLevel,
         _msg: &str,
         _detail: Option<&str>,
-        _answers: &[PromptButton],
+        _answers: &[&str],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
         None
     }

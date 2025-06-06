@@ -3,9 +3,9 @@ use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
     Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, Edges, Element,
-    ElementId, Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, IsZero, LayoutId,
-    ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle,
-    ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window, quad,
+    ElementId, Entity, EntityId, GlobalElementId, Hitbox, Hsla, IsZero, LayoutId, ListState,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollHandle, ScrollWheelEvent,
+    Size, Style, UniformListScrollHandle, Window, quad,
 };
 
 pub struct Scrollbar {
@@ -226,7 +226,7 @@ impl Element for Scrollbar {
         _: &mut App,
     ) -> Self::PrepaintState {
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            window.insert_hitbox(bounds, HitboxBehavior::Normal)
+            window.insert_hitbox(bounds, false)
         })
     }
 

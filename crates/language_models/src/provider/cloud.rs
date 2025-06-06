@@ -809,7 +809,6 @@ impl LanguageModel for CloudLanguageModel {
     > {
         let thread_id = request.thread_id.clone();
         let prompt_id = request.prompt_id.clone();
-        let intent = request.intent;
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
         match self.model.provider {
@@ -842,7 +841,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
@@ -899,7 +897,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
@@ -937,7 +934,6 @@ impl LanguageModel for CloudLanguageModel {
                         CompletionBody {
                             thread_id,
                             prompt_id,
-                            intent,
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),

@@ -557,13 +557,12 @@ impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
         task_variables: &TaskVariables,
-        location: ContextLocation<'_>,
+        location: &Location,
         project_env: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
-            .file_location
             .buffer
             .read(cx)
             .file()

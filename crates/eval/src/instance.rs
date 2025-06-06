@@ -9,7 +9,7 @@ use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
+    LanguageModelToolResultContent, MessageContent, Role, TokenUsage, WrappedTextContent,
 };
 use project::lsp_store::OpenLspBufferHandle;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -576,7 +576,6 @@ impl ExampleInstance {
                 thread_id: None,
                 prompt_id: None,
                 mode: None,
-                intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
@@ -968,7 +967,11 @@ impl RequestMarkdown {
                         }
 
                         match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => {
+                            LanguageModelToolResultContent::Text(text)
+                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
+                                text,
+                                ..
+                            }) => {
                                 writeln!(messages, "{text}\n").ok();
                             }
                             LanguageModelToolResultContent::Image(image) => {

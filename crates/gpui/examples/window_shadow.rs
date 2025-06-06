@@ -1,8 +1,8 @@
 use gpui::{
-    App, Application, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton,
-    Pixels, Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowDecorations, WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size,
-    transparent_black, white,
+    App, Application, Bounds, Context, CursorStyle, Decorations, Hsla, MouseButton, Pixels, Point,
+    ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
+    WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black,
+    white,
 };
 
 struct WindowShadow {}
@@ -37,7 +37,7 @@ impl Render for WindowShadow {
                                         point(px(0.0), px(0.0)),
                                         window.window_bounds().get_bounds().size,
                                     ),
-                                    HitboxBehavior::Normal,
+                                    false,
                                 )
                             },
                             move |_bounds, hitbox, window, _cx| {

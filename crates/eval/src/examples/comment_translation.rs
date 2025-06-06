@@ -17,7 +17,6 @@ impl Example for CommentTranslation {
             max_assertions: Some(1),
             profile_id: AgentProfileId::default(),
             existing_thread_json: None,
-            max_turns: None,
         }
     }
 

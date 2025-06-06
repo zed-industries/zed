@@ -25,7 +25,6 @@ use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{Toast, Workspace, notifications::NotificationId};
-use zed_llm_client::CompletionIntent;
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -292,7 +291,6 @@ impl TerminalInlineAssistant {
                 thread_id: None,
                 prompt_id: None,
                 mode: None,
-                intent: Some(CompletionIntent::TerminalInlineAssist),
                 messages: vec![request_message],
                 tools: Vec::new(),
                 tool_choice: None,
