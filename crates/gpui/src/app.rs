@@ -213,15 +213,18 @@ impl Application {
     where
         F: 'static + FnMut(&mut App),
     {
-        let this = Rc::downgrade(&self.0);
-        self.0
-            .borrow_mut()
-            .platform
-            .new_window_for_tab(Box::new(move || {
-                if let Some(app) = this.upgrade() {
-                    callback(&mut app.borrow_mut());
-                }
-            }));
+        #[cfg(target_os = "macos")]
+        {
+            let this = Rc::downgrade(&self.0);
+            self.0
+                .borrow_mut()
+                .platform
+                .new_window_for_tab(Box::new(move || {
+                    if let Some(app) = this.upgrade() {
+                        callback(&mut app.borrow_mut());
+                    }
+                }));
+        }
         self
     }
 
