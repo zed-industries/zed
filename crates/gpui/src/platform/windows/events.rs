@@ -691,17 +691,9 @@ fn handle_ime_composition_inner(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if lparam.0 == 0 {
-        // Japanese IME may send this message with lparam = 0, which indicates that
-        // there is no composition string.
-        with_input_handler(&state_ptr, |input_handler| {
-            input_handler.replace_text_in_range(None, "");
-        })?;
-        return Some(0);
-    }
     let mut ime_input = None;
     if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-        let comp_string = parse_ime_compostion_string(ctx)?;
+        let comp_string = parse_ime_composition_string(ctx)?;
         with_input_handler(&state_ptr, |input_handler| {
             input_handler.replace_and_mark_text_in_range(None, &comp_string, None);
         })?;
@@ -719,12 +711,21 @@ fn handle_ime_composition_inner(
         })?;
     }
     if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-        let comp_result = parse_ime_compostion_result(ctx)?;
+        let comp_result = parse_ime_composition_result(ctx)?;
         with_input_handler(&state_ptr, |input_handler| {
             input_handler.replace_text_in_range(None, &comp_result);
         })?;
         return Some(0);
     }
+    if lparam.0 == 0 {
+        // Japanese IME may send this message with lparam = 0, which indicates that
+        // there is no composition string.
+        with_input_handler(&state_ptr, |input_handler| {
+            input_handler.replace_text_in_range(None, "");
+        })?;
+        return Some(0);
+    }
+
     // currently, we don't care other stuff
     None
 }
@@ -1353,7 +1354,7 @@ fn parse_normal_key(
     })
 }
 
-fn parse_ime_compostion_string(ctx: HIMC) -> Option<String> {
+fn parse_ime_composition_string(ctx: HIMC) -> Option<String> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
         if string_len >= 0 {
@@ -1380,7 +1381,7 @@ fn retrieve_composition_cursor_position(ctx: HIMC) -> usize {
     unsafe { ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0) as usize }
 }
 
-fn parse_ime_compostion_result(ctx: HIMC) -> Option<String> {
+fn parse_ime_composition_result(ctx: HIMC) -> Option<String> {
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
         if string_len >= 0 {
