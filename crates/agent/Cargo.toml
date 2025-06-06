@@ -102,6 +102,7 @@ zed_llm_client.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+assistant_tools.workspace = true
 buffer_diff = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }

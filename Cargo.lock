@@ -59,6 +59,7 @@ dependencies = [
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
+ "assistant_tools",
  "audio",
  "buffer_diff",
  "chrono",
@@ -147,7 +148,6 @@ dependencies = [
  "deepseek",
  "fs",
  "gpui",
- "indexmap",
  "language_model",
  "lmstudio",
  "log",
@@ -2978,7 +2978,6 @@ dependencies = [
  "anyhow",
  "assistant_context_editor",
  "assistant_slash_command",
- "assistant_tool",
  "async-stripe",
  "async-trait",
  "async-tungstenite",
@@ -4225,6 +4224,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "log",
  "menu",
@@ -4534,6 +4534,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "command_palette",
+ "gpui",
  "mdbook",
  "regex",
  "serde",
@@ -4541,6 +4543,7 @@ dependencies = [
  "settings",
  "util",
  "workspace-hack",
+ "zed",
 ]
 
 [[package]]
@@ -10193,6 +10196,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -15720,6 +15724,7 @@ dependencies = [
  "task",
  "theme",
  "thiserror 2.0.12",
+ "url",
  "util",
  "windows 0.61.1",
  "workspace-hack",

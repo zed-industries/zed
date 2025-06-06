@@ -1,7 +1,5 @@
-use std::cell::RefCell;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -912,16 +910,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         })
     }
 
-    fn resolve_completions(
-        &self,
-        _buffer: Entity<Buffer>,
-        _completion_indices: Vec<usize>,
-        _completions: Rc<RefCell<Box<[Completion]>>>,
-        _cx: &mut Context<Editor>,
-    ) -> Task<Result<bool>> {
-        Task::ready(Ok(true))
-    }
-
     fn is_completion_trigger(
         &self,
         buffer: &Entity<language::Buffer>,
@@ -1077,7 +1065,7 @@ mod tests {
     use project::{Project, ProjectPath};
     use serde_json::json;
     use settings::SettingsStore;
-    use std::ops::Deref;
+    use std::{ops::Deref, rc::Rc};
     use util::{path, separator};
     use workspace::{AppState, Item};
 

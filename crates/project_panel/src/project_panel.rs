@@ -1383,6 +1383,8 @@ impl ProjectPanel {
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if cx.stop_active_drag(window) {
+            self.drag_target_entry.take();
+            self.hover_expand_task.take();
             return;
         }
 
