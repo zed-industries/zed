@@ -2928,9 +2928,13 @@ impl Pane {
                                 this.pinned_tab_count += 1;
                             }
                         } else if this.items.len() > to_pane_old_length {
-                            if to_pane_old_length == 0 && was_pinned_in_from_pane {
-                                this.pinned_tab_count = 1;
-                            } else if is_pinned_in_to_pane {
+                            let item_created_pane = to_pane_old_length == 0;
+                            let is_first_position = ix == 0;
+                            let was_dropped_at_beginning = item_created_pane || is_first_position;
+                            let should_remain_pinned = is_pinned_in_to_pane
+                                || (was_pinned_in_from_pane && was_dropped_at_beginning);
+
+                            if should_remain_pinned {
                                 this.pinned_tab_count += 1;
                             }
                         }
@@ -4497,6 +4501,50 @@ mod tests {
         // A should become pinned
         assert_item_labels(&pane_a, [], cx);
         assert_item_labels(&pane_b, ["B!", "A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_pinned_tab_into_existing_panes_first_position_with_no_pinned_tabs(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A to pane A and pin
+        let item_a = add_labeled_item(&pane_a, "A", false, cx);
+        pane_a.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane_a, ["A*!"], cx);
+
+        // Add B to pane B
+        let pane_b = workspace.update_in(cx, |workspace, window, cx| {
+            workspace.split_pane(pane_a.clone(), SplitDirection::Right, window, cx)
+        });
+        add_labeled_item(&pane_b, "B", false, cx);
+        assert_item_labels(&pane_b, ["B*"], cx);
+
+        // Move A from pane A to position 0 in pane B, indicating it should stay pinned
+        pane_b.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 0,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 0, window, cx);
+        });
+
+        // A should stay pinned
+        assert_item_labels(&pane_a, [], cx);
+        assert_item_labels(&pane_b, ["A*!", "B"], cx);
     }
 
     #[gpui::test]
