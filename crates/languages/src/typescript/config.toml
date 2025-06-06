@@ -1,7 +1,7 @@
 name = "TypeScript"
 grammar = "typescript"
 path_suffixes = ["ts", "cts", "mts"]
-first_line_pattern = '^#!.*\b(?:deno run|ts-node|bun|tsx)\b'
+first_line_pattern = '^#!.*\b(?:deno run|ts-node|bun|tsx|[/ ]node)\b'
 line_comments = ["// "]
 block_comment = ["/*", "*/"]
 autoclose_before = ";:.,=}])>"

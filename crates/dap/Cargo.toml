@@ -56,5 +56,7 @@ async-pipe.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 task = { workspace = true, features = ["test-support"] }
+tree-sitter.workspace = true
+tree-sitter-go.workspace = true
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

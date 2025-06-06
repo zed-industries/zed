@@ -532,7 +532,7 @@ mod tests {
         outline_view: &Entity<Picker<OutlineViewDelegate>>,
         cx: &mut VisualTestContext,
     ) -> Vec<String> {
-        outline_view.update(cx, |outline_view, _| {
+        outline_view.read_with(cx, |outline_view, _| {
             let items = &outline_view.delegate.outline.items;
             outline_view
                 .delegate

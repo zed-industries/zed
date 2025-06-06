@@ -27,14 +27,43 @@ use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_con
 use util::{ResultExt, paths::PathExt};
 use workspace::{
     CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
-    Workspace, WorkspaceId,
+    Workspace, WorkspaceId, with_active_or_new_workspace,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
-    cx.observe_new(RecentProjects::register).detach();
-    cx.observe_new(RemoteServerProjects::register).detach();
+    cx.on_action(|open_recent: &OpenRecent, cx| {
+        let create_new_window = open_recent.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let Some(recent_projects) = workspace.active_modal::<RecentProjects>(cx) else {
+                RecentProjects::open(workspace, create_new_window, window, cx);
+                return;
+            };
+
+            recent_projects.update(cx, |recent_projects, cx| {
+                recent_projects
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
+            });
+        });
+    });
+    cx.on_action(|open_remote: &OpenRemote, cx| {
+        let from_existing_connection = open_remote.from_existing_connection;
+        let create_new_window = open_remote.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            if from_existing_connection {
+                cx.propagate();
+                return;
+            }
+            let handle = cx.entity().downgrade();
+            let fs = workspace.project().read(cx).fs().clone();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::new(create_new_window, fs, window, handle, cx)
+            })
+        });
+    });
+
     cx.observe_new(DisconnectedOverlay::register).detach();
 }
 
@@ -84,25 +113,6 @@ impl RecentProjects {
             rem_width,
             _subscription,
         }
-    }
-
-    fn register(
-        workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        _cx: &mut Context<Workspace>,
-    ) {
-        workspace.register_action(|workspace, open_recent: &OpenRecent, window, cx| {
-            let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, open_recent.create_new_window, window, cx);
-                return;
-            };
-
-            recent_projects.update(cx, |recent_projects, cx| {
-                recent_projects
-                    .picker
-                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
-            });
-        });
     }
 
     pub fn open(
@@ -471,6 +481,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .key_binding(KeyBinding::for_action(
                             &OpenRemote {
                                 from_existing_connection: false,
+                                create_new_window: false,
                             },
                             window,
                             cx,
@@ -479,6 +490,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             window.dispatch_action(
                                 OpenRemote {
                                     from_existing_connection: false,
+                                    create_new_window: false,
                                 }
                                 .boxed_clone(),
                                 cx,

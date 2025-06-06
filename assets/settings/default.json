@@ -73,9 +73,6 @@
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
   "active_pane_modifiers": {
-    // The factor to grow the active pane by. Defaults to 1.0
-    // which gives the same size as all other panes.
-    "magnification": 1.0,
     // Inset border size of the active pane, in pixels.
     "border_size": 0.0,
     // Opacity of the inactive panes. 0 means transparent, 1 means opaque.
@@ -128,6 +125,8 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to automatically close files that have been deleted on disk.
+  "close_on_file_delete": false,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -475,6 +474,10 @@
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
+  // Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
+  // to both the horizontal and vertical delta values while scrolling. Fast scrolling
+  // happens when a user holds the alt or option key while scrolling.
+  "fast_scroll_sensitivity": 4.0,
   "relative_line_numbers": false,
   // If 'search_wrap' is disabled, search result do not wrap around the end of the file.
   "search_wrap": true,
@@ -530,6 +533,9 @@
       "function": false
     }
   },
+  // Whether to resize all the panels in a dock when resizing the dock.
+  // Can be a combination of "left", "right" and "bottom".
+  "resize_all_panels_in_dock": ["left"],
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
@@ -710,7 +716,7 @@
     "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
-    /// What completion mode to start new threads in, if available. Can be 'normal' or 'max'.
+    /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
     "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
@@ -725,14 +731,7 @@
       // The provider to use.
       "provider": "zed.dev",
       // The model to use.
-      "model": "claude-3-7-sonnet-latest"
-    },
-    // The model to use when applying edits from the agent.
-    "editor_model": {
-      // The provider to use.
-      "provider": "zed.dev",
-      // The model to use.
-      "model": "claude-3-7-sonnet-latest"
+      "model": "claude-sonnet-4"
     },
     // Additional parameters for language model requests. When making a request to a model, parameters will be taken
     // from the last entry in this list that matches the model's provider and name. In each entry, both provider
@@ -752,7 +751,7 @@
       // To set parameters for a specific provider and model:
       // {
       //   "provider": "zed.dev",
-      //   "model": "claude-3-7-sonnet-latest",
+      //   "model": "claude-sonnet-4",
       //   "temperature": 1.0
       // }
     ],
@@ -818,7 +817,12 @@
     // "primary_screen" - Show the notification only on your primary screen (default)
     // "all_screens" - Show these notifications on all screens
     // "never" - Never show these notifications
-    "notify_when_agent_waiting": "primary_screen"
+    "notify_when_agent_waiting": "primary_screen",
+    // Whether to play a sound when the agent has either completed
+    // its response, or needs user input.
+
+    // Default: false
+    "play_sound_when_agent_done": false
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -950,7 +954,17 @@
     //    "skip_focus_for_active_in_search": false
     //
     // Default: true
-    "skip_focus_for_active_in_search": true
+    "skip_focus_for_active_in_search": true,
+    // Whether to show the git status in the file finder.
+    "git_status": true,
+    // Whether to use gitignored files when searching.
+    // Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    //
+    // Can accept 3 values:
+    //   * `true`: Use all gitignored files
+    //   * `false`: Use only the files Zed had indexed
+    //   * `null`: Be smart and search for ignored when called from a gitignored worktree
+    "include_ignored": null
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -1020,6 +1034,9 @@
     "button": true,
     // Whether to show warnings or not by default.
     "include_warnings": true,
+    // Minimum time to wait before pulling diagnostics from the language server(s).
+    // 0 turns the debounce off, `null` disables the feature.
+    "lsp_pull_diagnostics_debounce_ms": 50,
     // Settings for inline diagnostics
     "inline": {
       // Whether to show diagnostics inline or not
@@ -1295,7 +1312,17 @@
   // Settings related to running tasks.
   "tasks": {
     "variables": {},
-    "enabled": true
+    "enabled": true,
+    // Use LSP tasks over Zed language extension ones.
+    // If no LSP tasks are returned due to error/timeout or regular execution,
+    // Zed language extension tasks will be used instead.
+    //
+    // Other Zed tasks will still be shown:
+    // * Zed task from either of the task config file
+    // * Zed task from history (e.g. one-off task was spawned before)
+    //
+    // Default: true
+    "prefer_lsp": true
   },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
@@ -1434,8 +1461,8 @@
     },
     "Git Commit": {
       "allow_rewrap": "anywhere",
-      "preferred_line_length": 72,
-      "soft_wrap": "bounded"
+      "soft_wrap": "editor_width",
+      "preferred_line_length": 72
     },
     "Go": {
       "code_actions_on_format": {
@@ -1478,11 +1505,11 @@
       }
     },
     "LaTeX": {
-      "format_on_save": "on",
       "formatter": "language_server",
       "language_servers": ["texlab", "..."],
       "prettier": {
-        "allowed": false
+        "allowed": true,
+        "plugins": ["prettier-plugin-latex"]
       }
     },
     "Markdown": {
@@ -1506,7 +1533,7 @@
       "allow_rewrap": "anywhere"
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
     },
     "SCSS": {
       "prettier": {
@@ -1582,6 +1609,9 @@
     "openai": {
       "version": "1",
       "api_url": "https://api.openai.com/v1"
+    },
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1"
     },
     "lmstudio": {
       "api_url": "http://localhost:1234/api/v0"

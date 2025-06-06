@@ -582,6 +582,7 @@ pub struct Channel {
     pub visibility: ChannelVisibility,
     /// parent_path is the channel ids from the root to this one (not including this one)
     pub parent_path: Vec<ChannelId>,
+    pub channel_order: i32,
 }
 
 impl Channel {
@@ -591,6 +592,7 @@ impl Channel {
             visibility: value.visibility,
             name: value.clone().name,
             parent_path: value.ancestors().collect(),
+            channel_order: value.channel_order,
         }
     }
 
@@ -600,7 +602,12 @@ impl Channel {
             name: self.name.clone(),
             visibility: self.visibility.into(),
             parent_path: self.parent_path.iter().map(|c| c.to_proto()).collect(),
+            channel_order: self.channel_order,
         }
+    }
+
+    pub fn root_id(&self) -> ChannelId {
+        self.parent_path.first().copied().unwrap_or(self.id)
     }
 }
 

@@ -23,7 +23,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
-use paths;
+
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
@@ -901,7 +901,7 @@ impl SshRemoteClient {
         mut connection_activity_rx: mpsc::Receiver<()>,
         cx: &mut AsyncApp,
     ) -> Task<Result<()>> {
-        let Ok(client) = this.update(cx, |this, _| this.client.clone()) else {
+        let Ok(client) = this.read_with(cx, |this, _| this.client.clone()) else {
             return Task::ready(Err(anyhow!("SshRemoteClient lost")));
         };
 
@@ -1715,20 +1715,21 @@ impl SshRemoteConnection {
             version_str
         );
         let dst_path = paths::remote_server_dir_relative().join(binary_name);
-        let tmp_path_gz = PathBuf::from(format!(
-            "{}-download-{}.gz",
-            dst_path.to_string_lossy(),
-            std::process::id()
-        ));
 
+        let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_BUILD_REMOTE_SERVER").is_ok() {
+        if let Some(build_remote_server) = build_remote_server {
             let src_path = self
-                .build_local(self.platform().await?, delegate, cx)
+                .build_local(build_remote_server, self.platform().await?, delegate, cx)
                 .await?;
-            self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+            let tmp_path = paths::remote_server_dir_relative().join(format!(
+                "download-{}-{}",
+                std::process::id(),
+                src_path.file_name().unwrap().to_string_lossy()
+            ));
+            self.upload_local_server_binary(&src_path, &tmp_path, delegate, cx)
                 .await?;
-            self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+            self.extract_server_binary(&dst_path, &tmp_path, delegate, cx)
                 .await?;
             return Ok(dst_path);
         }
@@ -1755,6 +1756,11 @@ impl SshRemoteConnection {
 
         let platform = self.platform().await?;
 
+        let tmp_path_gz = PathBuf::from(format!(
+            "{}-download-{}.gz",
+            dst_path.to_string_lossy(),
+            std::process::id()
+        ));
         if !self.socket.connection_options.upload_binary_over_ssh {
             if let Some((url, body)) = delegate
                 .get_download_params(platform, release_channel, wanted_version, cx)
@@ -1895,20 +1901,27 @@ impl SshRemoteConnection {
     async fn extract_server_binary(
         &self,
         dst_path: &Path,
-        tmp_path_gz: &Path,
+        tmp_path: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
-        let script = shell_script!(
-            "gunzip -f {tmp_path_gz} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
-            tmp_path_gz = &tmp_path_gz.to_string_lossy(),
-            tmp_path = &tmp_path_gz.to_string_lossy().strip_suffix(".gz").unwrap(),
-            server_mode = &format!("{:o}", server_mode),
-            dst_path = &dst_path.to_string_lossy()
-        );
+        let orig_tmp_path = tmp_path.to_string_lossy();
+        let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
+            shell_script!(
+                "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
+                server_mode = &format!("{:o}", server_mode),
+                dst_path = &dst_path.to_string_lossy()
+            )
+        } else {
+            shell_script!(
+                "chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",
+                server_mode = &format!("{:o}", server_mode),
+                dst_path = &dst_path.to_string_lossy()
+            )
+        };
         self.socket.run_command("sh", &["-c", &script]).await?;
         Ok(())
     }
@@ -1948,6 +1961,7 @@ impl SshRemoteConnection {
     #[cfg(debug_assertions)]
     async fn build_local(
         &self,
+        build_remote_server: String,
         platform: SshPlatform,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncApp,
@@ -1998,57 +2012,81 @@ impl SshRemoteConnection {
         };
         smol::fs::create_dir_all("target/remote_server").await?;
 
-        delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
-        log::info!("installing cross");
-        run_cmd(Command::new("cargo").args([
-            "install",
-            "cross",
-            "--git",
-            "https://github.com/cross-rs/cross",
-        ]))
-        .await?;
+        if build_remote_server.contains("zigbuild") {
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote binary from source for {triple} with Zig"
+                )),
+                cx,
+            );
+            log::info!("building remote binary from source for {triple} with Zig");
+            run_cmd(Command::new("cargo").args([
+                "zigbuild",
+                "--package",
+                "remote_server",
+                "--features",
+                "debug-embed",
+                "--target-dir",
+                "target/remote_server",
+                "--target",
+                &triple,
+            ]))
+            .await?;
+        } else {
+            delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+            log::info!("installing cross");
+            run_cmd(Command::new("cargo").args([
+                "install",
+                "cross",
+                "--git",
+                "https://github.com/cross-rs/cross",
+            ]))
+            .await?;
 
-        delegate.set_status(
-            Some(&format!(
-                "Building remote server binary from source for {} with Docker",
-                &triple
-            )),
-            cx,
-        );
-        log::info!("building remote server binary from source for {}", &triple);
-        run_cmd(
-            Command::new("cross")
-                .args([
-                    "build",
-                    "--package",
-                    "remote_server",
-                    "--features",
-                    "debug-embed",
-                    "--target-dir",
-                    "target/remote_server",
-                    "--target",
-                    &triple,
-                ])
-                .env(
-                    "CROSS_CONTAINER_OPTS",
-                    "--mount type=bind,src=./target,dst=/app/target",
-                ),
-        )
-        .await?;
+            delegate.set_status(
+                Some(&format!(
+                    "Building remote server binary from source for {} with Docker",
+                    &triple
+                )),
+                cx,
+            );
+            log::info!("building remote server binary from source for {}", &triple);
+            run_cmd(
+                Command::new("cross")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env(
+                        "CROSS_CONTAINER_OPTS",
+                        "--mount type=bind,src=./target,dst=/app/target",
+                    ),
+            )
+            .await?;
+        }
 
         delegate.set_status(Some("Compressing binary"), cx);
 
-        run_cmd(Command::new("gzip").args([
-            "-9",
-            "-f",
-            &format!("target/remote_server/{}/debug/remote_server", triple),
-        ]))
-        .await?;
+        let mut path = format!("target/remote_server/{triple}/debug/remote_server").into();
+        if !build_remote_server.contains("nocompress") {
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                &format!("target/remote_server/{}/debug/remote_server", triple),
+            ]))
+            .await?;
 
-        let path = std::env::current_dir()?.join(format!(
-            "target/remote_server/{}/debug/remote_server.gz",
-            triple
-        ));
+            path = std::env::current_dir()?.join(format!(
+                "target/remote_server/{triple}/debug/remote_server.gz"
+            ));
+        }
 
         return Ok(path);
     }

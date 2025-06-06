@@ -36,7 +36,7 @@ Alternatively, you can connect to MCP servers in Zed via adding their commands d
         "path": "some-command",
         "args": ["arg-1", "arg-2"],
         "env": {}
-      }
+      },
       "settings": {}
     }
   }

@@ -26,6 +26,7 @@ pub struct EditorSettings {
     pub autoscroll_on_clicks: bool,
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
+    pub fast_scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
@@ -406,6 +407,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 1.0
     pub scroll_sensitivity: Option<f32>,
+    /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
+    /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
+    /// happens when a user holds the alt or option key while scrolling.
+    ///
+    /// Default: 4.0
+    pub fast_scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false
@@ -744,6 +751,10 @@ impl Settings for EditorSettings {
         vscode.f32_setting(
             "editor.mouseWheelScrollSensitivity",
             &mut current.scroll_sensitivity,
+        );
+        vscode.f32_setting(
+            "editor.fastScrollSensitivity",
+            &mut current.fast_scroll_sensitivity,
         );
         if Some("relative") == vscode.read_string("editor.lineNumbers") {
             current.relative_line_numbers = Some(true);

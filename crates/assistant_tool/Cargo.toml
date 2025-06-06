@@ -13,6 +13,7 @@ path = "src/assistant_tool.rs"
 
 [dependencies]
 anyhow.workspace = true
+async-watch.workspace = true
 buffer_diff.workspace = true
 clock.workspace = true
 collections.workspace = true

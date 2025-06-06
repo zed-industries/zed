@@ -39,6 +39,7 @@ file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
@@ -50,6 +51,7 @@ project.workspace = true
 rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+# serde_json_lenient.workspace = true
 settings.workspace = true
 shlex.workspace = true
 sysinfo.workspace = true
@@ -63,6 +65,7 @@ workspace.workspace = true
 workspace-hack.workspace = true
 debugger_tools = { workspace = true, optional = true }
 unindent = { workspace = true, optional = true }
+zed_actions.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }
