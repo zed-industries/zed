@@ -765,7 +765,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
         let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
-            ..snapshot.anchor_before(state.source_range.end);
+            ..snapshot.anchor_after(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
         let text_thread_store = self.text_thread_store.clone();
