@@ -2,7 +2,8 @@ use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, physical_px,
+    size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -53,7 +54,7 @@ impl ScreenCaptureSource for TestScreenCaptureSource {
             id: 0,
             is_main: None,
             label: None,
-            resolution: size(DevicePixels(1), DevicePixels(1)),
+            resolution: size(physical_px(1), physical_px(1)),
         })
     }
 

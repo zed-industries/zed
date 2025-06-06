@@ -3,11 +3,11 @@ use x11rb::connection::RequestConnection;
 
 use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
 use crate::{
-    AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
-    Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowParams, X11ClientStatePtr, px, size,
+    AnyWindowHandle, Bounds, Decorations, ForegroundExecutor, GpuSpecs, Modifiers, Pixels,
+    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
+    PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowDecorations, WindowKind, WindowParams, X11ClientStatePtr, physical_px, px, size,
 };
 
 use blade_graphics as gpu;
@@ -1054,8 +1054,8 @@ impl X11WindowStatePtr {
             let gpu_size = query_render_extent(&self.xcb, self.x_window)?;
             if true {
                 state.renderer.update_drawable_size(size(
-                    DevicePixels(gpu_size.width as i32),
-                    DevicePixels(gpu_size.height as i32),
+                    physical_px(gpu_size.width as i32),
+                    physical_px(gpu_size.height as i32),
                 ));
                 resize_args = Some((state.content_size(), state.scale_factor));
             }

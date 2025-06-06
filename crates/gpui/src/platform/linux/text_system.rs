@@ -1,7 +1,7 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
     GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
-    ShapedGlyph, ShapedRun, SharedString, Size, point, size,
+    ShapedGlyph, ShapedRun, SharedString, Size, physical_px, point, size,
 };
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
@@ -491,8 +491,8 @@ impl From<RectF> for Bounds<f32> {
 impl From<RectI> for Bounds<DevicePixels> {
     fn from(rect: RectI) -> Self {
         Bounds {
-            origin: point(DevicePixels(rect.origin_x()), DevicePixels(rect.origin_y())),
-            size: size(DevicePixels(rect.width()), DevicePixels(rect.height())),
+            origin: point(physical_px(rect.origin_x()), physical_px(rect.origin_y())),
+            size: size(physical_px(rect.width()), physical_px(rect.height())),
         }
     }
 }

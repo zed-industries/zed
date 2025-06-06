@@ -6,7 +6,7 @@ use base64::write::EncoderWriter;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
-    point, px, size,
+    physical_px, point, px, size,
 };
 use image::codecs::png::PngEncoder;
 use serde::{Deserialize, Serialize};
@@ -61,7 +61,7 @@ impl LanguageModelImage {
         }
 
         Some(Self {
-            size: size(DevicePixels(width?), DevicePixels(height?)),
+            size: size(physical_px(width?), physical_px(height?)),
             source: SharedString::from(source.to_string()),
         })
     }
@@ -83,7 +83,7 @@ impl LanguageModelImage {
     pub fn empty() -> Self {
         Self {
             source: "".into(),
-            size: size(DevicePixels(0), DevicePixels(0)),
+            size: size(physical_px(0), physical_px(0)),
         }
     }
 
@@ -105,7 +105,7 @@ impl LanguageModelImage {
 
             let width = dynamic_image.width();
             let height = dynamic_image.height();
-            let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
+            let image_size = size(physical_px(width as i32), physical_px(height as i32));
 
             let base64_image = {
                 if image_size.width.0 > ANTHROPIC_SIZE_LIMT as i32

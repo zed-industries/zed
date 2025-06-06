@@ -1,4 +1,4 @@
-use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
+use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size, physical_px};
 use resvg::tiny_skia::Pixmap;
 use std::{
     hash::Hash,
@@ -79,8 +79,8 @@ impl SvgRenderer {
         let size = match size {
             SvgSize::Size(size) => size,
             SvgSize::ScaleFactor(scale) => crate::size(
-                DevicePixels((tree.size().width() * scale) as i32),
-                DevicePixels((tree.size().height() * scale) as i32),
+                physical_px((tree.size().width() * scale) as i32),
+                physical_px((tree.size().height() * scale) as i32),
             ),
         };
 

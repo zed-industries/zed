@@ -1594,8 +1594,8 @@ impl Size<Pixels> {
     /// Converts the size from logical to physical pixels.
     pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
         size(
-            DevicePixels((self.width.0 * scale_factor).round() as i32),
-            DevicePixels((self.height.0 * scale_factor).round() as i32),
+            physical_px((self.width.0 * scale_factor).round() as i32),
+            physical_px((self.height.0 * scale_factor).round() as i32),
         )
     }
 }
@@ -1642,8 +1642,8 @@ impl Bounds<Pixels> {
     pub fn to_device_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
         Bounds {
             origin: point(
-                DevicePixels((self.origin.x.0 * factor).round() as i32),
-                DevicePixels((self.origin.y.0 * factor).round() as i32),
+                physical_px((self.origin.x.0 * factor).round() as i32),
+                physical_px((self.origin.y.0 * factor).round() as i32),
             ),
             size: self.size.to_device_pixels(factor),
         }
@@ -2686,7 +2686,7 @@ impl Pixels {
     /// The resulting `ScaledPixels` represent the scaled value which can be used for rendering
     /// calculations where display scaling is considered.
     pub fn scale(&self, factor: f32) -> ScaledPixels {
-        ScaledPixels(self.0 * factor)
+        physical_px(self.0 * factor)
     }
 
     /// Raises the `Pixels` value to a given power.
@@ -2845,6 +2845,19 @@ pub type DevicePixels = PhysicalPixels<i32>;
 /// Deprecated alias to physical pixels.
 pub type ScaledPixels = PhysicalPixels<f32>;
 
+/// Constructs a [`PhysicalPixels`] value representing a length in physical pixels.
+///
+/// # Arguments
+///
+/// * `physical_pixels` - The number of physical pixels for the length.
+///
+/// # Returns
+///
+/// A `PhysicalPixels` representing the specified number of pixels.
+pub const fn physical_px<T>(physical_pixels: T) -> PhysicalPixels<T> {
+    PhysicalPixels(physical_pixels)
+}
+
 /// Deprecated alias for creating `PhysicalPixels`.
 #[expect(non_snake_case)]
 pub const fn DevicePixels(x: i32) -> DevicePixels {
@@ -2913,13 +2926,13 @@ impl From<DevicePixels> for i32 {
 
 impl From<i32> for DevicePixels {
     fn from(device_pixels: i32) -> Self {
-        DevicePixels(device_pixels)
+        physical_px(device_pixels)
     }
 }
 
 impl From<u32> for DevicePixels {
     fn from(device_pixels: u32) -> Self {
-        DevicePixels(device_pixels as i32)
+        physical_px(device_pixels as i32)
     }
 }
 
@@ -2937,7 +2950,7 @@ impl From<DevicePixels> for u64 {
 
 impl From<u64> for DevicePixels {
     fn from(device_pixels: u64) -> Self {
-        DevicePixels(device_pixels as i32)
+        physical_px(device_pixels as i32)
     }
 }
 
@@ -2949,19 +2962,19 @@ impl From<DevicePixels> for usize {
 
 impl From<usize> for DevicePixels {
     fn from(device_pixels: usize) -> Self {
-        DevicePixels(device_pixels as i32)
+        physical_px(device_pixels as i32)
     }
 }
 
 impl From<ScaledPixels> for DevicePixels {
     fn from(scaled: ScaledPixels) -> Self {
-        DevicePixels(scaled.0.ceil() as i32)
+        physical_px(scaled.0.ceil() as i32)
     }
 }
 
 impl From<DevicePixels> for ScaledPixels {
     fn from(device: DevicePixels) -> Self {
-        ScaledPixels(device.0 as f32)
+        physical_px(device.0 as f32)
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::{
     AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
-    Point, Size, platform::AtlasTextureList,
+    Point, Size, physical_px, platform::AtlasTextureList,
 };
 use anyhow::Result;
 use blade_graphics as gpu;
@@ -150,8 +150,8 @@ impl BladeAtlasState {
         kind: AtlasTextureKind,
     ) -> &mut BladeAtlasTexture {
         const DEFAULT_ATLAS_SIZE: Size<DevicePixels> = Size {
-            width: DevicePixels(1024),
-            height: DevicePixels(1024),
+            width: physical_px(1024),
+            height: physical_px(1024),
         };
 
         let size = min_size.max(&DEFAULT_ATLAS_SIZE);

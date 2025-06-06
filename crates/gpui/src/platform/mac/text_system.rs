@@ -353,10 +353,10 @@ impl MacTextSystemState {
             // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
             let mut bitmap_size = glyph_bounds.size;
             if params.subpixel_variant.x > 0 {
-                bitmap_size.width += DevicePixels(1);
+                bitmap_size.width += physical_px(1);
             }
             if params.subpixel_variant.y > 0 {
-                bitmap_size.height += DevicePixels(1);
+                bitmap_size.height += physical_px(1);
             }
             let bitmap_size = bitmap_size;
 
@@ -582,8 +582,8 @@ impl From<RectF> for Bounds<f32> {
 impl From<RectI> for Bounds<DevicePixels> {
     fn from(rect: RectI) -> Self {
         Bounds {
-            origin: point(DevicePixels(rect.origin_x()), DevicePixels(rect.origin_y())),
-            size: size(DevicePixels(rect.width()), DevicePixels(rect.height())),
+            origin: point(physical_px(rect.origin_x()), physical_px(rect.origin_y())),
+            size: size(physical_px(rect.width()), physical_px(rect.height())),
         }
     }
 }

@@ -76,7 +76,7 @@ use crate::{
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScrollDelta,
-    ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+    ScrollWheelEvent, Size, TouchPhase, WindowParams, physical_px, point, px, size,
 };
 use crate::{
     SharedString,
@@ -1014,10 +1014,10 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                 in_progress_output.scale = Some(factor);
             }
             wl_output::Event::Geometry { x, y, .. } => {
-                in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)))
+                in_progress_output.position = Some(point(physical_px(x), physical_px(y)))
             }
             wl_output::Event::Mode { width, height, .. } => {
-                in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)))
+                in_progress_output.size = Some(size(physical_px(width), physical_px(height)))
             }
             wl_output::Event::Done => {
                 if let Some(complete) = in_progress_output.complete() {
