@@ -5072,7 +5072,10 @@ impl Editor {
         // Typically `start` == `end`, but with snippet tabstop choices the default choice is
         // inserted and selected. To handle that case, the start of the selection is used so that
         // the menu starts with all choices.
-        let position = self.selections.newest_anchor().start
+        let position = self
+            .selections
+            .newest_anchor()
+            .start
             .bias_right(&multibuffer_snapshot);
         if position.diff_base_anchor.is_some() {
             return;
