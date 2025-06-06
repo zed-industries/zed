@@ -66,7 +66,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Send the pull request link into the Slack channel
+      - name: Send failure message to Slack channel if needed
         if: ${{ failure() }}
         uses: slackapi/slack-github-action@b0fa283ad8fea605de13dc3f449259339835fc52
         with:
