@@ -271,12 +271,11 @@ You can check the Zed log at:
 
 If you see messages like:
 
-* `Zed failed to open a window: NoSupportedDeviceFound`
-* `ERROR_INITIALIZATION_FAILED`
-* `GPU Crashed`
-* `ERROR_SURFACE_LOST_KHR`
+- `Zed failed to open a window: NoSupportedDeviceFound`
+- `ERROR_INITIALIZATION_FAILED`
+- `GPU Crashed`
+- `ERROR_SURFACE_LOST_KHR`
 
-then Vulkan might not be working properly on your system. In most cases, updating your GPU drivers may help resolve this.
+Then Vulkan might not be working properly on your system. In most cases, updating your GPU drivers may help resolve this.
 
 If there's nothing Vulkan-related in the logs and you happen to have Bandicam installed, try uninstalling it. Zed is currently not compatible with Bandicam.
-
