@@ -24,7 +24,7 @@ pub mod buffer_tests;
 
 pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
 use fs::Fs;
@@ -34,7 +34,7 @@ pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
-pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
+pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -64,8 +64,10 @@ use std::{
 use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{ContextProvider, RunnableRange};
-pub use text_diff::{DiffOptions, line_diff, text_diff, text_diff_with_options, unified_diff};
+pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
+pub use text_diff::{
+    DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
+};
 use theme::SyntaxTheme;
 pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
@@ -243,6 +245,10 @@ impl CachedLspAdapter {
         self.adapter.retain_old_diagnostic(previous_diagnostic, cx)
     }
 
+    pub fn underline_diagnostic(&self, diagnostic: &lsp::Diagnostic) -> bool {
+        self.adapter.underline_diagnostic(diagnostic)
+    }
+
     pub fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
         self.adapter.diagnostic_message_to_markdown(message)
     }
@@ -317,7 +323,6 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
-    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -368,9 +373,7 @@ pub trait LspAdapter: 'static + Send + Sync {
                 }
             }
 
-            if !binary_options.allow_binary_download {
-                return Err(anyhow!("downloading language servers disabled"));
-            }
+            anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
 
             if let Some(cached_binary) = cached_binary.as_ref() {
                 return Ok(cached_binary.clone());
@@ -468,6 +471,16 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// When processing new `lsp::PublishDiagnosticsParams` diagnostics, whether to retain previous one(s) or not.
     fn retain_old_diagnostic(&self, _previous_diagnostic: &Diagnostic, _cx: &App) -> bool {
         false
+    }
+
+    /// Whether to underline a given diagnostic or not, when rendering in the editor.
+    ///
+    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticTag
+    /// states that
+    /// > Clients are allowed to render diagnostics with this tag faded out instead of having an error squiggle.
+    /// for the unnecessary diagnostics, so do not underline them.
+    fn underline_diagnostic(&self, _diagnostic: &lsp::Diagnostic) -> bool {
+        true
     }
 
     /// Post-processes completions provided by the language server.
@@ -1296,17 +1309,13 @@ impl Language {
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_runnable_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
         let mut extra_captures = Vec::with_capacity(query.capture_names().len());
@@ -1329,9 +1338,7 @@ impl Language {
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -1368,9 +1375,7 @@ impl Language {
     }
 
     pub fn with_text_object_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
 
         let mut text_objects_by_capture_ix = Vec::new();
@@ -1388,9 +1393,7 @@ impl Language {
     }
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut item_capture_ix = None;
         let mut name_capture_ix = None;
@@ -1421,9 +1424,7 @@ impl Language {
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
@@ -1458,9 +1459,7 @@ impl Language {
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut indent_capture_ix = None;
         let mut start_capture_ix = None;
@@ -1488,9 +1487,7 @@ impl Language {
     }
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut injection_language_capture_ix = None;
@@ -1508,18 +1505,14 @@ impl Language {
         language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
             (None, Some(ix)) => Some(ix),
             (Some(_), Some(_)) => {
-                return Err(anyhow!(
-                    "both language and injection.language captures are present"
-                ));
+                anyhow::bail!("both language and injection.language captures are present");
             }
             _ => language_capture_ix,
         };
         content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
             (None, Some(ix)) => Some(ix),
             (Some(_), Some(_)) => {
-                return Err(anyhow!(
-                    "both content and injection.content captures are present"
-                ));
+                anyhow::bail!("both content and injection.content captures are present")
             }
             _ => content_capture_ix,
         };
@@ -1553,10 +1546,7 @@ impl Language {
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
         let query = {
-            let grammar = self
-                .grammar
-                .as_ref()
-                .ok_or_else(|| anyhow!("no grammar for language"))?;
+            let grammar = self.grammar.as_ref().context("no grammar for language")?;
             Query::new(&grammar.ts_language, source)?
         };
 
@@ -1607,10 +1597,10 @@ impl Language {
                 .values()
                 .any(|entry| entry.name == *referenced_name)
             {
-                Err(anyhow!(
+                anyhow::bail!(
                     "language {:?} has overrides in config not in query: {referenced_name:?}",
                     self.config.name
-                ))?;
+                );
             }
         }
 
@@ -1633,9 +1623,7 @@ impl Language {
 
         self.config.brackets.disabled_scopes_by_bracket_ix.clear();
 
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         grammar.override_config = Some(OverrideConfig {
             query,
             values: override_configs_by_id,
@@ -1644,9 +1632,7 @@ impl Language {
     }
 
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let grammar = self
-            .grammar_mut()
-            .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
 
         let query = Query::new(&grammar.ts_language, source)?;
         let mut redaction_capture_ix = None;
@@ -2190,18 +2176,16 @@ pub fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
 }
 
 pub fn range_to_lsp(range: Range<PointUtf16>) -> Result<lsp::Range> {
-    if range.start > range.end {
-        Err(anyhow!(
-            "Inverted range provided to an LSP request: {:?}-{:?}",
-            range.start,
-            range.end
-        ))
-    } else {
-        Ok(lsp::Range {
-            start: point_to_lsp(range.start),
-            end: point_to_lsp(range.end),
-        })
-    }
+    anyhow::ensure!(
+        range.start <= range.end,
+        "Inverted range provided to an LSP request: {:?}-{:?}",
+        range.start,
+        range.end
+    );
+    Ok(lsp::Range {
+        start: point_to_lsp(range.start),
+        end: point_to_lsp(range.end),
+    })
 }
 
 pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {

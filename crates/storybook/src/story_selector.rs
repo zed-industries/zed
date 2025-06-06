@@ -2,7 +2,6 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use crate::stories::*;
-use anyhow::anyhow;
 use clap::ValueEnum;
 use clap::builder::PossibleValue;
 use gpui::AnyView;
@@ -90,7 +89,7 @@ impl FromStr for StorySelector {
             return Ok(Self::Component(component_story));
         }
 
-        Err(anyhow!("story not found for '{raw_story_name}'"))
+        anyhow::bail!("story not found for '{raw_story_name}'")
     }
 }
 

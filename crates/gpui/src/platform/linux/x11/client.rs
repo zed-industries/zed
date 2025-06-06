@@ -841,6 +841,14 @@ impl X11Client {
                         state.xkb_device_id,
                     )
                 };
+                let depressed_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_DEPRESSED);
+                let latched_layout = xkb_state.serialize_layout(xkbc::STATE_LAYOUT_LATCHED);
+                let locked_layout = xkb_state.serialize_layout(xkbc::ffi::XKB_STATE_LAYOUT_LOCKED);
+                state.previous_xkb_state = XKBStateNotiy {
+                    depressed_layout,
+                    latched_layout,
+                    locked_layout,
+                };
                 state.xkb = xkb_state;
             }
             Event::XkbStateNotify(event) => {
@@ -1456,7 +1464,7 @@ impl LinuxClient for X11Client {
                     CursorStyle::None => create_invisible_cursor(&state.xcb_connection).log_err(),
                     _ => state
                         .cursor_handle
-                        .load_cursor(&state.xcb_connection, &style.to_icon_name())
+                        .load_cursor(&state.xcb_connection, style.to_icon_name())
                         .log_err(),
                 }) else {
                     return;

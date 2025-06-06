@@ -11,7 +11,7 @@ use editor::{
 };
 use gpui::{TestAppContext, VisualTestContext};
 use indoc::indoc;
-use language::Rope;
+use language::{DiagnosticSourceKind, Rope};
 use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
 use project::FakeFs;
@@ -27,9 +27,7 @@ use util::{RandomCharIter, path, post_inc};
 
 #[ctor::ctor]
 fn init_logger() {
-    if env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -107,7 +105,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             }
             ],
             version: None
-        }, &[], cx).unwrap();
+        }, DiagnosticSourceKind::Pushed, &[], cx).unwrap();
     });
 
     // Open the project diagnostics view while there are already diagnostics.
@@ -178,6 +176,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -263,6 +262,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                     ],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -370,6 +370,7 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -467,6 +468,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -509,6 +511,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -550,6 +553,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -562,6 +566,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -602,6 +607,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -734,6 +740,7 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                                 diagnostics: diagnostics.clone(),
                                 version: None,
                             },
+                            DiagnosticSourceKind::Pushed,
                             &[],
                             cx,
                         )
@@ -921,6 +928,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                                 diagnostics: diagnostics.clone(),
                                 version: None,
                             },
+                            DiagnosticSourceKind::Pushed,
                             &[],
                             cx,
                         )
@@ -976,6 +984,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                             ..Default::default()
                         }],
                     },
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -1009,6 +1018,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                         version: None,
                         diagnostics: Vec::new(),
                     },
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -1090,6 +1100,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
                             },
                         ],
                     },
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -1228,6 +1239,7 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1279,6 +1291,7 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1380,6 +1393,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
                     ],
                     version: None,
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1413,7 +1427,7 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        env_logger::try_init().ok();
+        zlog::init_test();
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);

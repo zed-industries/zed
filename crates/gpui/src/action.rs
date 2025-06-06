@@ -1,5 +1,5 @@
 use crate::SharedString;
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 pub use no_action::{NoAction, is_no_action};
 use serde_json::json;
@@ -235,7 +235,7 @@ impl ActionRegistry {
         let name = self
             .names_by_type_id
             .get(type_id)
-            .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?
+            .with_context(|| format!("no action type registered for {type_id:?}"))?
             .clone();
 
         Ok(self.build_action(&name, None)?)
@@ -288,6 +288,18 @@ impl ActionRegistry {
     }
 }
 
+/// Generate a list of all the registered actions.
+/// Useful for transforming the list of available actions into a
+/// format suited for static analysis such as in validating keymaps, or
+/// generating documentation.
+pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
+    let mut actions = Vec::new();
+    for builder in inventory::iter::<MacroActionBuilder> {
+        actions.push(builder.0());
+    }
+    actions
+}
+
 /// Defines and registers unit structs that can be used as actions.
 ///
 /// To use more complex data types as actions, use `impl_actions!`
@@ -333,7 +345,6 @@ macro_rules! action_as {
             ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq,
         )]
         pub struct $name;
-
         gpui::__impl_action!(
             $namespace,
             $name,

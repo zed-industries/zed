@@ -107,9 +107,18 @@ To enable [Inlay Hints](../configuring-languages.md#inlay-hints) for LuaLS in Ze
 
 ## Formatting
 
-### LuaLS
+### LuaLS Formatting
 
-To enable auto-formatting with your LuaLS (provided by [CppCXY/EmmyLuaCodeStyle](https://github.com/CppCXY/EmmyLuaCodeStyle)) make sure you have `"format.enable": true,` in your .luarc.json add the following to your Zed `settings.json`:
+To enable auto-formatting with your LuaLS (provided by [CppCXY/EmmyLuaCodeStyle](https://github.com/CppCXY/EmmyLuaCodeStyle)) make sure you have `"format.enable": true,` in your .luarc.json:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json",
+  "format.enable": true
+}
+```
+
+Then add the following to your Zed `settings.json`:
 
 ```json
 {
@@ -124,7 +133,7 @@ To enable auto-formatting with your LuaLS (provided by [CppCXY/EmmyLuaCodeStyle]
 
 You can customize various EmmyLuaCodeStyle style options via `.editorconfig`, see [lua.template.editorconfig](https://github.com/CppCXY/EmmyLuaCodeStyle/blob/master/lua.template.editorconfig) for all available options.
 
-### StyLua
+### StyLua Formatting
 
 Alternatively to use [StyLua](https://github.com/JohnnyMorganz/StyLua) for auto-formatting:
 

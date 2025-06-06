@@ -1,6 +1,9 @@
 use anyhow::Error;
-use etagere::euclid::Vector2D;
+use etagere::euclid::{Point2D, Vector2D};
 use lyon::geom::Angle;
+use lyon::math::{Vector, vector};
+use lyon::path::traits::SvgPathBuilder;
+use lyon::path::{ArcFlags, Polygon};
 use lyon::tessellation::{
     BuffersBuilder, FillTessellator, FillVertex, StrokeTessellator, StrokeVertex, VertexBuffers,
 };
@@ -53,6 +56,18 @@ impl From<lyon::math::Point> for Point<Pixels> {
 impl From<Point<Pixels>> for lyon::math::Point {
     fn from(p: Point<Pixels>) -> Self {
         lyon::math::point(p.x.0, p.y.0)
+    }
+}
+
+impl From<Point<Pixels>> for Vector {
+    fn from(p: Point<Pixels>) -> Self {
+        vector(p.x.0, p.y.0)
+    }
+}
+
+impl From<Point<Pixels>> for Point2D<f32, Pixels> {
+    fn from(p: Point<Pixels>) -> Self {
+        Point2D::new(p.x.0, p.y.0)
     }
 }
 
@@ -114,6 +129,49 @@ impl PathBuilder {
     ) {
         self.raw
             .cubic_bezier_to(control_a.into(), control_b.into(), to.into());
+    }
+
+    /// Adds an elliptical arc.
+    pub fn arc_to(
+        &mut self,
+        radii: Point<Pixels>,
+        x_rotation: Pixels,
+        large_arc: bool,
+        sweep: bool,
+        to: Point<Pixels>,
+    ) {
+        self.raw.arc_to(
+            radii.into(),
+            Angle::degrees(x_rotation.into()),
+            ArcFlags { large_arc, sweep },
+            to.into(),
+        );
+    }
+
+    /// Equivalent to `arc_to` in relative coordinates.
+    pub fn relative_arc_to(
+        &mut self,
+        radii: Point<Pixels>,
+        x_rotation: Pixels,
+        large_arc: bool,
+        sweep: bool,
+        to: Point<Pixels>,
+    ) {
+        self.raw.relative_arc_to(
+            radii.into(),
+            Angle::degrees(x_rotation.into()),
+            ArcFlags { large_arc, sweep },
+            to.into(),
+        );
+    }
+
+    /// Adds a polygon.
+    pub fn add_polygon(&mut self, points: &[Point<Pixels>], closed: bool) {
+        let points = points.iter().copied().map(|p| p.into()).collect::<Vec<_>>();
+        self.raw.add_polygon(Polygon {
+            points: points.as_ref(),
+            closed,
+        });
     }
 
     /// Close the current sub-path.

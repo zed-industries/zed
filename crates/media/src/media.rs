@@ -11,7 +11,7 @@ pub mod core_media {
         CMItemIndex, CMSampleTimingInfo, CMTime, CMTimeMake, CMVideoCodecType,
         kCMSampleAttachmentKey_NotSync, kCMTimeInvalid, kCMVideoCodecType_H264,
     };
-    use anyhow::{Result, anyhow};
+    use anyhow::Result;
     use core_foundation::{
         array::{CFArray, CFArrayRef},
         base::{CFTypeID, OSStatus, TCFType},
@@ -69,12 +69,11 @@ pub mod core_media {
                     index as CMItemIndex,
                     &mut timing_info,
                 );
-
-                if result == 0 {
-                    Ok(timing_info)
-                } else {
-                    Err(anyhow!("error getting sample timing info, code {}", result))
-                }
+                anyhow::ensure!(
+                    result == 0,
+                    "error getting sample timing info, code {result}"
+                );
+                Ok(timing_info)
             }
         }
 
@@ -153,11 +152,8 @@ pub mod core_media {
                     ptr::null_mut(),
                     ptr::null_mut(),
                 );
-                if result == 0 {
-                    Ok(std::slice::from_raw_parts(bytes, len))
-                } else {
-                    Err(anyhow!("error getting parameter set, code: {}", result))
-                }
+                anyhow::ensure!(result == 0, "error getting parameter set, code: {result}");
+                Ok(std::slice::from_raw_parts(bytes, len))
             }
         }
     }
@@ -231,7 +227,7 @@ pub mod core_video {
         kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
         kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr8Planar,
     };
-    use anyhow::{Result, anyhow};
+    use anyhow::Result;
     use core_foundation::{
         base::kCFAllocatorDefault, dictionary::CFDictionaryRef, mach_port::CFAllocatorRef,
     };
@@ -267,11 +263,11 @@ pub mod core_video {
                     &mut this,
                 )
             };
-            if result == kCVReturnSuccess {
-                unsafe { Ok(CVMetalTextureCache::wrap_under_create_rule(this)) }
-            } else {
-                Err(anyhow!("could not create texture cache, code: {}", result))
-            }
+            anyhow::ensure!(
+                result == kCVReturnSuccess,
+                "could not create texture cache, code: {result}"
+            );
+            unsafe { Ok(CVMetalTextureCache::wrap_under_create_rule(this)) }
         }
 
         /// # Safety
@@ -300,11 +296,11 @@ pub mod core_video {
                     &mut this,
                 )
             };
-            if result == kCVReturnSuccess {
-                unsafe { Ok(CVMetalTexture::wrap_under_create_rule(this)) }
-            } else {
-                Err(anyhow!("could not create texture, code: {}", result))
-            }
+            anyhow::ensure!(
+                result == kCVReturnSuccess,
+                "could not create texture, code: {result}"
+            );
+            unsafe { Ok(CVMetalTexture::wrap_under_create_rule(this)) }
         }
     }
 

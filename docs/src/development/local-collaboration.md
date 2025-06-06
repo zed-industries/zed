@@ -26,7 +26,7 @@ The script will seed the database with various content defined by:
 cat crates/collab/seed.default.json
 ```
 
-To use a different set of admin users, you can create your own version of that json file and export the `SEED_PATH` environment variable. Note that the usernames listed in the admins list currently must correspond to valid Github users.
+To use a different set of admin users, you can create your own version of that json file and export the `SEED_PATH` environment variable. Note that the usernames listed in the admins list currently must correspond to valid GitHub users.
 
 ```json
 {
