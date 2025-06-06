@@ -691,7 +691,8 @@ fn handle_ime_composition_inner(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if lparam.0 == 0 {
+    let lparam = lparam.0 as u32;
+    if lparam == 0 {
         // Japanese IME may send this message with lparam = 0, which indicates that
         // there is no composition string.
         with_input_handler(&state_ptr, |input_handler| {
@@ -699,9 +700,9 @@ fn handle_ime_composition_inner(
         })?;
         Some(0)
     } else {
-        if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
+        if lparam & GCS_COMPSTR.0 > 0 {
             let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
-            let caret_pos = (lparam.0 as u32 & GCS_CURSORPOS.0 > 0).then(|| {
+            let caret_pos = (lparam & GCS_CURSORPOS.0 > 0).then(|| {
                 let pos = retrieve_composition_cursor_position(ctx);
                 pos..pos
             });
@@ -709,7 +710,7 @@ fn handle_ime_composition_inner(
                 input_handler.replace_and_mark_text_in_range(None, &comp_string, caret_pos);
             })?;
         }
-        if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
+        if lparam & GCS_RESULTSTR.0 > 0 {
             let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
             with_input_handler(&state_ptr, |input_handler| {
                 input_handler.replace_text_in_range(None, &comp_result);
