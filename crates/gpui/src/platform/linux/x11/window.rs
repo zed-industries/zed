@@ -5,8 +5,8 @@ use crate::{
     AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GpuSpecs, Modifiers,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, ScaledPixels, Scene, Size,
-    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowKind, WindowParams, X11ClientStatePtr, px, size,
+    Tiling, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowDecorations, WindowKind, WindowParams, X11ClientStatePtr, px, size,
 };
 
 use blade_graphics as gpu;
@@ -1406,6 +1406,10 @@ impl PlatformWindow for X11Window {
 
     fn on_close(&self, callback: Box<dyn FnOnce()>) {
         self.0.callbacks.borrow_mut().close = Some(callback);
+    }
+
+    fn on_hit_test_window_control(&self, _callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+        unimplemented!()
     }
 
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
