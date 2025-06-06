@@ -864,8 +864,13 @@ impl ContextStore {
             };
 
             if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
-                if let Some(prompts) = protocol.list_prompts().await.log_err() {
-                    let slash_command_ids = prompts
+                if let Some(response) = protocol
+                    .request::<context_server::types::request::PromptsList>(())
+                    .await
+                    .log_err()
+                {
+                    let slash_command_ids = response
+                        .prompts
                         .into_iter()
                         .filter(assistant_slash_commands::acceptable_prompt)
                         .map(|prompt| {
