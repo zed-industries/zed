@@ -14,7 +14,7 @@ use collections::HashMap;
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
 
-use crate::LanguageName;
+use crate::{LanguageName, ManifestName};
 
 /// Represents a single toolchain.
 #[derive(Clone, Debug)]
@@ -44,14 +44,17 @@ pub trait ToolchainLister: Send + Sync {
     async fn list(
         &self,
         worktree_root: PathBuf,
+        subroot_relative_path: Option<Arc<Path>>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList;
     // Returns a term which we should use in UI to refer to a toolchain.
     fn term(&self) -> SharedString;
+    /// Returns the name of the manifest file for this toolchain.
+    fn manifest_name(&self) -> ManifestName;
 }
 
 #[async_trait(?Send)]
-pub trait LanguageToolchainStore {
+pub trait LanguageToolchainStore: Send + Sync + 'static {
     async fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,

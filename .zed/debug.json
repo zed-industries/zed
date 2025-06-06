@@ -2,16 +2,11 @@
   {
     "label": "Debug Zed (CodeLLDB)",
     "adapter": "CodeLLDB",
-    "program": "target/debug/zed",
-    "request": "launch"
+    "build": { "label": "Build Zed", "command": "cargo", "args": ["build"] }
   },
   {
     "label": "Debug Zed (GDB)",
     "adapter": "GDB",
-    "program": "target/debug/zed",
-    "request": "launch",
-    "initialize_args": {
-      "stopAtBeginningOfMainSubprogram": true
-    }
+    "build": { "label": "Build Zed", "command": "cargo", "args": ["build"] }
   }
 ]

@@ -1,10 +1,7 @@
-// Disable command line from opening on release mode
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-
 mod reliability;
 mod zed;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{Client, ProxySettings, UserStore, parse_zed_link};
@@ -163,7 +160,25 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 
-fn main() {
+pub fn main() {
+    #[cfg(unix)]
+    {
+        let is_root = nix::unistd::geteuid().is_root();
+        let allow_root = env::var("ZED_ALLOW_ROOT").is_ok_and(|val| val == "true");
+
+        // Prevent running Zed with root privileges on Unix systems unless explicitly allowed
+        if is_root && !allow_root {
+            eprintln!(
+                "\
+Error: Running Zed as root or via sudo is unsupported.
+       Doing so (even once) may subtly break things for all subsequent non-root usage of Zed.
+       It is untested and not recommended, don't complain when things break.
+       If you wish to proceed anyways, set `ZED_ALLOW_ROOT=true` in your environment."
+            );
+            process::exit(1);
+        }
+    }
+
     // Check if there is a pending installer
     // If there is, run the installer and exit
     // And we don't want to run the installer if we are not the first instance
@@ -181,6 +196,11 @@ fn main() {
         return;
     }
 
+    if args.dump_all_actions {
+        dump_all_gpui_actions();
+        return;
+    }
+
     // Set custom data directory.
     if let Some(dir) = &args.user_data_dir {
         paths::set_custom_data_dir(dir);
@@ -194,9 +214,6 @@ fn main() {
             let _ = AttachConsole(ATTACH_PARENT_PROCESS);
         }
     }
-
-    menu::init();
-    zed_actions::init();
 
     let file_errors = init_paths();
     if !file_errors.is_empty() {
@@ -217,7 +234,7 @@ fn main() {
 
     let app_version = AppVersion::load(env!("CARGO_PKG_VERSION"));
     let app_commit_sha =
-        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha(commit_sha.to_string()));
+        option_env!("ZED_COMMIT_SHA").map(|commit_sha| AppCommitSha::new(commit_sha.to_string()));
 
     if args.system_specs {
         let system_specs = feedback::system_specs::SystemSpecs::new_stateless(
@@ -338,6 +355,9 @@ fn main() {
     });
 
     app.run(move |cx| {
+        menu::init();
+        zed_actions::init();
+
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
         if let Some(app_commit_sha) = app_commit_sha {
@@ -392,7 +412,7 @@ fn main() {
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
-        let (tx, rx) = async_watch::channel(None);
+        let (mut tx, rx) = watch::channel(None);
         cx.observe_global::<SettingsStore>(move |cx| {
             let settings = &ProjectSettings::get_global(cx).node;
             let options = NodeBinaryOptions {
@@ -419,6 +439,7 @@ fn main() {
         .detach();
         let node_runtime = NodeRuntime::new(client.http_client(), Some(shell_env_loaded_rx), rx);
 
+        debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
         language_extension::init(extension_host_proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
@@ -518,6 +539,7 @@ fn main() {
             app_state.client.clone(),
             prompt_builder.clone(),
             app_state.languages.clone(),
+            false,
             cx,
         );
         assistant_tools::init(app_state.client.http_client(), cx);
@@ -572,6 +594,7 @@ fn main() {
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
+        inspector_ui::init(app_state.clone(), cx);
 
         cx.observe_global::<SettingsStore>({
             let fs = fs.clone();
@@ -997,7 +1020,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
     })
 }
 
-fn stdout_is_a_pty() -> bool {
+pub fn stdout_is_a_pty() -> bool {
     std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
 }
 
@@ -1034,7 +1057,7 @@ struct Args {
     #[arg(long, hide = true)]
     askpass: Option<String>,
 
-    /// Run zed in the foreground, only used on Windows, to match the behavior of the behavior on macOS.
+    /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
@@ -1045,6 +1068,9 @@ struct Args {
     #[cfg(target_os = "windows")]
     #[arg(hide = true)]
     dock_action: Option<usize>,
+
+    #[arg(long, hide = true)]
+    dump_all_actions: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1072,7 +1098,7 @@ fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
             {
                 Ok(arg.into())
             } else {
-                Err(anyhow!("error parsing path argument: {}", error))
+                anyhow::bail!("error parsing path argument: {error}")
             }
         }
     }
@@ -1257,3 +1283,28 @@ fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &m
 
 #[cfg(not(debug_assertions))]
 fn watch_languages(_fs: Arc<dyn fs::Fs>, _languages: Arc<LanguageRegistry>, _cx: &mut App) {}
+
+fn dump_all_gpui_actions() {
+    #[derive(Debug, serde::Serialize)]
+    struct ActionDef {
+        name: &'static str,
+        human_name: String,
+        aliases: &'static [&'static str],
+    }
+    let mut actions = gpui::generate_list_of_all_registered_actions()
+        .into_iter()
+        .map(|action| ActionDef {
+            name: action.name,
+            human_name: command_palette::humanize_action_name(action.name),
+            aliases: action.aliases,
+        })
+        .collect::<Vec<ActionDef>>();
+
+    actions.sort_by_key(|a| a.name);
+
+    io::Write::write(
+        &mut std::io::stdout(),
+        serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
+    )
+    .unwrap();
+}

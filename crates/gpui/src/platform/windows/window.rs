@@ -43,7 +43,6 @@ pub struct WindowsWindowState {
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
     pub last_reported_modifiers: Option<Modifiers>,
-    pub suppress_next_char_msg: bool,
     pub system_key_handled: bool,
     pub hovered: bool,
 
@@ -103,7 +102,6 @@ impl WindowsWindowState {
         let callbacks = Callbacks::default();
         let input_handler = None;
         let last_reported_modifiers = None;
-        let suppress_next_char_msg = false;
         let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
@@ -123,7 +121,6 @@ impl WindowsWindowState {
             callbacks,
             input_handler,
             last_reported_modifiers,
-            suppress_next_char_msg,
             system_key_handled,
             hovered,
             renderer,
@@ -608,7 +605,7 @@ impl PlatformWindow for WindowsWindow {
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> Option<Receiver<usize>> {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
@@ -616,8 +613,8 @@ impl PlatformWindow for WindowsWindow {
             Some(info) => Some(info.to_string()),
             None => None,
         };
-        let answers = answers.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let handle = self.0.hwnd;
+        let answers = answers.to_vec();
         self.0
             .executor
             .spawn(async move {
@@ -653,9 +650,9 @@ impl PlatformWindow for WindowsWindow {
                     let mut button_id_map = Vec::with_capacity(answers.len());
                     let mut buttons = Vec::new();
                     let mut btn_encoded = Vec::new();
-                    for (index, btn_string) in answers.iter().enumerate() {
-                        let encoded = HSTRING::from(btn_string);
-                        let button_id = if btn_string == "Cancel" {
+                    for (index, btn) in answers.iter().enumerate() {
+                        let encoded = HSTRING::from(btn.label().as_ref());
+                        let button_id = if btn.is_cancel() {
                             IDCANCEL.0
                         } else {
                             index as i32 - 100

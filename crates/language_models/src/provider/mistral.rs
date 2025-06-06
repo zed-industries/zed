@@ -277,7 +277,7 @@ impl MistralLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing Mistral API Key"))?;
+            let api_key = api_key.context("Missing Mistral API Key")?;
             let request =
                 mistral::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
@@ -443,6 +443,35 @@ pub fn into_mistral(
             }
         }
     }
+
+    // The Mistral API requires that tool messages be followed by assistant messages,
+    // not user messages. When we have a tool->user sequence in the conversation,
+    // we need to insert a placeholder assistant message to maintain proper conversation
+    // flow and prevent API errors. This is a Mistral-specific requirement that differs
+    // from other language model APIs.
+    let messages = {
+        let mut fixed_messages = Vec::with_capacity(messages.len());
+        let mut messages_iter = messages.into_iter().peekable();
+
+        while let Some(message) = messages_iter.next() {
+            let is_tool_message = matches!(message, mistral::RequestMessage::Tool { .. });
+            fixed_messages.push(message);
+
+            // Insert assistant message between tool and user messages
+            if is_tool_message {
+                if let Some(next_msg) = messages_iter.peek() {
+                    if matches!(next_msg, mistral::RequestMessage::User { .. }) {
+                        fixed_messages.push(mistral::RequestMessage::Assistant {
+                            content: Some(" ".to_string()),
+                            tool_calls: Vec::new(),
+                        });
+                    }
+                }
+            }
+        }
+
+        fixed_messages
+    };
 
     mistral::Request {
         model,
@@ -816,6 +845,7 @@ mod tests {
             tool_choice: None,
             thread_id: None,
             prompt_id: None,
+            intent: None,
             mode: None,
             stop: Vec::new(),
         };

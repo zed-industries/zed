@@ -2,7 +2,7 @@ use crate::{
     adapters::DebugAdapterBinary,
     transport::{IoKind, LogKind, TransportDelegate},
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
@@ -187,10 +187,7 @@ impl DebugAdapterClient {
                     Ok(serde_json::from_value(Default::default())?)
                 }
             }
-            false => Err(anyhow!(
-                "Request failed: {}",
-                response.message.unwrap_or_default()
-            )),
+            false => anyhow::bail!("Request failed: {}", response.message.unwrap_or_default()),
         }
     }
 
@@ -284,9 +281,7 @@ mod tests {
     };
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::try_init().ok();
-        }
+        zlog::init_test();
 
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);

@@ -1,3 +1,5 @@
+use anyhow::Context as _;
+
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
@@ -33,7 +35,7 @@ impl Database {
         &self,
         params: &CreateBillingSubscriptionParams,
     ) -> Result<billing_subscription::Model> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let id = billing_subscription::Entity::insert(billing_subscription::ActiveModel {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 kind: ActiveValue::set(params.kind),
@@ -51,7 +53,7 @@ impl Database {
             Ok(billing_subscription::Entity::find_by_id(id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("failed to retrieve inserted billing subscription"))?)
+                .context("failed to retrieve inserted billing subscription")?)
         })
         .await
     }
@@ -62,7 +64,7 @@ impl Database {
         id: BillingSubscriptionId,
         params: &UpdateBillingSubscriptionParams,
     ) -> Result<()> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             billing_subscription::Entity::update(billing_subscription::ActiveModel {
                 id: ActiveValue::set(id),
                 billing_customer_id: params.billing_customer_id.clone(),
@@ -88,7 +90,7 @@ impl Database {
         &self,
         id: BillingSubscriptionId,
     ) -> Result<Option<billing_subscription::Model>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             Ok(billing_subscription::Entity::find_by_id(id)
                 .one(&*tx)
                 .await?)
@@ -101,7 +103,7 @@ impl Database {
         &self,
         stripe_subscription_id: &str,
     ) -> Result<Option<billing_subscription::Model>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             Ok(billing_subscription::Entity::find()
                 .filter(
                     billing_subscription::Column::StripeSubscriptionId.eq(stripe_subscription_id),
@@ -116,7 +118,7 @@ impl Database {
         &self,
         user_id: UserId,
     ) -> Result<Option<billing_subscription::Model>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             Ok(billing_subscription::Entity::find()
                 .inner_join(billing_customer::Entity)
                 .filter(billing_customer::Column::UserId.eq(user_id))
@@ -150,7 +152,7 @@ impl Database {
         &self,
         user_id: UserId,
     ) -> Result<Vec<billing_subscription::Model>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let subscriptions = billing_subscription::Entity::find()
                 .inner_join(billing_customer::Entity)
                 .filter(billing_customer::Column::UserId.eq(user_id))
@@ -167,7 +169,7 @@ impl Database {
         &self,
         user_ids: HashSet<UserId>,
     ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
-        self.transaction(|tx| {
+        self.weak_transaction(|tx| {
             let user_ids = user_ids.clone();
             async move {
                 let mut rows = billing_subscription::Entity::find()
@@ -199,7 +201,7 @@ impl Database {
         &self,
         user_ids: HashSet<UserId>,
     ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
-        self.transaction(|tx| {
+        self.weak_transaction(|tx| {
             let user_ids = user_ids.clone();
             async move {
                 let mut rows = billing_subscription::Entity::find()
@@ -234,7 +236,7 @@ impl Database {
 
     /// Returns the count of the active billing subscriptions for the user with the specified ID.
     pub async fn count_active_billing_subscriptions(&self, user_id: UserId) -> Result<usize> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let count = billing_subscription::Entity::find()
                 .inner_join(billing_customer::Entity)
                 .filter(

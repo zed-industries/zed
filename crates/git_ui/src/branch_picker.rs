@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+use anyhow::Context as _;
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
@@ -221,6 +221,7 @@ impl BranchListDelegate {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        let new_branch_name = new_branch_name.to_string().replace(' ', "-");
         cx.spawn(async move |_, cx| {
             repo.update(cx, |repo, _| {
                 repo.create_branch(new_branch_name.to_string())
@@ -325,6 +326,7 @@ impl PickerDelegate for BranchListDelegate {
                             .first()
                             .is_some_and(|entry| entry.branch.name() == query)
                     {
+                        let query = query.replace(' ', "-");
                         matches.push(BranchEntry {
                             branch: Branch {
                                 ref_name: format!("refs/heads/{query}").into(),
@@ -360,7 +362,7 @@ impl PickerDelegate for BranchListDelegate {
         }
 
         let current_branch = self.repo.as_ref().map(|repo| {
-            repo.update(cx, |repo, _| {
+            repo.read_with(cx, |repo, _| {
                 repo.branch.as_ref().map(|branch| branch.ref_name.clone())
             })
         });
@@ -381,7 +383,7 @@ impl PickerDelegate for BranchListDelegate {
                         .delegate
                         .repo
                         .as_ref()
-                        .ok_or_else(|| anyhow!("No active repository"))?
+                        .context("No active repository")?
                         .clone();
 
                     let mut cx = cx.to_async();
