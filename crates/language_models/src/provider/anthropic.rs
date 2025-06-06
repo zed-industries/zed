@@ -387,22 +387,34 @@ impl AnthropicModel {
         &self,
         request: anthropic::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<anthropic::Event, AnthropicError>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<anthropic::Event, AnthropicError>>,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
 
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).anthropic;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         async move {
             let api_key = api_key.context("Missing Anthropic API Key")?;
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            request.await.context("failed to stream completion")
+            request.await.map_err(|err| match err {
+                AnthropicError::RateLimit(duration) => {
+                    LanguageModelCompletionError::RateLimit(duration)
+                }
+                err @ (AnthropicError::ApiError(..) | AnthropicError::Other(..)) => {
+                    LanguageModelCompletionError::Other(anthropic_err_to_anyhow(err))
+                }
+            })
         }
         .boxed()
     }
@@ -484,12 +496,7 @@ impl LanguageModel for AnthropicModel {
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request
-                .await
-                .map_err(|err| match err.downcast::<AnthropicError>() {
-                    Ok(anthropic_err) => anthropic_err_to_anyhow(anthropic_err),
-                    Err(err) => anyhow!(err),
-                })?;
+            let response = request.await?;
             Ok(AnthropicEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
