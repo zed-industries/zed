@@ -385,7 +385,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     extension::init(cx);
 
-    let (tx, rx) = async_watch::channel(None);
+    let (mut tx, rx) = watch::channel(None);
     cx.observe_global::<SettingsStore>(move |cx| {
         let settings = &ProjectSettings::get_global(cx).node;
         let options = NodeBinaryOptions {
