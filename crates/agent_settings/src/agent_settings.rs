@@ -372,6 +372,8 @@ impl AgentSettingsContent {
                                 None,
                                 None,
                                 Some(language_model.supports_tools()),
+                                Some(language_model.supports_images()),
+                                None,
                             )),
                             api_url,
                         });
@@ -728,6 +730,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "zed.dev".into(),
                 "copilot_chat".into(),
                 "deepseek".into(),
+                "openrouter".into(),
                 "mistral".into(),
             ]),
             ..Default::default()

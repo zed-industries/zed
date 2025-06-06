@@ -74,8 +74,9 @@ pub use element::{
 };
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagAppExt};
 use futures::{
-    FutureExt,
+    FutureExt, StreamExt as _,
     future::{self, Shared, join},
+    stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 
@@ -108,9 +109,10 @@ pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    CursorShape, DiagnosticEntry, DiagnosticSourceKind, DiffOptions, DocumentationConfig,
+    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
+    OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
+    WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -123,7 +125,7 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, ProjectPath,
+    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -211,8 +213,11 @@ use workspace::{
     searchable::SearchEvent,
 };
 
-use crate::hover_links::{find_url, find_url_from_range};
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
+use crate::{
+    code_context_menus::CompletionsMenuSource,
+    hover_links::{find_url, find_url_from_range},
+};
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
@@ -932,6 +937,7 @@ pub struct Editor {
     /// typing enters text into each of them, even the ones that aren't focused.
     pub(crate) show_cursor_when_unfocused: bool,
     columnar_selection_tail: Option<Anchor>,
+    columnar_display_point: Option<DisplayPoint>,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
     select_prev_state: Option<SelectNextState>,
@@ -986,7 +992,7 @@ pub struct Editor {
     context_menu: RefCell<Option<CodeContextMenu>>,
     context_menu_options: Option<ContextMenuOptions>,
     mouse_context_menu: Option<MouseContextMenu>,
-    completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    completion_tasks: Vec<(CompletionId, Task<()>)>,
     inline_blame_popover: Option<InlineBlamePopover>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
@@ -1068,6 +1074,7 @@ pub struct Editor {
     tasks_update_task: Option<Task<()>>,
     breakpoint_store: Option<Entity<BreakpointStore>>,
     gutter_breakpoint_indicator: (Option<PhantomBreakpointIndicator>, Option<Task<()>>),
+    pull_diagnostics_task: Task<()>,
     in_project_search: bool,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
     breadcrumb_header: Option<String>,
@@ -1199,7 +1206,7 @@ impl Default for SelectionHistoryMode {
 
 struct DeferredSelectionEffectsState {
     changed: bool,
-    show_completions: bool,
+    should_update_completions: bool,
     autoscroll: Option<Autoscroll>,
     old_cursor_position: Anchor,
     history_entry: SelectionHistoryEntry,
@@ -1306,6 +1313,11 @@ struct RowHighlight {
 
 #[derive(Clone, Debug)]
 struct AddSelectionsState {
+    groups: Vec<AddSelectionsGroup>,
+}
+
+#[derive(Clone, Debug)]
+struct AddSelectionsGroup {
     above: bool,
     stack: Vec<usize>,
 }
@@ -1686,6 +1698,10 @@ impl Editor {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
+                            editor.pull_diagnostics(window, cx);
+                        }
+                        project::Event::RefreshDocumentsDiagnostics => {
+                            editor.pull_diagnostics(window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -1788,7 +1804,7 @@ impl Editor {
             code_action_providers.push(Rc::new(project) as Rc<_>);
         }
 
-        let mut this = Self {
+        let mut editor = Self {
             focus_handle,
             show_cursor_when_unfocused: false,
             last_focused_descendant: None,
@@ -1797,6 +1813,7 @@ impl Editor {
             selections,
             scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
+            columnar_display_point: None,
             add_selections_state: None,
             select_next_state: None,
             select_prev_state: None,
@@ -1949,6 +1966,7 @@ impl Editor {
                 }),
             ],
             tasks_update_task: None,
+            pull_diagnostics_task: Task::ready(()),
             linked_edit_ranges: Default::default(),
             in_project_search: false,
             previous_search_ranges: None,
@@ -1973,16 +1991,17 @@ impl Editor {
             change_list: ChangeList::new(),
             mode,
         };
-        if let Some(breakpoints) = this.breakpoint_store.as_ref() {
-            this._subscriptions
+        if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
+            editor
+                ._subscriptions
                 .push(cx.observe(breakpoints, |_, _, cx| {
                     cx.notify();
                 }));
         }
-        this.tasks_update_task = Some(this.refresh_runnables(window, cx));
-        this._subscriptions.extend(project_subscriptions);
+        editor.tasks_update_task = Some(editor.refresh_runnables(window, cx));
+        editor._subscriptions.extend(project_subscriptions);
 
-        this._subscriptions.push(cx.subscribe_in(
+        editor._subscriptions.push(cx.subscribe_in(
             &cx.entity(),
             window,
             |editor, _, e: &EditorEvent, window, cx| match e {
@@ -2027,14 +2046,15 @@ impl Editor {
             },
         ));
 
-        if let Some(dap_store) = this
+        if let Some(dap_store) = editor
             .project
             .as_ref()
             .map(|project| project.read(cx).dap_store())
         {
             let weak_editor = cx.weak_entity();
 
-            this._subscriptions
+            editor
+                ._subscriptions
                 .push(
                     cx.observe_new::<project::debugger::session::Session>(move |_, _, cx| {
                         let session_entity = cx.entity();
@@ -2049,40 +2069,44 @@ impl Editor {
                 );
 
             for session in dap_store.read(cx).sessions().cloned().collect::<Vec<_>>() {
-                this._subscriptions
+                editor
+                    ._subscriptions
                     .push(cx.subscribe(&session, Self::on_debug_session_event));
             }
         }
 
-        this.end_selection(window, cx);
-        this.scroll_manager.show_scrollbars(window, cx);
-        jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut this, &buffer, cx);
+        editor.end_selection(window, cx);
+        editor.scroll_manager.show_scrollbars(window, cx);
+        jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut editor, &buffer, cx);
 
         if full_mode {
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
 
-            if this.git_blame_inline_enabled {
-                this.start_git_blame_inline(false, window, cx);
+            if editor.git_blame_inline_enabled {
+                editor.start_git_blame_inline(false, window, cx);
             }
 
-            this.go_to_active_debug_line(window, cx);
+            editor.go_to_active_debug_line(window, cx);
 
             if let Some(buffer) = buffer.read(cx).as_singleton() {
-                if let Some(project) = this.project.as_ref() {
+                if let Some(project) = editor.project.as_ref() {
                     let handle = project.update(cx, |project, cx| {
                         project.register_buffer_with_language_servers(&buffer, cx)
                     });
-                    this.registered_buffers
+                    editor
+                        .registered_buffers
                         .insert(buffer.read(cx).remote_id(), handle);
                 }
             }
 
-            this.minimap = this.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
+            editor.minimap =
+                editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
+            editor.pull_diagnostics(window, cx);
         }
 
-        this.report_editor_event("Editor Opened", None, cx);
-        this
+        editor.report_editor_event("Editor Opened", None, cx);
+        editor
     }
 
     pub fn deploy_mouse_context_menu(
@@ -2224,31 +2248,26 @@ impl Editor {
 
     pub fn accept_edit_prediction_keybind(
         &self,
+        accept_partial: bool,
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
 
-        AcceptEditPredictionBinding(
-            window
-                .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
-                .into_iter()
-                .filter(|binding| {
-                    !in_conflict
-                        || binding
-                            .keystrokes()
-                            .first()
-                            .map_or(false, |keystroke| keystroke.modifiers.modified())
-                })
-                .rev()
-                .min_by_key(|binding| {
-                    binding
-                        .keystrokes()
-                        .first()
-                        .map_or(u8::MAX, |k| k.modifiers.number_of_modifiers())
-                }),
-        )
+        let bindings = if accept_partial {
+            window.bindings_for_action_in_context(&AcceptPartialEditPrediction, key_context)
+        } else {
+            window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
+        };
+
+        AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
+            !in_conflict
+                || binding
+                    .keystrokes()
+                    .first()
+                    .map_or(false, |keystroke| keystroke.modifiers.modified())
+        }))
     }
 
     pub fn new_file(
@@ -2655,7 +2674,7 @@ impl Editor {
         &mut self,
         local: bool,
         old_cursor_position: &Anchor,
-        show_completions: bool,
+        should_update_completions: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2698,7 +2717,9 @@ impl Editor {
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        self.add_selections_state = None;
+        if self.selections.count() == 1 {
+            self.add_selections_state = None;
+        }
         self.select_next_state = None;
         self.select_prev_state = None;
         self.select_syntax_node_history.try_clear();
@@ -2707,7 +2728,9 @@ impl Editor {
             .invalidate(&self.selections.disjoint_anchors(), buffer);
         self.take_rename(false, window, cx);
 
-        let new_cursor_position = self.selections.newest_anchor().head();
+        let newest_selection = self.selections.newest_anchor();
+        let new_cursor_position = newest_selection.head();
+        let selection_start = newest_selection.start;
 
         self.push_to_nav_history(
             *old_cursor_position,
@@ -2717,15 +2740,6 @@ impl Editor {
         );
 
         if local {
-            let new_cursor_position = self.selections.newest_anchor().head();
-            let mut context_menu = self.context_menu.borrow_mut();
-            let completion_menu = match context_menu.as_ref() {
-                Some(CodeContextMenu::Completions(menu)) => Some(menu),
-                _ => {
-                    *context_menu = None;
-                    None
-                }
-            };
             if let Some(buffer_id) = new_cursor_position.buffer_id {
                 if !self.registered_buffers.contains_key(&buffer_id) {
                     if let Some(project) = self.project.as_ref() {
@@ -2742,50 +2756,40 @@ impl Editor {
                 }
             }
 
-            if let Some(completion_menu) = completion_menu {
-                let cursor_position = new_cursor_position.to_offset(buffer);
-                let (word_range, kind) =
-                    buffer.surrounding_word(completion_menu.initial_position, true);
-                if kind == Some(CharKind::Word)
-                    && word_range.to_inclusive().contains(&cursor_position)
-                {
-                    let mut completion_menu = completion_menu.clone();
-                    drop(context_menu);
-
-                    let query = Self::completion_query(buffer, cursor_position);
-                    let completion_provider = self.completion_provider.clone();
-                    cx.spawn_in(window, async move |this, cx| {
-                        completion_menu
-                            .filter(query.as_deref(), completion_provider, this.clone(), cx)
-                            .await;
-
-                        this.update(cx, |this, cx| {
-                            let mut context_menu = this.context_menu.borrow_mut();
-                            let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref()
-                            else {
-                                return;
-                            };
-
-                            if menu.id > completion_menu.id {
-                                return;
-                            }
-
-                            *context_menu = Some(CodeContextMenu::Completions(completion_menu));
-                            drop(context_menu);
-                            cx.notify();
-                        })
-                    })
-                    .detach();
-
-                    if show_completions {
-                        self.show_completions(&ShowCompletions { trigger: None }, window, cx);
-                    }
-                } else {
-                    drop(context_menu);
-                    self.hide_context_menu(window, cx);
+            let mut context_menu = self.context_menu.borrow_mut();
+            let completion_menu = match context_menu.as_ref() {
+                Some(CodeContextMenu::Completions(menu)) => Some(menu),
+                Some(CodeContextMenu::CodeActions(_)) => {
+                    *context_menu = None;
+                    None
                 }
-            } else {
-                drop(context_menu);
+                None => None,
+            };
+            let completion_position = completion_menu.map(|menu| menu.initial_position);
+            drop(context_menu);
+
+            if should_update_completions {
+                if let Some(completion_position) = completion_position {
+                    let start_offset = selection_start.to_offset(buffer);
+                    let position_matches = start_offset == completion_position.to_offset(buffer);
+                    let continue_showing = if position_matches {
+                        if self.snippet_stack.is_empty() {
+                            buffer.char_kind_before(start_offset, true) == Some(CharKind::Word)
+                        } else {
+                            // Snippet choices can be shown even when the cursor is in whitespace.
+                            // Dismissing the menu when actions like backspace
+                            true
+                        }
+                    } else {
+                        false
+                    };
+
+                    if continue_showing {
+                        self.show_completions(&ShowCompletions { trigger: None }, window, cx);
+                    } else {
+                        self.hide_context_menu(window, cx);
+                    }
+                }
             }
 
             hide_hover(self, cx);
@@ -2979,7 +2983,7 @@ impl Editor {
         self.change_selections_inner(true, autoscroll, window, cx, change)
     }
 
-    pub(crate) fn change_selections_without_showing_completions<R>(
+    pub(crate) fn change_selections_without_updating_completions<R>(
         &mut self,
         autoscroll: Option<Autoscroll>,
         window: &mut Window,
@@ -2991,7 +2995,7 @@ impl Editor {
 
     fn change_selections_inner<R>(
         &mut self,
-        show_completions: bool,
+        should_update_completions: bool,
         autoscroll: Option<Autoscroll>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2999,14 +3003,14 @@ impl Editor {
     ) -> R {
         if let Some(state) = &mut self.deferred_selection_effects_state {
             state.autoscroll = autoscroll.or(state.autoscroll);
-            state.show_completions = show_completions;
+            state.should_update_completions = should_update_completions;
             let (changed, result) = self.selections.change_with(cx, change);
             state.changed |= changed;
             return result;
         }
         let mut state = DeferredSelectionEffectsState {
             changed: false,
-            show_completions,
+            should_update_completions,
             autoscroll,
             old_cursor_position: self.selections.newest_anchor().head(),
             history_entry: SelectionHistoryEntry {
@@ -3066,7 +3070,7 @@ impl Editor {
             self.selections_did_change(
                 true,
                 &old_cursor_position,
-                state.show_completions,
+                state.should_update_completions,
                 window,
                 cx,
             );
@@ -3319,12 +3323,18 @@ impl Editor {
                     SelectMode::Character,
                 );
             });
+            if position.column() != goal_column {
+                self.columnar_display_point = Some(DisplayPoint::new(position.row(), goal_column));
+            } else {
+                self.columnar_display_point = None;
+            }
         }
 
         let tail = self.selections.newest::<Point>(cx).tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
         if !reset {
+            self.columnar_display_point = None;
             self.select_columns(
                 tail.to_display_point(&display_map),
                 position,
@@ -3347,7 +3357,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
-            let tail = tail.to_display_point(&display_map);
+            let tail = self
+                .columnar_display_point
+                .unwrap_or_else(|| tail.to_display_point(&display_map));
             self.select_columns(tail, position, goal_column, &display_map, window, cx);
         } else if let Some(mut pending) = self.selections.pending_anchor() {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -3463,7 +3475,7 @@ impl Editor {
         let selection_ranges = (start_row.0..=end_row.0)
             .map(DisplayRow)
             .filter_map(|row| {
-                if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
+                if !display_map.is_block_line(row) {
                     let start = display_map
                         .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
                         .to_point(display_map);
@@ -3481,8 +3493,19 @@ impl Editor {
             })
             .collect::<Vec<_>>();
 
+        let mut non_empty_ranges = selection_ranges
+            .iter()
+            .filter(|selection_range| selection_range.start != selection_range.end)
+            .peekable();
+
+        let ranges = if non_empty_ranges.peek().is_some() {
+            non_empty_ranges.cloned().collect()
+        } else {
+            selection_ranges
+        };
+
         self.change_selections(None, window, cx, |s| {
-            s.select_ranges(selection_ranges);
+            s.select_ranges(ranges);
         });
         cx.notify();
     }
@@ -3958,7 +3981,7 @@ impl Editor {
             }
 
             let had_active_inline_completion = this.has_active_inline_completion();
-            this.change_selections_without_showing_completions(
+            this.change_selections_without_updating_completions(
                 Some(Autoscroll::fit()),
                 window,
                 cx,
@@ -4506,30 +4529,40 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ignore_completion_provider = self
+        let completions_source = self
             .context_menu
             .borrow()
             .as_ref()
-            .map(|menu| match menu {
-                CodeContextMenu::Completions(completions_menu) => {
-                    completions_menu.ignore_completion_provider
-                }
-                CodeContextMenu::CodeActions(_) => false,
-            })
-            .unwrap_or(false);
+            .and_then(|menu| match menu {
+                CodeContextMenu::Completions(completions_menu) => Some(completions_menu.source),
+                CodeContextMenu::CodeActions(_) => None,
+            });
 
-        if ignore_completion_provider {
-            self.show_word_completions(&ShowWordCompletions, window, cx);
-        } else if self.is_completion_trigger(text, trigger_in_words, cx) {
-            self.show_completions(
-                &ShowCompletions {
-                    trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
-                },
-                window,
-                cx,
-            );
-        } else {
-            self.hide_context_menu(window, cx);
+        match completions_source {
+            Some(CompletionsMenuSource::Words) => {
+                self.show_word_completions(&ShowWordCompletions, window, cx)
+            }
+            Some(CompletionsMenuSource::Normal)
+            | Some(CompletionsMenuSource::SnippetChoices)
+            | None
+                if self.is_completion_trigger(
+                    text,
+                    trigger_in_words,
+                    completions_source.is_some(),
+                    cx,
+                ) =>
+            {
+                self.show_completions(
+                    &ShowCompletions {
+                        trigger: Some(text.to_owned()).filter(|x| !x.is_empty()),
+                    },
+                    window,
+                    cx,
+                )
+            }
+            _ => {
+                self.hide_context_menu(window, cx);
+            }
         }
     }
 
@@ -4537,6 +4570,7 @@ impl Editor {
         &self,
         text: &str,
         trigger_in_words: bool,
+        menu_is_open: bool,
         cx: &mut Context<Self>,
     ) -> bool {
         let position = self.selections.newest_anchor().head();
@@ -4554,6 +4588,7 @@ impl Editor {
                 position.text_anchor,
                 text,
                 trigger_in_words,
+                menu_is_open,
                 cx,
             )
         } else {
@@ -5004,7 +5039,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_completions_menu(true, None, window, cx);
+        self.open_or_update_completions_menu(Some(CompletionsMenuSource::Words), None, window, cx);
     }
 
     pub fn show_completions(
@@ -5013,12 +5048,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.open_completions_menu(false, options.trigger.as_deref(), window, cx);
+        self.open_or_update_completions_menu(None, options.trigger.as_deref(), window, cx);
     }
 
-    fn open_completions_menu(
+    fn open_or_update_completions_menu(
         &mut self,
-        ignore_completion_provider: bool,
+        requested_source: Option<CompletionsMenuSource>,
         trigger: Option<&str>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -5026,11 +5061,11 @@ impl Editor {
         if self.pending_rename.is_some() {
             return;
         }
-        if !self.snippet_stack.is_empty() && self.context_menu.borrow().as_ref().is_some() {
-            return;
-        }
 
-        let position = self.selections.newest_anchor().head();
+        // Typically `start` == `end`, but with snippet tabstop choices the default choice is
+        // inserted and selected. To handle that case, the start of the selection is used so that
+        // the menu starts with all choices.
+        let position = self.selections.newest_anchor().start;
         if position.diff_base_anchor.is_some() {
             return;
         }
@@ -5041,11 +5076,55 @@ impl Editor {
                 return;
             };
         let buffer_snapshot = buffer.read(cx).snapshot();
-        let show_completion_documentation = buffer_snapshot
-            .settings_at(buffer_position, cx)
-            .show_completion_documentation;
 
-        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position);
+        let query: Option<Arc<String>> =
+            Self::completion_query(&self.buffer.read(cx).read(cx), position)
+                .map(|query| query.into());
+
+        let provider = match requested_source {
+            Some(CompletionsMenuSource::Normal) | None => self.completion_provider.clone(),
+            Some(CompletionsMenuSource::Words) => None,
+            Some(CompletionsMenuSource::SnippetChoices) => {
+                log::error!("bug: SnippetChoices requested_source is not handled");
+                None
+            }
+        };
+
+        let sort_completions = provider
+            .as_ref()
+            .map_or(false, |provider| provider.sort_completions());
+
+        let filter_completions = provider
+            .as_ref()
+            .map_or(true, |provider| provider.filter_completions());
+
+        // When `is_incomplete` is false, can filter completions instead of re-querying when the
+        // current query is a suffix of the initial query.
+        if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
+            if !menu.is_incomplete && filter_completions {
+                // If the new query is a suffix of the old query (typing more characters) and
+                // the previous result was complete, the existing completions can be filtered.
+                //
+                // Note that this is always true for snippet completions.
+                let query_matches = match (&menu.initial_query, &query) {
+                    (Some(initial_query), Some(query)) => query.starts_with(initial_query.as_ref()),
+                    (None, _) => true,
+                    _ => false,
+                };
+                if query_matches {
+                    let position_matches = if menu.initial_position == position {
+                        true
+                    } else {
+                        let snapshot = self.buffer.read(cx).read(cx);
+                        menu.initial_position.to_offset(&snapshot) == position.to_offset(&snapshot)
+                    };
+                    if position_matches {
+                        menu.filter(query.clone(), provider.clone(), window, cx);
+                        return;
+                    }
+                }
+            }
+        };
 
         let trigger_kind = match trigger {
             Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
@@ -5064,14 +5143,15 @@ impl Editor {
             trigger_kind,
         };
 
-        let (old_range, word_kind) = buffer_snapshot.surrounding_word(buffer_position);
-        let (old_range, word_to_exclude) = if word_kind == Some(CharKind::Word) {
+        let (word_replace_range, word_to_exclude) = if let (word_range, Some(CharKind::Word)) =
+            buffer_snapshot.surrounding_word(buffer_position)
+        {
             let word_to_exclude = buffer_snapshot
-                .text_for_range(old_range.clone())
+                .text_for_range(word_range.clone())
                 .collect::<String>();
             (
-                buffer_snapshot.anchor_before(old_range.start)
-                    ..buffer_snapshot.anchor_after(old_range.end),
+                buffer_snapshot.anchor_before(word_range.start)
+                    ..buffer_snapshot.anchor_after(buffer_position),
                 Some(word_to_exclude),
             )
         } else {
@@ -5084,6 +5164,10 @@ impl Editor {
 
         let completion_settings =
             language_settings(language.clone(), buffer_snapshot.file(), cx).completions;
+
+        let show_completion_documentation = buffer_snapshot
+            .settings_at(buffer_position, cx)
+            .show_completion_documentation;
 
         // The document can be large, so stay in reasonable bounds when searching for words,
         // otherwise completion pop-up might be slow to appear.
@@ -5100,18 +5184,13 @@ impl Editor {
         let word_search_range = buffer_snapshot.point_to_offset(min_word_search)
             ..buffer_snapshot.point_to_offset(max_word_search);
 
-        let provider = if ignore_completion_provider {
-            None
-        } else {
-            self.completion_provider.clone()
-        };
         let skip_digits = query
             .as_ref()
             .map_or(true, |query| !query.chars().any(|c| c.is_digit(10)));
 
-        let (mut words, provided_completions) = match &provider {
+        let (mut words, provider_responses) = match &provider {
             Some(provider) => {
-                let completions = provider.completions(
+                let provider_responses = provider.completions(
                     position.excerpt_id,
                     &buffer,
                     buffer_position,
@@ -5132,7 +5211,7 @@ impl Editor {
                         }),
                 };
 
-                (words, completions)
+                (words, provider_responses)
             }
             None => (
                 cx.background_spawn(async move {
@@ -5142,137 +5221,165 @@ impl Editor {
                         skip_digits,
                     })
                 }),
-                Task::ready(Ok(None)),
+                Task::ready(Ok(Vec::new())),
             ),
         };
-
-        let sort_completions = provider
-            .as_ref()
-            .map_or(false, |provider| provider.sort_completions());
-
-        let filter_completions = provider
-            .as_ref()
-            .map_or(true, |provider| provider.filter_completions());
 
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_in(window, async move |editor, cx| {
-            async move {
-                editor.update(cx, |this, _| {
-                    this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
-                })?;
+            let Ok(()) = editor.update(cx, |this, _| {
+                this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
+            }) else {
+                return;
+            };
 
-                let mut completions = Vec::new();
-                if let Some(provided_completions) = provided_completions.await.log_err().flatten() {
-                    completions.extend(provided_completions);
+            // TODO: Ideally completions from different sources would be selectively re-queried, so
+            // that having one source with `is_incomplete: true` doesn't cause all to be re-queried.
+            let mut completions = Vec::new();
+            let mut is_incomplete = false;
+            if let Some(provider_responses) = provider_responses.await.log_err() {
+                if !provider_responses.is_empty() {
+                    for response in provider_responses {
+                        completions.extend(response.completions);
+                        is_incomplete = is_incomplete || response.is_incomplete;
+                    }
                     if completion_settings.words == WordsCompletionMode::Fallback {
                         words = Task::ready(BTreeMap::default());
                     }
                 }
+            }
 
-                let mut words = words.await;
-                if let Some(word_to_exclude) = &word_to_exclude {
-                    words.remove(word_to_exclude);
-                }
-                for lsp_completion in &completions {
-                    words.remove(&lsp_completion.new_text);
-                }
-                completions.extend(words.into_iter().map(|(word, word_range)| Completion {
-                    replace_range: old_range.clone(),
-                    new_text: word.clone(),
-                    label: CodeLabel::plain(word, None),
-                    icon_path: None,
-                    documentation: None,
-                    source: CompletionSource::BufferWord {
-                        word_range,
-                        resolved: false,
-                    },
-                    insert_text_mode: Some(InsertTextMode::AS_IS),
-                    confirm: None,
-                }));
+            let mut words = words.await;
+            if let Some(word_to_exclude) = &word_to_exclude {
+                words.remove(word_to_exclude);
+            }
+            for lsp_completion in &completions {
+                words.remove(&lsp_completion.new_text);
+            }
+            completions.extend(words.into_iter().map(|(word, word_range)| Completion {
+                replace_range: word_replace_range.clone(),
+                new_text: word.clone(),
+                label: CodeLabel::plain(word, None),
+                icon_path: None,
+                documentation: None,
+                source: CompletionSource::BufferWord {
+                    word_range,
+                    resolved: false,
+                },
+                insert_text_mode: Some(InsertTextMode::AS_IS),
+                confirm: None,
+            }));
 
-                let menu = if completions.is_empty() {
-                    None
-                } else {
-                    let mut menu = editor.update(cx, |editor, cx| {
-                        let languages = editor
-                            .workspace
-                            .as_ref()
-                            .and_then(|(workspace, _)| workspace.upgrade())
-                            .map(|workspace| workspace.read(cx).app_state().languages.clone());
-                        CompletionsMenu::new(
-                            id,
-                            sort_completions,
-                            show_completion_documentation,
-                            ignore_completion_provider,
-                            position,
-                            buffer.clone(),
-                            completions.into(),
-                            snippet_sort_order,
-                            languages,
-                            language,
-                            cx,
-                        )
-                    })?;
-
-                    menu.filter(
-                        if filter_completions {
-                            query.as_deref()
-                        } else {
-                            None
-                        },
-                        provider,
-                        editor.clone(),
+            let menu = if completions.is_empty() {
+                None
+            } else {
+                let Ok((mut menu, matches_task)) = editor.update(cx, |editor, cx| {
+                    let languages = editor
+                        .workspace
+                        .as_ref()
+                        .and_then(|(workspace, _)| workspace.upgrade())
+                        .map(|workspace| workspace.read(cx).app_state().languages.clone());
+                    let menu = CompletionsMenu::new(
+                        id,
+                        requested_source.unwrap_or(CompletionsMenuSource::Normal),
+                        sort_completions,
+                        show_completion_documentation,
+                        position,
+                        query.clone(),
+                        is_incomplete,
+                        buffer.clone(),
+                        completions.into(),
+                        snippet_sort_order,
+                        languages,
+                        language,
                         cx,
-                    )
-                    .await;
+                    );
 
-                    menu.visible().then_some(menu)
+                    let query = if filter_completions { query } else { None };
+                    let matches_task = if let Some(query) = query {
+                        menu.do_async_filtering(query, cx)
+                    } else {
+                        Task::ready(menu.unfiltered_matches())
+                    };
+                    (menu, matches_task)
+                }) else {
+                    return;
                 };
 
-                editor.update_in(cx, |editor, window, cx| {
+                let matches = matches_task.await;
+
+                let Ok(()) = editor.update_in(cx, |editor, window, cx| {
+                    // Newer menu already set, so exit.
                     match editor.context_menu.borrow().as_ref() {
-                        None => {}
                         Some(CodeContextMenu::Completions(prev_menu)) => {
                             if prev_menu.id > id {
                                 return;
                             }
                         }
-                        _ => return,
+                        _ => {}
+                    };
+
+                    // Only valid to take prev_menu because it the new menu is immediately set
+                    // below, or the menu is hidden.
+                    match editor.context_menu.borrow_mut().take() {
+                        Some(CodeContextMenu::Completions(prev_menu)) => {
+                            let position_matches =
+                                if prev_menu.initial_position == menu.initial_position {
+                                    true
+                                } else {
+                                    let snapshot = editor.buffer.read(cx).read(cx);
+                                    prev_menu.initial_position.to_offset(&snapshot)
+                                        == menu.initial_position.to_offset(&snapshot)
+                                };
+                            if position_matches {
+                                // Preserve markdown cache before `set_filter_results` because it will
+                                // try to populate the documentation cache.
+                                menu.preserve_markdown_cache(prev_menu);
+                            }
+                        }
+                        _ => {}
+                    };
+
+                    menu.set_filter_results(matches, provider, window, cx);
+                }) else {
+                    return;
+                };
+
+                menu.visible().then_some(menu)
+            };
+
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    if editor.focus_handle.is_focused(window) {
+                        if let Some(menu) = menu {
+                            *editor.context_menu.borrow_mut() =
+                                Some(CodeContextMenu::Completions(menu));
+
+                            crate::hover_popover::hide_hover(editor, cx);
+                            if editor.show_edit_predictions_in_menu() {
+                                editor.update_visible_inline_completion(window, cx);
+                            } else {
+                                editor.discard_inline_completion(false, cx);
+                            }
+
+                            cx.notify();
+                            return;
+                        }
                     }
 
-                    if editor.focus_handle.is_focused(window) && menu.is_some() {
-                        let mut menu = menu.unwrap();
-                        menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
-                        crate::hover_popover::hide_hover(editor, cx);
-                        *editor.context_menu.borrow_mut() =
-                            Some(CodeContextMenu::Completions(menu));
-
-                        if editor.show_edit_predictions_in_menu() {
-                            editor.update_visible_inline_completion(window, cx);
-                        } else {
-                            editor.discard_inline_completion(false, cx);
-                        }
-
-                        cx.notify();
-                    } else if editor.completion_tasks.len() <= 1 {
-                        // If there are no more completion tasks and the last menu was
-                        // empty, we should hide it.
+                    if editor.completion_tasks.len() <= 1 {
+                        // If there are no more completion tasks and the last menu was empty, we should hide it.
                         let was_hidden = editor.hide_context_menu(window, cx).is_none();
-                        // If it was already hidden and we don't show inline
-                        // completions in the menu, we should also show the
-                        // inline-completion when available.
+                        // If it was already hidden and we don't show inline completions in the menu, we should
+                        // also show the inline-completion when available.
                         if was_hidden && editor.show_edit_predictions_in_menu() {
                             editor.update_visible_inline_completion(window, cx);
                         }
                     }
-                })?;
-
-                anyhow::Ok(())
-            }
-            .log_err()
-            .await
+                })
+                .ok();
         });
 
         self.completion_tasks.push((id, task));
@@ -5292,17 +5399,16 @@ impl Editor {
     pub fn with_completions_menu_matching_id<R>(
         &self,
         id: CompletionId,
-        on_absent: impl FnOnce() -> R,
-        on_match: impl FnOnce(&mut CompletionsMenu) -> R,
+        f: impl FnOnce(Option<&mut CompletionsMenu>) -> R,
     ) -> R {
         let mut context_menu = self.context_menu.borrow_mut();
         let Some(CodeContextMenu::Completions(completions_menu)) = &mut *context_menu else {
-            return on_absent();
+            return f(None);
         };
         if completions_menu.id != id {
-            return on_absent();
+            return f(None);
         }
-        on_match(completions_menu)
+        f(Some(completions_menu))
     }
 
     pub fn confirm_completion(
@@ -5368,7 +5474,6 @@ impl Editor {
             mat.candidate_id
         };
 
-        let buffer_handle = completions_menu.buffer;
         let completion = completions_menu
             .completions
             .borrow()
@@ -5376,34 +5481,23 @@ impl Editor {
             .clone();
         cx.stop_propagation();
 
+        let buffer_handle = completions_menu.buffer.clone();
+
+        let CompletionEdit {
+            new_text,
+            snippet,
+            replace_range,
+        } = process_completion_for_edit(
+            &completion,
+            intent,
+            &buffer_handle,
+            &completions_menu.initial_position.text_anchor,
+            cx,
+        );
+
+        let buffer = buffer_handle.read(cx);
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let newest_anchor = self.selections.newest_anchor();
-
-        let snippet;
-        let new_text;
-        if completion.is_snippet() {
-            let mut snippet_source = completion.new_text.clone();
-            if let Some(scope) = snapshot.language_scope_at(newest_anchor.head()) {
-                if scope.prefers_label_for_snippet_in_completion() {
-                    if let Some(label) = completion.label() {
-                        if matches!(
-                            completion.kind(),
-                            Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD)
-                        ) {
-                            snippet_source = label;
-                        }
-                    }
-                }
-            }
-            snippet = Some(Snippet::parse(&snippet_source).log_err()?);
-            new_text = snippet.as_ref().unwrap().text.clone();
-        } else {
-            snippet = None;
-            new_text = completion.new_text.clone();
-        };
-
-        let replace_range = choose_completion_range(&completion, intent, &buffer_handle, cx);
-        let buffer = buffer_handle.read(cx);
         let replace_range_multibuffer = {
             let excerpt = snapshot.excerpt_containing(newest_anchor.range()).unwrap();
             let multibuffer_anchor = snapshot
@@ -5475,9 +5569,16 @@ impl Editor {
             }
         }
 
+        let common_prefix_len = old_text
+            .chars()
+            .zip(new_text.chars())
+            .take_while(|(a, b)| a == b)
+            .map(|(a, _)| a.len_utf8())
+            .sum::<usize>();
+
         cx.emit(EditorEvent::InputHandled {
             utf16_range_to_replace: None,
-            text: new_text.clone().into(),
+            text: new_text[common_prefix_len..].into(),
         });
 
         self.transact(window, cx, |this, window, cx| {
@@ -7013,12 +7114,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let accept_keybind = self.accept_edit_prediction_keybind(window, cx);
-        let Some(accept_keystroke) = accept_keybind.keystroke() else {
-            return;
+        let mut modifiers_held = false;
+        if let Some(accept_keystroke) = self
+            .accept_edit_prediction_keybind(false, window, cx)
+            .keystroke()
+        {
+            modifiers_held = modifiers_held
+                || (&accept_keystroke.modifiers == modifiers
+                    && accept_keystroke.modifiers.modified());
         };
+        if let Some(accept_partial_keystroke) = self
+            .accept_edit_prediction_keybind(true, window, cx)
+            .keystroke()
+        {
+            modifiers_held = modifiers_held
+                || (&accept_partial_keystroke.modifiers == modifiers
+                    && accept_partial_keystroke.modifiers.modified());
+        }
 
-        if &accept_keystroke.modifiers == modifiers && accept_keystroke.modifiers.modified() {
+        if modifiers_held {
             if matches!(
                 self.edit_prediction_preview,
                 EditPredictionPreview::Inactive { .. }
@@ -8335,7 +8449,7 @@ impl Editor {
         window: &mut Window,
         cx: &App,
     ) -> Option<AnyElement> {
-        let accept_binding = self.accept_edit_prediction_keybind(window, cx);
+        let accept_binding = self.accept_edit_prediction_keybind(false, window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
@@ -8832,26 +8946,30 @@ impl Editor {
         selection: Range<Anchor>,
         cx: &mut Context<Self>,
     ) {
-        if selection.start.buffer_id.is_none() {
+        let buffer_id = match (&selection.start.buffer_id, &selection.end.buffer_id) {
+            (Some(a), Some(b)) if a == b => a,
+            _ => {
+                log::error!("expected anchor range to have matching buffer IDs");
+                return;
+            }
+        };
+        let multi_buffer = self.buffer().read(cx);
+        let Some(buffer) = multi_buffer.buffer(*buffer_id) else {
             return;
-        }
-        let buffer_id = selection.start.buffer_id.unwrap();
-        let buffer = self.buffer().read(cx).buffer(buffer_id);
+        };
+
         let id = post_inc(&mut self.next_completion_id);
         let snippet_sort_order = EditorSettings::get_global(cx).snippet_sort_order;
-
-        if let Some(buffer) = buffer {
-            *self.context_menu.borrow_mut() = Some(CodeContextMenu::Completions(
-                CompletionsMenu::new_snippet_choices(
-                    id,
-                    true,
-                    choices,
-                    selection,
-                    buffer,
-                    snippet_sort_order,
-                ),
-            ));
-        }
+        *self.context_menu.borrow_mut() = Some(CodeContextMenu::Completions(
+            CompletionsMenu::new_snippet_choices(
+                id,
+                true,
+                choices,
+                selection,
+                buffer,
+                snippet_sort_order,
+            ),
+        ));
     }
 
     pub fn insert_snippet(
@@ -8873,7 +8991,10 @@ impl Editor {
                 .iter()
                 .cloned()
                 .map(|range| (range, snippet_text.clone()));
-            buffer.edit(edits, Some(AutoindentMode::EachLine), cx);
+            let autoindent_mode = AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            };
+            buffer.edit(edits, Some(autoindent_mode), cx);
 
             let snapshot = &*buffer.read(cx);
             let snippet = &snippet;
@@ -8914,7 +9035,9 @@ impl Editor {
         });
         if let Some(tabstop) = tabstops.first() {
             self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select_ranges(tabstop.ranges.iter().cloned());
+                // Reverse order so that the first range is the newest created selection.
+                // Completions will use it and autoscroll will prioritize it.
+                s.select_ranges(tabstop.ranges.iter().rev().cloned());
             });
 
             if let Some(choices) = &tabstop.choices {
@@ -9030,7 +9153,9 @@ impl Editor {
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
                 self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_anchor_ranges(current_ranges.iter().cloned())
+                    // Reverse order so that the first range is the newest created selection.
+                    // Completions will use it and autoscroll will prioritize it.
+                    s.select_ranges(current_ranges.iter().rev().cloned())
                 });
 
                 if let Some(choices) = &snippet.choices[snippet.active_index] {
@@ -10786,14 +10911,54 @@ impl Editor {
     pub fn rewrap_impl(&mut self, options: RewrapOptions, cx: &mut Context<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
-        let mut selections = selections.iter().peekable();
+
+        // Shrink and split selections to respect paragraph boundaries.
+        let ranges = selections.into_iter().flat_map(|selection| {
+            let language_settings = buffer.language_settings_at(selection.head(), cx);
+            let language_scope = buffer.language_scope_at(selection.head());
+
+            let Some(start_row) = (selection.start.row..=selection.end.row)
+                .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
+            else {
+                return vec![];
+            };
+            let Some(end_row) = (selection.start.row..=selection.end.row)
+                .rev()
+                .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
+            else {
+                return vec![];
+            };
+
+            let mut row = start_row;
+            let mut ranges = Vec::new();
+            while let Some(blank_row) =
+                (row..end_row).find(|row| buffer.is_line_blank(MultiBufferRow(*row)))
+            {
+                let next_paragraph_start = (blank_row + 1..=end_row)
+                    .find(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
+                    .unwrap();
+                ranges.push((
+                    language_settings.clone(),
+                    language_scope.clone(),
+                    Point::new(row, 0)..Point::new(blank_row - 1, 0),
+                ));
+                row = next_paragraph_start;
+            }
+            ranges.push((
+                language_settings.clone(),
+                language_scope.clone(),
+                Point::new(row, 0)..Point::new(end_row, 0),
+            ));
+
+            ranges
+        });
 
         let mut edits = Vec::new();
         let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
 
-        while let Some(selection) = selections.next() {
-            let mut start_row = selection.start.row;
-            let mut end_row = selection.end.row;
+        for (language_settings, language_scope, range) in ranges {
+            let mut start_row = range.start.row;
+            let mut end_row = range.end.row;
 
             // Skip selections that overlap with a range that has already been rewrapped.
             let selection_range = start_row..end_row;
@@ -10804,7 +10969,7 @@ impl Editor {
                 continue;
             }
 
-            let tab_size = buffer.language_settings_at(selection.head(), cx).tab_size;
+            let tab_size = language_settings.tab_size;
 
             // Since not all lines in the selection may be at the same indent
             // level, choose the indent size that is the most common between all
@@ -10835,25 +11000,20 @@ impl Editor {
             let mut line_prefix = indent_size.chars().collect::<String>();
 
             let mut inside_comment = false;
-            if let Some(comment_prefix) =
-                buffer
-                    .language_scope_at(selection.head())
-                    .and_then(|language| {
-                        language
-                            .line_comment_prefixes()
-                            .iter()
-                            .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                            .cloned()
-                    })
-            {
+            if let Some(comment_prefix) = language_scope.and_then(|language| {
+                language
+                    .line_comment_prefixes()
+                    .iter()
+                    .find(|prefix| buffer.contains_str_at(indent_end, prefix))
+                    .cloned()
+            }) {
                 line_prefix.push_str(&comment_prefix);
                 inside_comment = true;
             }
 
-            let language_settings = buffer.language_settings_at(selection.head(), cx);
             let allow_rewrap_based_on_language = match language_settings.allow_rewrap {
                 RewrapBehavior::InComments => inside_comment,
-                RewrapBehavior::InSelections => !selection.is_empty(),
+                RewrapBehavior::InSelections => !range.is_empty(),
                 RewrapBehavior::Anywhere => true,
             };
 
@@ -10864,11 +11024,12 @@ impl Editor {
                 continue;
             }
 
-            if selection.is_empty() {
+            if range.is_empty() {
                 'expand_upwards: while start_row > 0 {
                     let prev_row = start_row - 1;
                     if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
                         && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
+                        && !buffer.is_line_blank(MultiBufferRow(prev_row))
                     {
                         start_row = prev_row;
                     } else {
@@ -10880,6 +11041,7 @@ impl Editor {
                     let next_row = end_row + 1;
                     if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
                         && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
+                        && !buffer.is_line_blank(MultiBufferRow(next_row))
                     {
                         end_row = next_row;
                     } else {
@@ -12552,49 +12714,74 @@ impl Editor {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections.all::<Point>(cx);
+        let all_selections = self.selections.all::<Point>(cx);
         let text_layout_details = self.text_layout_details(window);
-        let mut state = self.add_selections_state.take().unwrap_or_else(|| {
-            let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
-            let range = oldest_selection.display_range(&display_map).sorted();
 
+        let (mut columnar_selections, new_selections_to_columnarize) = {
+            if let Some(state) = self.add_selections_state.as_ref() {
+                let columnar_selection_ids: HashSet<_> = state
+                    .groups
+                    .iter()
+                    .flat_map(|group| group.stack.iter())
+                    .copied()
+                    .collect();
+
+                all_selections
+                    .into_iter()
+                    .partition(|s| columnar_selection_ids.contains(&s.id))
+            } else {
+                (Vec::new(), all_selections)
+            }
+        };
+
+        let mut state = self
+            .add_selections_state
+            .take()
+            .unwrap_or_else(|| AddSelectionsState { groups: Vec::new() });
+
+        for selection in new_selections_to_columnarize {
+            let range = selection.display_range(&display_map).sorted();
             let start_x = display_map.x_for_display_point(range.start, &text_layout_details);
             let end_x = display_map.x_for_display_point(range.end, &text_layout_details);
             let positions = start_x.min(end_x)..start_x.max(end_x);
-
-            selections.clear();
             let mut stack = Vec::new();
             for row in range.start.row().0..=range.end.row().0 {
                 if let Some(selection) = self.selections.build_columnar_selection(
                     &display_map,
                     DisplayRow(row),
                     &positions,
-                    oldest_selection.reversed,
+                    selection.reversed,
                     &text_layout_details,
                 ) {
                     stack.push(selection.id);
-                    selections.push(selection);
+                    columnar_selections.push(selection);
                 }
             }
-
-            if above {
-                stack.reverse();
+            if !stack.is_empty() {
+                if above {
+                    stack.reverse();
+                }
+                state.groups.push(AddSelectionsGroup { above, stack });
             }
+        }
 
-            AddSelectionsState { above, stack }
-        });
+        let mut final_selections = Vec::new();
+        let end_row = if above {
+            DisplayRow(0)
+        } else {
+            display_map.max_point().row()
+        };
 
-        let last_added_selection = *state.stack.last().unwrap();
-        let mut new_selections = Vec::new();
-        if above == state.above {
-            let end_row = if above {
-                DisplayRow(0)
-            } else {
-                display_map.max_point().row()
-            };
+        let mut last_added_item_per_group = HashMap::default();
+        for group in state.groups.iter_mut() {
+            if let Some(last_id) = group.stack.last() {
+                last_added_item_per_group.insert(*last_id, group);
+            }
+        }
 
-            'outer: for selection in selections {
-                if selection.id == last_added_selection {
+        for selection in columnar_selections {
+            if let Some(group) = last_added_item_per_group.get_mut(&selection.id) {
+                if above == group.above {
                     let range = selection.display_range(&display_map).sorted();
                     debug_assert_eq!(range.start.row(), range.end.row());
                     let mut row = range.start.row();
@@ -12609,13 +12796,13 @@ impl Editor {
                             start_x.min(end_x)..start_x.max(end_x)
                         };
 
+                    let mut maybe_new_selection = None;
                     while row != end_row {
                         if above {
                             row.0 -= 1;
                         } else {
                             row.0 += 1;
                         }
-
                         if let Some(new_selection) = self.selections.build_columnar_selection(
                             &display_map,
                             row,
@@ -12623,32 +12810,50 @@ impl Editor {
                             selection.reversed,
                             &text_layout_details,
                         ) {
-                            state.stack.push(new_selection.id);
-                            if above {
-                                new_selections.push(new_selection);
-                                new_selections.push(selection);
-                            } else {
-                                new_selections.push(selection);
-                                new_selections.push(new_selection);
-                            }
-
-                            continue 'outer;
+                            maybe_new_selection = Some(new_selection);
+                            break;
                         }
                     }
-                }
 
-                new_selections.push(selection);
+                    if let Some(new_selection) = maybe_new_selection {
+                        group.stack.push(new_selection.id);
+                        if above {
+                            final_selections.push(new_selection);
+                            final_selections.push(selection);
+                        } else {
+                            final_selections.push(selection);
+                            final_selections.push(new_selection);
+                        }
+                    } else {
+                        final_selections.push(selection);
+                    }
+                } else {
+                    group.stack.pop();
+                }
+            } else {
+                final_selections.push(selection);
             }
-        } else {
-            new_selections = selections;
-            new_selections.retain(|s| s.id != last_added_selection);
-            state.stack.pop();
         }
 
         self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-            s.select(new_selections);
+            s.select(final_selections);
         });
-        if state.stack.len() > 1 {
+
+        let final_selection_ids: HashSet<_> = self
+            .selections
+            .all::<Point>(cx)
+            .iter()
+            .map(|s| s.id)
+            .collect();
+        state.groups.retain_mut(|group| {
+            // selections might get merged above so we remove invalid items from stacks
+            group.stack.retain(|id| final_selection_ids.contains(id));
+
+            // single selection in stack can be treated as initial state
+            group.stack.len() > 1
+        });
+
+        if !state.groups.is_empty() {
             self.add_selections_state = Some(state);
         }
     }
@@ -15757,6 +15962,49 @@ impl Editor {
         });
     }
 
+    fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
+        let project = self.project.as_ref()?.downgrade();
+        let debounce = Duration::from_millis(
+            ProjectSettings::get_global(cx)
+                .diagnostics
+                .lsp_pull_diagnostics_debounce_ms?,
+        );
+        let buffers = self.buffer.read(cx).all_buffers();
+
+        self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
+            cx.background_executor().timer(debounce).await;
+
+            let Ok(mut pull_diagnostics_tasks) = cx.update(|_, cx| {
+                buffers
+                    .into_iter()
+                    .flat_map(|buffer| {
+                        Some(project.upgrade()?.pull_diagnostics_for_buffer(buffer, cx))
+                    })
+                    .collect::<FuturesUnordered<_>>()
+            }) else {
+                return;
+            };
+
+            while let Some(pull_task) = pull_diagnostics_tasks.next().await {
+                match pull_task {
+                    Ok(()) => {
+                        if editor
+                            .update_in(cx, |editor, window, cx| {
+                                editor.update_diagnostics_state(window, cx);
+                            })
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    Err(e) => log::error!("Failed to update project diagnostics: {e:#}"),
+                }
+            }
+        });
+
+        Some(())
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -18470,7 +18718,7 @@ impl Editor {
         match event {
             multi_buffer::Event::Edited {
                 singleton_buffer_edited,
-                edited_buffer: buffer_edited,
+                edited_buffer,
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
@@ -18481,18 +18729,25 @@ impl Editor {
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
                 }
-                if let Some(buffer) = buffer_edited {
-                    let buffer_id = buffer.read(cx).remote_id();
-                    if !self.registered_buffers.contains_key(&buffer_id) {
-                        if let Some(project) = self.project.as_ref() {
-                            project.update(cx, |project, cx| {
-                                self.registered_buffers.insert(
-                                    buffer_id,
-                                    project.register_buffer_with_language_servers(&buffer, cx),
-                                );
-                            })
+                if let Some(project) = self.project.as_ref() {
+                    project.update(cx, |project, cx| {
+                        // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
+                        // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
+                        if edited_buffer
+                            .as_ref()
+                            .is_some_and(|buffer| buffer.read(cx).file().is_some())
+                        {
+                            cx.emit(project::Event::RefreshDocumentsDiagnostics);
                         }
-                    }
+
+                        if let Some(buffer) = edited_buffer {
+                            self.registered_buffers
+                                .entry(buffer.read(cx).remote_id())
+                                .or_insert_with(|| {
+                                    project.register_buffer_with_language_servers(&buffer, cx)
+                                });
+                        }
+                    });
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
@@ -18611,13 +18866,17 @@ impl Editor {
             | multi_buffer::Event::BufferDiffChanged => cx.emit(EditorEvent::TitleChanged),
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
-                self.refresh_active_diagnostics(cx);
-                self.refresh_inline_diagnostics(true, window, cx);
-                self.scrollbar_marker_state.dirty = true;
-                cx.notify();
+                self.update_diagnostics_state(window, cx);
             }
             _ => {}
         };
+    }
+
+    fn update_diagnostics_state(&mut self, window: &mut Window, cx: &mut Context<'_, Editor>) {
+        self.refresh_active_diagnostics(cx);
+        self.refresh_inline_diagnostics(true, window, cx);
+        self.scrollbar_marker_state.dirty = true;
+        cx.notify();
     }
 
     pub fn start_temporary_diff_override(&mut self) {
@@ -19514,79 +19773,152 @@ fn vim_enabled(cx: &App) -> bool {
         == Some(&serde_json::Value::Bool(true))
 }
 
-// Consider user intent and default settings
-fn choose_completion_range(
+fn process_completion_for_edit(
     completion: &Completion,
     intent: CompletionIntent,
     buffer: &Entity<Buffer>,
+    cursor_position: &text::Anchor,
     cx: &mut Context<Editor>,
-) -> Range<usize> {
-    fn should_replace(
-        completion: &Completion,
-        insert_range: &Range<text::Anchor>,
-        intent: CompletionIntent,
-        completion_mode_setting: LspInsertMode,
-        buffer: &Buffer,
-    ) -> bool {
-        // specific actions take precedence over settings
-        match intent {
-            CompletionIntent::CompleteWithInsert => return false,
-            CompletionIntent::CompleteWithReplace => return true,
-            CompletionIntent::Complete | CompletionIntent::Compose => {}
-        }
-
-        match completion_mode_setting {
-            LspInsertMode::Insert => false,
-            LspInsertMode::Replace => true,
-            LspInsertMode::ReplaceSubsequence => {
-                let mut text_to_replace = buffer.chars_for_range(
-                    buffer.anchor_before(completion.replace_range.start)
-                        ..buffer.anchor_after(completion.replace_range.end),
-                );
-                let mut completion_text = completion.new_text.chars();
-
-                // is `text_to_replace` a subsequence of `completion_text`
-                text_to_replace
-                    .all(|needle_ch| completion_text.any(|haystack_ch| haystack_ch == needle_ch))
-            }
-            LspInsertMode::ReplaceSuffix => {
-                let range_after_cursor = insert_range.end..completion.replace_range.end;
-
-                let text_after_cursor = buffer
-                    .text_for_range(
-                        buffer.anchor_before(range_after_cursor.start)
-                            ..buffer.anchor_after(range_after_cursor.end),
-                    )
-                    .collect::<String>();
-                completion.new_text.ends_with(&text_after_cursor)
-            }
-        }
-    }
-
+) -> CompletionEdit {
     let buffer = buffer.read(cx);
-
-    if let CompletionSource::Lsp {
-        insert_range: Some(insert_range),
-        ..
-    } = &completion.source
-    {
-        let completion_mode_setting =
-            language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
-                .completions
-                .lsp_insert_mode;
-
-        if !should_replace(
-            completion,
-            &insert_range,
-            intent,
-            completion_mode_setting,
-            buffer,
-        ) {
-            return insert_range.to_offset(buffer);
+    let buffer_snapshot = buffer.snapshot();
+    let (snippet, new_text) = if completion.is_snippet() {
+        let mut snippet_source = completion.new_text.clone();
+        if let Some(scope) = buffer_snapshot.language_scope_at(cursor_position) {
+            if scope.prefers_label_for_snippet_in_completion() {
+                if let Some(label) = completion.label() {
+                    if matches!(
+                        completion.kind(),
+                        Some(CompletionItemKind::FUNCTION) | Some(CompletionItemKind::METHOD)
+                    ) {
+                        snippet_source = label;
+                    }
+                }
+            }
         }
+        match Snippet::parse(&snippet_source).log_err() {
+            Some(parsed_snippet) => (Some(parsed_snippet.clone()), parsed_snippet.text),
+            None => (None, completion.new_text.clone()),
+        }
+    } else {
+        (None, completion.new_text.clone())
+    };
+
+    let mut range_to_replace = {
+        let replace_range = &completion.replace_range;
+        if let CompletionSource::Lsp {
+            insert_range: Some(insert_range),
+            ..
+        } = &completion.source
+        {
+            debug_assert_eq!(
+                insert_range.start, replace_range.start,
+                "insert_range and replace_range should start at the same position"
+            );
+            debug_assert!(
+                insert_range
+                    .start
+                    .cmp(&cursor_position, &buffer_snapshot)
+                    .is_le(),
+                "insert_range should start before or at cursor position"
+            );
+            debug_assert!(
+                replace_range
+                    .start
+                    .cmp(&cursor_position, &buffer_snapshot)
+                    .is_le(),
+                "replace_range should start before or at cursor position"
+            );
+            debug_assert!(
+                insert_range
+                    .end
+                    .cmp(&cursor_position, &buffer_snapshot)
+                    .is_le(),
+                "insert_range should end before or at cursor position"
+            );
+
+            let should_replace = match intent {
+                CompletionIntent::CompleteWithInsert => false,
+                CompletionIntent::CompleteWithReplace => true,
+                CompletionIntent::Complete | CompletionIntent::Compose => {
+                    let insert_mode =
+                        language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                            .completions
+                            .lsp_insert_mode;
+                    match insert_mode {
+                        LspInsertMode::Insert => false,
+                        LspInsertMode::Replace => true,
+                        LspInsertMode::ReplaceSubsequence => {
+                            let mut text_to_replace = buffer.chars_for_range(
+                                buffer.anchor_before(replace_range.start)
+                                    ..buffer.anchor_after(replace_range.end),
+                            );
+                            let mut current_needle = text_to_replace.next();
+                            for haystack_ch in completion.label.text.chars() {
+                                if let Some(needle_ch) = current_needle {
+                                    if haystack_ch.eq_ignore_ascii_case(&needle_ch) {
+                                        current_needle = text_to_replace.next();
+                                    }
+                                }
+                            }
+                            current_needle.is_none()
+                        }
+                        LspInsertMode::ReplaceSuffix => {
+                            if replace_range
+                                .end
+                                .cmp(&cursor_position, &buffer_snapshot)
+                                .is_gt()
+                            {
+                                let range_after_cursor = *cursor_position..replace_range.end;
+                                let text_after_cursor = buffer
+                                    .text_for_range(
+                                        buffer.anchor_before(range_after_cursor.start)
+                                            ..buffer.anchor_after(range_after_cursor.end),
+                                    )
+                                    .collect::<String>()
+                                    .to_ascii_lowercase();
+                                completion
+                                    .label
+                                    .text
+                                    .to_ascii_lowercase()
+                                    .ends_with(&text_after_cursor)
+                            } else {
+                                true
+                            }
+                        }
+                    }
+                }
+            };
+
+            if should_replace {
+                replace_range.clone()
+            } else {
+                insert_range.clone()
+            }
+        } else {
+            replace_range.clone()
+        }
+    };
+
+    if range_to_replace
+        .end
+        .cmp(&cursor_position, &buffer_snapshot)
+        .is_lt()
+    {
+        range_to_replace.end = *cursor_position;
     }
 
-    completion.replace_range.to_offset(buffer)
+    CompletionEdit {
+        new_text,
+        replace_range: range_to_replace.to_offset(&buffer),
+        snippet,
+    }
+}
+
+struct CompletionEdit {
+    new_text: String,
+    replace_range: Range<usize>,
+    snippet: Option<Snippet>,
 }
 
 fn insert_extra_newline_brackets(
@@ -20113,6 +20445,12 @@ pub trait SemanticsProvider {
         new_name: String,
         cx: &mut App,
     ) -> Option<Task<Result<ProjectTransaction>>>;
+
+    fn pull_diagnostics_for_buffer(
+        &self,
+        buffer: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>>;
 }
 
 pub trait CompletionProvider {
@@ -20124,15 +20462,17 @@ pub trait CompletionProvider {
         trigger: CompletionContext,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Option<Vec<Completion>>>>;
+    ) -> Task<Result<Vec<CompletionResponse>>>;
 
     fn resolve_completions(
         &self,
-        buffer: Entity<Buffer>,
-        completion_indices: Vec<usize>,
-        completions: Rc<RefCell<Box<[Completion]>>>,
-        cx: &mut Context<Editor>,
-    ) -> Task<Result<bool>>;
+        _buffer: Entity<Buffer>,
+        _completion_indices: Vec<usize>,
+        _completions: Rc<RefCell<Box<[Completion]>>>,
+        _cx: &mut Context<Editor>,
+    ) -> Task<Result<bool>> {
+        Task::ready(Ok(false))
+    }
 
     fn apply_additional_edits_for_completion(
         &self,
@@ -20151,6 +20491,7 @@ pub trait CompletionProvider {
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
+        menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool;
 
@@ -20233,7 +20574,7 @@ fn snippet_completions(
     buffer: &Entity<Buffer>,
     buffer_position: text::Anchor,
     cx: &mut App,
-) -> Task<Result<Vec<Completion>>> {
+) -> Task<Result<CompletionResponse>> {
     let languages = buffer.read(cx).languages_at(buffer_position);
     let snippet_store = project.snippets().read(cx);
 
@@ -20252,7 +20593,10 @@ fn snippet_completions(
         .collect();
 
     if scopes.is_empty() {
-        return Task::ready(Ok(vec![]));
+        return Task::ready(Ok(CompletionResponse {
+            completions: vec![],
+            is_incomplete: false,
+        }));
     }
 
     let snapshot = buffer.read(cx).text_snapshot();
@@ -20262,7 +20606,8 @@ fn snippet_completions(
     let executor = cx.background_executor().clone();
 
     cx.background_spawn(async move {
-        let mut all_results: Vec<Completion> = Vec::new();
+        let mut is_incomplete = false;
+        let mut completions: Vec<Completion> = Vec::new();
         for (scope, snippets) in scopes.into_iter() {
             let classifier = CharClassifier::new(Some(scope)).for_completion(true);
             let mut last_word = chars
@@ -20272,7 +20617,10 @@ fn snippet_completions(
             last_word = last_word.chars().rev().collect();
 
             if last_word.is_empty() {
-                return Ok(vec![]);
+                return Ok(CompletionResponse {
+                    completions: vec![],
+                    is_incomplete: true,
+                });
             }
 
             let as_offset = text::ToOffset::to_offset(&buffer_position, &snapshot);
@@ -20293,15 +20641,20 @@ fn snippet_completions(
                 })
                 .collect::<Vec<StringMatchCandidate>>();
 
+            const MAX_RESULTS: usize = 100;
             let mut matches = fuzzy::match_strings(
                 &candidates,
                 &last_word,
                 last_word.chars().any(|c| c.is_uppercase()),
-                100,
+                MAX_RESULTS,
                 &Default::default(),
                 executor.clone(),
             )
             .await;
+
+            if matches.len() >= MAX_RESULTS {
+                is_incomplete = true;
+            }
 
             // Remove all candidates where the query's start does not match the start of any word in the candidate
             if let Some(query_start) = last_word.chars().next() {
@@ -20322,76 +20675,72 @@ fn snippet_completions(
                 .map(|m| m.string)
                 .collect::<HashSet<_>>();
 
-            let mut result: Vec<Completion> = snippets
-                .iter()
-                .filter_map(|snippet| {
-                    let matching_prefix = snippet
-                        .prefix
-                        .iter()
-                        .find(|prefix| matched_strings.contains(*prefix))?;
-                    let start = as_offset - last_word.len();
-                    let start = snapshot.anchor_before(start);
-                    let range = start..buffer_position;
-                    let lsp_start = to_lsp(&start);
-                    let lsp_range = lsp::Range {
-                        start: lsp_start,
-                        end: lsp_end,
-                    };
-                    Some(Completion {
-                        replace_range: range,
-                        new_text: snippet.body.clone(),
-                        source: CompletionSource::Lsp {
-                            insert_range: None,
-                            server_id: LanguageServerId(usize::MAX),
-                            resolved: true,
-                            lsp_completion: Box::new(lsp::CompletionItem {
-                                label: snippet.prefix.first().unwrap().clone(),
-                                kind: Some(CompletionItemKind::SNIPPET),
-                                label_details: snippet.description.as_ref().map(|description| {
-                                    lsp::CompletionItemLabelDetails {
-                                        detail: Some(description.clone()),
-                                        description: None,
-                                    }
-                                }),
-                                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                                text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
-                                    lsp::InsertReplaceEdit {
-                                        new_text: snippet.body.clone(),
-                                        insert: lsp_range,
-                                        replace: lsp_range,
-                                    },
-                                )),
-                                filter_text: Some(snippet.body.clone()),
-                                sort_text: Some(char::MAX.to_string()),
-                                ..lsp::CompletionItem::default()
+            completions.extend(snippets.iter().filter_map(|snippet| {
+                let matching_prefix = snippet
+                    .prefix
+                    .iter()
+                    .find(|prefix| matched_strings.contains(*prefix))?;
+                let start = as_offset - last_word.len();
+                let start = snapshot.anchor_before(start);
+                let range = start..buffer_position;
+                let lsp_start = to_lsp(&start);
+                let lsp_range = lsp::Range {
+                    start: lsp_start,
+                    end: lsp_end,
+                };
+                Some(Completion {
+                    replace_range: range,
+                    new_text: snippet.body.clone(),
+                    source: CompletionSource::Lsp {
+                        insert_range: None,
+                        server_id: LanguageServerId(usize::MAX),
+                        resolved: true,
+                        lsp_completion: Box::new(lsp::CompletionItem {
+                            label: snippet.prefix.first().unwrap().clone(),
+                            kind: Some(CompletionItemKind::SNIPPET),
+                            label_details: snippet.description.as_ref().map(|description| {
+                                lsp::CompletionItemLabelDetails {
+                                    detail: Some(description.clone()),
+                                    description: None,
+                                }
                             }),
-                            lsp_defaults: None,
-                        },
-                        label: CodeLabel {
-                            text: matching_prefix.clone(),
-                            runs: Vec::new(),
-                            filter_range: 0..matching_prefix.len(),
-                        },
-                        icon_path: None,
-                        documentation: Some(
-                            CompletionDocumentation::SingleLineAndMultiLinePlainText {
-                                single_line: snippet.name.clone().into(),
-                                plain_text: snippet
-                                    .description
-                                    .clone()
-                                    .map(|description| description.into()),
-                            },
-                        ),
-                        insert_text_mode: None,
-                        confirm: None,
-                    })
+                            insert_text_format: Some(InsertTextFormat::SNIPPET),
+                            text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                                lsp::InsertReplaceEdit {
+                                    new_text: snippet.body.clone(),
+                                    insert: lsp_range,
+                                    replace: lsp_range,
+                                },
+                            )),
+                            filter_text: Some(snippet.body.clone()),
+                            sort_text: Some(char::MAX.to_string()),
+                            ..lsp::CompletionItem::default()
+                        }),
+                        lsp_defaults: None,
+                    },
+                    label: CodeLabel {
+                        text: matching_prefix.clone(),
+                        runs: Vec::new(),
+                        filter_range: 0..matching_prefix.len(),
+                    },
+                    icon_path: None,
+                    documentation: Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                        single_line: snippet.name.clone().into(),
+                        plain_text: snippet
+                            .description
+                            .clone()
+                            .map(|description| description.into()),
+                    }),
+                    insert_text_mode: None,
+                    confirm: None,
                 })
-                .collect();
-
-            all_results.append(&mut result);
+            }))
         }
 
-        Ok(all_results)
+        Ok(CompletionResponse {
+            completions,
+            is_incomplete,
+        })
     })
 }
 
@@ -20404,25 +20753,17 @@ impl CompletionProvider for Entity<Project> {
         options: CompletionContext,
         _window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> Task<Result<Option<Vec<Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         self.update(cx, |project, cx| {
             let snippets = snippet_completions(project, buffer, buffer_position, cx);
             let project_completions = project.completions(buffer, buffer_position, options, cx);
             cx.background_spawn(async move {
-                let snippets_completions = snippets.await?;
-                match project_completions.await? {
-                    Some(mut completions) => {
-                        completions.extend(snippets_completions);
-                        Ok(Some(completions))
-                    }
-                    None => {
-                        if snippets_completions.is_empty() {
-                            Ok(None)
-                        } else {
-                            Ok(Some(snippets_completions))
-                        }
-                    }
+                let mut responses = project_completions.await?;
+                let snippets = snippets.await?;
+                if !snippets.completions.is_empty() {
+                    responses.push(snippets);
                 }
+                Ok(responses)
             })
         })
     }
@@ -20468,6 +20809,7 @@ impl CompletionProvider for Entity<Project> {
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
+        menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let mut chars = text.chars();
@@ -20482,7 +20824,7 @@ impl CompletionProvider for Entity<Project> {
 
         let buffer = buffer.read(cx);
         let snapshot = buffer.snapshot();
-        if !snapshot.settings_at(position, cx).show_completions_on_input {
+        if !menu_is_open && !snapshot.settings_at(position, cx).show_completions_on_input {
             return false;
         }
         let classifier = snapshot.char_classifier_at(position).for_completion(true);
@@ -20625,6 +20967,61 @@ impl SemanticsProvider for Entity<Project> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
         }))
+    }
+
+    fn pull_diagnostics_for_buffer(
+        &self,
+        buffer: Entity<Buffer>,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        let diagnostics = self.update(cx, |project, cx| {
+            project
+                .lsp_store()
+                .update(cx, |lsp_store, cx| lsp_store.pull_diagnostics(buffer, cx))
+        });
+        let project = self.clone();
+        cx.spawn(async move |cx| {
+            let diagnostics = diagnostics.await.context("pulling diagnostics")?;
+            project.update(cx, |project, cx| {
+                project.lsp_store().update(cx, |lsp_store, cx| {
+                    for diagnostics_set in diagnostics {
+                        let LspPullDiagnostics::Response {
+                            server_id,
+                            uri,
+                            diagnostics: project::PulledDiagnostics::Changed { diagnostics, .. },
+                        } = diagnostics_set
+                        else {
+                            continue;
+                        };
+
+                        let adapter = lsp_store.language_server_adapter_for_id(server_id);
+                        let disk_based_sources = adapter
+                            .as_ref()
+                            .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                            .unwrap_or(&[]);
+                        lsp_store
+                            .merge_diagnostics(
+                                server_id,
+                                lsp::PublishDiagnosticsParams {
+                                    uri: uri.clone(),
+                                    diagnostics,
+                                    version: None,
+                                },
+                                DiagnosticSourceKind::Pulled,
+                                disk_based_sources,
+                                |old_diagnostic, _| match old_diagnostic.source_kind {
+                                    DiagnosticSourceKind::Pulled => false,
+                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
+                                        true
+                                    }
+                                },
+                                cx,
+                            )
+                            .log_err();
+                    }
+                })
+            })
+        })
     }
 }
 

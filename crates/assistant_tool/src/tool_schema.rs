@@ -16,9 +16,22 @@ pub fn adapt_schema_to_format(
     }
 
     match format {
-        LanguageModelToolSchemaFormat::JsonSchema => Ok(()),
+        LanguageModelToolSchemaFormat::JsonSchema => preprocess_json_schema(json),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
     }
+}
+
+fn preprocess_json_schema(json: &mut Value) -> Result<()> {
+    // `additionalProperties` defaults to `false` unless explicitly specified.
+    // This prevents models from hallucinating tool parameters.
+    if let Value::Object(obj) = json {
+        if let Some(Value::String(type_str)) = obj.get("type") {
+            if type_str == "object" && !obj.contains_key("additionalProperties") {
+                obj.insert("additionalProperties".to_string(), Value::Bool(false));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Tries to adapt the json schema so that it is compatible with https://ai.google.dev/api/caching#Schema
@@ -236,5 +249,60 @@ mod tests {
         });
 
         assert!(adapt_to_json_schema_subset(&mut json).is_err());
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_adds_additional_properties() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": false
+            })
+        );
+    }
+
+    #[test]
+    fn test_preprocess_json_schema_preserves_additional_properties() {
+        let mut json = json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            },
+            "additionalProperties": true
+        });
+
+        preprocess_json_schema(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "additionalProperties": true
+            })
+        );
     }
 }

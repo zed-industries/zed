@@ -1259,6 +1259,8 @@ pub struct Chunk<'a> {
     pub underline: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// Whether this chunk of text was originally a tab character.
+    pub is_inlay: bool,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
 }
@@ -1424,6 +1426,7 @@ impl<'a> Iterator for FoldChunks<'a> {
                 diagnostic_severity: chunk.diagnostic_severity,
                 is_unnecessary: chunk.is_unnecessary,
                 is_tab: chunk.is_tab,
+                is_inlay: chunk.is_inlay,
                 underline: chunk.underline,
                 renderer: None,
             });
