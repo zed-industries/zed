@@ -26,10 +26,12 @@ impl DebugAdapter for GdbDebugAdapter {
 
         match &zed_scenario.request {
             dap::DebugRequest::Attach(attach) => {
+                obj.insert("request".into(), "attach".into());
                 obj.insert("pid".into(), attach.process_id.into());
             }
 
             dap::DebugRequest::Launch(launch) => {
+                obj.insert("request".into(), "launch".into());
                 obj.insert("program".into(), launch.program.clone().into());
 
                 if !launch.args.is_empty() {
@@ -176,7 +178,7 @@ impl DebugAdapter for GdbDebugAdapter {
         let gdb_path = user_setting_path.unwrap_or(gdb_path?);
 
         let request_args = StartDebuggingRequestArguments {
-            request: self.validate_config(&config.config)?,
+            request: self.request_kind(&config.config)?,
             configuration: config.config.clone(),
         };
 

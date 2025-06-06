@@ -1,10 +1,10 @@
-use once_cell::sync::Lazy;
 use regex::Regex;
 use smallvec::SmallVec;
+use std::cell::LazyCell;
 use util::debug_panic;
 
-const START_MARKER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n?```\S*\n").unwrap());
-const END_MARKER: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n```\s*$").unwrap());
+const START_MARKER: LazyCell<Regex> = LazyCell::new(|| Regex::new(r"\n?```\S*\n").unwrap());
+const END_MARKER: LazyCell<Regex> = LazyCell::new(|| Regex::new(r"(^|\n)```\s*$").unwrap());
 
 #[derive(Debug)]
 pub enum CreateFileParserEvent {
@@ -181,6 +181,22 @@ mod tests {
             ),
             // This output is marlformed, so we're doing our best effort
             "```\nHello world\n```\n".to_string()
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    fn test_empty_file(mut rng: StdRng) {
+        let mut parser = CreateFileParser::new();
+        assert_eq!(
+            parse_random_chunks(
+                indoc! {"
+                    ```
+                    ```
+                "},
+                &mut parser,
+                &mut rng
+            ),
+            "".to_string()
         );
     }
 

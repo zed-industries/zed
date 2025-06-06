@@ -88,7 +88,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
-    let typescript_context = Arc::new(typescript::typescript_task_context());
+    let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new());
     let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(node.clone()));
     let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone()));
     let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node.clone()));

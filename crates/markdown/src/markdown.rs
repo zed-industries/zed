@@ -2,6 +2,9 @@ pub mod parser;
 mod path_range;
 
 use base64::Engine as _;
+use futures::FutureExt as _;
+use gpui::HitboxBehavior;
+use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 
@@ -101,7 +104,7 @@ pub struct Markdown {
     pending_parse: Option<Task<()>>,
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
-    fallback_code_block_language: Option<String>,
+    fallback_code_block_language: Option<LanguageName>,
     options: Options,
     copied_code_blocks: HashSet<ElementId>,
 }
@@ -144,7 +147,7 @@ impl Markdown {
     pub fn new(
         source: SharedString,
         language_registry: Option<Arc<LanguageRegistry>>,
-        fallback_code_block_language: Option<String>,
+        fallback_code_block_language: Option<LanguageName>,
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
@@ -223,7 +226,7 @@ impl Markdown {
         self.parse(cx);
     }
 
-    #[cfg(feature = "test-support")]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {
         &self.parsed_markdown
     }
@@ -310,9 +313,9 @@ impl Markdown {
             if let Some(registry) = language_registry.as_ref() {
                 for name in language_names {
                     let language = if !name.is_empty() {
-                        registry.language_for_name_or_extension(&name)
+                        registry.language_for_name_or_extension(&name).left_future()
                     } else if let Some(fallback) = &fallback {
-                        registry.language_for_name_or_extension(fallback)
+                        registry.language_for_name(fallback.as_ref()).right_future()
                     } else {
                         continue;
                     };
@@ -1207,8 +1210,9 @@ impl Element for MarkdownElement {
     ) -> Self::PrepaintState {
         let focus_handle = self.markdown.read(cx).focus_handle.clone();
         window.set_focus_handle(&focus_handle, cx);
+        window.set_view_id(self.markdown.entity_id());
 
-        let hitbox = window.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
         rendered_markdown.element.prepaint(window, cx);
         self.autoscroll(&rendered_markdown.text, window, cx);
         hitbox
