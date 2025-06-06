@@ -2,21 +2,20 @@ mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings, builtin_profiles};
+use agent_settings::{AgentProfileId, AgentSettings, builtin_profiles};
 use assistant_tool::ToolWorkingSet;
-use convert_case::{Case, Casing as _};
 use editor::Editor;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
-use settings::{Settings as _, update_settings_file};
+use settings::Settings as _;
 use ui::{
     KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
 };
-use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
+use crate::agent_profile::AgentProfile;
 use crate::{AgentPanel, ManageProfiles};
 
 use super::tool_picker::ToolPickerMode;
@@ -261,32 +260,10 @@ impl ManageProfilesModal {
         match &self.mode {
             Mode::ChooseProfile { .. } => {}
             Mode::NewProfile(mode) => {
-                let settings = AgentSettings::get_global(cx);
-
-                let base_profile = mode
-                    .base_profile_id
-                    .as_ref()
-                    .and_then(|profile_id| settings.profiles.get(profile_id).cloned());
-
                 let name = mode.name_editor.read(cx).text(cx);
-                let profile_id = AgentProfileId(name.to_case(Case::Kebab).into());
 
-                let profile_settings = AgentProfileSettings {
-                    name: name.into(),
-                    tools: base_profile
-                        .as_ref()
-                        .map(|profile| profile.tools.clone())
-                        .unwrap_or_default(),
-                    enable_all_context_servers: base_profile
-                        .as_ref()
-                        .map(|profile| profile.enable_all_context_servers)
-                        .unwrap_or_default(),
-                    context_servers: base_profile
-                        .map(|profile| profile.context_servers)
-                        .unwrap_or_default(),
-                };
-
-                self.create_profile(profile_id.clone(), profile_settings, cx);
+                let profile_id =
+                    AgentProfile::create(name, mode.base_profile_id.clone(), self.fs.clone(), cx);
                 self.view_profile(profile_id, window, cx);
             }
             Mode::ViewProfile(_) => {}
@@ -315,19 +292,6 @@ impl ManageProfilesModal {
                 self.view_profile(profile_id.clone(), window, cx)
             }
         }
-    }
-
-    fn create_profile(
-        &self,
-        profile_id: AgentProfileId,
-        profile: AgentProfileSettings,
-        cx: &mut Context<Self>,
-    ) {
-        update_settings_file::<AgentSettings>(self.fs.clone(), cx, {
-            move |settings, _cx| {
-                settings.create_profile(profile_id, profile).log_err();
-            }
-        });
     }
 }
 
