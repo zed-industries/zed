@@ -3,7 +3,7 @@ mod input_handler;
 pub use lsp_types::request::*;
 pub use lsp_types::*;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use futures::{
     AsyncRead, AsyncWrite, Future, FutureExt,
@@ -16,12 +16,12 @@ use notification::DidChangeWorkspaceFolders;
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
 use schemars::{
+    JsonSchema,
     r#gen::SchemaGenerator,
     schema::{InstanceType, Schema, SchemaObject},
-    JsonSchema,
 };
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::{json, value::RawValue, Value};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json, value::RawValue};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -37,8 +37,8 @@ use std::{
     path::PathBuf,
     pin::Pin,
     sync::{
-        atomic::{AtomicI32, Ordering::SeqCst},
         Arc, Weak,
+        atomic::{AtomicI32, Ordering::SeqCst},
     },
     task::Poll,
     time::{Duration, Instant},

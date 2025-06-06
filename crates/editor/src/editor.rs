@@ -117,8 +117,8 @@ use language::{
     OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
     WordsQuery,
     language_settings::{
-        self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
-        SemanticTokensSettings, all_language_settings, language_settings,
+        self, InlayHintSettings, LspInsertMode, RewrapBehavior, SemanticTokensSettings,
+        WordsCompletionMode, all_language_settings, language_settings,
     },
     point_from_lsp, text_diff_with_options,
 };
@@ -4886,9 +4886,7 @@ impl Editor {
                 }
                 return;
             }
-            SemanticTokensRefreshReason::NewLinesShown => {
-                (InvalidationStrategy::None, None)
-            }
+            SemanticTokensRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
             SemanticTokensRefreshReason::BufferEdited(buffer_languages) => {
                 (InvalidationStrategy::BufferEdited, Some(buffer_languages))
             }

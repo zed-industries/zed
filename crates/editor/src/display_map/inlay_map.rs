@@ -11,7 +11,7 @@ use std::{
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
-use super::{semantic_tokens::TokenChunks, Highlights};
+use super::{Highlights, semantic_tokens::TokenChunks};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
