@@ -703,7 +703,7 @@ impl EditorActionId {
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
-type GutterHighlight = (fn(&App) -> Hsla, Arc<[Range<Anchor>]>);
+type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
 #[derive(Default)]
 struct ScrollbarMarkerState {
@@ -1291,6 +1291,7 @@ impl SelectionHistory {
 
 #[derive(Clone, Copy)]
 pub struct RowHighlightOptions {
+    pub border: Option<Hsla>,
     pub autoscroll: bool,
     pub include_gutter: bool,
 }
@@ -1300,6 +1301,7 @@ impl Default for RowHighlightOptions {
         Self {
             autoscroll: Default::default(),
             include_gutter: true,
+            border: None,
         }
     }
 }
@@ -18227,7 +18229,7 @@ impl Editor {
                                 DisplayRow(row),
                                 LineHighlight {
                                     include_gutter: highlight.options.include_gutter,
-                                    border: None,
+                                    border: highlight.options.border,
                                     background: highlight.color.into(),
                                     type_id: Some(highlight.type_id),
                                 },
@@ -18298,12 +18300,12 @@ impl Editor {
 
     pub fn highlight_gutter<T: 'static>(
         &mut self,
-        ranges: &[Range<Anchor>],
+        ranges: impl Into<Vec<Range<Anchor>>>,
         color_fetcher: fn(&App) -> Hsla,
         cx: &mut Context<Self>,
     ) {
         self.gutter_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
+            .insert(TypeId::of::<T>(), (color_fetcher, ranges.into()));
         cx.notify();
     }
 
@@ -22475,7 +22477,7 @@ impl Render for MissingEditPredictionKeybindingTooltip {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LineHighlight {
     pub background: Background,
-    pub border: Option<gpui::Hsla>,
+    pub border: Option<Hsla>,
     pub include_gutter: bool,
     pub type_id: Option<TypeId>,
 }

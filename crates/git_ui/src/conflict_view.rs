@@ -325,16 +325,12 @@ fn update_conflict_highlighting(
     cx: &mut Context<Editor>,
 ) {
     log::debug!("update conflict highlighting for {conflict:?}");
-    let theme = cx.theme().clone();
-    let colors = theme.colors();
+
     let outer_start = buffer
         .anchor_in_excerpt(excerpt_id, conflict.range.start)
         .unwrap();
     let outer_end = buffer
         .anchor_in_excerpt(excerpt_id, conflict.range.end)
-        .unwrap();
-    let our_start = buffer
-        .anchor_in_excerpt(excerpt_id, conflict.ours.start)
         .unwrap();
     let our_end = buffer
         .anchor_in_excerpt(excerpt_id, conflict.ours.end)
@@ -346,36 +342,44 @@ fn update_conflict_highlighting(
         .anchor_in_excerpt(excerpt_id, conflict.theirs.end)
         .unwrap();
 
-    let ours_background = colors.version_control_conflict_ours_background;
-    let ours_marker = colors.version_control_conflict_ours_marker_background;
-    let theirs_background = colors.version_control_conflict_theirs_background;
-    let theirs_marker = colors.version_control_conflict_theirs_marker_background;
-    let divider_background = colors.version_control_conflict_divider_background;
+    let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
+    let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
+    let divider_background = cx.theme().colors().version_control_conflict_marker_border;
 
     let options = RowHighlightOptions {
-        include_gutter: false,
+        include_gutter: true,
         ..Default::default()
     };
 
+    let mut gutter_highlights = editor
+        .clear_gutter_highlights::<ConflictsOuter>(cx)
+        .map(|(_, highlights)| highlights)
+        .unwrap_or_default();
+    let ix = match gutter_highlights.binary_search_by(|probe| probe.start.cmp(&outer_start, buffer))
+    {
+        Ok(ix) | Err(ix) => ix,
+    };
+    gutter_highlights.insert(ix, outer_start..their_end);
+    editor.highlight_gutter::<ConflictsOuter>(gutter_highlights, |_| gpui::blue(), cx);
+
     // Prevent diff hunk highlighting within the entire conflict region.
-    editor.highlight_rows::<ConflictsOuter>(
-        outer_start..outer_end,
-        divider_background,
-        options,
+    editor.highlight_rows::<ConflictsOuter>(outer_start..outer_end, theirs_background, options, cx);
+    editor.highlight_rows::<ConflictsOurs>(
+        outer_start..our_end,
+        ours_background,
+        RowHighlightOptions {
+            border: Some(gpui::red()),
+            ..options
+        },
         cx,
     );
-    editor.highlight_rows::<ConflictsOurs>(our_start..our_end, ours_background, options, cx);
-    editor.highlight_rows::<ConflictsOursMarker>(outer_start..our_start, ours_marker, options, cx);
     editor.highlight_rows::<ConflictsTheirs>(
-        their_start..their_end,
+        their_start..outer_end,
         theirs_background,
-        options,
-        cx,
-    );
-    editor.highlight_rows::<ConflictsTheirsMarker>(
-        their_end..outer_end,
-        theirs_marker,
-        options,
+        RowHighlightOptions {
+            border: Some(gpui::blue()),
+            ..options
+        },
         cx,
     );
 }
@@ -518,6 +522,20 @@ pub(crate) fn resolve_conflict(
                 editor.remove_highlighted_rows::<ConflictsOursMarker>(vec![start..end], cx);
                 editor.remove_highlighted_rows::<ConflictsTheirsMarker>(vec![start..end], cx);
                 editor.remove_blocks(HashSet::from_iter([block_id]), None, cx);
+
+                if let Some((color, mut gutter_highlights)) =
+                    editor.clear_gutter_highlights::<ConflictsOuter>(cx)
+                {
+                    let ix = match gutter_highlights
+                        .binary_search_by(|probe| probe.start.cmp(&start, &snapshot))
+                    {
+                        Ok(ix) => ix,
+                        Err(ix) => ix,
+                    };
+                    gutter_highlights.remove(ix);
+                    editor.highlight_gutter::<ConflictsOuter>(gutter_highlights, color, cx);
+                }
+
                 Some((workspace, project, multibuffer, buffer))
             })
             .ok()
@@ -537,6 +555,7 @@ pub(crate) fn resolve_conflict(
         else {
             return;
         };
+
         if save.await.log_err().is_none() {
             let open_path = maybe!({
                 let path = buffer
