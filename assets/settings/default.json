@@ -73,9 +73,6 @@
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
   "active_pane_modifiers": {
-    // The factor to grow the active pane by. Defaults to 1.0
-    // which gives the same size as all other panes.
-    "magnification": 1.0,
     // Inset border size of the active pane, in pixels.
     "border_size": 0.0,
     // Opacity of the inactive panes. 0 means transparent, 1 means opaque.
@@ -128,6 +125,8 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // Whether to automatically close files that have been deleted on disk.
+  "close_on_file_delete": false,
   // Size of the drop target in the editor.
   "drop_target_size": 0.2,
   // Whether the window should be closed when using 'close active item' on a window with no tabs.
@@ -534,6 +533,9 @@
       "function": false
     }
   },
+  // Whether to resize all the panels in a dock when resizing the dock.
+  // Can be a combination of "left", "right" and "bottom".
+  "resize_all_panels_in_dock": ["left"],
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
@@ -731,13 +733,6 @@
       // The model to use.
       "model": "claude-sonnet-4"
     },
-    // The model to use when applying edits from the agent.
-    "editor_model": {
-      // The provider to use.
-      "provider": "zed.dev",
-      // The model to use.
-      "model": "claude-sonnet-4"
-    },
     // Additional parameters for language model requests. When making a request to a model, parameters will be taken
     // from the last entry in this list that matches the model's provider and name. In each entry, both provider
     // and model are optional, so that you can specify parameters for either one.
@@ -776,7 +771,6 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
-          "create_file": true,
           "delete_path": true,
           "diagnostics": true,
           "edit_file": true,
@@ -1039,6 +1033,14 @@
     "button": true,
     // Whether to show warnings or not by default.
     "include_warnings": true,
+    // Settings for using LSP pull diagnostics mechanism in Zed.
+    "lsp_pull_diagnostics": {
+      // Whether to pull for diagnostics or not.
+      "enabled": true,
+      // Minimum time to wait before pulling diagnostics from the language server(s).
+      // 0 turns the debounce off.
+      "debounce_ms": 50
+    },
     // Settings for inline diagnostics
     "inline": {
       // Whether to show diagnostics inline or not
@@ -1462,7 +1464,9 @@
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
     "Git Commit": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
+      "preferred_line_length": 72
     },
     "Go": {
       "code_actions_on_format": {
@@ -1505,11 +1509,11 @@
       }
     },
     "LaTeX": {
-      "format_on_save": "on",
       "formatter": "language_server",
       "language_servers": ["texlab", "..."],
       "prettier": {
-        "allowed": false
+        "allowed": true,
+        "plugins": ["prettier-plugin-latex"]
       }
     },
     "Markdown": {
@@ -1533,7 +1537,7 @@
       "allow_rewrap": "anywhere"
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
     },
     "SCSS": {
       "prettier": {
@@ -1609,6 +1613,9 @@
     "openai": {
       "version": "1",
       "api_url": "https://api.openai.com/v1"
+    },
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1"
     },
     "lmstudio": {
       "api_url": "http://localhost:1234/api/v0"

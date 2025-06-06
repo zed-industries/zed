@@ -682,7 +682,7 @@ impl EditorElement {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
-                    reset: false,
+                    reset: true,
                     goal_column: point_for_position.exact_unclipped.column(),
                 },
                 window,
@@ -3881,7 +3881,8 @@ impl EditorElement {
 
                 let edit_prediction = if edit_prediction_popover_visible {
                     self.editor.update(cx, move |editor, cx| {
-                        let accept_binding = editor.accept_edit_prediction_keybind(window, cx);
+                        let accept_binding =
+                            editor.accept_edit_prediction_keybind(false, window, cx);
                         let mut element = editor.render_edit_prediction_cursor_popover(
                             min_width,
                             max_width,
@@ -6665,7 +6666,7 @@ impl AcceptEditPredictionBinding {
     pub fn keystroke(&self) -> Option<&Keystroke> {
         if let Some(binding) = self.0.as_ref() {
             match &binding.keystrokes() {
-                [keystroke] => Some(keystroke),
+                [keystroke, ..] => Some(keystroke),
                 _ => None,
             }
         } else {
@@ -6871,6 +6872,7 @@ impl LineWithInvisibles {
             text: "\n",
             style: None,
             is_tab: false,
+            is_inlay: false,
             replacement: None,
         }]) {
             if let Some(replacement) = highlighted_chunk.replacement {
@@ -7004,7 +7006,7 @@ impl LineWithInvisibles {
                             strikethrough: text_style.strikethrough,
                         });
 
-                        if editor_mode.is_full() {
+                        if editor_mode.is_full() && !highlighted_chunk.is_inlay {
                             // Line wrap pads its contents with fake whitespaces,
                             // avoid printing them
                             let is_soft_wrapped = is_row_soft_wrapped(row);

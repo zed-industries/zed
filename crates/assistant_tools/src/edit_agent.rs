@@ -54,6 +54,7 @@ impl Template for EditFilePromptTemplate {
 pub enum EditAgentOutputEvent {
     ResolvingEditRange(Range<Anchor>),
     UnresolvedEditRange,
+    AmbiguousEditRange(Vec<Range<usize>>),
     Edited,
 }
 
@@ -269,16 +270,29 @@ impl EditAgent {
                 }
             }
 
-            let (edit_events_, resolved_old_text) = resolve_old_text.await?;
+            let (edit_events_, mut resolved_old_text) = resolve_old_text.await?;
             edit_events = edit_events_;
 
             // If we can't resolve the old text, restart the loop waiting for a
             // new edit (or for the stream to end).
-            let Some(resolved_old_text) = resolved_old_text else {
-                output_events
-                    .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
-                    .ok();
-                continue;
+            let resolved_old_text = match resolved_old_text.len() {
+                1 => resolved_old_text.pop().unwrap(),
+                0 => {
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::UnresolvedEditRange)
+                        .ok();
+                    continue;
+                }
+                _ => {
+                    let ranges = resolved_old_text
+                        .into_iter()
+                        .map(|text| text.range)
+                        .collect();
+                    output_events
+                        .unbounded_send(EditAgentOutputEvent::AmbiguousEditRange(ranges))
+                        .ok();
+                    continue;
+                }
             };
 
             // Compute edits in the background and apply them as they become
@@ -405,13 +419,13 @@ impl EditAgent {
         mut edit_events: T,
         cx: &mut AsyncApp,
     ) -> (
-        Task<Result<(T, Option<ResolvedOldText>)>>,
-        async_watch::Receiver<Option<Range<usize>>>,
+        Task<Result<(T, Vec<ResolvedOldText>)>>,
+        watch::Receiver<Option<Range<usize>>>,
     )
     where
         T: 'static + Send + Unpin + Stream<Item = Result<EditParserEvent>>,
     {
-        let (old_range_tx, old_range_rx) = async_watch::channel(None);
+        let (mut old_range_tx, old_range_rx) = watch::channel(None);
         let task = cx.background_spawn(async move {
             let mut matcher = StreamingFuzzyMatcher::new(snapshot);
             while let Some(edit_event) = edit_events.next().await {
@@ -425,21 +439,29 @@ impl EditAgent {
                 }
             }
 
-            let old_range = matcher.finish();
-            old_range_tx.send(old_range.clone())?;
-            if let Some(old_range) = old_range {
-                let line_indent =
-                    LineIndent::from_iter(matcher.query_lines().first().unwrap().chars());
-                Ok((
-                    edit_events,
-                    Some(ResolvedOldText {
-                        range: old_range,
-                        indent: line_indent,
-                    }),
-                ))
+            let matches = matcher.finish();
+
+            let old_range = if matches.len() == 1 {
+                matches.first()
             } else {
-                Ok((edit_events, None))
-            }
+                // No matches or multiple ambiguous matches
+                None
+            };
+            old_range_tx.send(old_range.cloned())?;
+
+            let indent = LineIndent::from_iter(
+                matcher
+                    .query_lines()
+                    .first()
+                    .unwrap_or(&String::new())
+                    .chars(),
+            );
+            let resolved_old_texts = matches
+                .into_iter()
+                .map(|range| ResolvedOldText { range, indent })
+                .collect::<Vec<_>>();
+
+            Ok((edit_events, resolved_old_texts))
         });
 
         (task, old_range_rx)
@@ -1320,6 +1342,76 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         EditAgent::new(model, project, action_log, Templates::new())
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_non_unique_text_error(cx: &mut TestAppContext, mut rng: StdRng) {
+        let agent = init_test(cx).await;
+        let original_text = indoc! {"
+                function foo() {
+                    return 42;
+                }
+
+                function bar() {
+                    return 42;
+                }
+
+                function baz() {
+                    return 42;
+                }
+            "};
+        let buffer = cx.new(|cx| Buffer::local(original_text, cx));
+        let (apply, mut events) = agent.edit(
+            buffer.clone(),
+            String::new(),
+            &LanguageModelRequest::default(),
+            &mut cx.to_async(),
+        );
+        cx.run_until_parked();
+
+        // When <old_text> matches text in more than one place
+        simulate_llm_output(
+            &agent,
+            indoc! {"
+                <old_text>
+                return 42;
+                </old_text>
+                <new_text>
+                return 100;
+                </new_text>
+            "},
+            &mut rng,
+            cx,
+        );
+        apply.await.unwrap();
+
+        // Then the text should remain unchanged
+        let result_text = buffer.read_with(cx, |buffer, _| buffer.snapshot().text());
+        assert_eq!(
+            result_text,
+            indoc! {"
+                function foo() {
+                    return 42;
+                }
+
+                function bar() {
+                    return 42;
+                }
+
+                function baz() {
+                    return 42;
+                }
+            "},
+            "Text should remain unchanged when there are multiple matches"
+        );
+
+        // And AmbiguousEditRange even should be emitted
+        let events = drain_events(&mut events);
+        let ambiguous_ranges = vec![17..31, 52..66, 87..101];
+        assert!(
+            events.contains(&EditAgentOutputEvent::AmbiguousEditRange(ambiguous_ranges)),
+            "Should emit AmbiguousEditRange for non-unique text"
+        );
     }
 
     fn drain_events(

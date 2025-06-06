@@ -741,6 +741,7 @@ mod tests {
                 ("a.txt".into(), "".into()),
                 ("b/c.txt".into(), "something-else".into()),
             ],
+            "deadbeef",
         );
         cx.executor().run_until_parked();
         cx.executor().advance_clock(Duration::from_secs(1));

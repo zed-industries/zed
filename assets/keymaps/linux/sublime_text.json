@@ -52,10 +52,10 @@
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
-      "ctrl-right": "editor::MoveToNextSubwordEnd",
-      "ctrl-left": "editor::MoveToPreviousSubwordStart",
-      "ctrl-shift-right": "editor::SelectToNextSubwordEnd",
-      "ctrl-shift-left": "editor::SelectToPreviousSubwordStart"
+      "alt-right": "editor::MoveToNextSubwordEnd",
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-shift-right": "editor::SelectToNextSubwordEnd",
+      "alt-shift-left": "editor::SelectToPreviousSubwordStart"
     }
   },
   {

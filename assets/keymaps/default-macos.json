@@ -4,8 +4,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "f4": "debugger::Start",
-      "alt-f4": "debugger::RerunLastSession",
-      "f5": "debugger::Continue",
       "shift-f5": "debugger::Stop",
       "shift-cmd-f5": "debugger::Restart",
       "f6": "debugger::Pause",
@@ -140,7 +138,7 @@
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-'": "editor::ToggleSelectedDiffHunks",
       "cmd-\"": "editor::ExpandAllDiffHunks",
-      "cmd-alt-g b": "editor::ToggleGitBlame",
+      "cmd-alt-g b": "git::Blame",
       "cmd-i": "editor::ShowSignatureHelp",
       "f9": "editor::ToggleBreakpoint",
       "shift-f9": "editor::EditLogBreakpoint",
@@ -183,8 +181,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "alt-tab": "editor::NextEditPrediction",
-      "alt-shift-tab": "editor::PreviousEditPrediction",
-      "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
+      "alt-shift-tab": "editor::PreviousEditPrediction"
     }
   },
   {
@@ -317,7 +314,9 @@
       "enter": "agent::Chat",
       "cmd-enter": "agent::ChatWithFollow",
       "cmd-i": "agent::ToggleProfileSelector",
-      "shift-ctrl-r": "agent::OpenAgentDiff"
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "cmd-shift-y": "agent::KeepAll",
+      "cmd-shift-n": "agent::RejectAll"
     }
   },
   {
@@ -584,9 +583,9 @@
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
-      "alt-cmd-o": "projects::OpenRecent",
-      "ctrl-cmd-o": "projects::OpenRemote",
-      "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true }],
+      "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
+      "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
@@ -635,7 +634,8 @@
       "cmd-k shift-right": "workspace::SwapPaneRight",
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
-      "cmd-shift-x": "zed::Extensions"
+      "cmd-shift-x": "zed::Extensions",
+      "f5": "debugger::RerunLastSession"
     }
   },
   {
@@ -650,6 +650,20 @@
       // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
       // or by tag:
       // "foo-bar": ["task::Spawn", { "task_tag": "MyTag" }],
+    }
+  },
+  {
+    "context": "Workspace && debugger_running",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": "zed::NoAction"
+    }
+  },
+  {
+    "context": "Workspace && debugger_stopped",
+    "use_key_equivalents": true,
+    "bindings": {
+      "f5": "debugger::Continue"
     }
   },
   // Bindings from Sublime Text
@@ -704,14 +718,16 @@
     "context": "Editor && edit_prediction",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
-      "tab": "editor::AcceptEditPrediction"
+      "tab": "editor::AcceptEditPrediction",
+      "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
     "context": "Editor && edit_prediction_conflict",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-tab": "editor::AcceptEditPrediction"
+      "alt-tab": "editor::AcceptEditPrediction",
+      "ctrl-cmd-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
@@ -936,7 +952,8 @@
     "context": "DebugPanel",
     "bindings": {
       "cmd-t": "debugger::ToggleThreadPicker",
-      "cmd-i": "debugger::ToggleSessionPicker"
+      "cmd-i": "debugger::ToggleSessionPicker",
+      "shift-alt-escape": "debugger::ToggleExpandItem"
     }
   },
   {
@@ -951,7 +968,9 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm"
+      "space": "menu::Confirm",
+      "cmd-up": "collab_panel::MoveChannelUp",
+      "cmd-down": "collab_panel::MoveChannelDown"
     }
   },
   {
@@ -985,6 +1004,14 @@
     "use_key_equivalents": true,
     "bindings": {
       "tab": "channel_modal::ToggleMode"
+    }
+  },
+  {
+    "context": "FileFinder",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-shift-a": "file_finder::ToggleSplitMenu",
+      "cmd-shift-i": "file_finder::ToggleFilterMenu"
     }
   },
   {

@@ -8,7 +8,8 @@ pub mod variable_list;
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
-    new_session_modal::resolve_path,
+    ToggleExpandItem,
+    new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
 };
 
@@ -285,6 +286,7 @@ pub(crate) fn new_debugger_pane(
                                 &new_pane,
                                 item_id_to_move,
                                 new_pane.read(cx).active_item_index(),
+                                true,
                                 window,
                                 cx,
                             );
@@ -347,6 +349,7 @@ pub(crate) fn new_debugger_pane(
                 false
             }
         })));
+        pane.set_can_toggle_zoom(false, cx);
         pane.display_nav_history_buttons(None);
         pane.set_custom_drop_handle(cx, custom_drop_handle);
         pane.set_should_display_tab_bar(|_, _| true);
@@ -472,17 +475,19 @@ pub(crate) fn new_debugger_pane(
                                     },
                                 )
                                 .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |pane, _, window, cx| {
-                                    pane.toggle_zoom(&workspace::ToggleZoom, window, cx);
+                                .on_click(cx.listener(move |pane, _, _, cx| {
+                                    let is_zoomed = pane.is_zoomed();
+                                    pane.set_zoomed(!is_zoomed, cx);
+                                    cx.notify();
                                 }))
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
                                     move |window, cx| {
                                         let zoomed_text =
-                                            if zoomed { "Zoom Out" } else { "Zoom In" };
+                                            if zoomed { "Minimize" } else { "Expand" };
                                         Tooltip::for_action_in(
                                             zoomed_text,
-                                            &workspace::ToggleZoom,
+                                            &ToggleExpandItem,
                                             &focus_handle,
                                             window,
                                             cx,
@@ -566,7 +571,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn relativlize_paths(
+    pub(crate) fn relativize_paths(
         key: Option<&str>,
         config: &mut serde_json::Value,
         context: &TaskContext,
@@ -574,12 +579,12 @@ impl RunningState {
         match config {
             serde_json::Value::Object(obj) => {
                 obj.iter_mut()
-                    .for_each(|(key, value)| Self::relativlize_paths(Some(key), value, context));
+                    .for_each(|(key, value)| Self::relativize_paths(Some(key), value, context));
             }
             serde_json::Value::Array(array) => {
                 array
                     .iter_mut()
-                    .for_each(|value| Self::relativlize_paths(None, value, context));
+                    .for_each(|value| Self::relativize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
                 // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
@@ -806,7 +811,7 @@ impl RunningState {
                 mut config,
                 tcp_connection,
             } = scenario;
-            Self::relativlize_paths(None, &mut config, &task_context);
+            Self::relativize_paths(None, &mut config, &task_context);
             Self::substitute_variables_in_config(&mut config, &task_context);
 
             let request_type = dap_registry
@@ -897,7 +902,6 @@ impl RunningState {
                         weak_workspace,
                         None,
                         weak_project,
-                        false,
                         window,
                         cx,
                     )
@@ -1051,15 +1055,7 @@ impl RunningState {
             let terminal = terminal_task.await?;
 
             let terminal_view = cx.new_window_entity(|window, cx| {
-                TerminalView::new(
-                    terminal.clone(),
-                    workspace,
-                    None,
-                    weak_project,
-                    false,
-                    window,
-                    cx,
-                )
+                TerminalView::new(terminal.clone(), workspace, None, weak_project, window, cx)
             })?;
 
             running.update_in(cx, |running, window, cx| {
@@ -1259,18 +1255,6 @@ impl RunningState {
             }
             Event::Focus => {
                 this.active_pane = source_pane.clone();
-            }
-            Event::ZoomIn => {
-                source_pane.update(cx, |pane, cx| {
-                    pane.set_zoomed(true, cx);
-                });
-                cx.notify();
-            }
-            Event::ZoomOut => {
-                source_pane.update(cx, |pane, cx| {
-                    pane.set_zoomed(false, cx);
-                });
-                cx.notify();
             }
             _ => {}
         }
