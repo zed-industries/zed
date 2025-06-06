@@ -18,7 +18,6 @@ use crate::{
     text_diff::text_diff,
 };
 use anyhow::{Context as _, Result};
-use async_watch as watch;
 pub use clock::ReplicaId;
 use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
@@ -932,7 +931,7 @@ impl Buffer {
             reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
-            parse_status: async_watch::channel(ParseStatus::Idle),
+            parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
