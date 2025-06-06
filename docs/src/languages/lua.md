@@ -86,7 +86,7 @@ Then in your `.luarc.json`:
 
 ### Inlay Hints
 
-To enable [Inlay Hints](../configuring-languages#inlay-hints) for LuaLS in Zed
+To enable [Inlay Hints](../configuring-languages.md#inlay-hints) for LuaLS in Zed
 
 1. Add the following to your Zed settings.json:
 
