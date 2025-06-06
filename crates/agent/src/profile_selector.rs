@@ -65,6 +65,7 @@ impl ProfileSelector {
             for (profile_id, profile_name) in self.profiles.iter() {
                 if !builtin_profiles::is_builtin(profile_id) {
                     found_non_builtin = true;
+                    continue;
                 }
                 menu = menu.item(self.menu_entry_for_profile(
                     profile_id.clone(),
