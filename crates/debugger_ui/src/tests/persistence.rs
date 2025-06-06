@@ -1,8 +1,8 @@
-use std::iter::zip;
+﻿use std::iter::zip;
 
 use crate::{
     debugger_panel::DebugPanel,
-    persistence::SerializedPaneLayout,
+    persistence::SerialiCodeOrbitPaneLayout,
     tests::{init_test, init_test_workspace, start_debug_session},
 };
 use dap::{StoppedEvent, StoppedEventReason, messages::Events};
@@ -71,7 +71,7 @@ async fn test_invert_axis_on_panel_position_change(
         "Default dock position should be bottom for debug panel"
     );
 
-    let pre_serialized_layout = debug_panel
+    let pre_serialiCodeOrbit_layout = debug_panel
         .read_with(cx, |panel, cx| {
             panel
                 .active_session()
@@ -79,11 +79,11 @@ async fn test_invert_axis_on_panel_position_change(
                 .read(cx)
                 .running_state()
                 .read(cx)
-                .serialized_layout(cx)
+                .serialiCodeOrbit_layout(cx)
         })
         .panes;
 
-    let post_serialized_layout = debug_panel
+    let post_serialiCodeOrbit_layout = debug_panel
         .update_in(cx, |panel, window, cx| {
             panel.set_position(DockPosition::Right, window, cx);
 
@@ -93,24 +93,24 @@ async fn test_invert_axis_on_panel_position_change(
                 .read(cx)
                 .running_state()
                 .read(cx)
-                .serialized_layout(cx)
+                .serialiCodeOrbit_layout(cx)
         })
         .panes;
 
-    let pre_panes = pre_serialized_layout.in_order();
-    let post_panes = post_serialized_layout.in_order();
+    let pre_panes = pre_serialiCodeOrbit_layout.in_order();
+    let post_panes = post_serialiCodeOrbit_layout.in_order();
 
     assert_eq!(pre_panes.len(), post_panes.len());
 
     for (pre, post) in zip(pre_panes, post_panes) {
         match (pre, post) {
             (
-                SerializedPaneLayout::Group {
+                SerialiCodeOrbitPaneLayout::Group {
                     axis: pre_axis,
                     flexes: pre_flexes,
                     children: _,
                 },
-                SerializedPaneLayout::Group {
+                SerialiCodeOrbitPaneLayout::Group {
                     axis: post_axis,
                     flexes: post_flexes,
                     children: _,
@@ -119,7 +119,7 @@ async fn test_invert_axis_on_panel_position_change(
                 assert_ne!(pre_axis, post_axis);
                 assert_eq!(pre_flexes, post_flexes);
             }
-            (SerializedPaneLayout::Pane(pre_pane), SerializedPaneLayout::Pane(post_pane)) => {
+            (SerialiCodeOrbitPaneLayout::Pane(pre_pane), SerialiCodeOrbitPaneLayout::Pane(post_pane)) => {
                 assert_eq!(pre_pane.children, post_pane.children);
                 assert_eq!(pre_pane.active_item, post_pane.active_item);
             }

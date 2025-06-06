@@ -1,4 +1,4 @@
-use crate::{attach_modal::Candidate, tests::start_debug_session_with, *};
+﻿use crate::{attach_modal::Candidate, tests::start_debug_session_with, *};
 use attach_modal::AttachModal;
 use dap::{FakeAdapter, adapters::DebugTaskDefinition};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -106,7 +106,7 @@ async fn test_show_attach_modal_and_select_process(
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
                     workspace_handle,
-                    task::ZedDebugConfig {
+                    task::CodeOrbitDebugConfig {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
                         request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),

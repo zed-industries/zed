@@ -1,4 +1,4 @@
-use std::io::{Cursor, Write};
+﻿use std::io::{Cursor, Write};
 use std::sync::Arc;
 
 use crate::role::Role;
@@ -12,7 +12,7 @@ use gpui::{
 use image::codecs::png::PngEncoder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
-use zed_llm_client::{CompletionIntent, CompletionMode};
+use codeorbit_llm_client::{CompletionIntent, CompletionMode};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct LanguageModelImage {
@@ -117,13 +117,13 @@ impl LanguageModelImage {
                         },
                         image_size,
                     );
-                    let resized_image = dynamic_image.resize(
+                    let resiCodeOrbit_image = dynamic_image.resize(
                         new_bounds.size.width.0 as u32,
                         new_bounds.size.height.0 as u32,
                         image::imageops::FilterType::Triangle,
                     );
 
-                    encode_as_base64(data, resized_image)
+                    encode_as_base64(data, resiCodeOrbit_image)
                 } else {
                     encode_as_base64(data, dynamic_image)
                 }

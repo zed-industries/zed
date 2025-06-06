@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+﻿use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use gpui::{AsyncApp, Entity};
@@ -612,7 +612,7 @@ mod tests {
             "/root",
             json!({
                 ".config": {
-                    "zed": {
+                    "CodeOrbit": {
                         "settings.json": r#"{ "formatter": "auto" }"#,
                     },
                 },
@@ -647,7 +647,7 @@ mod tests {
             Prettier::locate_prettier_installation(
                 fs.as_ref(),
                 &HashSet::default(),
-                Path::new("/root/.config/zed/settings.json"),
+                Path::new("/root/.config/CodeOrbit/settings.json"),
             )
             .await
             .unwrap(),

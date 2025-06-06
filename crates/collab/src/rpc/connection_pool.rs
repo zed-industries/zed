@@ -1,4 +1,4 @@
-use crate::db::{ChannelId, ChannelRole, UserId};
+﻿use crate::db::{ChannelId, ChannelRole, UserId};
 use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use rpc::ConnectionId;
@@ -20,15 +20,15 @@ struct ConnectedPrincipal {
 }
 
 #[derive(Copy, Clone, Debug, Serialize, PartialOrd, PartialEq, Eq, Ord)]
-pub struct ZedVersion(pub SemanticVersion);
+pub struct CodeOrbitVersion(pub SemanticVersion);
 
-impl fmt::Display for ZedVersion {
+impl fmt::Display for CodeOrbitVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl ZedVersion {
+impl CodeOrbitVersion {
     pub fn can_collaborate(&self) -> bool {
         self.0 >= SemanticVersion::new(0, 157, 0)
     }
@@ -38,7 +38,7 @@ impl ZedVersion {
 pub struct Connection {
     pub user_id: UserId,
     pub admin: bool,
-    pub zed_version: ZedVersion,
+    pub codeorbit_version: CodeOrbitVersion,
 }
 
 impl ConnectionPool {
@@ -58,14 +58,14 @@ impl ConnectionPool {
         connection_id: ConnectionId,
         user_id: UserId,
         admin: bool,
-        zed_version: ZedVersion,
+        codeorbit_version: CodeOrbitVersion,
     ) {
         self.connections.insert(
             connection_id,
             Connection {
                 user_id,
                 admin,
-                zed_version,
+                codeorbit_version,
             },
         );
         let connected_user = self.connected_users.entry(user_id).or_default();

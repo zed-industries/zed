@@ -1,4 +1,4 @@
-//! Context management for the CodeOrbit extension.
+﻿//! Context management for the CodeOrbit extension.
 //! 
 //! This module provides a way to share state and context between different
 //! components of the CodeOrbit extension.
@@ -24,13 +24,13 @@ impl Context {
 
     /// Stores a value in the context.
     pub fn set<T: Serialize>(&self, key: &str, value: &T) -> Result<()> {
-        let serialized = bincode::serialize(value)
+        let serialiCodeOrbit = bincode::serialize(value)
             .map_err(|e| Error::SerializationError(e.to_string()))?;
         
         let mut store = self.store.write()
             .map_err(|_| Error::LockError)?;
             
-        store.insert(key.to_string(), serialized);
+        store.insert(key.to_string(), serialiCodeOrbit);
         Ok(())
     }
 
@@ -41,9 +41,9 @@ impl Context {
             
         match store.get(key) {
             Some(bytes) => {
-                let deserialized = bincode::deserialize(bytes)
+                let deserialiCodeOrbit = bincode::deserialize(bytes)
                     .map_err(|e| Error::DeserializationError(e.to_string()))?;
-                Ok(Some(deserialized))
+                Ok(Some(deserialiCodeOrbit))
             },
             None => Ok(None),
         }

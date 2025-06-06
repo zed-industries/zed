@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
@@ -90,7 +90,7 @@ impl Tool for ContextServerTool {
 
             cx.spawn(async move |_cx| {
                 let Some(protocol) = server_clone.client() else {
-                    bail!("Context server not initialized");
+                    bail!("Context server not initialiCodeOrbit");
                 };
 
                 let arguments = if let serde_json::Value::Object(map) = input_clone {

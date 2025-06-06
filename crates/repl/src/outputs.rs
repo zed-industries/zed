@@ -1,4 +1,4 @@
-//! # REPL Output Module
+﻿//! # REPL Output Module
 //!
 //! This module provides the core functionality for handling and displaying
 //! various types of output from Jupyter kernels.
@@ -68,7 +68,7 @@ fn rank_mime_type(mimetype: &MimeType) -> usize {
         MimeType::Jpeg(_) => 3,
         MimeType::Markdown(_) => 2,
         MimeType::Plain(_) => 1,
-        // All other media types are not supported in Zed at this time
+        // All other media types are not supported in CodeOrbit at this time
         _ => 0,
     }
 }

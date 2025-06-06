@@ -1,13 +1,13 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
-# Try to make sure we are in the zed repo root
+# Try to make sure we are in the CodeOrbit repo root
 if [ ! -d "crates" ] || [ ! -d "script" ]; then
-    echo "Error: Run from the \`zed\` repo root"
+    echo "Error: Run from the \`CodeOrbit\` repo root"
     exit 1
 fi
 
 if [ ! -f "Cargo.toml" ]; then
-    echo "Error: Run from the \`zed\` repo root"
+    echo "Error: Run from the \`CodeOrbit\` repo root"
     exit 1
 fi
 

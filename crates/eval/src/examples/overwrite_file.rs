@@ -1,4 +1,4 @@
-use agent_settings::AgentProfileId;
+﻿use agent_settings::AgentProfileId;
 use anyhow::Result;
 use assistant_tools::{EditFileMode, EditFileToolInput};
 use async_trait::async_trait;
@@ -25,7 +25,7 @@ impl Example for FileOverwriteExample {
 
         ExampleMetadata {
             name: "file_overwrite".to_string(),
-            url: "https://github.com/zed-industries/zed.git".to_string(),
+            url: "https://github.com/CodeOrbit-industries/CodeOrbit.git".to_string(),
             revision: "023a60806a8cc82e73bd8d88e63b4b07fc7a0040".to_string(),
             language_server: None,
             max_assertions: Some(1),

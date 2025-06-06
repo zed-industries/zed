@@ -1,4 +1,4 @@
-use crate::{Action, App, Platform, SharedString};
+﻿use crate::{Action, App, Platform, SharedString};
 use util::ResultExt;
 
 /// A menu of the application, either a main menu or a submenu
@@ -147,8 +147,8 @@ impl Clone for OwnedMenuItem {
 // be moved to GPUI-provided actions that make this association
 // without leaking the platform details to GPUI users
 
-/// OS actions are actions that are recognized by the operating system
-/// This allows the operating system to provide specialized behavior for
+/// OS actions are actions that are recogniCodeOrbit by the operating system
+/// This allows the operating system to provide specialiCodeOrbit behavior for
 /// these actions
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum OsAction {

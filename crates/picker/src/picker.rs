@@ -1,4 +1,4 @@
-mod head;
+﻿mod head;
 pub mod highlighted_match_with_paths;
 pub mod popover_menu;
 
@@ -82,7 +82,7 @@ pub enum PickerEditorPosition {
     End,
 }
 
-pub trait PickerDelegate: Sized + 'static {
+pub trait PickerDelegate: SiCodeOrbit + 'static {
     type ListItem: IntoElement;
 
     fn match_count(&self) -> usize;
@@ -266,7 +266,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     /// A picker, which displays its matches using `gpui::list`, matches can have different heights.
     /// The picker allows the user to perform search items by text.
-    /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimized for that.
+    /// If `PickerDelegate::render_match` only returns items with the same height, use `Picker::uniform_list` as its implementation is optimiCodeOrbit for that.
     pub fn list(delegate: D, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let head = Head::editor(
             delegate.placeholder_text(window, cx),

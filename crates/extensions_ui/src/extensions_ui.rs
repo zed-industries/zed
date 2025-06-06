@@ -1,4 +1,4 @@
-mod components;
+﻿mod components;
 mod extension_suggest;
 mod extension_version_selector;
 
@@ -31,14 +31,14 @@ use workspace::{
     Workspace, WorkspaceId,
     item::{Item, ItemEvent},
 };
-use zed_actions::ExtensionCategoryFilter;
+use codeorbit_actions::ExtensionCategoryFilter;
 
 use crate::components::{ExtensionCard, FeatureUpsell};
 use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 
-actions!(zed, [InstallDevExtension]);
+actions!(CodeOrbit, [InstallDevExtension]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(move |workspace: &mut Workspace, window, cx| {
@@ -47,7 +47,7 @@ pub fn init(cx: &mut App) {
         };
         workspace
             .register_action(
-                move |workspace, action: &zed_actions::Extensions, window, cx| {
+                move |workspace, action: &codeorbit_actions::Extensions, window, cx| {
                     let provides_filter = action.category_filter.map(|category| match category {
                         ExtensionCategoryFilter::Themes => ExtensionProvides::Themes,
                         ExtensionCategoryFilter::IconThemes => ExtensionProvides::IconThemes,
@@ -357,7 +357,7 @@ impl ExtensionsPage {
             workspace
                 .update(cx, |_workspace, cx| {
                     window.dispatch_action(
-                        zed_actions::theme_selector::Toggle {
+                        codeorbit_actions::theme_selector::Toggle {
                             themes_filter: Some(themes),
                         }
                         .boxed_clone(),
@@ -376,7 +376,7 @@ impl ExtensionsPage {
             workspace
                 .update(cx, |_workspace, cx| {
                     window.dispatch_action(
-                        zed_actions::icon_theme_selector::Toggle {
+                        codeorbit_actions::icon_theme_selector::Toggle {
                             themes_filter: Some(icon_themes),
                         }
                         .boxed_clone(),
@@ -1022,7 +1022,7 @@ impl ExtensionsPage {
                                     move |_, cx| {
                                         Tooltip::simple(
                                             format!(
-                                                "v{version} is not compatible with this version of Zed.",
+                                                "v{version} is not compatible with this version of CodeOrbit.",
                                             ),
                                              cx,
                                         )
@@ -1286,15 +1286,15 @@ impl ExtensionsPage {
         v_flex().children(self.upsells.iter().enumerate().map(|(ix, feature)| {
             let upsell = match feature {
                 Feature::Git => FeatureUpsell::new(
-                    "Zed comes with basic Git support. More Git features are coming in the future.",
+                    "CodeOrbit comes with basic Git support. More Git features are coming in the future.",
                 )
-                .docs_url("https://zed.dev/docs/git"),
+                .docs_url("https://CodeOrbit.dev/docs/git"),
                 Feature::OpenIn => FeatureUpsell::new(
-                    "Zed supports linking to a source line on GitHub and others.",
+                    "CodeOrbit supports linking to a source line on GitHub and others.",
                 )
-                .docs_url("https://zed.dev/docs/git#git-integrations"),
-                Feature::Vim => FeatureUpsell::new("Vim support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/vim")
+                .docs_url("https://CodeOrbit.dev/docs/git#git-integrations"),
+                Feature::Vim => FeatureUpsell::new("Vim support is built-in to CodeOrbit!")
+                    .docs_url("https://CodeOrbit.dev/docs/vim")
                     .child(CheckboxWithLabel::new(
                         "enable-vim",
                         Label::new("Enable vim mode"),
@@ -1312,23 +1312,23 @@ impl ExtensionsPage {
                             );
                         }),
                     )),
-                Feature::LanguageBash => FeatureUpsell::new("Shell support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/bash"),
-                Feature::LanguageC => FeatureUpsell::new("C support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/c"),
-                Feature::LanguageCpp => FeatureUpsell::new("C++ support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/cpp"),
-                Feature::LanguageGo => FeatureUpsell::new("Go support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/go"),
-                Feature::LanguagePython => FeatureUpsell::new("Python support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/python"),
-                Feature::LanguageReact => FeatureUpsell::new("React support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/typescript"),
-                Feature::LanguageRust => FeatureUpsell::new("Rust support is built-in to Zed!")
-                    .docs_url("https://zed.dev/docs/languages/rust"),
+                Feature::LanguageBash => FeatureUpsell::new("Shell support is built-in to CodeOrbit!")
+                    .docs_url("https://CodeOrbit.dev/docs/languages/bash"),
+                Feature::LanguageC => FeatureUpsell::new("C support is built-in to CodeOrbit!")
+                    .docs_url("https://CodeOrbit.dev/docs/languages/c"),
+                Feature::LanguageCpp => FeatureUpsell::new("C++ support is built-in to CodeOrbit!")
+                    .docs_url("https://CodeOrbit.dev/docs/languages/cpp"),
+                Feature::LanguageGo => FeatureUpsell::new("Go support is built-in to CodeOrbit!")
+                    .docs_url("https://CodeOrbit.dev/docs/languages/go"),
+                Feature::LanguagePython => FeatureUpsell::new("Python support is built-in to CodeOrbit!")
+                    .docs_url("https://CodeOrbit.dev/docs/languages/python"),
+                Feature::LanguageReact => FeatureUpsell::new("React support is built-in to CodeOrbit!")
+                    .docs_url("https://CodeOrbit.dev/docs/languages/typescript"),
+                Feature::LanguageRust => FeatureUpsell::new("Rust support is built-in to CodeOrbit!")
+                    .docs_url("https://CodeOrbit.dev/docs/languages/rust"),
                 Feature::LanguageTypescript => {
-                    FeatureUpsell::new("Typescript support is built-in to Zed!")
-                        .docs_url("https://zed.dev/docs/languages/typescript")
+                    FeatureUpsell::new("Typescript support is built-in to CodeOrbit!")
+                        .docs_url("https://CodeOrbit.dev/docs/languages/typescript")
                 }
             };
 

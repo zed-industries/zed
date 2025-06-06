@@ -1,4 +1,4 @@
-pub mod model;
+﻿pub mod model;
 
 use std::{
     borrow::Cow,
@@ -31,16 +31,16 @@ use uuid::Uuid;
 use crate::WorkspaceId;
 
 use model::{
-    GroupId, ItemId, LocalPaths, PaneId, SerializedItem, SerializedPane, SerializedPaneGroup,
-    SerializedSshProject, SerializedWorkspace,
+    GroupId, ItemId, LocalPaths, PaneId, Serialicodeorbit-editem, SerialiCodeOrbitPane, SerialiCodeOrbitPaneGroup,
+    SerialiCodeOrbitSshProject, SerialiCodeOrbitWorkspace,
 };
 
-use self::model::{DockStructure, LocalPathsOrder, SerializedWorkspaceLocation};
+use self::model::{DockStructure, LocalPathsOrder, SerialiCodeOrbitWorkspaceLocation};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
-pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
-impl sqlez::bindable::StaticColumnCount for SerializedAxis {}
-impl sqlez::bindable::Bind for SerializedAxis {
+pub(crate) struct SerialiCodeOrbitAxis(pub(crate) gpui::Axis);
+impl sqlez::bindable::StaticColumnCount for SerialiCodeOrbitAxis {}
+impl sqlez::bindable::Bind for SerialiCodeOrbitAxis {
     fn bind(
         &self,
         statement: &sqlez::statement::Statement,
@@ -54,7 +54,7 @@ impl sqlez::bindable::Bind for SerializedAxis {
     }
 }
 
-impl sqlez::bindable::Column for SerializedAxis {
+impl sqlez::bindable::Column for SerialiCodeOrbitAxis {
     fn column(
         statement: &mut sqlez::statement::Statement,
         start_index: i32,
@@ -64,7 +64,7 @@ impl sqlez::bindable::Column for SerializedAxis {
                 match axis_text.as_str() {
                     "Horizontal" => Self(Axis::Horizontal),
                     "Vertical" => Self(Axis::Vertical),
-                    _ => anyhow::bail!("Stored serialized item kind is incorrect"),
+                    _ => anyhow::bail!("Stored serialiCodeOrbit item kind is incorrect"),
                 },
                 next_index,
             ))
@@ -73,37 +73,37 @@ impl sqlez::bindable::Column for SerializedAxis {
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
-pub(crate) struct SerializedWindowBounds(pub(crate) WindowBounds);
+pub(crate) struct SerialiCodeOrbitWindowBounds(pub(crate) WindowBounds);
 
-impl StaticColumnCount for SerializedWindowBounds {
+impl StaticColumnCount for SerialiCodeOrbitWindowBounds {
     fn column_count() -> usize {
         5
     }
 }
 
-impl Bind for SerializedWindowBounds {
+impl Bind for SerialiCodeOrbitWindowBounds {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         match self.0 {
             WindowBounds::Windowed(bounds) => {
                 let next_index = statement.bind(&"Windowed", start_index)?;
                 statement.bind(
                     &(
-                        SerializedPixels(bounds.origin.x),
-                        SerializedPixels(bounds.origin.y),
-                        SerializedPixels(bounds.size.width),
-                        SerializedPixels(bounds.size.height),
+                        SerialiCodeOrbitPixels(bounds.origin.x),
+                        SerialiCodeOrbitPixels(bounds.origin.y),
+                        SerialiCodeOrbitPixels(bounds.size.width),
+                        SerialiCodeOrbitPixels(bounds.size.height),
                     ),
                     next_index,
                 )
             }
-            WindowBounds::Maximized(bounds) => {
-                let next_index = statement.bind(&"Maximized", start_index)?;
+            WindowBounds::MaximiCodeOrbit(bounds) => {
+                let next_index = statement.bind(&"MaximiCodeOrbit", start_index)?;
                 statement.bind(
                     &(
-                        SerializedPixels(bounds.origin.x),
-                        SerializedPixels(bounds.origin.y),
-                        SerializedPixels(bounds.size.width),
-                        SerializedPixels(bounds.size.height),
+                        SerialiCodeOrbitPixels(bounds.origin.x),
+                        SerialiCodeOrbitPixels(bounds.origin.y),
+                        SerialiCodeOrbitPixels(bounds.size.width),
+                        SerialiCodeOrbitPixels(bounds.size.height),
                     ),
                     next_index,
                 )
@@ -112,10 +112,10 @@ impl Bind for SerializedWindowBounds {
                 let next_index = statement.bind(&"FullScreen", start_index)?;
                 statement.bind(
                     &(
-                        SerializedPixels(bounds.origin.x),
-                        SerializedPixels(bounds.origin.y),
-                        SerializedPixels(bounds.size.width),
-                        SerializedPixels(bounds.size.height),
+                        SerialiCodeOrbitPixels(bounds.origin.x),
+                        SerialiCodeOrbitPixels(bounds.origin.y),
+                        SerialiCodeOrbitPixels(bounds.size.width),
+                        SerialiCodeOrbitPixels(bounds.size.height),
                     ),
                     next_index,
                 )
@@ -124,7 +124,7 @@ impl Bind for SerializedWindowBounds {
     }
 }
 
-impl Column for SerializedWindowBounds {
+impl Column for SerialiCodeOrbitWindowBounds {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (window_state, next_index) = String::column(statement, start_index)?;
         let ((x, y, width, height), _): ((i32, i32, i32, i32), _) =
@@ -135,9 +135,9 @@ impl Column for SerializedWindowBounds {
         };
 
         let status = match window_state.as_str() {
-            "Windowed" | "Fixed" => SerializedWindowBounds(WindowBounds::Windowed(bounds)),
-            "Maximized" => SerializedWindowBounds(WindowBounds::Maximized(bounds)),
-            "FullScreen" => SerializedWindowBounds(WindowBounds::Fullscreen(bounds)),
+            "Windowed" | "Fixed" => SerialiCodeOrbitWindowBounds(WindowBounds::Windowed(bounds)),
+            "MaximiCodeOrbit" => SerialiCodeOrbitWindowBounds(WindowBounds::MaximiCodeOrbit(bounds)),
+            "FullScreen" => SerialiCodeOrbitWindowBounds(WindowBounds::Fullscreen(bounds)),
             _ => bail!("Window State did not have a valid string"),
         };
 
@@ -260,10 +260,10 @@ impl Column for Breakpoints {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct SerializedPixels(gpui::Pixels);
-impl sqlez::bindable::StaticColumnCount for SerializedPixels {}
+struct SerialiCodeOrbitPixels(gpui::Pixels);
+impl sqlez::bindable::StaticColumnCount for SerialiCodeOrbitPixels {}
 
-impl sqlez::bindable::Bind for SerializedPixels {
+impl sqlez::bindable::Bind for SerialiCodeOrbitPixels {
     fn bind(
         &self,
         statement: &sqlez::statement::Statement,
@@ -342,9 +342,9 @@ define_connection! {
         CREATE TABLE workspaces(
             workspace_id INTEGER PRIMARY KEY,
             workspace_location BLOB UNIQUE,
-            dock_visible INTEGER, // Deprecated. Preserving so users can downgrade Zed.
-            dock_anchor TEXT, // Deprecated. Preserving so users can downgrade Zed.
-            dock_pane INTEGER, // Deprecated.  Preserving so users can downgrade Zed.
+            dock_visible INTEGER, // Deprecated. Preserving so users can downgrade CodeOrbit.
+            dock_anchor TEXT, // Deprecated. Preserving so users can downgrade CodeOrbit.
+            dock_pane INTEGER, // Deprecated.  Preserving so users can downgrade CodeOrbit.
             left_sidebar_open INTEGER, // Boolean
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
             FOREIGN KEY(dock_pane) REFERENCES panes(pane_id)
@@ -408,9 +408,9 @@ define_connection! {
         CREATE TABLE workspaces_2(
             workspace_id INTEGER PRIMARY KEY,
             workspace_location BLOB UNIQUE,
-            dock_visible INTEGER, // Deprecated. Preserving so users can downgrade Zed.
-            dock_anchor TEXT, // Deprecated. Preserving so users can downgrade Zed.
-            dock_pane INTEGER, // Deprecated.  Preserving so users can downgrade Zed.
+            dock_visible INTEGER, // Deprecated. Preserving so users can downgrade CodeOrbit.
+            dock_anchor TEXT, // Deprecated. Preserving so users can downgrade CodeOrbit.
+            dock_pane INTEGER, // Deprecated.  Preserving so users can downgrade CodeOrbit.
             left_sidebar_open INTEGER, // Boolean
             timestamp TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL,
             window_state TEXT,
@@ -445,7 +445,7 @@ define_connection! {
     ),
     // Add fullscreen field to workspace
     // Deprecated, `WindowBounds` holds the fullscreen state now.
-    // Preserving so users can downgrade Zed.
+    // Preserving so users can downgrade CodeOrbit.
     sql!(
         ALTER TABLE workspaces ADD COLUMN fullscreen INTEGER; //bool
     ),
@@ -546,13 +546,13 @@ define_connection! {
 }
 
 impl WorkspaceDb {
-    /// Returns a serialized workspace for the given worktree_roots. If the passed array
+    /// Returns a serialiCodeOrbit workspace for the given worktree_roots. If the passed array
     /// is empty, the most recent workspace is returned instead. If no workspace for the
     /// passed roots is stored, returns none.
     pub(crate) fn workspace_for_roots<P: AsRef<Path>>(
         &self,
         worktree_roots: &[P],
-    ) -> Option<SerializedWorkspace> {
+    ) -> Option<SerialiCodeOrbitWorkspace> {
         // paths are sorted before db interactions to ensure that the order of the paths
         // doesn't affect the workspace selection for existing workspaces
         let local_paths = LocalPaths::new(worktree_roots);
@@ -572,7 +572,7 @@ impl WorkspaceDb {
             WorkspaceId,
             Option<LocalPaths>,
             Option<LocalPathsOrder>,
-            Option<SerializedWindowBounds>,
+            Option<SerialiCodeOrbitWindowBounds>,
             Option<Uuid>,
             Option<bool>,
             DockStructure,
@@ -610,14 +610,14 @@ impl WorkspaceDb {
 
         let local_paths = local_paths?;
         let location = match local_paths_order {
-            Some(order) => SerializedWorkspaceLocation::Local(local_paths, order),
+            Some(order) => SerialiCodeOrbitWorkspaceLocation::Local(local_paths, order),
             None => {
                 let order = LocalPathsOrder::default_for_paths(&local_paths);
-                SerializedWorkspaceLocation::Local(local_paths, order)
+                SerialiCodeOrbitWorkspaceLocation::Local(local_paths, order)
             }
         };
 
-        Some(SerializedWorkspace {
+        Some(SerialiCodeOrbitWorkspace {
             id: workspace_id,
             location,
             center_group: self
@@ -636,11 +636,11 @@ impl WorkspaceDb {
 
     pub(crate) fn workspace_for_ssh_project(
         &self,
-        ssh_project: &SerializedSshProject,
-    ) -> Option<SerializedWorkspace> {
+        ssh_project: &SerialiCodeOrbitSshProject,
+    ) -> Option<SerialiCodeOrbitWorkspace> {
         let (workspace_id, window_bounds, display, centered_layout, docks, window_id): (
             WorkspaceId,
-            Option<SerializedWindowBounds>,
+            Option<SerialiCodeOrbitWindowBounds>,
             Option<Uuid>,
             Option<bool>,
             DockStructure,
@@ -674,9 +674,9 @@ impl WorkspaceDb {
             .warn_on_err()
             .flatten()?;
 
-        Some(SerializedWorkspace {
+        Some(SerialiCodeOrbitWorkspace {
             id: workspace_id,
-            location: SerializedWorkspaceLocation::Ssh(ssh_project.clone()),
+            location: SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_project.clone()),
             center_group: self
                 .get_center_pane_group(workspace_id)
                 .context("Getting center group")
@@ -739,7 +739,7 @@ impl WorkspaceDb {
 
     /// Saves a workspace using the worktree roots. Will garbage collect any workspaces
     /// that used this workspace previously
-    pub(crate) async fn save_workspace(&self, workspace: SerializedWorkspace) {
+    pub(crate) async fn save_workspace(&self, workspace: SerialiCodeOrbitWorkspace) {
         log::debug!("Saving workspace at location: {:?}", workspace.location);
         self.write(move |conn| {
             conn.with_savepoint("update_worktrees", || {
@@ -781,7 +781,7 @@ impl WorkspaceDb {
 
 
                 match workspace.location {
-                    SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
+                    SerialiCodeOrbitWorkspaceLocation::Local(local_paths, local_paths_order) => {
                         conn.exec_bound(sql!(
                             DELETE FROM toolchains WHERE workspace_id = ?1;
                             DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
@@ -834,7 +834,7 @@ impl WorkspaceDb {
 
                         prepared_query(args).context("Updating workspace")?;
                     }
-                    SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                    SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_project) => {
                         conn.exec_bound(sql!(
                             DELETE FROM toolchains WHERE workspace_id = ?1;
                             DELETE FROM workspaces WHERE ssh_project_id = ? AND workspace_id != ?
@@ -903,7 +903,7 @@ impl WorkspaceDb {
         port: Option<u16>,
         paths: Vec<String>,
         user: Option<String>,
-    ) -> Result<SerializedSshProject> {
+    ) -> Result<SerialiCodeOrbitSshProject> {
         let paths = serde_json::to_string(&paths)?;
         if let Some(project) = self
             .get_ssh_project(host.clone(), port, paths.clone(), user.clone())
@@ -919,7 +919,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        async fn get_ssh_project(host: String, port: Option<u16>, paths: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
+        async fn get_ssh_project(host: String, port: Option<u16>, paths: String, user: Option<String>) -> Result<Option<SerialiCodeOrbitSshProject>> {
             SELECT id, host, port, paths, user
             FROM ssh_projects
             WHERE host IS ? AND port IS ? AND paths IS ? AND user IS ?
@@ -928,7 +928,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        async fn insert_ssh_project(host: String, port: Option<u16>, paths: String, user: Option<String>) -> Result<Option<SerializedSshProject>> {
+        async fn insert_ssh_project(host: String, port: Option<u16>, paths: String, user: Option<String>) -> Result<Option<SerialiCodeOrbitSshProject>> {
             INSERT INTO ssh_projects(
                 host,
                 port,
@@ -980,14 +980,14 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn ssh_projects() -> Result<Vec<SerializedSshProject>> {
+        fn ssh_projects() -> Result<Vec<SerialiCodeOrbitSshProject>> {
             SELECT id, host, port, paths, user
             FROM ssh_projects
         }
     }
 
     query! {
-        fn ssh_project(id: u64) -> Result<SerializedSshProject> {
+        fn ssh_project(id: u64) -> Result<SerialiCodeOrbitSshProject> {
             SELECT id, host, port, paths, user
             FROM ssh_projects
             WHERE id = ?
@@ -996,9 +996,9 @@ impl WorkspaceDb {
 
     pub(crate) fn last_window(
         &self,
-    ) -> anyhow::Result<(Option<Uuid>, Option<SerializedWindowBounds>)> {
+    ) -> anyhow::Result<(Option<Uuid>, Option<SerialiCodeOrbitWindowBounds>)> {
         let mut prepared_query =
-            self.select::<(Option<Uuid>, Option<SerializedWindowBounds>)>(sql!(
+            self.select::<(Option<Uuid>, Option<SerialiCodeOrbitWindowBounds>)>(sql!(
                 SELECT
                 display,
                 window_state, window_x, window_y, window_width, window_height
@@ -1041,7 +1041,7 @@ impl WorkspaceDb {
     // exist.
     pub async fn recent_workspaces_on_disk(
         &self,
-    ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation)>> {
+    ) -> Result<Vec<(WorkspaceId, SerialiCodeOrbitWorkspaceLocation)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
         let ssh_projects = self.ssh_projects()?;
@@ -1049,7 +1049,7 @@ impl WorkspaceDb {
         for (id, location, order, ssh_project_id) in self.recent_workspaces()? {
             if let Some(ssh_project_id) = ssh_project_id.map(SshProjectId) {
                 if let Some(ssh_project) = ssh_projects.iter().find(|rp| rp.id == ssh_project_id) {
-                    result.push((id, SerializedWorkspaceLocation::Ssh(ssh_project.clone())));
+                    result.push((id, SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_project.clone())));
                 } else {
                     delete_tasks.push(self.delete_workspace_by_id(id));
                 }
@@ -1059,7 +1059,7 @@ impl WorkspaceDb {
             if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                result.push((id, SerializedWorkspaceLocation::Local(location, order)));
+                result.push((id, SerialiCodeOrbitWorkspaceLocation::Local(location, order)));
             } else {
                 delete_tasks.push(self.delete_workspace_by_id(id));
             }
@@ -1069,7 +1069,7 @@ impl WorkspaceDb {
         Ok(result)
     }
 
-    pub async fn last_workspace(&self) -> Result<Option<SerializedWorkspaceLocation>> {
+    pub async fn last_workspace(&self) -> Result<Option<SerialiCodeOrbitWorkspaceLocation>> {
         Ok(self
             .recent_workspaces_on_disk()
             .await?
@@ -1079,26 +1079,26 @@ impl WorkspaceDb {
     }
 
     // Returns the locations of the workspaces that were still opened when the last
-    // session was closed (i.e. when Zed was quit).
+    // session was closed (i.e. when CodeOrbit was quit).
     // If `last_session_window_order` is provided, the returned locations are ordered
     // according to that.
     pub fn last_session_workspace_locations(
         &self,
         last_session_id: &str,
         last_session_window_stack: Option<Vec<WindowId>>,
-    ) -> Result<Vec<SerializedWorkspaceLocation>> {
+    ) -> Result<Vec<SerialiCodeOrbitWorkspaceLocation>> {
         let mut workspaces = Vec::new();
 
         for (location, order, window_id, ssh_project_id) in
             self.session_workspaces(last_session_id.to_owned())?
         {
             if let Some(ssh_project_id) = ssh_project_id {
-                let location = SerializedWorkspaceLocation::Ssh(self.ssh_project(ssh_project_id)?);
+                let location = SerialiCodeOrbitWorkspaceLocation::Ssh(self.ssh_project(ssh_project_id)?);
                 workspaces.push((location, window_id.map(WindowId::from)));
             } else if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                let location = SerializedWorkspaceLocation::Local(location, order);
+                let location = SerialiCodeOrbitWorkspaceLocation::Local(location, order);
                 workspaces.push((location, window_id.map(WindowId::from)));
             }
         }
@@ -1117,13 +1117,13 @@ impl WorkspaceDb {
             .collect::<Vec<_>>())
     }
 
-    fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerializedPaneGroup> {
+    fn get_center_pane_group(&self, workspace_id: WorkspaceId) -> Result<SerialiCodeOrbitPaneGroup> {
         Ok(self
             .get_pane_group(workspace_id, None)?
             .into_iter()
             .next()
             .unwrap_or_else(|| {
-                SerializedPaneGroup::Pane(SerializedPane {
+                SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane {
                     active: true,
                     children: vec![],
                     pinned_count: 0,
@@ -1135,11 +1135,11 @@ impl WorkspaceDb {
         &self,
         workspace_id: WorkspaceId,
         group_id: Option<GroupId>,
-    ) -> Result<Vec<SerializedPaneGroup>> {
+    ) -> Result<Vec<SerialiCodeOrbitPaneGroup>> {
         type GroupKey = (Option<GroupId>, WorkspaceId);
         type GroupOrPane = (
             Option<GroupId>,
-            Option<SerializedAxis>,
+            Option<SerialiCodeOrbitAxis>,
             Option<PaneId>,
             Option<bool>,
             Option<usize>,
@@ -1182,13 +1182,13 @@ impl WorkspaceDb {
                     .map(|flexes: String| serde_json::from_str::<Vec<f32>>(&flexes))
                     .transpose()?;
 
-                Ok(SerializedPaneGroup::Group {
+                Ok(SerialiCodeOrbitPaneGroup::Group {
                     axis,
                     children: self.get_pane_group(workspace_id, Some(group_id))?,
                     flexes,
                 })
             } else if let Some((pane_id, active, pinned_count)) = maybe_pane {
-                Ok(SerializedPaneGroup::Pane(SerializedPane::new(
+                Ok(SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                     self.get_items(pane_id)?,
                     active,
                     pinned_count,
@@ -1199,8 +1199,8 @@ impl WorkspaceDb {
         })
         // Filter out panes and pane groups which don't have any children or items
         .filter(|pane_group| match pane_group {
-            Ok(SerializedPaneGroup::Group { children, .. }) => !children.is_empty(),
-            Ok(SerializedPaneGroup::Pane(pane)) => !pane.children.is_empty(),
+            Ok(SerialiCodeOrbitPaneGroup::Group { children, .. }) => !children.is_empty(),
+            Ok(SerialiCodeOrbitPaneGroup::Pane(pane)) => !pane.children.is_empty(),
             _ => true,
         })
         .collect::<Result<_>>()
@@ -1209,14 +1209,14 @@ impl WorkspaceDb {
     fn save_pane_group(
         conn: &Connection,
         workspace_id: WorkspaceId,
-        pane_group: &SerializedPaneGroup,
+        pane_group: &SerialiCodeOrbitPaneGroup,
         parent: Option<(GroupId, usize)>,
     ) -> Result<()> {
         if parent.is_none() {
             log::debug!("Saving a pane group for workspace {workspace_id:?}");
         }
         match pane_group {
-            SerializedPaneGroup::Group {
+            SerialiCodeOrbitPaneGroup::Group {
                 axis,
                 children,
                 flexes,
@@ -1252,7 +1252,7 @@ impl WorkspaceDb {
 
                 Ok(())
             }
-            SerializedPaneGroup::Pane(pane) => {
+            SerialiCodeOrbitPaneGroup::Pane(pane) => {
                 Self::save_pane(conn, workspace_id, pane, parent)?;
                 Ok(())
             }
@@ -1262,7 +1262,7 @@ impl WorkspaceDb {
     fn save_pane(
         conn: &Connection,
         workspace_id: WorkspaceId,
-        pane: &SerializedPane,
+        pane: &SerialiCodeOrbitPane,
         parent: Option<(GroupId, usize)>,
     ) -> Result<PaneId> {
         let pane_id = conn.select_row_bound::<_, i64>(sql!(
@@ -1283,7 +1283,7 @@ impl WorkspaceDb {
         Ok(pane_id)
     }
 
-    fn get_items(&self, pane_id: PaneId) -> Result<Vec<SerializedItem>> {
+    fn get_items(&self, pane_id: PaneId) -> Result<Vec<Serialicodeorbit-editem>> {
         self.select_bound(sql!(
             SELECT kind, item_id, active, preview FROM items
             WHERE pane_id = ?
@@ -1295,7 +1295,7 @@ impl WorkspaceDb {
         conn: &Connection,
         workspace_id: WorkspaceId,
         pane_id: PaneId,
-        items: &[SerializedItem],
+        items: &[Serialicodeorbit-editem],
     ) -> Result<()> {
         let mut insert = conn.exec_bound(sql!(
             INSERT INTO items(workspace_id, pane_id, position, kind, item_id, active, preview) VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -1316,7 +1316,7 @@ impl WorkspaceDb {
     }
 
     query! {
-        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerializedWindowBounds, display: Uuid) -> Result<()> {
+        pub(crate) async fn set_window_open_status(workspace_id: WorkspaceId, bounds: SerialiCodeOrbitWindowBounds, display: Uuid) -> Result<()> {
             UPDATE workspaces
             SET window_state = ?2,
                 window_x = ?3,
@@ -1460,8 +1460,8 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::persistence::model::SerializedWorkspace;
-    use crate::persistence::model::{SerializedItem, SerializedPane, SerializedPaneGroup};
+    use crate::persistence::model::SerialiCodeOrbitWorkspace;
+    use crate::persistence::model::{Serialicodeorbit-editem, SerialiCodeOrbitPane, SerialiCodeOrbitPaneGroup};
     use gpui;
 
     #[gpui::test]
@@ -1513,9 +1513,9 @@ mod tests {
             hit_condition: Some(">= 3".into()),
         };
 
-        let workspace = SerializedWorkspace {
+        let workspace = SerialiCodeOrbitWorkspace {
             id,
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1666,9 +1666,9 @@ mod tests {
             hit_condition: None,
         };
 
-        let workspace = SerializedWorkspace {
+        let workspace = SerialiCodeOrbitWorkspace {
             id,
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1712,9 +1712,9 @@ mod tests {
         assert_eq!(loaded_breakpoints[0].state, breakpoint_to_remove.state);
         assert_eq!(loaded_breakpoints[0].path, Arc::from(singular_path));
 
-        let workspace_without_breakpoint = SerializedWorkspace {
+        let workspace_without_breakpoint = SerialiCodeOrbitWorkspace {
             id,
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1806,9 +1806,9 @@ mod tests {
         .await
         .unwrap();
 
-        let mut workspace_1 = SerializedWorkspace {
+        let mut workspace_1 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(1),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1819,9 +1819,9 @@ mod tests {
             window_id: None,
         };
 
-        let workspace_2 = SerializedWorkspace {
+        let workspace_2 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(2),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1850,7 +1850,7 @@ mod tests {
         })
         .await;
 
-        workspace_1.location = SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp3"]);
+        workspace_1.location = SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp", "/tmp3"]);
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_1).await;
         db.save_workspace(workspace_2).await;
@@ -1870,9 +1870,9 @@ mod tests {
         assert_eq!(test_text_1, "test-text-1");
     }
 
-    fn group(axis: Axis, children: Vec<SerializedPaneGroup>) -> SerializedPaneGroup {
-        SerializedPaneGroup::Group {
-            axis: SerializedAxis(axis),
+    fn group(axis: Axis, children: Vec<SerialiCodeOrbitPaneGroup>) -> SerialiCodeOrbitPaneGroup {
+        SerialiCodeOrbitPaneGroup::Group {
+            axis: SerialiCodeOrbitAxis(axis),
             flexes: None,
             children,
         }
@@ -1895,28 +1895,28 @@ mod tests {
                 group(
                     Axis::Vertical,
                     vec![
-                        SerializedPaneGroup::Pane(SerializedPane::new(
+                        SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 5, false, false),
-                                SerializedItem::new("Terminal", 6, true, false),
+                                Serialicodeorbit-editem::new("Terminal", 5, false, false),
+                                Serialicodeorbit-editem::new("Terminal", 6, true, false),
                             ],
                             false,
                             0,
                         )),
-                        SerializedPaneGroup::Pane(SerializedPane::new(
+                        SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 7, true, false),
-                                SerializedItem::new("Terminal", 8, false, false),
+                                Serialicodeorbit-editem::new("Terminal", 7, true, false),
+                                Serialicodeorbit-editem::new("Terminal", 8, false, false),
                             ],
                             false,
                             0,
                         )),
                     ],
                 ),
-                SerializedPaneGroup::Pane(SerializedPane::new(
+                SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 9, false, false),
-                        SerializedItem::new("Terminal", 10, true, false),
+                        Serialicodeorbit-editem::new("Terminal", 9, false, false),
+                        Serialicodeorbit-editem::new("Terminal", 10, true, false),
                     ],
                     false,
                     0,
@@ -1924,9 +1924,9 @@ mod tests {
             ],
         );
 
-        let workspace = SerializedWorkspace {
+        let workspace = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(5),
-            location: SerializedWorkspaceLocation::Local(
+            location: SerialiCodeOrbitWorkspaceLocation::Local(
                 LocalPaths::new(["/tmp", "/tmp2"]),
                 LocalPathsOrder::new([1, 0]),
             ),
@@ -1959,9 +1959,9 @@ mod tests {
 
         let db = WorkspaceDb::open_test_db("test_basic_functionality").await;
 
-        let workspace_1 = SerializedWorkspace {
+        let workspace_1 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(1),
-            location: SerializedWorkspaceLocation::Local(
+            location: SerialiCodeOrbitWorkspaceLocation::Local(
                 LocalPaths::new(["/tmp", "/tmp2"]),
                 LocalPathsOrder::new([0, 1]),
             ),
@@ -1975,9 +1975,9 @@ mod tests {
             window_id: Some(1),
         };
 
-        let mut workspace_2 = SerializedWorkspace {
+        let mut workspace_2 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(2),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2006,7 +2006,7 @@ mod tests {
         assert_eq!(db.workspace_for_roots(&["/tmp3", "/tmp2", "/tmp4"]), None);
 
         // Test 'mutate' case of updating a pre-existing id
-        workspace_2.location = SerializedWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]);
+        workspace_2.location = SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp", "/tmp2"]);
 
         db.save_workspace(workspace_2.clone()).await;
         assert_eq!(
@@ -2015,9 +2015,9 @@ mod tests {
         );
 
         // Test other mechanism for mutating
-        let mut workspace_3 = SerializedWorkspace {
+        let mut workspace_3 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(3),
-            location: SerializedWorkspaceLocation::Local(
+            location: SerialiCodeOrbitWorkspaceLocation::Local(
                 LocalPaths::new(["/tmp", "/tmp2"]),
                 LocalPathsOrder::new([1, 0]),
             ),
@@ -2039,7 +2039,7 @@ mod tests {
 
         // Make sure that updating paths differently also works
         workspace_3.location =
-            SerializedWorkspaceLocation::from_local_paths(["/tmp3", "/tmp4", "/tmp2"]);
+            SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp3", "/tmp4", "/tmp2"]);
         db.save_workspace(workspace_3.clone()).await;
         assert_eq!(db.workspace_for_roots(&["/tmp2", "tmp"]), None);
         assert_eq!(
@@ -2055,9 +2055,9 @@ mod tests {
 
         let db = WorkspaceDb::open_test_db("test_serializing_workspaces_session_id").await;
 
-        let workspace_1 = SerializedWorkspace {
+        let workspace_1 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(1),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp1"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp1"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2068,9 +2068,9 @@ mod tests {
             window_id: Some(10),
         };
 
-        let workspace_2 = SerializedWorkspace {
+        let workspace_2 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(2),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp2"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp2"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2081,9 +2081,9 @@ mod tests {
             window_id: Some(20),
         };
 
-        let workspace_3 = SerializedWorkspace {
+        let workspace_3 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(3),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp3"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp3"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2094,9 +2094,9 @@ mod tests {
             window_id: Some(30),
         };
 
-        let workspace_4 = SerializedWorkspace {
+        let workspace_4 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(4),
-            location: SerializedWorkspaceLocation::from_local_paths(["/tmp4"]),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(["/tmp4"]),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2112,9 +2112,9 @@ mod tests {
             .await
             .unwrap();
 
-        let workspace_5 = SerializedWorkspace {
+        let workspace_5 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(5),
-            location: SerializedWorkspaceLocation::Ssh(ssh_project.clone()),
+            location: SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_project.clone()),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2125,9 +2125,9 @@ mod tests {
             window_id: Some(50),
         };
 
-        let workspace_6 = SerializedWorkspace {
+        let workspace_6 = SerialiCodeOrbitWorkspace {
             id: WorkspaceId(6),
-            location: SerializedWorkspaceLocation::Local(
+            location: SerialiCodeOrbitWorkspaceLocation::Local(
                 LocalPaths::new(["/tmp6a", "/tmp6b", "/tmp6c"]),
                 LocalPathsOrder::new([2, 1, 0]),
             ),
@@ -2182,11 +2182,11 @@ mod tests {
 
     fn default_workspace<P: AsRef<Path>>(
         workspace_id: &[P],
-        center_group: &SerializedPaneGroup,
-    ) -> SerializedWorkspace {
-        SerializedWorkspace {
+        center_group: &SerialiCodeOrbitPaneGroup,
+    ) -> SerialiCodeOrbitWorkspace {
+        SerialiCodeOrbitWorkspace {
             id: WorkspaceId(4),
-            location: SerializedWorkspaceLocation::from_local_paths(workspace_id),
+            location: SerialiCodeOrbitWorkspaceLocation::from_local_paths(workspace_id),
             center_group: center_group.clone(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2227,9 +2227,9 @@ mod tests {
             ),
         ]
         .into_iter()
-        .map(|(id, locations, order, window_id)| SerializedWorkspace {
+        .map(|(id, locations, order, window_id)| SerialiCodeOrbitWorkspace {
             id: WorkspaceId(id),
-            location: SerializedWorkspaceLocation::Local(
+            location: SerialiCodeOrbitWorkspaceLocation::Local(
                 LocalPaths::new(locations),
                 LocalPathsOrder::new(order),
             ),
@@ -2263,30 +2263,30 @@ mod tests {
         assert_eq!(have.len(), 6);
         assert_eq!(
             have[0],
-            SerializedWorkspaceLocation::from_local_paths(&[dir4.path()])
+            SerialiCodeOrbitWorkspaceLocation::from_local_paths(&[dir4.path()])
         );
         assert_eq!(
             have[1],
-            SerializedWorkspaceLocation::from_local_paths([dir3.path()])
+            SerialiCodeOrbitWorkspaceLocation::from_local_paths([dir3.path()])
         );
         assert_eq!(
             have[2],
-            SerializedWorkspaceLocation::from_local_paths([dir2.path()])
+            SerialiCodeOrbitWorkspaceLocation::from_local_paths([dir2.path()])
         );
         assert_eq!(
             have[3],
-            SerializedWorkspaceLocation::from_local_paths([dir1.path()])
+            SerialiCodeOrbitWorkspaceLocation::from_local_paths([dir1.path()])
         );
         assert_eq!(
             have[4],
-            SerializedWorkspaceLocation::Local(
+            SerialiCodeOrbitWorkspaceLocation::Local(
                 LocalPaths::new([dir1.path(), dir2.path(), dir3.path()]),
                 LocalPathsOrder::new([0, 1, 2]),
             ),
         );
         assert_eq!(
             have[5],
-            SerializedWorkspaceLocation::Local(
+            SerialiCodeOrbitWorkspaceLocation::Local(
                 LocalPaths::new([dir2.path(), dir3.path(), dir4.path()]),
                 LocalPathsOrder::new([2, 1, 0]),
             ),
@@ -2323,9 +2323,9 @@ mod tests {
             (4, ssh_projects[3].clone(), 2),
         ]
         .into_iter()
-        .map(|(id, ssh_project, window_id)| SerializedWorkspace {
+        .map(|(id, ssh_project, window_id)| SerialiCodeOrbitWorkspace {
             id: WorkspaceId(id),
-            location: SerializedWorkspaceLocation::Ssh(ssh_project),
+            location: SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_project),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -2354,19 +2354,19 @@ mod tests {
         assert_eq!(have.len(), 4);
         assert_eq!(
             have[0],
-            SerializedWorkspaceLocation::Ssh(ssh_projects[3].clone())
+            SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_projects[3].clone())
         );
         assert_eq!(
             have[1],
-            SerializedWorkspaceLocation::Ssh(ssh_projects[2].clone())
+            SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_projects[2].clone())
         );
         assert_eq!(
             have[2],
-            SerializedWorkspaceLocation::Ssh(ssh_projects[1].clone())
+            SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_projects[1].clone())
         );
         assert_eq!(
             have[3],
-            SerializedWorkspaceLocation::Ssh(ssh_projects[0].clone())
+            SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_projects[0].clone())
         );
     }
 
@@ -2503,28 +2503,28 @@ mod tests {
                 group(
                     Axis::Vertical,
                     vec![
-                        SerializedPaneGroup::Pane(SerializedPane::new(
+                        SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1, false, false),
-                                SerializedItem::new("Terminal", 2, true, false),
+                                Serialicodeorbit-editem::new("Terminal", 1, false, false),
+                                Serialicodeorbit-editem::new("Terminal", 2, true, false),
                             ],
                             false,
                             0,
                         )),
-                        SerializedPaneGroup::Pane(SerializedPane::new(
+                        SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4, false, false),
-                                SerializedItem::new("Terminal", 3, true, false),
+                                Serialicodeorbit-editem::new("Terminal", 4, false, false),
+                                Serialicodeorbit-editem::new("Terminal", 3, true, false),
                             ],
                             true,
                             0,
                         )),
                     ],
                 ),
-                SerializedPaneGroup::Pane(SerializedPane::new(
+                SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5, true, false),
-                        SerializedItem::new("Terminal", 6, false, false),
+                        Serialicodeorbit-editem::new("Terminal", 5, true, false),
+                        Serialicodeorbit-editem::new("Terminal", 6, false, false),
                     ],
                     false,
                     0,
@@ -2553,28 +2553,28 @@ mod tests {
                 group(
                     Axis::Vertical,
                     vec![
-                        SerializedPaneGroup::Pane(SerializedPane::new(
+                        SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 1, false, false),
-                                SerializedItem::new("Terminal", 2, true, false),
+                                Serialicodeorbit-editem::new("Terminal", 1, false, false),
+                                Serialicodeorbit-editem::new("Terminal", 2, true, false),
                             ],
                             false,
                             0,
                         )),
-                        SerializedPaneGroup::Pane(SerializedPane::new(
+                        SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                             vec![
-                                SerializedItem::new("Terminal", 4, false, false),
-                                SerializedItem::new("Terminal", 3, true, false),
+                                Serialicodeorbit-editem::new("Terminal", 4, false, false),
+                                Serialicodeorbit-editem::new("Terminal", 3, true, false),
                             ],
                             true,
                             0,
                         )),
                     ],
                 ),
-                SerializedPaneGroup::Pane(SerializedPane::new(
+                SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 5, false, false),
-                        SerializedItem::new("Terminal", 6, true, false),
+                        Serialicodeorbit-editem::new("Terminal", 5, false, false),
+                        Serialicodeorbit-editem::new("Terminal", 6, true, false),
                     ],
                     false,
                     0,
@@ -2591,18 +2591,18 @@ mod tests {
         workspace.center_group = group(
             Axis::Vertical,
             vec![
-                SerializedPaneGroup::Pane(SerializedPane::new(
+                SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 1, false, false),
-                        SerializedItem::new("Terminal", 2, true, false),
+                        Serialicodeorbit-editem::new("Terminal", 1, false, false),
+                        Serialicodeorbit-editem::new("Terminal", 2, true, false),
                     ],
                     false,
                     0,
                 )),
-                SerializedPaneGroup::Pane(SerializedPane::new(
+                SerialiCodeOrbitPaneGroup::Pane(SerialiCodeOrbitPane::new(
                     vec![
-                        SerializedItem::new("Terminal", 4, true, false),
-                        SerializedItem::new("Terminal", 3, false, false),
+                        Serialicodeorbit-editem::new("Terminal", 4, true, false),
+                        Serialicodeorbit-editem::new("Terminal", 3, false, false),
                     ],
                     true,
                     0,

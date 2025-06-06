@@ -1,4 +1,4 @@
-use crate::debugger::breakpoint_store::BreakpointSessionState;
+﻿use crate::debugger::breakpoint_store::BreakpointSessionState;
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -254,9 +254,9 @@ impl RunningMode {
                     breakpoints
                         .into_iter()
                         .zip(raw_breakpoints)
-                        .filter_map(|(dap_bp, zed_bp)| {
+                        .filter_map(|(dap_bp, codeorbit_bp)| {
                             Some((
-                                zed_bp,
+                                codeorbit_bp,
                                 BreakpointSessionState {
                                     id: dap_bp.id?,
                                     verified: dap_bp.verified,
@@ -339,9 +339,9 @@ impl RunningMode {
                     let breakpoints = cx.background_spawn(send_request).await?;
 
                     let breakpoints = breakpoints.into_iter().zip(raw_breakpoints).filter_map(
-                        |(dap_bp, zed_bp)| {
+                        |(dap_bp, codeorbit_bp)| {
                             Some((
-                                zed_bp,
+                                codeorbit_bp,
                                 BreakpointSessionState {
                                     id: dap_bp.id?,
                                     verified: dap_bp.verified,
@@ -373,7 +373,7 @@ impl RunningMode {
     fn initialize_sequence(
         &self,
         capabilities: &Capabilities,
-        initialized_rx: oneshot::Receiver<()>,
+        initialiCodeOrbit_rx: oneshot::Receiver<()>,
         dap_store: WeakEntity<DapStore>,
         cx: &mut Context<Session>,
     ) -> Task<Result<()>> {
@@ -410,7 +410,7 @@ impl RunningMode {
             async move |_, cx| {
                 let breakpoint_store =
                     dap_store.read_with(cx, |dap_store, _| dap_store.breakpoint_store().clone())?;
-                initialized_rx.await?;
+                initialiCodeOrbit_rx.await?;
                 let errors_by_path = cx
                     .update(|cx| this.send_source_breakpoints(false, &breakpoint_store, cx))?
                     .await;
@@ -782,14 +782,14 @@ impl Session {
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let (message_tx, mut message_rx) = futures::channel::mpsc::unbounded();
-        let (initialized_tx, initialized_rx) = futures::channel::oneshot::channel();
+        let (initialiCodeOrbit_tx, initialiCodeOrbit_rx) = futures::channel::oneshot::channel();
 
         let background_tasks = vec![cx.spawn(async move |this: WeakEntity<Session>, cx| {
-            let mut initialized_tx = Some(initialized_tx);
+            let mut initialiCodeOrbit_tx = Some(initialiCodeOrbit_tx);
             while let Some(message) = message_rx.next().await {
                 if let Message::Event(event) = message {
-                    if let Events::Initialized(_) = *event {
-                        if let Some(tx) = initialized_tx.take() {
+                    if let Events::InitialiCodeOrbit(_) = *event {
+                        if let Some(tx) = initialiCodeOrbit_tx.take() {
                             tx.send(()).ok();
                         }
                     } else {
@@ -837,7 +837,7 @@ impl Session {
                 .await?;
 
             this.update(cx, |session, cx| {
-                session.initialize_sequence(initialized_rx, dap_store.clone(), cx)
+                session.initialize_sequence(initialiCodeOrbit_rx, dap_store.clone(), cx)
             })?
             .await
         })
@@ -1237,10 +1237,10 @@ impl Session {
 
     pub(crate) fn handle_dap_event(&mut self, event: Box<Events>, cx: &mut Context<Self>) {
         match *event {
-            Events::Initialized(_) => {
+            Events::InitialiCodeOrbit(_) => {
                 debug_assert!(
                     false,
-                    "Initialized event should have been handled in LocalMode"
+                    "InitialiCodeOrbit event should have been handled in LocalMode"
                 );
             }
             Events::Stopped(event) => self.handle_stopped_event(event, cx),

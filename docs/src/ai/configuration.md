@@ -1,38 +1,38 @@
-# Configuration
+﻿# Configuration
 
 There are various aspects about the Agent Panel that you can customize.
-All of them can be seen by either visiting [the Configuring Zed page](../configuring-zed.md#agent) or by running the `zed: open default settings` action and searching for `"agent"`.
+All of them can be seen by either visiting [the Configuring CodeOrbit page](../configuring-CodeOrbit.md#agent) or by running the `CodeOrbit: open default settings` action and searching for `"agent"`.
 Alternatively, you can also visit the panel's Settings view by running the `agent: open configuration` action or going to the top-right menu and hitting "Settings".
 
 ## LLM Providers
 
-Zed supports multiple large language model providers.
+CodeOrbit supports multiple large language model providers.
 Here's an overview of the supported providers and tool call support:
 
 | Provider                                        | Tool Use Supported                                                                                                                                                          |
 | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [Amazon Bedrock](#amazon-bedrock)               | Depends on the model                                                                                                                                                        |
-| [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
-| [DeepSeek](#deepseek)                           | ✅                                                                                                                                                                          |
-| [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
-| [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
-| [LM Studio](#lmstudio)                          | ✅                                                                                                                                                                          |
-| [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
-| [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
-| [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
-| [OpenRouter](#openrouter)                       | ✅                                                                                                                                                                          |
-| [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
+| [Anthropic](#anthropic)                         | âœ…                                                                                                                                                                          |
+| [DeepSeek](#deepseek)                           | âœ…                                                                                                                                                                          |
+| [GitHub Copilot Chat](#github-copilot-chat)     | For Some Models ([link](https://github.com/CodeOrbit-industries/CodeOrbit/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
+| [Google AI](#google-ai)                         | âœ…                                                                                                                                                                          |
+| [LM Studio](#lmstudio)                          | âœ…                                                                                                                                                                          |
+| [Mistral](#mistral)                             | âœ…                                                                                                                                                                          |
+| [Ollama](#ollama)                               | âœ…                                                                                                                                                                          |
+| [OpenAI](#openai)                               | âœ…                                                                                                                                                                          |
+| [OpenRouter](#openrouter)                       | âœ…                                                                                                                                                                          |
+| [OpenAI API Compatible](#openai-api-compatible) | ðŸš«                                                                                                                                                                          |
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-While Zed offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys.
+While CodeOrbit offers hosted versions of models through [our various plans](/ai/plans-and-usage), we're always happy to support users wanting to supply their own API keys.
 Below, you can learn how to do that for each provider.
 
-> Using your own API keys is _free_—you do not need to subscribe to a Zed plan to use our AI features with your own keys.
+> Using your own API keys is _free_â€”you do not need to subscribe to a CodeOrbit plan to use our AI features with your own keys.
 
 ### Amazon Bedrock {#amazon-bedrock}
 
-> ✅ Supports tool use with models that support streaming tool use.
+> âœ… Supports tool use with models that support streaming tool use.
 > More details can be found in the [Amazon Bedrock's Tool Use documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
 
 To use Amazon Bedrock's models, an AWS authentication is required.
@@ -66,7 +66,7 @@ With that done, choose one of the two authentication methods:
 #### Authentication via Named Profile (Recommended)
 
 1. Ensure you have the AWS CLI installed and configured with a named profile
-2. Open your `settings.json` (`zed: open settings`) and include the `bedrock` key under `language_models` with the following settings:
+2. Open your `settings.json` (`CodeOrbit: open settings`) and include the `bedrock` key under `language_models` with the following settings:
    ```json
    {
      "language_models": {
@@ -91,7 +91,7 @@ To do this:
 
 #### Cross-Region Inference
 
-The Zed implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for all the models and region combinations that support it.
+The CodeOrbit implementation of Amazon Bedrock uses [Cross-Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html) for all the models and region combinations that support it.
 With Cross-Region inference, you can distribute traffic across multiple AWS Regions, enabling higher throughput.
 
 For example, if you use `Claude Sonnet 3.7 Thinking` from `us-east-1`, it may be processed across the US regions, namely: `us-east-1`, `us-east-2`, or `us-west-2`.
@@ -101,13 +101,13 @@ For example, a request made within the US is kept within the AWS Regions in the 
 Although the data remains stored only in the source Region, your input prompts and output results might move outside of your source Region during cross-Region inference.
 All data will be transmitted encrypted across Amazon's secure network.
 
-We will support Cross-Region inference for each of the models on a best-effort basis, please refer to the [Cross-Region Inference method Code](https://github.com/zed-industries/zed/blob/main/crates/bedrock/src/models.rs#L297).
+We will support Cross-Region inference for each of the models on a best-effort basis, please refer to the [Cross-Region Inference method Code](https://github.com/CodeOrbit-industries/CodeOrbit/blob/main/crates/bedrock/src/models.rs#L297).
 
 For the most up-to-date supported regions and models, refer to the [Supported Models and Regions for Cross Region inference](https://docs.aws.amazon.com/bedrock/latest/userguide/inference-profiles-support.html).
 
 ### Anthropic {#anthropic}
 
-> ✅ Supports tool use
+> âœ… Supports tool use
 
 You can use Anthropic models by choosing it via the model dropdown in the Agent Panel.
 
@@ -118,11 +118,11 @@ You can use Anthropic models by choosing it via the model dropdown in the Agent 
 
 Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
 
-Zed will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
+CodeOrbit will also use the `ANTHROPIC_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#anthropic-custom-models}
 
-You can add custom models to the Anthropic provider by adding the following to your Zed `settings.json`:
+You can add custom models to the Anthropic provider by adding the following to your CodeOrbit `settings.json`:
 
 ```json
 {
@@ -165,7 +165,7 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
 
 ### DeepSeek {#deepseek}
 
-> ✅ Supports tool use
+> âœ… Supports tool use
 
 1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
 2. Open the settings view (`agent: open configuration`) and go to the DeepSeek section
@@ -173,11 +173,11 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
 
 The DeepSeek API key will be saved in your keychain.
 
-Zed will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
+CodeOrbit will also use the `DEEPSEEK_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#deepseek-custom-models}
 
-The Zed Assistant comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner). If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your Zed `settings.json`:
+The CodeOrbit Assistant comes pre-configured to use the latest version for common models (DeepSeek Chat, DeepSeek Reasoner). If you wish to use alternate models or customize the API endpoint, you can do so by adding the following to your CodeOrbit `settings.json`:
 
 ```json
 {
@@ -206,16 +206,16 @@ Custom models will be listed in the model dropdown in the Agent Panel. You can a
 
 ### GitHub Copilot Chat {#github-copilot-chat}
 
-> ✅ Supports tool use in some cases.
-> Visit [the Copilot Chat code](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset.
+> âœ… Supports tool use in some cases.
+> Visit [the Copilot Chat code](https://github.com/CodeOrbit-industries/CodeOrbit/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset.
 
-You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use GitHub Copilot chat with the CodeOrbit assistant by choosing it via the model dropdown in the Agent Panel.
 
 ### Google AI {#google-ai}
 
-> ✅ Supports tool use
+> âœ… Supports tool use
 
-You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use Gemini 1.5 Pro/Flash with the CodeOrbit assistant by choosing it via the model dropdown in the Agent Panel.
 
 1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the settings view (`agent: open configuration`) and go to the Google AI section
@@ -223,13 +223,13 @@ You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the m
 
 The Google AI API key will be saved in your keychain.
 
-Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
+CodeOrbit will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#google-ai-custom-models}
 
-By default, Zed will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models). You can configure a model to use [thinking mode](https://ai.google.dev/gemini-api/docs/thinking) (if it supports it) by adding a `mode` configuration to your model. This is useful for controlling reasoning token usage and response speed. If not specified, Gemini will automatically choose the thinking budget.
+By default, CodeOrbit will use `stable` versions of models, but you can use specific versions of models, including [experimental models](https://ai.google.dev/gemini-api/docs/models/experimental-models). You can configure a model to use [thinking mode](https://ai.google.dev/gemini-api/docs/thinking) (if it supports it) by adding a `mode` configuration to your model. This is useful for controlling reasoning token usage and response speed. If not specified, Gemini will automatically choose the thinking budget.
 
-Here is an example of a custom Google AI model you could add to your Zed `settings.json`:
+Here is an example of a custom Google AI model you could add to your CodeOrbit `settings.json`:
 
 ```json
 {
@@ -255,10 +255,10 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### LM Studio {#lmstudio}
 
-> ✅ Supports tool use
+> âœ… Supports tool use
 
 1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
-2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
+2. In the app press âŒ˜/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
 
    You can also get models via the LM Studio CLI:
 
@@ -276,7 +276,7 @@ Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#
 
 ### Mistral {#mistral}
 
-> ✅ Supports tool use
+> âœ… Supports tool use
 
 1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
 2. Open the configuration view (`assistant: show configuration`) and navigate to the Mistral section
@@ -284,11 +284,11 @@ Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#
 
 The Mistral API key will be saved in your keychain.
 
-Zed will also use the `MISTRAL_API_KEY` environment variable if it's defined.
+CodeOrbit will also use the `MISTRAL_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#mistral-custom-models}
 
-The Zed Assistant comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba). All the default models support tool use. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your Zed `settings.json`:
+The CodeOrbit Assistant comes pre-configured with several Mistral models (codestral-latest, mistral-large-latest, mistral-medium-latest, mistral-small-latest, open-mistral-nemo, and open-codestral-mamba). All the default models support tool use. If you wish to use alternate models or customize their parameters, you can do so by adding the following to your CodeOrbit `settings.json`:
 
 ```json
 {
@@ -314,7 +314,7 @@ Custom models will be listed in the model dropdown in the assistant panel.
 
 ### Ollama {#ollama}
 
-> ✅ Supports tool use
+> âœ… Supports tool use
 
 Download and install Ollama from [ollama.com/download](https://ollama.com/download) (Linux or macOS) and ensure it's running with `ollama --version`.
 
@@ -334,9 +334,9 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 #### Ollama Context Length {#ollama-context}
 
-Zed has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models.
-Zed API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box.
-See [get_max_tokens in ollama.rs](https://github.com/zed-industries/zed/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
+CodeOrbit has pre-configured maximum context lengths (`max_tokens`) to match the capabilities of common models.
+CodeOrbit API requests to Ollama include this as `num_ctx` parameter, but the default values do not exceed `16384` so users with ~16GB of ram are able to use most models out of the box.
+See [get_max_tokens in ollama.rs](https://github.com/CodeOrbit-industries/CodeOrbit/blob/main/crates/ollama/src/ollama.rs) for a complete set of defaults.
 
 > **Note**: Token counts displayed in the Agent Panel are only estimates and will differ from the model's native tokenizer.
 
@@ -374,15 +374,15 @@ The `supports_tools` option controls whether or not the model will use additiona
 If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
 If the model is not tagged with `tools` in the Ollama catalog, this option can still be supplied with value `true`; however be aware that only the `Minimal` built in profile will work.
 
-The `supports_thinking` option controls whether or not the model will perform an explicit “thinking” (reasoning) pass before producing its final answer.  
-If the model is tagged with `thinking` in the Ollama catalog, set this option and you can use it in zed.
+The `supports_thinking` option controls whether or not the model will perform an explicit â€œthinkingâ€ (reasoning) pass before producing its final answer.  
+If the model is tagged with `thinking` in the Ollama catalog, set this option and you can use it in CodeOrbit.
 
-The `supports_images` option enables the model’s vision capabilities, allowing it to process images included in the conversation context.  
-If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in zed.
+The `supports_images` option enables the modelâ€™s vision capabilities, allowing it to process images included in the conversation context.  
+If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in CodeOrbit.
 
 ### OpenAI {#openai}
 
-> ✅ Supports tool use
+> âœ… Supports tool use
 
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits
@@ -391,12 +391,12 @@ If the model is tagged with `vision` in the Ollama catalog, set this option and 
 
 The OpenAI API key will be saved in your keychain.
 
-Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
+CodeOrbit will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini).
-To use alternate models, perhaps a preview release or a dated model release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
+The CodeOrbit Assistant comes pre-configured to use the latest version for common models (GPT-3.5 Turbo, GPT-4, GPT-4 Turbo, GPT-4o, GPT-4o mini).
+To use alternate models, perhaps a preview release or a dated model release, or if you wish to control the request parameters, you can do so by adding the following to your CodeOrbit `settings.json`:
 
 ```json
 {
@@ -427,7 +427,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenRouter {#openrouter}
 
-> ✅ Supports tool use
+> âœ… Supports tool use
 
 OpenRouter provides access to multiple AI models through a single API. It supports tool use for compatible models.
 
@@ -438,15 +438,15 @@ OpenRouter provides access to multiple AI models through a single API. It suppor
 
 The OpenRouter API key will be saved in your keychain.
 
-Zed will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
+CodeOrbit will also use the `OPENROUTER_API_KEY` environment variable if it's defined.
 
 ### OpenAI API Compatible {#openai-api-compatible}
 
-Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
+CodeOrbit supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
 
 #### X.ai Grok
 
-Example configuration for using X.ai Grok with Zed:
+Example configuration for using X.ai Grok with CodeOrbit:
 
 ```json
   "language_models": {
@@ -485,7 +485,7 @@ Where `some-provider` can be any of the following values: `anthropic`, `google`,
 
 ### Default Model {#default-model}
 
-Zed's hosted LLM service sets `claude-sonnet-4` as the default model.
+CodeOrbit's hosted LLM service sets `claude-sonnet-4` as the default model.
 However, you can change it either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
 
 ```json
@@ -493,7 +493,7 @@ However, you can change it either via the model dropdown in the Agent Panel's bo
   "agent": {
     "version": "2",
     "default_model": {
-      "provider": "zed.dev",
+      "provider": "CodeOrbit.dev",
       "model": "gpt-4o"
     }
   }
@@ -517,7 +517,7 @@ Example configuration:
   "agent": {
     "version": "2",
     "default_model": {
-      "provider": "zed.dev",
+      "provider": "CodeOrbit.dev",
       "model": "claude-sonnet-4"
     },
     "inline_assistant_model": {
@@ -549,12 +549,12 @@ One with Claude 3.7 Sonnet, and one with GPT-4o.
 {
   "agent": {
     "default_model": {
-      "provider": "zed.dev",
+      "provider": "CodeOrbit.dev",
       "model": "claude-sonnet-4"
     },
     "inline_alternatives": [
       {
-        "provider": "zed.dev",
+        "provider": "CodeOrbit.dev",
         "model": "gpt-4o"
       }
     ],

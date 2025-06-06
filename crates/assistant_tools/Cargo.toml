@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "assistant_tools"
 version = "0.1.0"
 edition.workspace = true
@@ -62,7 +62,7 @@ web_search.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
-zed_llm_client.workspace = true
+codeorbit_llm_client.workspace = true
 
 [dev-dependencies]
 lsp = { workspace = true, features = ["test-support"] }

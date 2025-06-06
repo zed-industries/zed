@@ -1,4 +1,4 @@
-use crate::askpass_modal::AskPassModal;
+﻿use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
@@ -69,7 +69,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::DetachAndPromptErr,
 };
-use zed_llm_client::CompletionIntent;
+use codeorbit_llm_client::CompletionIntent;
 
 actions!(
     git_panel,
@@ -176,7 +176,7 @@ pub enum Event {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SerializedGitPanel {
+struct SerialiCodeOrbitGitPanel {
     width: Option<Pixels>,
 }
 
@@ -543,7 +543,7 @@ impl GitPanel {
         // Once this is fixed we can extend the GitPanelSettings with a `scrollbar.axis`
         // so we can show each axis based on the settings.
         //
-        // We should fix this. PR: https://github.com/zed-industries/zed/pull/19495
+        // We should fix this. PR: https://github.com/CodeOrbit-industries/CodeOrbit/pull/19495
 
         let show_setting = GitPanelSettings::get_global(cx)
             .scrollbar
@@ -683,7 +683,7 @@ impl GitPanel {
                 KEY_VALUE_STORE
                     .write_kvp(
                         GIT_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedGitPanel { width })?,
+                        serde_json::to_string(&SerialiCodeOrbitGitPanel { width })?,
                     )
                     .await?;
                 anyhow::Ok(())
@@ -1125,7 +1125,7 @@ impl GitPanel {
             .take(5)
             .join("\n");
         if entries.len() > 5 {
-            details.push_str(&format!("\nand {} more…", entries.len() - 5))
+            details.push_str(&format!("\nand {} moreâ€¦", entries.len() - 5))
         }
 
         #[derive(strum::EnumIter, strum::VariantNames)]
@@ -1187,7 +1187,7 @@ impl GitPanel {
             .join("\n");
 
         if to_delete.len() > 5 {
-            details.push_str(&format!("\nand {} more…", to_delete.len() - 5))
+            details.push_str(&format!("\nand {} moreâ€¦", to_delete.len() - 5))
         }
 
         let prompt = prompt("Trash these files?", Some(&details), window, cx);
@@ -3706,7 +3706,7 @@ impl GitPanel {
                                     .h_full(),
                             )
                             .child(
-                                // HACK: Fill the missing 1px 🥲
+                                // HACK: Fill the missing 1px ðŸ¥²
                                 div()
                                     .absolute()
                                     .right(scroll_track_size - px(1.))
@@ -4472,17 +4472,17 @@ impl RenderOnce for PanelRepoFooter {
             .truncate(true)
             .tooltip(Tooltip::for_action_title(
                 "Switch Branch",
-                &zed_actions::git::Switch,
+                &codeorbit_actions::git::Switch,
             ))
             .on_click(|_, window, cx| {
-                window.dispatch_action(zed_actions::git::Switch.boxed_clone(), cx);
+                window.dispatch_action(codeorbit_actions::git::Switch.boxed_clone(), cx);
             });
 
         let branch_selector = PopoverMenu::new("popover-button")
             .menu(move |window, cx| Some(branch_picker::popover(repo.clone(), window, cx)))
             .trigger_with_tooltip(
                 branch_selector_button,
-                Tooltip::for_action_title("Switch Branch", &zed_actions::git::Switch),
+                Tooltip::for_action_title("Switch Branch", &codeorbit_actions::git::Switch),
             )
             .anchor(Corner::BottomLeft)
             .offset(gpui::Point {
@@ -4592,7 +4592,7 @@ impl Component for PanelRepoFooter {
                 is_head: true,
                 ref_name: branch_name.to_string().into(),
                 upstream: upstream.map(|tracking| Upstream {
-                    ref_name: format!("zed/{}", branch_name).into(),
+                    ref_name: format!("CodeOrbit/{}", branch_name).into(),
                     tracking,
                 }),
                 most_recent_commit: Some(CommitSummary {
@@ -4710,7 +4710,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        SharedString::from("zed"),
+                                        SharedString::from("CodeOrbit"),
                                         Some(custom("main", behind_upstream)),
                                     ))
                                     .into_any_element(),
@@ -4721,7 +4721,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        SharedString::from("zed"),
+                                        SharedString::from("CodeOrbit"),
                                         Some(custom(
                                             "redesign-and-update-git-ui-list-entry-style",
                                             behind_upstream,
@@ -4735,7 +4735,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        SharedString::from("zed-industries-community-examples"),
+                                        SharedString::from("CodeOrbit-industries-community-examples"),
                                         Some(custom("gpui", ahead_of_upstream)),
                                     ))
                                     .into_any_element(),
@@ -4746,7 +4746,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        SharedString::from("zed-industries-community-examples"),
+                                        SharedString::from("CodeOrbit-industries-community-examples"),
                                         Some(custom(
                                             "redesign-and-update-git-ui-list-entry-style",
                                             behind_upstream,
@@ -4771,7 +4771,7 @@ impl Component for PanelRepoFooter {
                                     .w(example_width)
                                     .overflow_hidden()
                                     .child(PanelRepoFooter::new_preview(
-                                        SharedString::from("zed"),
+                                        SharedString::from("CodeOrbit"),
                                         Some(custom("update-README", behind_upstream)),
                                     ))
                                     .into_any_element(),
@@ -4822,7 +4822,7 @@ mod tests {
         fs.insert_tree(
             "/root",
             json!({
-                "zed": {
+                "CodeOrbit": {
                     ".git": {},
                     "crates": {
                         "gpui": {
@@ -4838,7 +4838,7 @@ mod tests {
         .await;
 
         fs.set_status_for_repo(
-            Path::new(path!("/root/zed/.git")),
+            Path::new(path!("/root/CodeOrbit/.git")),
             &[
                 (
                     Path::new("crates/gpui/gpui.rs"),
@@ -4852,7 +4852,7 @@ mod tests {
         );
 
         let project =
-            Project::test(fs.clone(), [path!("/root/zed/crates/gpui").as_ref()], cx).await;
+            Project::test(fs.clone(), [path!("/root/CodeOrbit/crates/gpui").as_ref()], cx).await;
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -4890,13 +4890,13 @@ mod tests {
                     header: Section::Tracked
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
-                    abs_path: path!("/root/zed/crates/gpui/gpui.rs").into(),
+                    abs_path: path!("/root/CodeOrbit/crates/gpui/gpui.rs").into(),
                     repo_path: "crates/gpui/gpui.rs".into(),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
-                    abs_path: path!("/root/zed/crates/util/util.rs").into(),
+                    abs_path: path!("/root/CodeOrbit/crates/util/util.rs").into(),
                     repo_path: "crates/util/util.rs".into(),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
@@ -4921,8 +4921,8 @@ mod tests {
         //pretty_assertions::assert_eq!(
         //    worktree_roots,
         //    vec![
-        //        Path::new(path!("/root/zed/crates/gpui")).into(),
-        //        Path::new(path!("/root/zed/crates/util/util.rs")).into(),
+        //        Path::new(path!("/root/CodeOrbit/crates/gpui")).into(),
+        //        Path::new(path!("/root/CodeOrbit/crates/util/util.rs")).into(),
         //    ]
         //);
 
@@ -4935,7 +4935,7 @@ mod tests {
         //        .collect::<Vec<_>>();
         //    assert_eq!(
         //        filtered_entries,
-        //        [Path::new(path!("/root/zed/crates/gpui")).into()]
+        //        [Path::new(path!("/root/CodeOrbit/crates/gpui")).into()]
         //    );
         //    // But we can select it artificially here.
         //    let repo_from_single_file_worktree = git_store
@@ -4943,7 +4943,7 @@ mod tests {
         //        .values()
         //        .find(|repo| {
         //            repo.read(cx).worktree_abs_path.as_ref()
-        //                == Path::new(path!("/root/zed/crates/util/util.rs"))
+        //                == Path::new(path!("/root/CodeOrbit/crates/util/util.rs"))
         //        })
         //        .unwrap()
         //        .clone();
@@ -4965,13 +4965,13 @@ mod tests {
                     header: Section::Tracked
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
-                    abs_path: path!("/root/zed/crates/gpui/gpui.rs").into(),
+                    abs_path: path!("/root/CodeOrbit/crates/gpui/gpui.rs").into(),
                     repo_path: "crates/gpui/gpui.rs".into(),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,
                 }),
                 GitListEntry::GitStatusEntry(GitStatusEntry {
-                    abs_path: path!("/root/zed/crates/util/util.rs").into(),
+                    abs_path: path!("/root/CodeOrbit/crates/util/util.rs").into(),
                     repo_path: "crates/util/util.rs".into(),
                     status: StatusCode::Modified.worktree(),
                     staging: StageStatus::Unstaged,

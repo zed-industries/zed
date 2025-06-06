@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
@@ -31,7 +31,7 @@ use ui::ActiveTheme;
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{Item, SaveIntent, notifications::NotifyResultExt};
-use zed_actions::{OpenDocs, RevealTarget};
+use codeorbit_actions::{OpenDocs, RevealTarget};
 
 use crate::{
     ToggleMarksView, ToggleRegistersView, Vim,
@@ -989,7 +989,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         .bang(workspace::CloseAllItemsAndPanes {
             save_intent: Some(SaveIntent::Overwrite),
         }),
-        VimCommand::new(("cq", "uit"), zed_actions::Quit),
+        VimCommand::new(("cq", "uit"), codeorbit_actions::Quit),
         VimCommand::new(("sp", "lit"), workspace::SplitHorizontal),
         VimCommand::new(("vs", "plit"), workspace::SplitVertical),
         VimCommand::new(
@@ -1103,7 +1103,7 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             .args(|_, args| Some(VimEdit { filename: args }.boxed_clone())),
         VimCommand::new(("ex", ""), editor::actions::ReloadFile).bang(editor::actions::ReloadFile),
         VimCommand::new(("cpp", "link"), editor::actions::CopyPermalinkToLine).range(act_on_range),
-        VimCommand::str(("opt", "ions"), "zed::OpenDefaultSettings"),
+        VimCommand::str(("opt", "ions"), "CodeOrbit::OpenDefaultSettings"),
         VimCommand::str(("map", ""), "vim::OpenDefaultKeymap"),
         VimCommand::new(("h", "elp"), OpenDocs),
     ]
@@ -1298,7 +1298,7 @@ pub(crate) struct OnMatchingLines {
 }
 
 impl OnMatchingLines {
-    // convert a vim query into something more usable by zed.
+    // convert a vim query into something more usable by CodeOrbit.
     // we don't attempt to fully convert between the two regex syntaxes,
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
     // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
@@ -1845,7 +1845,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-            ˇa
+            Ë‡a
             b
             c"})
             .await;
@@ -1855,7 +1855,7 @@ mod test {
         // hack: our cursor positioning after a join command is wrong
         cx.simulate_shared_keystrokes("^").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "ˇa b
+            "Ë‡a b
             c"
         });
     }
@@ -1865,7 +1865,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-            ˇa
+            Ë‡a
             b
             c"})
             .await;
@@ -1873,7 +1873,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             a
             b
-            ˇc"});
+            Ë‡c"});
     }
 
     #[gpui::test]
@@ -1881,7 +1881,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-            ˇa
+            Ë‡a
             b
             b
             c"})
@@ -1890,7 +1890,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             a
             d
-            ˇd
+            Ë‡d
             c"});
         cx.simulate_shared_keystrokes(": % s : . : \\ 0 \\ 0 enter")
             .await;
@@ -1898,13 +1898,13 @@ mod test {
             aa
             dd
             dd
-            ˇcc"});
+            Ë‡cc"});
         cx.simulate_shared_keystrokes("k : s / d d / e e enter")
             .await;
         cx.shared_state().await.assert_eq(indoc! {"
             aa
             dd
-            ˇee
+            Ë‡ee
             cc"});
     }
 
@@ -1913,7 +1913,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-                ˇa
+                Ë‡a
                 b
                 a
                 c"})
@@ -1921,12 +1921,12 @@ mod test {
         cx.simulate_shared_keystrokes(": / b enter").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 a
-                ˇb
+                Ë‡b
                 a
                 c"});
         cx.simulate_shared_keystrokes(": ? a enter").await;
         cx.shared_state().await.assert_eq(indoc! {"
-                ˇa
+                Ë‡a
                 b
                 a
                 c"});
@@ -1975,55 +1975,55 @@ mod test {
     async fn test_offsets(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("ˇ1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n")
+        cx.set_shared_state("Ë‡1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n")
             .await;
 
         cx.simulate_shared_keystrokes(": + enter").await;
         cx.shared_state()
             .await
-            .assert_eq("1\nˇ2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n");
+            .assert_eq("1\nË‡2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n");
 
         cx.simulate_shared_keystrokes(": 1 0 - enter").await;
         cx.shared_state()
             .await
-            .assert_eq("1\n2\n3\n4\n5\n6\n7\n8\nˇ9\n10\n11\n");
+            .assert_eq("1\n2\n3\n4\n5\n6\n7\n8\nË‡9\n10\n11\n");
 
         cx.simulate_shared_keystrokes(": . - 2 enter").await;
         cx.shared_state()
             .await
-            .assert_eq("1\n2\n3\n4\n5\n6\nˇ7\n8\n9\n10\n11\n");
+            .assert_eq("1\n2\n3\n4\n5\n6\nË‡7\n8\n9\n10\n11\n");
 
         cx.simulate_shared_keystrokes(": % enter").await;
         cx.shared_state()
             .await
-            .assert_eq("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\nˇ");
+            .assert_eq("1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\nË‡");
     }
 
     #[gpui::test]
     async fn test_command_ranges(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("ˇ1\n2\n3\n4\n4\n3\n2\n1").await;
+        cx.set_shared_state("Ë‡1\n2\n3\n4\n4\n3\n2\n1").await;
 
         cx.simulate_shared_keystrokes(": 2 , 4 d enter").await;
-        cx.shared_state().await.assert_eq("1\nˇ4\n3\n2\n1");
+        cx.shared_state().await.assert_eq("1\nË‡4\n3\n2\n1");
 
         cx.simulate_shared_keystrokes(": 2 , 4 s o r t enter").await;
-        cx.shared_state().await.assert_eq("1\nˇ2\n3\n4\n1");
+        cx.shared_state().await.assert_eq("1\nË‡2\n3\n4\n1");
 
         cx.simulate_shared_keystrokes(": 2 , 4 j o i n enter").await;
-        cx.shared_state().await.assert_eq("1\nˇ2 3 4\n1");
+        cx.shared_state().await.assert_eq("1\nË‡2 3 4\n1");
     }
 
     #[gpui::test]
     async fn test_command_visual_replace(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("ˇ1\n2\n3\n4\n4\n3\n2\n1").await;
+        cx.set_shared_state("Ë‡1\n2\n3\n4\n4\n3\n2\n1").await;
 
         cx.simulate_shared_keystrokes("v 2 j : s / . / k enter")
             .await;
-        cx.shared_state().await.assert_eq("k\nk\nˇk\n4\n4\n3\n2\n1");
+        cx.shared_state().await.assert_eq("k\nk\nË‡k\n4\n4\n3\n2\n1");
     }
 
     #[track_caller]
@@ -2075,7 +2075,7 @@ mod test {
             .await;
 
         // Put the path to the second file into the currently open buffer
-        cx.set_state(indoc! {"go to fiˇle2.rs"}, Mode::Normal);
+        cx.set_state(indoc! {"go to fiË‡le2.rs"}, Mode::Normal);
 
         // Go to file2.rs
         cx.simulate_keystrokes("g f");
@@ -2097,7 +2097,7 @@ mod test {
 
         // Put the path to the third file into the currently open buffer,
         // but remove its suffix, because we want that lookup to happen automatically.
-        cx.set_state(indoc! {"go to fiˇle3"}, Mode::Normal);
+        cx.set_state(indoc! {"go to fiË‡le3"}, Mode::Normal);
 
         // Go to file3.rs
         cx.simulate_keystrokes("g f");
@@ -2147,7 +2147,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-            ˇa
+            Ë‡a
             b
             a
             b
@@ -2162,12 +2162,12 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             b
             b
-            ˇ"});
+            Ë‡"});
 
         cx.simulate_shared_keystrokes("u").await;
 
         cx.shared_state().await.assert_eq(indoc! {"
-            ˇa
+            Ë‡a
             b
             a
             b
@@ -2181,7 +2181,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
             a
             a
-            ˇa"});
+            Ë‡a"});
     }
 
     #[gpui::test]
@@ -2189,7 +2189,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-            ˇa
+            Ë‡a
             b
             a
             b

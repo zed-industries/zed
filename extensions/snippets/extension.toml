@@ -1,10 +1,10 @@
-id = "snippets"
+﻿id = "snippets"
 name = "Snippets"
 description = "Support for language-agnostic snippets, provided by simple-completion-language-server"
 version = "0.0.5"
 schema_version = 1
 authors = []
-repository = "https://github.com/zed-industries/zed"
+repository = "https://github.com/CodeOrbit-industries/CodeOrbit"
 
 [language_servers.snippet-completion-server]
 name = "Snippet Completion Server"

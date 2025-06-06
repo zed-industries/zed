@@ -1,4 +1,4 @@
-mod outline_panel_settings;
+﻿mod outline_panel_settings;
 
 use std::{
     cmp,
@@ -425,7 +425,7 @@ impl PartialEq for PanelEntry {
 impl Eq for PanelEntry {}
 
 const SEARCH_MATCH_CONTEXT_SIZE: u32 = 40;
-const TRUNCATED_CONTEXT_MARK: &str = "…";
+const TRUNCATED_CONTEXT_MARK: &str = "â€¦";
 
 impl SearchData {
     fn new(
@@ -655,7 +655,7 @@ pub enum Event {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SerializedOutlinePanel {
+struct SerialiCodeOrbitOutlinePanel {
     width: Option<Pixels>,
     active: Option<bool>,
 }
@@ -680,7 +680,7 @@ impl OutlinePanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        let serialized_panel = match workspace
+        let serialiCodeOrbit_panel = match workspace
             .read_with(&cx, |workspace, _| {
                 OutlinePanel::serialization_key(workspace)
             })
@@ -693,7 +693,7 @@ impl OutlinePanel {
                 .context("loading outline panel")
                 .log_err()
                 .flatten()
-                .map(|panel| serde_json::from_str::<SerializedOutlinePanel>(&panel))
+                .map(|panel| serde_json::from_str::<SerialiCodeOrbitOutlinePanel>(&panel))
                 .transpose()
                 .log_err()
                 .flatten(),
@@ -702,10 +702,10 @@ impl OutlinePanel {
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = Self::new(workspace, window, cx);
-            if let Some(serialized_panel) = serialized_panel {
+            if let Some(serialiCodeOrbit_panel) = serialiCodeOrbit_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width.map(|px| px.round());
-                    panel.active = serialized_panel.active.unwrap_or(false);
+                    panel.width = serialiCodeOrbit_panel.width.map(|px| px.round());
+                    panel.active = serialiCodeOrbit_panel.active.unwrap_or(false);
                     cx.notify();
                 });
             }
@@ -880,7 +880,7 @@ impl OutlinePanel {
                 KEY_VALUE_STORE
                     .write_kvp(
                         serialization_key,
-                        serde_json::to_string(&SerializedOutlinePanel { width, active })?,
+                        serde_json::to_string(&SerialiCodeOrbitOutlinePanel { width, active })?,
                     )
                     .await?;
                 anyhow::Ok(())
@@ -1380,10 +1380,10 @@ impl OutlinePanel {
                     menu.action("Fold Directory", Box::new(FoldDirectory))
                 })
                 .separator()
-                .action("Copy Path", Box::new(zed_actions::workspace::CopyPath))
+                .action("Copy Path", Box::new(codeorbit_actions::workspace::CopyPath))
                 .action(
                     "Copy Relative Path",
-                    Box::new(zed_actions::workspace::CopyRelativePath),
+                    Box::new(codeorbit_actions::workspace::CopyRelativePath),
                 )
         });
         window.focus(&context_menu.focus_handle(cx));
@@ -1847,7 +1847,7 @@ impl OutlinePanel {
 
     fn copy_path(
         &mut self,
-        _: &zed_actions::workspace::CopyPath,
+        _: &codeorbit_actions::workspace::CopyPath,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1862,7 +1862,7 @@ impl OutlinePanel {
 
     fn copy_relative_path(
         &mut self,
-        _: &zed_actions::workspace::CopyRelativePath,
+        _: &codeorbit_actions::workspace::CopyRelativePath,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {

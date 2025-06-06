@@ -1,4 +1,4 @@
-use crate::{db::ChannelId, tests::TestServer};
+﻿use crate::{db::ChannelId, tests::TestServer};
 use call::ActiveCall;
 use chrono::Utc;
 use editor::Editor;
@@ -174,7 +174,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
 }
 
 #[gpui::test]
-async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+async fn test_channel_requires_CodeOrbit_cla(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
     let mut server = TestServer::start(cx_a.executor()).await;
 
     server
@@ -189,14 +189,14 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     let active_call_a = cx_a.read(ActiveCall::global);
     let active_call_b = cx_b.read(ActiveCall::global);
 
-    // Create a parent channel that requires the Zed CLA
+    // Create a parent channel that requires the CodeOrbit CLA
     let parent_channel_id = server
         .make_channel("the-channel", None, (&client_a, cx_a), &mut [])
         .await;
     server
         .app_state
         .db
-        .set_channel_requires_zed_cla(ChannelId::from_proto(parent_channel_id.0), true)
+        .set_channel_requires_CodeOrbit_cla(ChannelId::from_proto(parent_channel_id.0), true)
         .await
         .unwrap();
 
@@ -241,7 +241,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
 
     // A tries to grant write access to B, but cannot because B has not
-    // yet signed the zed CLA.
+    // yet signed the CodeOrbit CLA.
     active_call_a
         .update(cx_a, |call, cx| {
             call.room().unwrap().update(cx, |room, cx| {
@@ -261,7 +261,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
 
     // A tries to grant write access to B, but cannot because B has not
-    // yet signed the zed CLA.
+    // yet signed the CodeOrbit CLA.
     active_call_a
         .update(cx_a, |call, cx| {
             call.room().unwrap().update(cx, |room, cx| {
@@ -280,7 +280,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
         assert!(room_b.read_with(cx_b, |room, _| room.can_use_microphone()));
     });
 
-    // User B signs the zed CLA.
+    // User B signs the CodeOrbit CLA.
     server
         .app_state
         .db

@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use collections::HashSet;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
 use pretty_assertions::assert_eq;
@@ -5581,7 +5581,7 @@ impl ProjectItem for TestProjectItemView {
         cx: &mut Context<Self>,
     ) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Self {
             path: project_item.update(cx, |project_item, _| project_item.path.clone()),

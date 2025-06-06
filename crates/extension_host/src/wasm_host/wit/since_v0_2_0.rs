@@ -1,4 +1,4 @@
-use crate::wasm_host::WasmState;
+﻿use crate::wasm_host::WasmState;
 use anyhow::Result;
 use extension::{KeyValueStoreDelegate, ProjectDelegate, WorktreeDelegate};
 use semantic_version::SemanticVersion;
@@ -17,16 +17,16 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/github": latest::zed::extension::github,
-         "zed:extension/http-client": latest::zed::extension::http_client,
-         "zed:extension/lsp": latest::zed::extension::lsp,
-         "zed:extension/nodejs": latest::zed::extension::nodejs,
-         "zed:extension/platform": latest::zed::extension::platform,
-         "zed:extension/slash-command": latest::zed::extension::slash_command,
+         "CodeOrbit:extension/github": latest::CodeOrbit::extension::github,
+         "CodeOrbit:extension/http-client": latest::CodeOrbit::extension::http_client,
+         "CodeOrbit:extension/lsp": latest::CodeOrbit::extension::lsp,
+         "CodeOrbit:extension/nodejs": latest::CodeOrbit::extension::nodejs,
+         "CodeOrbit:extension/platform": latest::CodeOrbit::extension::platform,
+         "CodeOrbit:extension/slash-command": latest::CodeOrbit::extension::slash_command,
     },
 });
 
-pub use self::zed::extension::*;
+pub use self::CodeOrbit::extension::*;
 
 mod settings {
     include!(concat!(env!("OUT_DIR"), "/since_v0.2.0/settings.rs"));

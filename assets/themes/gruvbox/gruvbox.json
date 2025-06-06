@@ -1,7 +1,7 @@
-{
-  "$schema": "https://zed.dev/schema/themes/v0.2.0.json",
+﻿{
+  "$schema": "https://CodeOrbit.dev/schema/themes/v0.2.0.json",
   "name": "Gruvbox",
-  "author": "Zed Industries",
+  "author": "CodeOrbit Industries",
   "themes": [
     {
       "name": "Gruvbox Dark",

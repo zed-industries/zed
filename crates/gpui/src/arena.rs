@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     alloc,
     cell::Cell,
     ops::{Deref, DerefMut},
@@ -106,14 +106,14 @@ impl Drop for Arena {
     }
 }
 
-pub struct ArenaBox<T: ?Sized> {
+pub struct ArenaBox<T: ?SiCodeOrbit> {
     ptr: *mut T,
     valid: Rc<Cell<bool>>,
 }
 
-impl<T: ?Sized> ArenaBox<T> {
+impl<T: ?SiCodeOrbit> ArenaBox<T> {
     #[inline(always)]
-    pub fn map<U: ?Sized>(mut self, f: impl FnOnce(&mut T) -> &mut U) -> ArenaBox<U> {
+    pub fn map<U: ?SiCodeOrbit>(mut self, f: impl FnOnce(&mut T) -> &mut U) -> ArenaBox<U> {
         ArenaBox {
             ptr: f(&mut self),
             valid: self.valid,
@@ -129,7 +129,7 @@ impl<T: ?Sized> ArenaBox<T> {
     }
 }
 
-impl<T: ?Sized> Deref for ArenaBox<T> {
+impl<T: ?SiCodeOrbit> Deref for ArenaBox<T> {
     type Target = T;
 
     #[inline(always)]
@@ -139,7 +139,7 @@ impl<T: ?Sized> Deref for ArenaBox<T> {
     }
 }
 
-impl<T: ?Sized> DerefMut for ArenaBox<T> {
+impl<T: ?SiCodeOrbit> DerefMut for ArenaBox<T> {
     #[inline(always)]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.validate();
@@ -147,15 +147,15 @@ impl<T: ?Sized> DerefMut for ArenaBox<T> {
     }
 }
 
-pub struct ArenaRef<T: ?Sized>(ArenaBox<T>);
+pub struct ArenaRef<T: ?SiCodeOrbit>(ArenaBox<T>);
 
-impl<T: ?Sized> From<ArenaBox<T>> for ArenaRef<T> {
+impl<T: ?SiCodeOrbit> From<ArenaBox<T>> for ArenaRef<T> {
     fn from(value: ArenaBox<T>) -> Self {
         ArenaRef(value)
     }
 }
 
-impl<T: ?Sized> Clone for ArenaRef<T> {
+impl<T: ?SiCodeOrbit> Clone for ArenaRef<T> {
     fn clone(&self) -> Self {
         Self(ArenaBox {
             ptr: self.0.ptr,
@@ -164,7 +164,7 @@ impl<T: ?Sized> Clone for ArenaRef<T> {
     }
 }
 
-impl<T: ?Sized> Deref for ArenaRef<T> {
+impl<T: ?SiCodeOrbit> Deref for ArenaRef<T> {
     type Target = T;
 
     #[inline(always)]

@@ -1,6 +1,6 @@
-use gpui::actions;
+﻿use gpui::actions;
 
-// If the zed binary doesn't use anything in this crate, it will be optimized away
+// If the CodeOrbit binary doesn't use anything in this crate, it will be optimiCodeOrbit away
 // and the actions won't initialize. So we just provide an empty initialization function
 // to be called from main.
 //

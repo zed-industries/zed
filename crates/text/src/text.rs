@@ -1,4 +1,4 @@
-mod anchor;
+﻿mod anchor;
 pub mod locator;
 #[cfg(any(test, feature = "test-support"))]
 pub mod network;
@@ -681,16 +681,16 @@ impl Buffer {
         let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
-        Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(base_text))
+        Self::new_normaliCodeOrbit(replica_id, remote_id, line_ending, Rope::from(base_text))
     }
 
-    pub fn new_normalized(
+    pub fn new_normaliCodeOrbit(
         replica_id: u16,
         remote_id: BufferId,
         line_ending: LineEnding,
-        normalized: Rope,
+        normaliCodeOrbit: Rope,
     ) -> Buffer {
-        let history = History::new(normalized);
+        let history = History::new(normaliCodeOrbit);
         let mut fragments = SumTree::new(&None);
         let mut insertions = SumTree::default();
 

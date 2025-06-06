@@ -1,4 +1,4 @@
-use futures::channel::oneshot;
+﻿use futures::channel::oneshot;
 use git2::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Task, TaskLabel};
 use language::{Language, LanguageRegistry};
@@ -734,7 +734,7 @@ fn compute_hunks(
         )
         .log_err();
 
-        // A common case in Zed is that the empty buffer is represented as just a newline,
+        // A common case in CodeOrbit is that the empty buffer is represented as just a newline,
         // but if we just compute a naive diff you get a "preserved" line in the middle,
         // which is a bit odd.
         if buffer_text == "\n" && diff_base.ends_with("\n") && diff_base.len() > 1 {
@@ -1574,8 +1574,8 @@ mod tests {
                     ZERO
                     one
                     two
-                    «THREE_HUNDRED
-                    FOUR_HUNDRED»
+                    Â«THREE_HUNDRED
+                    FOUR_HUNDREDÂ»
                     five
                     SIX
                 "
@@ -1610,8 +1610,8 @@ mod tests {
                 buffer_marked_text: "
                     ZERO
                     one
-                    «TWO_HUNDRED
-                    THREE_HUNDRED»
+                    Â«TWO_HUNDRED
+                    THREE_HUNDREDÂ»
                     four
                     five
                     SIX
@@ -1651,9 +1651,9 @@ mod tests {
                 buffer_marked_text: "
                     one
                     TWO
-                    «THREE_HUNDRED
+                    Â«THREE_HUNDRED
                     FOUR
-                    FIVE_HUNDRED»
+                    FIVE_HUNDREDÂ»
                     SIX
                     seven
                 "
@@ -1689,7 +1689,7 @@ mod tests {
                 .unindent(),
                 buffer_marked_text: "
                     one
-                    ˇfive
+                    Ë‡five
                 "
                 .unindent(),
                 final_index_text: "
@@ -1716,10 +1716,10 @@ mod tests {
                 "
                 .unindent(),
                 buffer_marked_text: "
-                    «one
+                    Â«one
 
                     three // modified
-                    four»
+                    fourÂ»
                 "
                 .unindent(),
                 final_index_text: "
@@ -1750,11 +1750,11 @@ mod tests {
                 "
                 .unindent(),
                 buffer_marked_text: "
-                    «one
+                    Â«one
                     TWO_HUNDRED
                     THREE
                     FOUR_HUNDRED
-                    five»
+                    fiveÂ»
                 "
                 .unindent(),
                 final_index_text: "
@@ -1931,7 +1931,7 @@ mod tests {
                 three
                 four
                 five
-                «SIX.5»
+                Â«SIX.5Â»
                 seven
                 eight
                 NINE
@@ -1945,7 +1945,7 @@ mod tests {
         buffer.edit_via_marked_text(
             &"
                 one
-                «THREE»
+                Â«THREEÂ»
                 four
                 five
                 SIX.5
@@ -1965,7 +1965,7 @@ mod tests {
                 one
                 THREE
                 four
-                five«»
+                fiveÂ«Â»
                 seven
                 eight
                 NINE
@@ -1981,9 +1981,9 @@ mod tests {
             &"
                 one
                 THREE
-                four«
+                fourÂ«
                 FOUR.5
-                »five
+                Â»five
                 seven
                 eight
                 NINE
@@ -2004,7 +2004,7 @@ mod tests {
                 five
                 seven
                 eight
-                «nine»
+                Â«nineÂ»
             "
             .unindent(),
         );
@@ -2114,7 +2114,7 @@ mod tests {
         });
         let working_copy = gen_working_copy(rng, &head_text);
         let working_copy = cx.new(|cx| {
-            language::Buffer::local_normalized(
+            language::Buffer::local_normaliCodeOrbit(
                 Rope::from(working_copy.as_str()),
                 text::LineEnding::default(),
                 cx,

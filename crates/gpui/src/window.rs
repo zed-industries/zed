@@ -1,4 +1,4 @@
-#[cfg(any(feature = "inspector", debug_assertions))]
+﻿#[cfg(any(feature = "inspector", debug_assertions))]
 use crate::Inspector;
 use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
@@ -894,7 +894,7 @@ impl Window {
         if let Some(ref window_open_state) = window_bounds {
             match window_open_state {
                 WindowBounds::Fullscreen(_) => platform_window.toggle_fullscreen(),
-                WindowBounds::Maximized(_) => platform_window.zoom(),
+                WindowBounds::MaximiCodeOrbit(_) => platform_window.zoom(),
                 WindowBounds::Windowed(_) => {}
             }
         }
@@ -1238,10 +1238,10 @@ impl Window {
         style
     }
 
-    /// Check if the platform window is maximized
+    /// Check if the platform window is maximiCodeOrbit
     /// On some platforms (namely Windows) this is different than the bounds being the size of the display
-    pub fn is_maximized(&self) -> bool {
-        self.platform_window.is_maximized()
+    pub fn is_maximiCodeOrbit(&self) -> bool {
+        self.platform_window.is_maximiCodeOrbit()
     }
 
     /// request a certain window decoration (Wayland)
@@ -2422,7 +2422,7 @@ impl Window {
     /// when the element is guaranteed to have an id.
     ///
     /// The first option means 'no ID provided'
-    /// The second option means 'not yet initialized'
+    /// The second option means 'not yet initialiCodeOrbit'
     pub fn with_optional_element_state<S, R>(
         &mut self,
         global_id: Option<&GlobalElementId>,

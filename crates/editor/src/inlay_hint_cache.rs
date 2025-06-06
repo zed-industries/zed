@@ -1,9 +1,9 @@
-/// Stores and updates all data received from LSP <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_inlayHint">textDocument/inlayHint</a> requests.
-/// Has nothing to do with other inlays, e.g. copilot suggestions — those are stored elsewhere.
+﻿/// Stores and updates all data received from LSP <a href="https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_inlayHint">textDocument/inlayHint</a> requests.
+/// Has nothing to do with other inlays, e.g. copilot suggestions â€” those are stored elsewhere.
 /// On every update, cache may query for more inlay hints and update inlays on the screen.
 ///
 /// Inlays stored on screen are in [`crate::display_map::inlay_map`] and this cache is the only way to update any inlay hint data in the visible hints in the inlay map.
-/// For determining the update to the `inlay_map`, the cache requires a list of visible inlay hints — all other hints are not relevant and their separate updates are not influencing the cache work.
+/// For determining the update to the `inlay_map`, the cache requires a list of visible inlay hints â€” all other hints are not relevant and their separate updates are not influencing the cache work.
 ///
 /// Due to the way the data is stored for both visible inlays and the cache, every inlay (and inlay hint) collection is editor-specific, so a single buffer may have multiple sets of inlays of open on different panes.
 use std::{
@@ -74,7 +74,7 @@ pub(super) enum InvalidationStrategy {
     /// A new file got opened/new excerpt was added to a multibuffer/a [multi]buffer was scrolled to a new position.
     /// No invalidation should be done at all, all new hints are added to the cache.
     ///
-    /// A special case is the settings change: in addition to LSP capabilities, Zed allows omitting certain hint kinds (defined by the corresponding LSP part: type/parameter/other).
+    /// A special case is the settings change: in addition to LSP capabilities, CodeOrbit allows omitting certain hint kinds (defined by the corresponding LSP part: type/parameter/other).
     /// This does not lead to cache invalidation, but would require cache usage for determining which hints are not displayed and issuing an update to inlays on the screen.
     None,
 }
@@ -3072,7 +3072,7 @@ pub mod tests {
         fs.insert_tree(
             path!("/a"),
             json!({
-                "main.rs": format!(r#"fn main() {{\n{}\n}}"#, format!("let i = {};\n", "√".repeat(10)).repeat(500)),
+                "main.rs": format!(r#"fn main() {{\n{}\n}}"#, format!("let i = {};\n", "âˆš".repeat(10)).repeat(500)),
                 "other.rs": "// Test file",
             }),
         )

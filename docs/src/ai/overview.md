@@ -1,17 +1,17 @@
-# AI
+﻿# AI
 
-Zed smoothly integrates LLMs in multiple ways across the editor.
-Learn how to get started with AI on Zed and all its capabilities.
+CodeOrbit smoothly integrates LLMs in multiple ways across the editor.
+Learn how to get started with AI on CodeOrbit and all its capabilities.
 
-## Setting up AI in Zed
+## Setting up AI in CodeOrbit
 
 - [Configuration](./configuration.md): Learn how to set up different language model providers like Anthropic, OpenAI, Ollama, Google AI, and more.
 
-- [Models](./models.md): Learn about the various language models available in Zed.
+- [Models](./models.md): Learn about the various language models available in CodeOrbit.
 
-- [Subscription](./subscription.md): Learn about Zed's subscriptions and other billing-related information.
+- [Subscription](./subscription.md): Learn about CodeOrbit's subscriptions and other billing-related information.
 
-- [Privacy and Security](./privacy-and-security.md): Understand how Zed handles privacy and security with AI features.
+- [Privacy and Security](./privacy-and-security.md): Understand how CodeOrbit handles privacy and security with AI features.
 
 ## Agentic Editing
 
@@ -27,7 +27,7 @@ Learn how to get started with AI on Zed and all its capabilities.
 
 ## Edit Prediction
 
-- [Edit Prediction](./edit-prediction.md): Learn about Zed's AI prediction feature that helps autocomplete your code.
+- [Edit Prediction](./edit-prediction.md): Learn about CodeOrbit's AI prediction feature that helps autocomplete your code.
 
 ## Text Threads
 

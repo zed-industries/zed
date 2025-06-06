@@ -1,4 +1,4 @@
-use crate::{LabelLike, prelude::*};
+﻿use crate::{LabelLike, prelude::*};
 use gpui::StyleRefinement;
 
 /// A struct representing a label element in the UI.
@@ -173,14 +173,14 @@ impl LabelCommon for Label {
         self
     }
 
-    /// Truncates overflowing text with an ellipsis (`…`) if needed.
+    /// Truncates overflowing text with an ellipsis (`â€¦`) if needed.
     fn truncate(mut self) -> Self {
         self.base = self.base.truncate();
         self
     }
 
     fn single_line(mut self) -> Self {
-        self.label = SharedString::from(self.label.replace('\n', "⏎"));
+        self.label = SharedString::from(self.label.replace('\n', "âŽ"));
         self.base = self.base.single_line();
         self
     }
@@ -222,7 +222,7 @@ impl Component for Label {
                         vec![
                             single_example("Default", Label::new("Project Explorer").into_any_element()),
                             single_example("Small", Label::new("File: main.rs").size(LabelSize::Small).into_any_element()),
-                            single_example("Large", Label::new("Welcome to Zed").size(LabelSize::Large).into_any_element()),
+                            single_example("Large", Label::new("Welcome to CodeOrbit").size(LabelSize::Large).into_any_element()),
                         ],
                     ),
                     example_group_with_title(

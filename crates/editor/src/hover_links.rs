@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
     editor_settings::{GoToDefinitionFallback, MultiCursorModifier},
@@ -950,17 +950,17 @@ mod tests {
 
         cx.set_state(indoc! {"
             struct A;
-            let vˇariable = A;
+            let vË‡ariable = A;
         "});
         let screen_coord = cx.editor(|editor, _, cx| editor.pixel_position_of_cursor(cx));
 
         // Basic hold cmd+shift, expect highlight in region if response contains type definition
         let symbol_range = cx.lsp_range(indoc! {"
             struct A;
-            let «variable» = A;
+            let Â«variableÂ» = A;
         "});
         let target_range = cx.lsp_range(indoc! {"
-            struct «A»;
+            struct Â«AÂ»;
             let variable = A;
         "});
 
@@ -990,7 +990,7 @@ mod tests {
         cx.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             struct A;
-            let «variable» = A;
+            let Â«variableÂ» = A;
         "});
 
         cx.simulate_modifiers_change(Modifiers::secondary_key());
@@ -1004,7 +1004,7 @@ mod tests {
         cx.simulate_click(screen_coord.unwrap(), modifiers);
 
         cx.assert_editor_state(indoc! {"
-            struct «Aˇ»;
+            struct Â«AË‡Â»;
             let variable = A;
         "});
     }
@@ -1024,22 +1024,22 @@ mod tests {
         .await;
 
         cx.set_state(indoc! {"
-                fn ˇtest() { do_work(); }
+                fn Ë‡test() { do_work(); }
                 fn do_work() { test(); }
             "});
 
         // Basic hold cmd, expect highlight in region if response contains definition
         let hover_point = cx.pixel_position(indoc! {"
-                fn test() { do_wˇork(); }
+                fn test() { do_wË‡ork(); }
                 fn do_work() { test(); }
             "});
         let symbol_range = cx.lsp_range(indoc! {"
-                fn test() { «do_work»(); }
+                fn test() { Â«do_workÂ»(); }
                 fn do_work() { test(); }
             "});
         let target_range = cx.lsp_range(indoc! {"
                 fn test() { do_work(); }
-                fn «do_work»() { test(); }
+                fn Â«do_workÂ»() { test(); }
             "});
 
         let mut requests =
@@ -1058,7 +1058,7 @@ mod tests {
         requests.next().await;
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-                fn test() { «do_work»(); }
+                fn test() { Â«do_workÂ»(); }
                 fn do_work() { test(); }
             "});
 
@@ -1085,13 +1085,13 @@ mod tests {
         requests.next().await;
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-                fn test() { «do_work»(); }
+                fn test() { Â«do_workÂ»(); }
                 fn do_work() { test(); }
             "});
 
         // Moving mouse to location with no response dismisses highlight
         let hover_point = cx.pixel_position(indoc! {"
-                fˇn test() { do_work(); }
+                fË‡n test() { do_work(); }
                 fn do_work() { test(); }
             "});
         let mut requests =
@@ -1114,7 +1114,7 @@ mod tests {
         // // Move mouse without cmd and then pressing cmd triggers highlight
         let hover_point = cx.pixel_position(indoc! {"
                 fn test() { do_work(); }
-                fn do_work() { teˇst(); }
+                fn do_work() { teË‡st(); }
             "});
         cx.simulate_mouse_move(hover_point, None, Modifiers::none());
 
@@ -1126,10 +1126,10 @@ mod tests {
 
         let symbol_range = cx.lsp_range(indoc! {"
                 fn test() { do_work(); }
-                fn do_work() { «test»(); }
+                fn do_work() { Â«testÂ»(); }
             "});
         let target_range = cx.lsp_range(indoc! {"
-                fn «test»() { do_work(); }
+                fn Â«testÂ»() { do_work(); }
                 fn do_work() { test(); }
             "});
 
@@ -1152,7 +1152,7 @@ mod tests {
 
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
                 fn test() { do_work(); }
-                fn do_work() { «test»(); }
+                fn do_work() { Â«testÂ»(); }
             "});
 
         cx.deactivate_window();
@@ -1165,19 +1165,19 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
                 fn test() { do_work(); }
-                fn do_work() { «test»(); }
+                fn do_work() { Â«testÂ»(); }
             "});
 
         // Moving again within the same symbol range doesn't re-request
         let hover_point = cx.pixel_position(indoc! {"
                 fn test() { do_work(); }
-                fn do_work() { tesˇt(); }
+                fn do_work() { tesË‡t(); }
             "});
         cx.simulate_mouse_move(hover_point, None, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
                 fn test() { do_work(); }
-                fn do_work() { «test»(); }
+                fn do_work() { Â«testÂ»(); }
             "});
 
         // Cmd click with existing definition doesn't re-request and dismisses highlight
@@ -1190,7 +1190,7 @@ mod tests {
             });
         cx.background_executor.run_until_parked();
         cx.assert_editor_state(indoc! {"
-                fn «testˇ»() { do_work(); }
+                fn Â«testË‡Â»() { do_work(); }
                 fn do_work() { test(); }
             "});
 
@@ -1202,12 +1202,12 @@ mod tests {
 
         // Cmd click without existing definition requests and jumps
         let hover_point = cx.pixel_position(indoc! {"
-                fn test() { do_wˇork(); }
+                fn test() { do_wË‡ork(); }
                 fn do_work() { test(); }
             "});
         let target_range = cx.lsp_range(indoc! {"
                 fn test() { do_work(); }
-                fn «do_work»() { test(); }
+                fn Â«do_workÂ»() { test(); }
             "});
 
         let mut requests =
@@ -1226,18 +1226,18 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.assert_editor_state(indoc! {"
                 fn test() { do_work(); }
-                fn «do_workˇ»() { test(); }
+                fn Â«do_workË‡Â»() { test(); }
             "});
 
         // 1. We have a pending selection, mouse point is over a symbol that we have a response for, hitting cmd and nothing happens
         // 2. Selection is completed, hovering
         let hover_point = cx.pixel_position(indoc! {"
-                fn test() { do_wˇork(); }
+                fn test() { do_wË‡ork(); }
                 fn do_work() { test(); }
             "});
         let target_range = cx.lsp_range(indoc! {"
                 fn test() { do_work(); }
-                fn «do_work»() { test(); }
+                fn Â«do_workÂ»() { test(); }
             "});
         let mut requests =
             cx.set_request_handler::<GotoDefinition, _, _>(move |url, _, _| async move {
@@ -1253,7 +1253,7 @@ mod tests {
 
         // create a pending selection
         let selection_range = cx.ranges(indoc! {"
-                fn «test() { do_w»ork(); }
+                fn Â«test() { do_wÂ»ork(); }
                 fn do_work() { test(); }
             "})[0]
             .clone();
@@ -1303,20 +1303,20 @@ mod tests {
                 struct TestStruct;
 
                 fn main() {
-                    let variableˇ = TestStruct;
+                    let variableË‡ = TestStruct;
                 }
             "});
         let hint_start_offset = cx.ranges(indoc! {"
                 struct TestStruct;
 
                 fn main() {
-                    let variableˇ = TestStruct;
+                    let variableË‡ = TestStruct;
                 }
             "})[0]
             .start;
         let hint_position = cx.to_lsp(hint_start_offset);
         let target_range = cx.lsp_range(indoc! {"
-                struct «TestStruct»;
+                struct Â«TestStructÂ»;
 
                 fn main() {
                     let variable = TestStruct;
@@ -1363,7 +1363,7 @@ mod tests {
                 struct TestStruct;
 
                 fn main() {
-                    let variable« »= TestStruct;
+                    let variableÂ« Â»= TestStruct;
                 }
             "})
             .first()
@@ -1418,7 +1418,7 @@ mod tests {
         cx.simulate_click(hover_point, Modifiers::secondary_key());
         cx.background_executor.run_until_parked();
         cx.assert_editor_state(indoc! {"
-                struct «TestStructˇ»;
+                struct Â«TestStructË‡Â»;
 
                 fn main() {
                     let variable = TestStruct;
@@ -1438,22 +1438,22 @@ mod tests {
         .await;
 
         cx.set_state(indoc! {"
-            Let's test a [complex](https://zed.dev/channel/had-(oops)) caseˇ.
+            Let's test a [complex](https://CodeOrbit.dev/channel/had-(oops)) caseË‡.
         "});
 
         let screen_coord = cx.pixel_position(indoc! {"
-            Let's test a [complex](https://zed.dev/channel/had-(ˇoops)) case.
+            Let's test a [complex](https://CodeOrbit.dev/channel/had-(Ë‡oops)) case.
             "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
-            Let's test a [complex](«https://zed.dev/channel/had-(oops)ˇ») case.
+            Let's test a [complex](Â«https://CodeOrbit.dev/channel/had-(oops)Ë‡Â») case.
         "});
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
         assert_eq!(
             cx.opened_url(),
-            Some("https://zed.dev/channel/had-(oops)".into())
+            Some("https://CodeOrbit.dev/channel/had-(oops)".into())
         );
     }
 
@@ -1468,18 +1468,18 @@ mod tests {
         )
         .await;
 
-        cx.set_state(indoc! {"https://zed.dev/releases is a cool ˇwebpage."});
+        cx.set_state(indoc! {"https://CodeOrbit.dev/releases is a cool Ë‡webpage."});
 
         let screen_coord =
-            cx.pixel_position(indoc! {"https://zed.dev/relˇeases is a cool webpage."});
+            cx.pixel_position(indoc! {"https://CodeOrbit.dev/relË‡eases is a cool webpage."});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights::<HoveredLinkState>(
-            indoc! {"«https://zed.dev/releasesˇ» is a cool webpage."},
+            indoc! {"Â«https://CodeOrbit.dev/releasesË‡Â» is a cool webpage."},
         );
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
-        assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
+        assert_eq!(cx.opened_url(), Some("https://CodeOrbit.dev/releases".into()));
     }
 
     #[gpui::test]
@@ -1493,18 +1493,18 @@ mod tests {
         )
         .await;
 
-        cx.set_state(indoc! {"A cool ˇwebpage is https://zed.dev/releases"});
+        cx.set_state(indoc! {"A cool Ë‡webpage is https://CodeOrbit.dev/releases"});
 
         let screen_coord =
-            cx.pixel_position(indoc! {"A cool webpage is https://zed.dev/releˇases"});
+            cx.pixel_position(indoc! {"A cool webpage is https://CodeOrbit.dev/releË‡ases"});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
         cx.assert_editor_text_highlights::<HoveredLinkState>(
-            indoc! {"A cool webpage is «https://zed.dev/releasesˇ»"},
+            indoc! {"A cool webpage is Â«https://CodeOrbit.dev/releasesË‡Â»"},
         );
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
-        assert_eq!(cx.opened_url(), Some("https://zed.dev/releases".into()));
+        assert_eq!(cx.opened_url(), Some("https://CodeOrbit.dev/releases".into()));
     }
 
     #[gpui::test]
@@ -1519,30 +1519,30 @@ mod tests {
         .await;
 
         let test_cases = [
-            ("file ˇ name", None),
-            ("ˇfile name", Some("file")),
-            ("file ˇname", Some("name")),
-            ("fiˇle name", Some("file")),
-            ("filenˇame", Some("filename")),
+            ("file Ë‡ name", None),
+            ("Ë‡file name", Some("file")),
+            ("file Ë‡name", Some("name")),
+            ("fiË‡le name", Some("file")),
+            ("filenË‡ame", Some("filename")),
             // Absolute path
-            ("foobar ˇ/home/user/f.txt", Some("/home/user/f.txt")),
-            ("foobar /home/useˇr/f.txt", Some("/home/user/f.txt")),
+            ("foobar Ë‡/home/user/f.txt", Some("/home/user/f.txt")),
+            ("foobar /home/useË‡r/f.txt", Some("/home/user/f.txt")),
             // Windows
-            ("C:\\Useˇrs\\user\\f.txt", Some("C:\\Users\\user\\f.txt")),
+            ("C:\\UseË‡rs\\user\\f.txt", Some("C:\\Users\\user\\f.txt")),
             // Whitespace
-            ("ˇfile\\ -\\ name.txt", Some("file - name.txt")),
-            ("file\\ -\\ naˇme.txt", Some("file - name.txt")),
+            ("Ë‡file\\ -\\ name.txt", Some("file - name.txt")),
+            ("file\\ -\\ naË‡me.txt", Some("file - name.txt")),
             // Tilde
-            ("ˇ~/file.txt", Some("~/file.txt")),
-            ("~/fiˇle.txt", Some("~/file.txt")),
+            ("Ë‡~/file.txt", Some("~/file.txt")),
+            ("~/fiË‡le.txt", Some("~/file.txt")),
             // Double quotes
-            ("\"fˇile.txt\"", Some("file.txt")),
-            ("ˇ\"file.txt\"", Some("file.txt")),
-            ("ˇ\"fi\\ le.txt\"", Some("fi le.txt")),
+            ("\"fË‡ile.txt\"", Some("file.txt")),
+            ("Ë‡\"file.txt\"", Some("file.txt")),
+            ("Ë‡\"fi\\ le.txt\"", Some("fi le.txt")),
             // Single quotes
-            ("'fˇile.txt'", Some("file.txt")),
-            ("ˇ'file.txt'", Some("file.txt")),
-            ("ˇ'fi\\ le.txt'", Some("fi le.txt")),
+            ("'fË‡ile.txt'", Some("file.txt")),
+            ("Ë‡'file.txt'", Some("file.txt")),
+            ("Ë‡'fi\\ le.txt'", Some("fi le.txt")),
         ];
 
         for (input, expected) in test_cases {
@@ -1603,7 +1603,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/dir/file2 if this is a Rust file.ˇ
+            Or go to /root/dir/file2 if this is a Rust file.Ë‡
             "});
         #[cfg(target_os = "windows")]
         cx.set_state(indoc! {"
@@ -1611,13 +1611,13 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/dir/file2 if this is a Rust file.ˇ
+            Or go to C:/root/dir/file2 if this is a Rust file.Ë‡
         "});
 
         // File does not exist
         #[cfg(not(target_os = "windows"))]
         let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that dˇoes_not_exist.txt.
+            You can't go to a file that dË‡oes_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
@@ -1625,7 +1625,7 @@ mod tests {
         "});
         #[cfg(target_os = "windows")]
         let screen_coord = cx.pixel_position(indoc! {"
-            You can't go to a file that dˇoes_not_exist.txt.
+            You can't go to a file that dË‡oes_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
@@ -1648,7 +1648,7 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
-            Go to fˇile2.rs if you want.
+            Go to fË‡ile2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
@@ -1656,7 +1656,7 @@ mod tests {
         #[cfg(target_os = "windows")]
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
-            Go to fˇile2.rs if you want.
+            Go to fË‡ile2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
@@ -1666,7 +1666,7 @@ mod tests {
         #[cfg(not(target_os = "windows"))]
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
-            Go to «file2.rsˇ» if you want.
+            Go to Â«file2.rsË‡Â» if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
@@ -1674,7 +1674,7 @@ mod tests {
         #[cfg(target_os = "windows")]
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
-            Go to «file2.rsˇ» if you want.
+            Go to Â«file2.rsË‡Â» if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
@@ -1685,7 +1685,7 @@ mod tests {
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
-            Or go to ../dir/fˇile2.rs if you want.
+            Or go to ../dir/fË‡ile2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
@@ -1693,7 +1693,7 @@ mod tests {
         let screen_coord = cx.pixel_position(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
-            Or go to ../dir/fˇile2.rs if you want.
+            Or go to ../dir/fË‡ile2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
         "});
@@ -1703,7 +1703,7 @@ mod tests {
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
-            Or go to «../dir/file2.rsˇ» if you want.
+            Or go to Â«../dir/file2.rsË‡Â» if you want.
             Or go to /root/dir/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
@@ -1711,7 +1711,7 @@ mod tests {
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
-            Or go to «../dir/file2.rsˇ» if you want.
+            Or go to Â«../dir/file2.rsË‡Â» if you want.
             Or go to C:/root/dir/file2.rs if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
         "});
@@ -1722,7 +1722,7 @@ mod tests {
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
-            Or go to /root/diˇr/file2.rs if project is local.
+            Or go to /root/diË‡r/file2.rs if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
 
@@ -1731,7 +1731,7 @@ mod tests {
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
-            Or go to C:/root/diˇr/file2.rs if project is local.
+            Or go to C:/root/diË‡r/file2.rs if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
         "});
 
@@ -1741,7 +1741,7 @@ mod tests {
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
-            Or go to «/root/dir/file2.rsˇ» if project is local.
+            Or go to Â«/root/dir/file2.rsË‡Â» if project is local.
             Or go to /root/dir/file2 if this is a Rust file.
         "});
         #[cfg(target_os = "windows")]
@@ -1749,7 +1749,7 @@ mod tests {
             You can't go to a file that does_not_exist.txt.
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
-            Or go to «C:/root/dir/file2.rsˇ» if project is local.
+            Or go to Â«C:/root/dir/file2.rsË‡Â» if project is local.
             Or go to C:/root/dir/file2 if this is a Rust file.
         "});
 
@@ -1760,7 +1760,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
-            Or go to /root/diˇr/file2 if this is a Rust file.
+            Or go to /root/diË‡r/file2 if this is a Rust file.
         "});
         #[cfg(target_os = "windows")]
         let screen_coord = cx.pixel_position(indoc! {"
@@ -1768,7 +1768,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
-            Or go to C:/root/diˇr/file2 if this is a Rust file.
+            Or go to C:/root/diË‡r/file2 if this is a Rust file.
         "});
 
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
@@ -1778,7 +1778,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to /root/dir/file2.rs if project is local.
-            Or go to «/root/dir/file2ˇ» if this is a Rust file.
+            Or go to Â«/root/dir/file2Ë‡Â» if this is a Rust file.
         "});
         #[cfg(target_os = "windows")]
         cx.assert_editor_text_highlights::<HoveredLinkState>(indoc! {"
@@ -1786,7 +1786,7 @@ mod tests {
             Go to file2.rs if you want.
             Or go to ../dir/file2.rs if you want.
             Or go to C:/root/dir/file2.rs if project is local.
-            Or go to «C:/root/dir/file2ˇ» if this is a Rust file.
+            Or go to Â«C:/root/dir/file2Ë‡Â» if this is a Rust file.
         "});
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
@@ -1830,12 +1830,12 @@ mod tests {
             .await;
 
         cx.set_state(indoc! {"
-            You can't open ../diˇr because it's a directory.
+            You can't open ../diË‡r because it's a directory.
         "});
 
         // File does not exist
         let screen_coord = cx.pixel_position(indoc! {"
-            You can't open ../diˇr because it's a directory.
+            You can't open ../diË‡r because it's a directory.
         "});
         cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
 

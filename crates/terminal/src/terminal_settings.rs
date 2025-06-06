@@ -1,4 +1,4 @@
-use alacritty_terminal::vte::ansi::{
+﻿use alacritty_terminal::vte::ansi::{
     CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
 };
 use collections::HashMap;
@@ -308,13 +308,13 @@ impl settings::Settings for TerminalSettings {
         {
             for (k, v) in env {
                 if v.is_null() {
-                    if let Some(zed_env) = current.env.as_mut() {
-                        zed_env.remove(k);
+                    if let Some(codeorbit_env) = current.env.as_mut() {
+                        codeorbit_env.remove(k);
                     }
                 }
                 let Some(v) = v.as_str() else { continue };
-                if let Some(zed_env) = current.env.as_mut() {
-                    zed_env.insert(k.clone(), v.to_owned());
+                if let Some(codeorbit_env) = current.env.as_mut() {
+                    codeorbit_env.insert(k.clone(), v.to_owned());
                 } else {
                     current.env = Some([(k.clone(), v.to_owned())].into_iter().collect())
                 }
@@ -398,14 +398,14 @@ pub struct ToolbarContent {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
-    /// Cursor is a block like `█`.
+    /// Cursor is a block like `â–ˆ`.
     #[default]
     Block,
     /// Cursor is an underscore like `_`.
     Underline,
-    /// Cursor is a vertical bar like `⎸`.
+    /// Cursor is a vertical bar like `âŽ¸`.
     Bar,
-    /// Cursor is a hollow box like `▯`.
+    /// Cursor is a hollow box like `â–¯`.
     Hollow,
 }
 

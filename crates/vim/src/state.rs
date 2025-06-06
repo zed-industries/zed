@@ -1,4 +1,4 @@
-use crate::command::command_interceptor;
+﻿use crate::command::command_interceptor;
 use crate::motion::MotionKind;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
@@ -231,7 +231,7 @@ pub struct MarksState {
     buffer_marks: HashMap<BufferId, HashMap<String, Vec<text::Anchor>>>,
     watched_buffers: HashMap<BufferId, (MarkLocation, Subscription, Subscription)>,
 
-    serialized_marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
+    serialiCodeOrbit_marks: HashMap<Arc<Path>, HashMap<String, Vec<Point>>>,
     global_marks: HashMap<String, MarkLocation>,
 
     _subscription: Subscription,
@@ -269,7 +269,7 @@ impl MarksState {
                 multibuffer_marks: HashMap::default(),
                 buffer_marks: HashMap::default(),
                 watched_buffers: HashMap::default(),
-                serialized_marks: HashMap::default(),
+                serialiCodeOrbit_marks: HashMap::default(),
                 global_marks: HashMap::default(),
                 _subscription: subscription,
             };
@@ -311,7 +311,7 @@ impl MarksState {
 
     fn loaded(
         &mut self,
-        marks: Vec<SerializedMark>,
+        marks: Vec<SerialiCodeOrbitMark>,
         global_mark_paths: Vec<(String, Arc<Path>)>,
         cx: &mut Context<Self>,
     ) {
@@ -320,7 +320,7 @@ impl MarksState {
         };
 
         for mark in marks {
-            self.serialized_marks
+            self.serialiCodeOrbit_marks
                 .entry(mark.path)
                 .or_default()
                 .insert(mark.name, mark.points);
@@ -361,13 +361,13 @@ impl MarksState {
         };
         let abs_path: Arc<Path> = abs_path.into();
 
-        let Some(serialized_marks) = self.serialized_marks.get(&abs_path) else {
+        let Some(serialiCodeOrbit_marks) = self.serialiCodeOrbit_marks.get(&abs_path) else {
             return;
         };
 
         let mut loaded_marks = HashMap::default();
         let buffer = buffer_handle.read(cx);
-        for (name, points) in serialized_marks.iter() {
+        for (name, points) in serialiCodeOrbit_marks.iter() {
             loaded_marks.insert(
                 name.clone(),
                 points
@@ -403,7 +403,7 @@ impl MarksState {
             } else {
                 HashMap::default()
             };
-        let old_points = self.serialized_marks.get(&path.clone());
+        let old_points = self.serialiCodeOrbit_marks.get(&path.clone());
         if old_points == Some(&new_points) {
             return;
         }
@@ -430,7 +430,7 @@ impl MarksState {
             }
         }
 
-        self.serialized_marks.insert(path.clone(), new_points);
+        self.serialiCodeOrbit_marks.insert(path.clone(), new_points);
 
         if let Some(workspace_id) = self.workspace_id(cx) {
             cx.background_spawn(async move {
@@ -608,7 +608,7 @@ impl MarksState {
                 return Some(Mark::Buffer(*entity_id, anchors.get(name)?.clone()));
             }
             MarkLocation::Path(path) => {
-                let points = self.serialized_marks.get(path)?;
+                let points = self.serialiCodeOrbit_marks.get(path)?;
                 return Some(Mark::Path(path.clone(), points.get(name)?.clone()));
             }
         }
@@ -659,7 +659,7 @@ impl MarksState {
             }
         };
         self.global_marks.remove(&mark_name.clone());
-        self.serialized_marks
+        self.serialiCodeOrbit_marks
             .get_mut(&path.clone())
             .map(|m| m.remove(&mark_name.clone()));
         if let Some(workspace_id) = self.workspace_id(cx) {
@@ -1489,7 +1489,7 @@ impl PickerDelegate for MarksViewDelegate {
                         }
                         MarkLocation::Path(path) => {
                             if let Some(&position) = marks_state
-                                .serialized_marks
+                                .serialiCodeOrbit_marks
                                 .get(path.as_ref())
                                 .and_then(|map| map.get(name))
                                 .and_then(|points| points.first())
@@ -1687,7 +1687,7 @@ define_connection! (
     ];
 );
 
-struct SerializedMark {
+struct SerialiCodeOrbitMark {
     path: Arc<Path>,
     name: String,
     points: Vec<Point>,
@@ -1714,8 +1714,8 @@ impl VimDb {
                         .into_iter()
                         .map(|point| (point.row, point.column))
                         .collect();
-                    let serialized = serde_json::to_string(&pairs)?;
-                    query((workspace_id, mark_name, path.clone(), serialized))?;
+                    let serialiCodeOrbit = serde_json::to_string(&pairs)?;
+                    query((workspace_id, mark_name, path.clone(), serialiCodeOrbit))?;
                 }
                 Ok(())
             })
@@ -1723,7 +1723,7 @@ impl VimDb {
         result
     }
 
-    fn get_marks(&self, workspace_id: WorkspaceId) -> Result<Vec<SerializedMark>> {
+    fn get_marks(&self, workspace_id: WorkspaceId) -> Result<Vec<SerialiCodeOrbitMark>> {
         let result: Vec<(Arc<Path>, String, String)> = self.select_bound(sql!(
             SELECT path, mark_name, value FROM vim_marks
                 WHERE workspace_id = ?
@@ -1733,7 +1733,7 @@ impl VimDb {
             .into_iter()
             .filter_map(|(path, name, value)| {
                 let pairs: Vec<(u32, u32)> = serde_json::from_str(&value).log_err()?;
-                Some(SerializedMark {
+                Some(SerialiCodeOrbitMark {
                     path,
                     name,
                     points: pairs

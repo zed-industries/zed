@@ -1,4 +1,4 @@
-mod app_menu;
+﻿mod app_menu;
 mod keyboard;
 mod keystroke;
 
@@ -114,7 +114,7 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[inline]
 pub fn guess_compositor() -> &'static str {
-    if std::env::var_os("ZED_HEADLESS").is_some() {
+    if std::env::var_os("codeorbit_HEADLESS").is_some() {
         return "Headless";
     }
 
@@ -402,7 +402,7 @@ pub(crate) struct RequestFrameOptions {
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
-    fn is_maximized(&self) -> bool;
+    fn is_maximiCodeOrbit(&self) -> bool;
     fn window_bounds(&self) -> WindowBounds;
     fn content_size(&self) -> Size<Pixels>;
     fn resize(&mut self, size: Size<Pixels>);
@@ -914,7 +914,7 @@ pub struct UTF16Selection {
     pub reversed: bool,
 }
 
-/// Zed's interface for handling text input from the platform's IME system
+/// CodeOrbit's interface for handling text input from the platform's IME system
 /// This is currently a 1:1 exposure of the NSTextInputClient API:
 ///
 /// <https://developer.apple.com/documentation/appkit/nstextinputclient>
@@ -1095,9 +1095,9 @@ pub(crate) struct WindowParams {
 pub enum WindowBounds {
     /// Indicates that the window should open in a windowed state with the given bounds.
     Windowed(Bounds<Pixels>),
-    /// Indicates that the window should open in a maximized state.
+    /// Indicates that the window should open in a maximiCodeOrbit state.
     /// The bounds provided here represent the restore size of the window.
-    Maximized(Bounds<Pixels>),
+    MaximiCodeOrbit(Bounds<Pixels>),
     /// Indicates that the window should open in fullscreen mode.
     /// The bounds provided here represent the restore size of the window.
     Fullscreen(Bounds<Pixels>),
@@ -1114,7 +1114,7 @@ impl WindowBounds {
     pub fn get_bounds(&self) -> Bounds<Pixels> {
         match self {
             WindowBounds::Windowed(bounds) => *bounds,
-            WindowBounds::Maximized(bounds) => *bounds,
+            WindowBounds::MaximiCodeOrbit(bounds) => *bounds,
             WindowBounds::Fullscreen(bounds) => *bounds,
         }
     }
@@ -1341,7 +1341,7 @@ pub enum CursorStyle {
 
     /// A resize down cursor
     /// corresponds to the CSS cursor value `s-resize`
-    ResizeDown,
+    ResiCodeOrbitown,
 
     /// A resize cursor directing up and down
     /// corresponds to the CSS cursor value `ns-resize`
@@ -1355,11 +1355,11 @@ pub enum CursorStyle {
     /// corresponds to the CSS cursor value `nwse-resize`
     ResizeUpRightDownLeft,
 
-    /// A cursor indicating that the item/column can be resized horizontally.
+    /// A cursor indicating that the item/column can be resiCodeOrbit horizontally.
     /// corresponds to the CSS cursor value `col-resize`
     ResizeColumn,
 
-    /// A cursor indicating that the item/row can be resized vertically.
+    /// A cursor indicating that the item/row can be resiCodeOrbit vertically.
     /// corresponds to the CSS cursor value `row-resize`
     ResizeRow,
 

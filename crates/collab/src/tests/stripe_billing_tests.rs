@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use pretty_assertions::assert_eq;
@@ -47,13 +47,13 @@ async fn test_initialize() {
     let price1 = StripePrice {
         id: StripePriceId("price_1".into()),
         unit_amount: Some(1_000),
-        lookup_key: Some("zed-pro".to_string()),
+        lookup_key: Some("CodeOrbit-pro".to_string()),
         recurring: None,
     };
     let price2 = StripePrice {
         id: StripePriceId("price_2".into()),
         unit_amount: Some(0),
-        lookup_key: Some("zed-free".to_string()),
+        lookup_key: Some("CodeOrbit-free".to_string()),
         recurring: None,
     };
     let price3 = StripePrice {
@@ -81,19 +81,19 @@ async fn test_initialize() {
     stripe_billing.initialize().await.unwrap();
 
     // Verify that prices can be found by lookup key
-    let zed_pro_price_id = stripe_billing.zed_pro_price_id().await.unwrap();
-    assert_eq!(zed_pro_price_id.to_string(), "price_1");
+    let codeorbit_pro_price_id = stripe_billing.codeorbit_pro_price_id().await.unwrap();
+    assert_eq!(codeorbit_pro_price_id.to_string(), "price_1");
 
-    let zed_free_price_id = stripe_billing.zed_free_price_id().await.unwrap();
-    assert_eq!(zed_free_price_id.to_string(), "price_2");
+    let codeorbit_free_price_id = stripe_billing.codeorbit_free_price_id().await.unwrap();
+    assert_eq!(codeorbit_free_price_id.to_string(), "price_2");
 
     // Verify that a price can be found by lookup key
-    let zed_pro_price = stripe_billing
-        .find_price_by_lookup_key("zed-pro")
+    let codeorbit_pro_price = stripe_billing
+        .find_price_by_lookup_key("CodeOrbit-pro")
         .await
         .unwrap();
-    assert_eq!(zed_pro_price.id.to_string(), "price_1");
-    assert_eq!(zed_pro_price.unit_amount, Some(1_000));
+    assert_eq!(codeorbit_pro_price.id.to_string(), "price_1");
+    assert_eq!(codeorbit_pro_price.unit_amount, Some(1_000));
 
     // Verify that finding a non-existent lookup key returns an error
     let result = stripe_billing
@@ -231,45 +231,45 @@ async fn test_subscribe_to_price() {
 }
 
 #[gpui::test]
-async fn test_subscribe_to_zed_free() {
+async fn test_subscribe_to_CodeOrbit_free() {
     let (stripe_billing, stripe_client) = make_stripe_billing();
 
-    let zed_pro_price = StripePrice {
+    let codeorbit_pro_price = StripePrice {
         id: StripePriceId("price_1".into()),
         unit_amount: Some(0),
-        lookup_key: Some("zed-pro".to_string()),
+        lookup_key: Some("CodeOrbit-pro".to_string()),
         recurring: None,
     };
     stripe_client
         .prices
         .lock()
-        .insert(zed_pro_price.id.clone(), zed_pro_price.clone());
-    let zed_free_price = StripePrice {
+        .insert(codeorbit_pro_price.id.clone(), codeorbit_pro_price.clone());
+    let codeorbit_free_price = StripePrice {
         id: StripePriceId("price_2".into()),
         unit_amount: Some(0),
-        lookup_key: Some("zed-free".to_string()),
+        lookup_key: Some("CodeOrbit-free".to_string()),
         recurring: None,
     };
     stripe_client
         .prices
         .lock()
-        .insert(zed_free_price.id.clone(), zed_free_price.clone());
+        .insert(codeorbit_free_price.id.clone(), codeorbit_free_price.clone());
 
     stripe_billing.initialize().await.unwrap();
 
-    // Customer is subscribed to Zed Free when not already subscribed to a plan.
+    // Customer is subscribed to CodeOrbit Free when not already subscribed to a plan.
     {
         let customer_id = StripeCustomerId("cus_no_plan".into());
 
         let subscription = stripe_billing
-            .subscribe_to_zed_free(customer_id)
+            .subscribe_to_CodeOrbit_free(customer_id)
             .await
             .unwrap();
 
-        assert_eq!(subscription.items[0].price.as_ref(), Some(&zed_free_price));
+        assert_eq!(subscription.items[0].price.as_ref(), Some(&codeorbit_free_price));
     }
 
-    // Customer is not subscribed to Zed Free when they already have an active subscription.
+    // Customer is not subscribed to CodeOrbit Free when they already have an active subscription.
     {
         let customer_id = StripeCustomerId("cus_active_subscription".into());
 
@@ -282,7 +282,7 @@ async fn test_subscribe_to_zed_free() {
             current_period_end: (now + Duration::days(30)).timestamp(),
             items: vec![StripeSubscriptionItem {
                 id: StripeSubscriptionItemId("si_test".into()),
-                price: Some(zed_pro_price.clone()),
+                price: Some(codeorbit_pro_price.clone()),
             }],
             cancel_at: None,
             cancellation_details: None,
@@ -293,14 +293,14 @@ async fn test_subscribe_to_zed_free() {
         );
 
         let subscription = stripe_billing
-            .subscribe_to_zed_free(customer_id)
+            .subscribe_to_CodeOrbit_free(customer_id)
             .await
             .unwrap();
 
         assert_eq!(subscription, existing_subscription);
     }
 
-    // Customer is not subscribed to Zed Free when they already have a trial subscription.
+    // Customer is not subscribed to CodeOrbit Free when they already have a trial subscription.
     {
         let customer_id = StripeCustomerId("cus_trial_subscription".into());
 
@@ -313,7 +313,7 @@ async fn test_subscribe_to_zed_free() {
             current_period_end: (now + Duration::days(14)).timestamp(),
             items: vec![StripeSubscriptionItem {
                 id: StripeSubscriptionItemId("si_test".into()),
-                price: Some(zed_pro_price.clone()),
+                price: Some(codeorbit_pro_price.clone()),
             }],
             cancel_at: None,
             cancellation_details: None,
@@ -324,7 +324,7 @@ async fn test_subscribe_to_zed_free() {
         );
 
         let subscription = stripe_billing
-            .subscribe_to_zed_free(customer_id)
+            .subscribe_to_CodeOrbit_free(customer_id)
             .await
             .unwrap();
 
@@ -364,23 +364,23 @@ async fn test_bill_model_request_usage() {
 }
 
 #[gpui::test]
-async fn test_checkout_with_zed_pro() {
+async fn test_checkout_with_CodeOrbit_pro() {
     let (stripe_billing, stripe_client) = make_stripe_billing();
 
     let customer_id = StripeCustomerId("cus_test".into());
-    let github_login = "zeduser1";
+    let github_login = "CodeOrbituser1";
     let success_url = "https://example.com/success";
 
-    // It returns an error when the Zed Pro price doesn't exist.
+    // It returns an error when the CodeOrbit Pro price doesn't exist.
     {
         let result = stripe_billing
-            .checkout_with_zed_pro(&customer_id, github_login, success_url)
+            .checkout_with_CodeOrbit_pro(&customer_id, github_login, success_url)
             .await;
 
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            r#"no price ID found for "zed-pro""#
+            r#"no price ID found for "CodeOrbit-pro""#
         );
     }
 
@@ -389,7 +389,7 @@ async fn test_checkout_with_zed_pro() {
         let price = StripePrice {
             id: StripePriceId("price_1".into()),
             unit_amount: Some(2000),
-            lookup_key: Some("zed-pro".to_string()),
+            lookup_key: Some("CodeOrbit-pro".to_string()),
             recurring: None,
         };
         stripe_client
@@ -400,7 +400,7 @@ async fn test_checkout_with_zed_pro() {
         stripe_billing.initialize().await.unwrap();
 
         let checkout_url = stripe_billing
-            .checkout_with_zed_pro(&customer_id, github_login, success_url)
+            .checkout_with_CodeOrbit_pro(&customer_id, github_login, success_url)
             .await
             .unwrap();
 
@@ -430,30 +430,30 @@ async fn test_checkout_with_zed_pro() {
 }
 
 #[gpui::test]
-async fn test_checkout_with_zed_pro_trial() {
+async fn test_checkout_with_CodeOrbit_pro_trial() {
     let (stripe_billing, stripe_client) = make_stripe_billing();
 
     let customer_id = StripeCustomerId("cus_test".into());
-    let github_login = "zeduser1";
+    let github_login = "CodeOrbituser1";
     let success_url = "https://example.com/success";
 
-    // It returns an error when the Zed Pro price doesn't exist.
+    // It returns an error when the CodeOrbit Pro price doesn't exist.
     {
         let result = stripe_billing
-            .checkout_with_zed_pro_trial(&customer_id, github_login, Vec::new(), success_url)
+            .checkout_with_CodeOrbit_pro_trial(&customer_id, github_login, Vec::new(), success_url)
             .await;
 
         assert!(result.is_err());
         assert_eq!(
             result.err().unwrap().to_string(),
-            r#"no price ID found for "zed-pro""#
+            r#"no price ID found for "CodeOrbit-pro""#
         );
     }
 
     let price = StripePrice {
         id: StripePriceId("price_1".into()),
         unit_amount: Some(2000),
-        lookup_key: Some("zed-pro".to_string()),
+        lookup_key: Some("CodeOrbit-pro".to_string()),
         recurring: None,
     };
     stripe_client
@@ -466,7 +466,7 @@ async fn test_checkout_with_zed_pro_trial() {
     // Successful checkout.
     {
         let checkout_url = stripe_billing
-            .checkout_with_zed_pro_trial(&customer_id, github_login, Vec::new(), success_url)
+            .checkout_with_CodeOrbit_pro_trial(&customer_id, github_login, Vec::new(), success_url)
             .await
             .unwrap();
 
@@ -512,7 +512,7 @@ async fn test_checkout_with_zed_pro_trial() {
     // Successful checkout with extended trial.
     {
         let checkout_url = stripe_billing
-            .checkout_with_zed_pro_trial(
+            .checkout_with_CodeOrbit_pro_trial(
                 &customer_id,
                 github_login,
                 vec![AGENT_EXTENDED_TRIAL_FEATURE_FLAG.to_string()],

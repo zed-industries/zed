@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncApp, DispatchPhase, Effect, EntityId, EventEmitter,
     FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver, Reservation, SubscriberSet,
     Subscription, Task, WeakEntity, WeakFocusHandle, Window, WindowHandle,
@@ -16,7 +16,7 @@ use util::Deferred;
 
 use super::{App, AsyncWindowContext, Entity, KeystrokeEvent};
 
-/// The app context, with specialized behavior for the given entity.
+/// The app context, with specialiCodeOrbit behavior for the given entity.
 #[derive(Deref, DerefMut)]
 pub struct Context<'a, T> {
     #[deref]
@@ -215,7 +215,7 @@ impl<'a, T: 'static> Context<'a, T> {
     /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut App)`,
     /// but it's often useful to be able to access view state in these
     /// callbacks. This method provides a convenient way to do so.
-    pub fn listener<E: ?Sized>(
+    pub fn listener<E: ?SiCodeOrbit>(
         &self,
         f: impl Fn(&mut T, &E, &mut Window, &mut Context<T>) + 'static,
     ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
@@ -379,7 +379,7 @@ impl<'a, T: 'static> Context<'a, T> {
             })
     }
 
-    /// Register a callback to be invoked when the window is resized.
+    /// Register a callback to be invoked when the window is resiCodeOrbit.
     pub fn observe_window_bounds(
         &self,
         window: &mut Window,

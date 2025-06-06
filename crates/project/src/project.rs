@@ -1,4 +1,4 @@
-pub mod buffer_store;
+﻿pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
 pub mod context_server_store;
@@ -114,7 +114,7 @@ use text::{Anchor, BufferId};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
-    paths::{SanitizedPath, compare_paths},
+    paths::{SanitiCodeOrbitPath, compare_paths},
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
@@ -149,7 +149,7 @@ pub trait ProjectItem: 'static {
         cx: &mut App,
     ) -> Option<Task<Result<Entity<Self>>>>
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
     fn entry_id(&self, cx: &App) -> Option<ProjectEntryId>;
     fn project_path(&self, cx: &App) -> Option<ProjectPath>;
     fn is_dirty(&self) -> bool;
@@ -1954,8 +1954,8 @@ impl Project {
         exclude_sub_dirs: bool,
         cx: &App,
     ) -> Option<bool> {
-        let sanitized_path = SanitizedPath::from(path);
-        let path = sanitized_path.as_path();
+        let sanitiCodeOrbit_path = SanitiCodeOrbitPath::from(path);
+        let path = sanitiCodeOrbit_path.as_path();
         self.worktrees(cx)
             .filter_map(|worktree| {
                 let worktree = worktree.read(cx);

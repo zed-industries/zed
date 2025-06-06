@@ -1,4 +1,4 @@
-# Summary
+﻿# Summary
 
 # General
 
@@ -13,7 +13,7 @@
 
 # Configuration
 
-- [Configuring Zed](./configuring-zed.md)
+- [Configuring CodeOrbit](./configuring-CodeOrbit.md)
 - [Configuring Languages](./configuring-languages.md)
 - [Key bindings](./key-bindings.md)
 - [Snippets](./snippets.md)
@@ -24,7 +24,7 @@
 <!-- - [Globs](./globs.md) -->
 <!-- - [Fonts](./fonts.md) -->
 
-# Using Zed
+# Using CodeOrbit
 
 - [Multibuffers](./multibuffers.md)
 - [Outline Panel](./outline-panel.md)
@@ -141,9 +141,9 @@
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 
-# Developing Zed
+# Developing CodeOrbit
 
-- [Developing Zed](./development.md)
+- [Developing CodeOrbit](./development.md)
   - [macOS](./development/macos.md)
   - [Linux](./development/linux.md)
   - [Windows](./development/windows.md)

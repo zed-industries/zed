@@ -1,4 +1,4 @@
-use gpui::{
+﻿use gpui::{
     FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, UnderlineStyle, px,
 };
 use language::HighlightId;
@@ -210,7 +210,7 @@ impl MarkdownHighlight {
 /// The style for a Markdown highlight.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MarkdownHighlightStyle {
-    /// Whether the text should be italicized.
+    /// Whether the text should be italiciCodeOrbit.
     pub italic: bool,
     /// Whether the text should be underlined.
     pub underline: bool,

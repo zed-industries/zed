@@ -1,4 +1,4 @@
-use crate::notification_window_options;
+﻿use crate::notification_window_options;
 use crate::notifications::collab_notification::CollabNotification;
 use call::{ActiveCall, IncomingCall};
 use futures::StreamExt;
@@ -127,7 +127,7 @@ impl Render for IncomingCallNotification {
                 }),
             )
             .child(v_flex().overflow_hidden().child(Label::new(format!(
-                "{} is sharing a project in Zed",
+                "{} is sharing a project in CodeOrbit",
                 self.state.call.calling_user.github_login
             )))),
         )

@@ -1,8 +1,8 @@
-use std::fs;
-use zed::lsp::CompletionKind;
-use zed::{CodeLabel, CodeLabelSpan, LanguageServerId};
-use zed_extension_api::process::Command;
-use zed_extension_api::{self as zed, Result};
+﻿use std::fs;
+use CodeOrbit::lsp::CompletionKind;
+use CodeOrbit::{CodeLabel, CodeLabelSpan, LanguageServerId};
+use codeorbit_extension_api::process::Command;
+use codeorbit_extension_api::{self as CodeOrbit, Result};
 
 struct TestExtension {
     cached_binary_path: Option<String>,
@@ -12,7 +12,7 @@ impl TestExtension {
     fn language_server_binary_path(
         &mut self,
         language_server_id: &LanguageServerId,
-        _worktree: &zed::Worktree,
+        _worktree: &CodeOrbit::Worktree,
     ) -> Result<String> {
         let echo_output = Command::new("echo").arg("hello!").output()?;
 
@@ -24,31 +24,31 @@ impl TestExtension {
             }
         }
 
-        zed::set_language_server_installation_status(
+        CodeOrbit::set_language_server_installation_status(
             language_server_id,
-            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
+            &CodeOrbit::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let release = zed::latest_github_release(
+        let release = CodeOrbit::latest_github_release(
             "gleam-lang/gleam",
-            zed::GithubReleaseOptions {
+            CodeOrbit::GithubReleaseOptions {
                 require_assets: true,
                 pre_release: false,
             },
         )?;
 
-        let (platform, arch) = zed::current_platform();
+        let (platform, arch) = CodeOrbit::current_platform();
         let asset_name = format!(
             "gleam-{version}-{arch}-{os}.tar.gz",
             version = release.version,
             arch = match arch {
-                zed::Architecture::Aarch64 => "aarch64",
-                zed::Architecture::X86 => "x86",
-                zed::Architecture::X8664 => "x86_64",
+                CodeOrbit::Architecture::Aarch64 => "aarch64",
+                CodeOrbit::Architecture::X86 => "x86",
+                CodeOrbit::Architecture::X8664 => "x86_64",
             },
             os = match platform {
-                zed::Os::Mac => "apple-darwin",
-                zed::Os::Linux => "unknown-linux-musl",
-                zed::Os::Windows => "pc-windows-msvc",
+                CodeOrbit::Os::Mac => "apple-darwin",
+                CodeOrbit::Os::Linux => "unknown-linux-musl",
+                CodeOrbit::Os::Windows => "pc-windows-msvc",
             },
         );
 
@@ -62,15 +62,15 @@ impl TestExtension {
         let binary_path = format!("{version_dir}/gleam");
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
-            zed::set_language_server_installation_status(
+            CodeOrbit::set_language_server_installation_status(
                 language_server_id,
-                &zed::LanguageServerInstallationStatus::Downloading,
+                &CodeOrbit::LanguageServerInstallationStatus::Downloading,
             );
 
-            zed::download_file(
+            CodeOrbit::download_file(
                 &asset.download_url,
                 &version_dir,
-                zed::DownloadedFileType::GzipTar,
+                CodeOrbit::DownloadedFileType::GzipTar,
             )
             .map_err(|e| format!("failed to download file: {e}"))?;
 
@@ -89,7 +89,7 @@ impl TestExtension {
     }
 }
 
-impl zed::Extension for TestExtension {
+impl CodeOrbit::Extension for TestExtension {
     fn new() -> Self {
         Self {
             cached_binary_path: None,
@@ -99,9 +99,9 @@ impl zed::Extension for TestExtension {
     fn language_server_command(
         &mut self,
         language_server_id: &LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<zed::Command> {
-        Ok(zed::Command {
+        worktree: &CodeOrbit::Worktree,
+    ) -> Result<CodeOrbit::Command> {
+        Ok(CodeOrbit::Command {
             command: self.language_server_binary_path(language_server_id, worktree)?,
             args: vec!["lsp".to_string()],
             env: Default::default(),
@@ -111,8 +111,8 @@ impl zed::Extension for TestExtension {
     fn label_for_completion(
         &self,
         _language_server_id: &LanguageServerId,
-        completion: zed::lsp::Completion,
-    ) -> Option<zed::CodeLabel> {
+        completion: CodeOrbit::lsp::Completion,
+    ) -> Option<CodeOrbit::CodeLabel> {
         let name = &completion.label;
         let ty = strip_newlines_from_detail(&completion.detail?);
         let let_binding = "let a";
@@ -145,12 +145,12 @@ impl zed::Extension for TestExtension {
     }
 }
 
-zed::register_extension!(TestExtension);
+CodeOrbit::register_extension!(TestExtension);
 
 /// Removes newlines from the completion detail.
 ///
 /// The Gleam LSP can return types containing newlines, which causes formatting
-/// issues within the Zed completions menu.
+/// issues within the CodeOrbit completions menu.
 fn strip_newlines_from_detail(detail: &str) -> String {
     let without_newlines = detail
         .replace("->\n  ", "-> ")

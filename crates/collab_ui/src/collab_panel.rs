@@ -1,4 +1,4 @@
-mod channel_modal;
+﻿mod channel_modal;
 mod contact_finder;
 
 use self::channel_modal::ChannelModal;
@@ -193,7 +193,7 @@ pub struct CollabPanel {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SerializedCollabPanel {
+struct SerialiCodeOrbitCollabPanel {
     width: Option<Pixels>,
     collapsed_channels: Option<Vec<u64>>,
 }
@@ -381,7 +381,7 @@ impl CollabPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        let serialized_panel = match workspace
+        let serialiCodeOrbit_panel = match workspace
             .read_with(&cx, |workspace, _| {
                 CollabPanel::serialization_key(workspace)
             })
@@ -394,7 +394,7 @@ impl CollabPanel {
                 .context("reading collaboration panel from key value store")
                 .log_err()
                 .flatten()
-                .map(|panel| serde_json::from_str::<SerializedCollabPanel>(&panel))
+                .map(|panel| serde_json::from_str::<SerialiCodeOrbitCollabPanel>(&panel))
                 .transpose()
                 .log_err()
                 .flatten(),
@@ -403,10 +403,10 @@ impl CollabPanel {
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let panel = CollabPanel::new(workspace, window, cx);
-            if let Some(serialized_panel) = serialized_panel {
+            if let Some(serialiCodeOrbit_panel) = serialiCodeOrbit_panel {
                 panel.update(cx, |panel, cx| {
-                    panel.width = serialized_panel.width.map(|w| w.round());
-                    panel.collapsed_channels = serialized_panel
+                    panel.width = serialiCodeOrbit_panel.width.map(|w| w.round());
+                    panel.collapsed_channels = serialiCodeOrbit_panel
                         .collapsed_channels
                         .unwrap_or_else(Vec::new)
                         .iter()
@@ -443,7 +443,7 @@ impl CollabPanel {
                 KEY_VALUE_STORE
                     .write_kvp(
                         serialization_key,
-                        serde_json::to_string(&SerializedCollabPanel {
+                        serde_json::to_string(&SerialiCodeOrbitCollabPanel {
                             width,
                             collapsed_channels: Some(
                                 collapsed_channels.iter().map(|cid| cid.0).collect(),
@@ -1182,7 +1182,7 @@ impl CollabPanel {
                             })
                             .detach_and_prompt_err("Failed to grant write access", window, cx, |e, _, _| {
                                 match e.error_code() {
-                                    ErrorCode::NeedsCla => Some("This user has not yet signed the CLA at https://zed.dev/cla.".into()),
+                                    ErrorCode::NeedsCla => Some("This user has not yet signed the CLA at https://CodeOrbit.dev/cla.".into()),
                                     _ => None,
                                 }
                             })

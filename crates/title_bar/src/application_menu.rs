@@ -1,4 +1,4 @@
-use gpui::{Entity, OwnedMenu, OwnedMenuItem};
+﻿use gpui::{Entity, OwnedMenu, OwnedMenuItem};
 
 #[cfg(not(target_os = "macos"))]
 use gpui::{actions, impl_actions};
@@ -95,9 +95,9 @@ impl ApplicationMenu {
         ContextMenu::build(window, cx, |menu, window, cx| {
             // Grab current focus handle so menu can shown items in context with the focused element
             let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
-            let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
+            let sanitiCodeOrbit_items = Self::sanitize_menu_items(entry.menu.items);
 
-            sanitized_items
+            sanitiCodeOrbit_items
                 .into_iter()
                 .fold(menu, |menu, item| match item {
                     OwnedMenuItem::Separator => menu.separator(),

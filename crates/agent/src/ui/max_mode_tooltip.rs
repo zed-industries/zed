@@ -1,4 +1,4 @@
-use crate::ToggleBurnMode;
+﻿use crate::ToggleBurnMode;
 use gpui::{Context, FontWeight, IntoElement, Render, Window};
 use ui::{KeyBinding, prelude::*, tooltip_container};
 
@@ -20,9 +20,9 @@ impl MaxModeTooltip {
 impl Render for MaxModeTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (icon, color) = if self.selected {
-            (IconName::ZedBurnModeOn, Color::Error)
+            (IconName::CodeOrbitBurnModeOn, Color::Error)
         } else {
-            (IconName::ZedBurnMode, Color::Default)
+            (IconName::CodeOrbitBurnMode, Color::Default)
         };
 
         let turned_on = h_flex()

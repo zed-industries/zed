@@ -1,4 +1,4 @@
-use collections::HashMap;
+﻿use collections::HashMap;
 pub use ipc_channel::ipc;
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +28,6 @@ pub enum CliResponse {
     Exit { status: i32 },
 }
 
-/// When Zed started not as an *.app but as a binary (e.g. local development),
+/// When CodeOrbit started not as an *.app but as a binary (e.g. local development),
 /// there's a possibility to tell it to behave "regularly".
-pub const FORCE_CLI_MODE_ENV_VAR_NAME: &str = "ZED_FORCE_CLI_MODE";
+pub const FORCE_CLI_MODE_ENV_VAR_NAME: &str = "codeorbit_FORCE_CLI_MODE";

@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     ProjectItem as _, ProjectPath,
     lsp_store::OpenLspBufferHandle,
     search::SearchQuery,
@@ -1649,21 +1649,21 @@ impl BufferStore {
         peer_id: proto::PeerId,
         cx: &mut Context<Self>,
     ) -> proto::ProjectTransaction {
-        let mut serialized_transaction = proto::ProjectTransaction {
+        let mut serialiCodeOrbit_transaction = proto::ProjectTransaction {
             buffer_ids: Default::default(),
             transactions: Default::default(),
         };
         for (buffer, transaction) in project_transaction.0 {
             self.create_buffer_for_peer(&buffer, peer_id, cx)
                 .detach_and_log_err(cx);
-            serialized_transaction
+            serialiCodeOrbit_transaction
                 .buffer_ids
                 .push(buffer.read(cx).remote_id().into());
-            serialized_transaction
+            serialiCodeOrbit_transaction
                 .transactions
                 .push(language::proto::serialize_transaction(&transaction));
         }
-        serialized_transaction
+        serialiCodeOrbit_transaction
     }
 }
 

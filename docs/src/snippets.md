@@ -1,8 +1,8 @@
-# Snippets
+﻿# Snippets
 
 Use the {#action snippets::ConfigureSnippets} action to create a new snippets file or edit a existing snippets file for a specified [scope](#scopes).
 
-The snippets are located in `~/.config/zed/snippets` directory to which you can navigate to with the {#action snippets::OpenFolder} action.
+The snippets are located in `~/.config/CodeOrbit/snippets` directory to which you can navigate to with the {#action snippets::OpenFolder} action.
 
 ## Example configuration
 
@@ -40,4 +40,4 @@ To create JSX snippets you have to use `javascript.json` snippets file, instead 
 
 ## See also
 
-For more configuration information, see the [`simple-completion-language-server` instructions](https://github.com/zed-industries/simple-completion-language-server/tree/main).
+For more configuration information, see the [`simple-completion-language-server` instructions](https://github.com/CodeOrbit-industries/simple-completion-language-server/tree/main).

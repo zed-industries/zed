@@ -1,4 +1,4 @@
-//! Test support for GPUI.
+﻿//! Test support for GPUI.
 //!
 //! GPUI provides first-class support for testing, which includes a macro to run test that rely on having a context,
 //! and a test implementation of the `ForegroundExecutor` and `BackgroundExecutor` which ensure that your tests run
@@ -7,7 +7,7 @@
 //! The output of the `gpui::test` macro is understood by other rust test runners, so you can use it with `cargo test`
 //! or `cargo-nextest`, or another runner of your choice.
 //!
-//! To make it possible to test collaborative user interfaces (like Zed) you can ask for as many different contexts
+//! To make it possible to test collaborative user interfaces (like CodeOrbit) you can ask for as many different contexts
 //! as you need.
 //!
 //! ## Example

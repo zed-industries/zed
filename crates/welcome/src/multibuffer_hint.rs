@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+﻿use std::collections::HashSet;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -163,7 +163,7 @@ impl Render for MultibufferHint {
                             .icon_color(Color::Muted)
                             .icon_position(IconPosition::End)
                             .on_click(move |_event, _, cx| {
-                                cx.open_url("https://zed.dev/docs/multibuffers")
+                                cx.open_url("https://CodeOrbit.dev/docs/multibuffers")
                             }),
                     ),
             )

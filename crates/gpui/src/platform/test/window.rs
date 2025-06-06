@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GpuSpecs,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, PromptButton, RequestFrameOptions, ScaledPixels, Size, TestPlatform, TileId,
@@ -118,7 +118,7 @@ impl PlatformWindow for TestWindow {
         WindowBounds::Windowed(self.bounds())
     }
 
-    fn is_maximized(&self) -> bool {
+    fn is_maximiCodeOrbit(&self) -> bool {
         false
     }
 

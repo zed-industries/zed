@@ -1,4 +1,4 @@
-mod billing_subscription_tests;
+﻿mod billing_subscription_tests;
 mod buffer_tests;
 mod channel_tests;
 mod contributor_tests;
@@ -76,7 +76,7 @@ impl TestDb {
         let _guard = LOCK.lock();
         let mut rng = StdRng::from_entropy();
         let url = format!(
-            "postgres://postgres@localhost/zed-test-{}",
+            "postgres://postgres@localhost/CodeOrbit-test-{}",
             rng.r#gen::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()

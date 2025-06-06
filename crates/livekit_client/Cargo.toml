@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "livekit_client"
 version = "0.1.0"
 edition.workspace = true
@@ -40,8 +40,8 @@ util.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-libwebrtc = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/zed-industries/livekit-rust-sdks" }
-livekit = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
+libwebrtc = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/CodeOrbit-industries/livekit-rust-sdks" }
+livekit = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/CodeOrbit-industries/livekit-rust-sdks", features = [
     "__rustls-tls"
 ] }
 

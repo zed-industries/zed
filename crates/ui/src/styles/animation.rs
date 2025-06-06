@@ -1,4 +1,4 @@
-use crate::{ContentGroup, prelude::*};
+﻿use crate::{ContentGroup, prelude::*};
 use gpui::{AnimationElement, AnimationExt, Styled};
 use std::time::Duration;
 
@@ -31,7 +31,7 @@ pub enum AnimationDirection {
     FromTop,
 }
 
-pub trait DefaultAnimations: Styled + Sized {
+pub trait DefaultAnimations: Styled + SiCodeOrbit {
     fn animate_in(
         self,
         animation_type: AnimationDirection,

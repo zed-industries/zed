@@ -1,13 +1,13 @@
-id = "toml"
+﻿id = "toml"
 name = "TOML"
 description = "TOML support."
 version = "0.1.4"
 schema_version = 1
 authors = [
-    "Max Brunsfeld <max@zed.dev>",
+    "Max Brunsfeld <max@CodeOrbit.dev>",
     "Ammar Arif <evergreenkary@gmail.com>"
 ]
-repository = "https://github.com/zed-industries/zed"
+repository = "https://github.com/CodeOrbit-industries/CodeOrbit"
 
 [language_servers.taplo]
 name = "Taplo"

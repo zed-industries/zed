@@ -1,7 +1,7 @@
-[
+﻿[
   {
     "bindings": {
-      "ctrl-alt-s": "zed::OpenSettings",
+      "ctrl-alt-s": "CodeOrbit::OpenSettings",
       "ctrl-{": "pane::ActivatePreviousItem",
       "ctrl-}": "pane::ActivateNextItem",
       "ctrl-f2": "debugger::Stop",
@@ -16,8 +16,8 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl->": ["zed::IncreaseBufferFontSize", { "persist": true }],
-      "ctrl-<": ["zed::DecreaseBufferFontSize", { "persist": true }],
+      "ctrl->": ["CodeOrbit::IncreaseBufferFontSize", { "persist": true }],
+      "ctrl-<": ["CodeOrbit::DecreaseBufferFontSize", { "persist": true }],
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-d": "editor::DuplicateSelection",
       "ctrl-y": "editor::DeleteLine",

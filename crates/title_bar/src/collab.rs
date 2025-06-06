@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{User, proto::PeerId};
@@ -36,7 +36,7 @@ fn toggle_screen_sharing(_: &ToggleScreenSharing, window: &mut Window, cx: &mut 
                 room.share_screen(cx)
             }
         });
-        toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| Some(format!("{:?}\n\nPlease check that you have given Zed permissions to record your screen in Settings.", e)));
+        toggle_screen_sharing.detach_and_prompt_err("Sharing Screen Failed", window, cx, |e, _, _| Some(format!("{:?}\n\nPlease check that you have given CodeOrbit permissions to record your screen in Settings.", e)));
     }
 }
 

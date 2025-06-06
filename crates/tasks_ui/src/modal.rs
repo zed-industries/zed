@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use crate::TaskContexts;
 use editor::Editor;
@@ -21,7 +21,7 @@ use ui::{
 
 use util::{ResultExt, truncate_and_trailoff};
 use workspace::{ModalView, Workspace};
-pub use zed_actions::{Rerun, Spawn};
+pub use codeorbit_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
 pub struct TasksModalDelegate {
@@ -762,7 +762,7 @@ mod tests {
         fs.insert_tree(
             path!("/dir"),
             json!({
-                ".zed": {
+                ".CodeOrbit": {
                     "tasks.json": r#"[
                         {
                             "label": "example task",
@@ -934,17 +934,17 @@ mod tests {
         fs.insert_tree(
             path!("/dir"),
             json!({
-                ".zed": {
+                ".CodeOrbit": {
                     "tasks.json": r#"[
                         {
-                            "label": "hello from $ZED_FILE:$ZED_ROW:$ZED_COLUMN",
+                            "label": "hello from $codeorbit_FILE:$codeorbit_ROW:$codeorbit_COLUMN",
                             "command": "echo",
-                            "args": ["hello", "from", "$ZED_FILE", ":", "$ZED_ROW", ":", "$ZED_COLUMN"]
+                            "args": ["hello", "from", "$codeorbit_FILE", ":", "$codeorbit_ROW", ":", "$codeorbit_COLUMN"]
                         },
                         {
-                            "label": "opened now: $ZED_WORKTREE_ROOT",
+                            "label": "opened now: $codeorbit_WORKTREE_ROOT",
                             "command": "echo",
-                            "args": ["opened", "now:", "$ZED_WORKTREE_ROOT"]
+                            "args": ["opened", "now:", "$codeorbit_WORKTREE_ROOT"]
                         }
                     ]"#,
                 },
@@ -1077,12 +1077,12 @@ mod tests {
                             ..TaskTemplate::default()
                         },
                         TaskTemplate {
-                            label: "TypeScript task from file $ZED_FILE".to_string(),
+                            label: "TypeScript task from file $codeorbit_FILE".to_string(),
                             command: "npm run build".to_string(),
                             ..TaskTemplate::default()
                         },
                         TaskTemplate {
-                            label: "Another task from file $ZED_FILE".to_string(),
+                            label: "Another task from file $codeorbit_FILE".to_string(),
                             command: "npm run lint".to_string(),
                             ..TaskTemplate::default()
                         },

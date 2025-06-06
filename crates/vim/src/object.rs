@@ -1,4 +1,4 @@
-use std::ops::Range;
+﻿use std::ops::Range;
 
 use crate::{
     Vim,
@@ -1666,18 +1666,18 @@ mod test {
     };
 
     const WORD_LOCATIONS: &str = indoc! {"
-        The quick ˇbrowˇnˇ•••
-        fox ˇjuˇmpsˇ over
-        the lazy dogˇ••
-        ˇ
-        ˇ
-        ˇ
-        Thˇeˇ-ˇquˇickˇ ˇbrownˇ•
-        ˇ••
-        ˇ••
-        ˇ  fox-jumpˇs over
-        the lazy dogˇ•
-        ˇ
+        The quick Ë‡browË‡nË‡â€¢â€¢â€¢
+        fox Ë‡juË‡mpsË‡ over
+        the lazy dogË‡â€¢â€¢
+        Ë‡
+        Ë‡
+        Ë‡
+        ThË‡eË‡-Ë‡quË‡ickË‡ Ë‡brownË‡â€¢
+        Ë‡â€¢â€¢
+        Ë‡â€¢â€¢
+        Ë‡  fox-jumpË‡s over
+        the lazy dogË‡â€¢
+        Ë‡
         "
     };
 
@@ -1722,21 +1722,21 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         /*
-                cx.set_shared_state("The quick ˇbrown\nfox").await;
+                cx.set_shared_state("The quick Ë‡brown\nfox").await;
                 cx.simulate_shared_keystrokes(["v"]).await;
-                cx.assert_shared_state("The quick «bˇ»rown\nfox").await;
+                cx.assert_shared_state("The quick Â«bË‡Â»rown\nfox").await;
                 cx.simulate_shared_keystrokes(["i", "w"]).await;
-                cx.assert_shared_state("The quick «brownˇ»\nfox").await;
+                cx.assert_shared_state("The quick Â«brownË‡Â»\nfox").await;
         */
-        cx.set_shared_state("The quick brown\nˇ\nfox").await;
+        cx.set_shared_state("The quick brown\nË‡\nfox").await;
         cx.simulate_shared_keystrokes("v").await;
         cx.shared_state()
             .await
-            .assert_eq("The quick brown\n«\nˇ»fox");
+            .assert_eq("The quick brown\nÂ«\nË‡Â»fox");
         cx.simulate_shared_keystrokes("i w").await;
         cx.shared_state()
             .await
-            .assert_eq("The quick brown\n«\nˇ»fox");
+            .assert_eq("The quick brown\nÂ«\nË‡Â»fox");
 
         cx.simulate_at_each_offset("v i w", WORD_LOCATIONS)
             .await
@@ -1748,56 +1748,56 @@ mod test {
 
     const PARAGRAPH_EXAMPLES: &[&str] = &[
         // Single line
-        "ˇThe quick brown fox jumpˇs over the lazy dogˇ.ˇ",
+        "Ë‡The quick brown fox jumpË‡s over the lazy dogË‡.Ë‡",
         // Multiple lines without empty lines
         indoc! {"
-            ˇThe quick brownˇ
-            ˇfox jumps overˇ
-            the lazy dog.ˇ
+            Ë‡The quick brownË‡
+            Ë‡fox jumps overË‡
+            the lazy dog.Ë‡
         "},
         // Heading blank paragraph and trailing normal paragraph
         indoc! {"
-            ˇ
-            ˇ
-            ˇThe quick brown fox jumps
-            ˇover the lazy dog.
-            ˇ
-            ˇ
-            ˇThe quick brown fox jumpsˇ
-            ˇover the lazy dog.ˇ
+            Ë‡
+            Ë‡
+            Ë‡The quick brown fox jumps
+            Ë‡over the lazy dog.
+            Ë‡
+            Ë‡
+            Ë‡The quick brown fox jumpsË‡
+            Ë‡over the lazy dog.Ë‡
         "},
         // Inserted blank paragraph and trailing blank paragraph
         indoc! {"
-            ˇThe quick brown fox jumps
-            ˇover the lazy dog.
-            ˇ
-            ˇ
-            ˇ
-            ˇThe quick brown fox jumpsˇ
-            ˇover the lazy dog.ˇ
-            ˇ
-            ˇ
-            ˇ
+            Ë‡The quick brown fox jumps
+            Ë‡over the lazy dog.
+            Ë‡
+            Ë‡
+            Ë‡
+            Ë‡The quick brown fox jumpsË‡
+            Ë‡over the lazy dog.Ë‡
+            Ë‡
+            Ë‡
+            Ë‡
         "},
         // "Blank" paragraph with whitespace characters
         indoc! {"
-            ˇThe quick brown fox jumps
+            Ë‡The quick brown fox jumps
             over the lazy dog.
 
-            ˇ \t
+            Ë‡ \t
 
-            ˇThe quick brown fox jumps
-            over the lazy dog.ˇ
-            ˇ
-            ˇ \t
+            Ë‡The quick brown fox jumps
+            over the lazy dog.Ë‡
+            Ë‡
+            Ë‡ \t
             \t \t
         "},
         // Single line "paragraphs", where selection size might be zero.
         indoc! {"
-            ˇThe quick brown fox jumps over the lazy dog.
-            ˇ
-            ˇThe quick brown fox jumpˇs over the lazy dog.ˇ
-            ˇ
+            Ë‡The quick brown fox jumps over the lazy dog.
+            Ë‡
+            Ë‡The quick brown fox jumpË‡s over the lazy dog.Ë‡
+            Ë‡
         "},
     ];
 
@@ -1835,24 +1835,24 @@ mod test {
 
         const EXAMPLES: &[&str] = &[
             indoc! {"
-                ˇThe quick brown
+                Ë‡The quick brown
                 fox jumps over
                 the lazy dog.
             "},
             indoc! {"
-                ˇ
+                Ë‡
 
-                ˇThe quick brown fox jumps
+                Ë‡The quick brown fox jumps
                 over the lazy dog.
-                ˇ
+                Ë‡
 
-                ˇThe quick brown fox jumps
+                Ë‡The quick brown fox jumps
                 over the lazy dog.
             "},
             indoc! {"
-                ˇThe quick brown fox jumps over the lazy dog.
-                ˇ
-                ˇThe quick brown fox jumps over the lazy dog.
+                Ë‡The quick brown fox jumps over the lazy dog.
+                Ë‡
+                Ë‡The quick brown fox jumps over the lazy dog.
 
             "},
         ];
@@ -1869,9 +1869,9 @@ mod test {
 
     // Test string with "`" for opening surrounders and "'" for closing surrounders
     const SURROUNDING_MARKER_STRING: &str = indoc! {"
-        ˇTh'ˇe ˇ`ˇ'ˇquˇi`ˇck broˇ'wn`
-        'ˇfox juˇmps ov`ˇer
-        the ˇlazy d'o`ˇg"};
+        Ë‡Th'Ë‡e Ë‡`Ë‡'Ë‡quË‡i`Ë‡ck broË‡'wn`
+        'Ë‡fox juË‡mps ov`Ë‡er
+        the Ë‡lazy d'o`Ë‡g"};
 
     const SURROUNDING_OBJECTS: &[(char, char)] = &[
         ('"', '"'), // Double Quote
@@ -1907,67 +1907,67 @@ mod test {
         cx.set_shared_wrap(12).await;
 
         cx.set_shared_state(indoc! {
-            "\"ˇhello world\"!"
+            "\"Ë‡hello world\"!"
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "\"«hello worldˇ»\"!"
+            "\"Â«hello worldË‡Â»\"!"
         });
 
         cx.set_shared_state(indoc! {
-            "\"hˇello world\"!"
+            "\"hË‡ello world\"!"
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "\"«hello worldˇ»\"!"
+            "\"Â«hello worldË‡Â»\"!"
         });
 
         cx.set_shared_state(indoc! {
-            "helˇlo \"world\"!"
+            "helË‡lo \"world\"!"
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "hello \"«worldˇ»\"!"
+            "hello \"Â«worldË‡Â»\"!"
         });
 
         cx.set_shared_state(indoc! {
-            "hello \"wˇorld\"!"
+            "hello \"wË‡orld\"!"
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "hello \"«worldˇ»\"!"
+            "hello \"Â«worldË‡Â»\"!"
         });
 
         cx.set_shared_state(indoc! {
-            "hello \"wˇorld\"!"
+            "hello \"wË‡orld\"!"
         })
         .await;
         cx.simulate_shared_keystrokes("v a \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "hello« \"world\"ˇ»!"
+            "helloÂ« \"world\"Ë‡Â»!"
         });
 
         cx.set_shared_state(indoc! {
-            "hello \"wˇorld\" !"
+            "hello \"wË‡orld\" !"
         })
         .await;
         cx.simulate_shared_keystrokes("v a \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "hello «\"world\" ˇ»!"
+            "hello Â«\"world\" Ë‡Â»!"
         });
 
         cx.set_shared_state(indoc! {
-            "hello \"wˇorld\"•
+            "hello \"wË‡orld\"â€¢
             goodbye"
         })
         .await;
         cx.simulate_shared_keystrokes("v a \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "hello «\"world\" ˇ»
+            "hello Â«\"world\" Ë‡Â»
             goodbye"
         });
     }
@@ -1982,7 +1982,7 @@ mod test {
                    if a == \"\" {
                       return true
                    }
-                   ˇreturn false
+                   Ë‡return false
                 }"
             },
             Mode::Normal,
@@ -1991,10 +1991,10 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                   «if a == \"\" {
+                   Â«if a == \"\" {
                       return true
                    }
-                   return falseˇ»
+                   return falseË‡Â»
                 }"
             },
             Mode::Visual,
@@ -2004,7 +2004,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         ˇreturn true
+                         Ë‡return true
                      }
                      return false
                 }"
@@ -2016,7 +2016,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         «return trueˇ»
+                         Â«return trueË‡Â»
                      }
                      return false
                 }"
@@ -2027,7 +2027,7 @@ mod test {
         cx.set_state(
             indoc! {
                 "func empty(a string) bool {
-                     if a == \"\" ˇ{
+                     if a == \"\" Ë‡{
                          return true
                      }
                      return false
@@ -2040,7 +2040,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                      if a == \"\" {
-                         «return trueˇ»
+                         Â«return trueË‡Â»
                      }
                      return false
                 }"
@@ -2055,7 +2055,7 @@ mod test {
                          return true
                      }
                      return false
-                ˇ}"
+                Ë‡}"
             },
             Mode::Normal,
         );
@@ -2063,10 +2063,10 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                     «if a == \"\" {
+                     Â«if a == \"\" {
                          return true
                      }
-                     return falseˇ»
+                     return falseË‡Â»
                 }"
             },
             Mode::Visual,
@@ -2076,7 +2076,7 @@ mod test {
             indoc! {
                 "func empty(a string) bool {
                              if a == \"\" {
-                             ˇ
+                             Ë‡
 
                              }"
             },
@@ -2086,7 +2086,7 @@ mod test {
         cx.assert_state(
             indoc! {
                 "func empty(a string) bool {
-                             if a == \"\" {ˇ}"
+                             if a == \"\" {Ë‡}"
             },
             Mode::Insert,
         );
@@ -2098,21 +2098,21 @@ mod test {
     ) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_shared_state(indoc! {
-            "h\"e\\\"lˇlo \\\"world\"!"
+            "h\"e\\\"lË‡lo \\\"world\"!"
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "h\"«e\\\"llo \\\"worldˇ»\"!"
+            "h\"Â«e\\\"llo \\\"worldË‡Â»\"!"
         });
 
         cx.set_shared_state(indoc! {
-            "hello \"teˇst \\\"inside\\\" world\""
+            "hello \"teË‡st \\\"inside\\\" world\""
         })
         .await;
         cx.simulate_shared_keystrokes("v i \"").await;
         cx.shared_state().await.assert_eq(indoc! {
-            "hello \"«test \\\"inside\\\" worldˇ»\""
+            "hello \"Â«test \\\"inside\\\" worldË‡Â»\""
         });
     }
 
@@ -2122,7 +2122,7 @@ mod test {
         cx.set_state(
             indoc! {"
             fn boop() {
-                baz(ˇ|a, b| { bar(|j, k| { })})
+                baz(Ë‡|a, b| { bar(|j, k| { })})
             }"
             },
             Mode::Normal,
@@ -2131,7 +2131,7 @@ mod test {
         cx.assert_state(
             indoc! {"
             fn boop() {
-                baz(|ˇ| { bar(|j, k| { })})
+                baz(|Ë‡| { bar(|j, k| { })})
             }"
             },
             Mode::Insert,
@@ -2140,7 +2140,7 @@ mod test {
         cx.assert_state(
             indoc! {"
             fn boop() {
-                baz(|| { bar(ˇ|j, k| { })})
+                baz(|| { bar(Ë‡|j, k| { })})
             }"
             },
             Mode::Normal,
@@ -2150,7 +2150,7 @@ mod test {
         cx.assert_state(
             indoc! {"
             fn boop() {
-                baz(|| { bar(«|j, k| ˇ»{ })})
+                baz(|| { bar(Â«|j, k| Ë‡Â»{ })})
             }"
             },
             Mode::Visual,
@@ -2162,56 +2162,56 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         // Generic arguments
-        cx.set_state("fn boop<A: ˇDebug, B>() {}", Mode::Normal);
+        cx.set_state("fn boop<A: Ë‡Debug, B>() {}", Mode::Normal);
         cx.simulate_keystrokes("v i a");
-        cx.assert_state("fn boop<«A: Debugˇ», B>() {}", Mode::Visual);
+        cx.assert_state("fn boop<Â«A: DebugË‡Â», B>() {}", Mode::Visual);
 
         // Function arguments
         cx.set_state(
-            "fn boop(ˇarg_a: (Tuple, Of, Types), arg_b: String) {}",
+            "fn boop(Ë‡arg_a: (Tuple, Of, Types), arg_b: String) {}",
             Mode::Normal,
         );
         cx.simulate_keystrokes("d a a");
-        cx.assert_state("fn boop(ˇarg_b: String) {}", Mode::Normal);
+        cx.assert_state("fn boop(Ë‡arg_b: String) {}", Mode::Normal);
 
-        cx.set_state("std::namespace::test(\"strinˇg\", a.b.c())", Mode::Normal);
+        cx.set_state("std::namespace::test(\"strinË‡g\", a.b.c())", Mode::Normal);
         cx.simulate_keystrokes("v a a");
-        cx.assert_state("std::namespace::test(«\"string\", ˇ»a.b.c())", Mode::Visual);
+        cx.assert_state("std::namespace::test(Â«\"string\", Ë‡Â»a.b.c())", Mode::Visual);
 
         // Tuple, vec, and array arguments
         cx.set_state(
-            "fn boop(arg_a: (Tuple, Ofˇ, Types), arg_b: String) {}",
+            "fn boop(arg_a: (Tuple, OfË‡, Types), arg_b: String) {}",
             Mode::Normal,
         );
         cx.simulate_keystrokes("c i a");
         cx.assert_state(
-            "fn boop(arg_a: (Tuple, ˇ, Types), arg_b: String) {}",
+            "fn boop(arg_a: (Tuple, Ë‡, Types), arg_b: String) {}",
             Mode::Insert,
         );
 
-        cx.set_state("let a = (test::call(), 'p', my_macro!{ˇ});", Mode::Normal);
+        cx.set_state("let a = (test::call(), 'p', my_macro!{Ë‡});", Mode::Normal);
         cx.simulate_keystrokes("c a a");
-        cx.assert_state("let a = (test::call(), 'p'ˇ);", Mode::Insert);
+        cx.assert_state("let a = (test::call(), 'p'Ë‡);", Mode::Insert);
 
-        cx.set_state("let a = [test::call(ˇ), 300];", Mode::Normal);
+        cx.set_state("let a = [test::call(Ë‡), 300];", Mode::Normal);
         cx.simulate_keystrokes("c i a");
-        cx.assert_state("let a = [ˇ, 300];", Mode::Insert);
+        cx.assert_state("let a = [Ë‡, 300];", Mode::Insert);
 
         cx.set_state(
-            "let a = vec![Vec::new(), vecˇ![test::call(), 300]];",
+            "let a = vec![Vec::new(), vecË‡![test::call(), 300]];",
             Mode::Normal,
         );
         cx.simulate_keystrokes("c a a");
-        cx.assert_state("let a = vec![Vec::new()ˇ];", Mode::Insert);
+        cx.assert_state("let a = vec![Vec::new()Ë‡];", Mode::Insert);
 
         // Cursor immediately before / after brackets
-        cx.set_state("let a = [test::call(first_arg)ˇ]", Mode::Normal);
+        cx.set_state("let a = [test::call(first_arg)Ë‡]", Mode::Normal);
         cx.simulate_keystrokes("v i a");
-        cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
+        cx.assert_state("let a = [Â«test::call(first_arg)Ë‡Â»]", Mode::Visual);
 
-        cx.set_state("let a = [test::callˇ(first_arg)]", Mode::Normal);
+        cx.set_state("let a = [test::callË‡(first_arg)]", Mode::Normal);
         cx.simulate_keystrokes("v i a");
-        cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
+        cx.assert_state("let a = [Â«test::call(first_arg)Ë‡Â»]", Mode::Visual);
     }
 
     #[gpui::test]
@@ -2223,7 +2223,7 @@ mod test {
             indoc! {"
                 fn boop() {
                     // Comment
-                    baz();ˇ
+                    baz();Ë‡
 
                     loop {
                         bar(1);
@@ -2239,7 +2239,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 fn boop() {
-                «    // Comment
+                Â«    // Comment
                     baz();
 
                     loop {
@@ -2247,7 +2247,7 @@ mod test {
                         bar(2);
                     }
 
-                    resultˇ»
+                    resultË‡Â»
                 }
             "},
             Mode::Visual,
@@ -2260,7 +2260,7 @@ mod test {
                 fn boop() {
 
                     hello();
-                    worˇld()
+                    worË‡ld()
                 }
             "},
             Mode::Normal,
@@ -2269,10 +2269,10 @@ mod test {
         cx.assert_state(
             indoc! {"
                 const ABOVE: str = true;
-                «fn boop() {
+                Â«fn boop() {
 
                     hello();
-                    world()ˇ»
+                    world()Ë‡Â»
                 }
             "},
             Mode::Visual,
@@ -2283,7 +2283,7 @@ mod test {
             indoc! {"
                 const ABOVE: str = true;
                 fn boop() {
-                    hellˇo();
+                    hellË‡o();
                     world()
 
                 }
@@ -2295,7 +2295,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 const ABOVE: str = true;
-                ˇ
+                Ë‡
                 const BELOW: str = true;
             "},
             Mode::Insert,
@@ -2341,107 +2341,107 @@ mod test {
             // the false string in the middle should be considered
             (
                 "c i q",
-                "'first' false ˇstring 'second'",
-                "'first'ˇ'second'",
+                "'first' false Ë‡string 'second'",
+                "'first'Ë‡'second'",
                 Mode::Insert,
             ),
             // Single quotes
             (
                 "c i q",
-                "Thisˇ is a 'quote' example.",
-                "This is a 'ˇ' example.",
+                "ThisË‡ is a 'quote' example.",
+                "This is a 'Ë‡' example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "Thisˇ is a 'quote' example.",
-                "This is a ˇexample.",
+                "ThisË‡ is a 'quote' example.",
+                "This is a Ë‡example.",
                 Mode::Insert,
             ),
             (
                 "c i q",
-                "This is a \"simple 'qˇuote'\" example.",
-                "This is a \"simple 'ˇ'\" example.",
+                "This is a \"simple 'qË‡uote'\" example.",
+                "This is a \"simple 'Ë‡'\" example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "This is a \"simple 'qˇuote'\" example.",
-                "This is a \"simpleˇ\" example.",
+                "This is a \"simple 'qË‡uote'\" example.",
+                "This is a \"simpleË‡\" example.",
                 Mode::Insert,
             ),
             (
                 "c i q",
-                "This is a 'qˇuote' example.",
-                "This is a 'ˇ' example.",
+                "This is a 'qË‡uote' example.",
+                "This is a 'Ë‡' example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "This is a 'qˇuote' example.",
-                "This is a ˇexample.",
+                "This is a 'qË‡uote' example.",
+                "This is a Ë‡example.",
                 Mode::Insert,
             ),
             (
                 "d i q",
-                "This is a 'qˇuote' example.",
-                "This is a 'ˇ' example.",
+                "This is a 'qË‡uote' example.",
+                "This is a 'Ë‡' example.",
                 Mode::Normal,
             ),
             (
                 "d a q",
-                "This is a 'qˇuote' example.",
-                "This is a ˇexample.",
+                "This is a 'qË‡uote' example.",
+                "This is a Ë‡example.",
                 Mode::Normal,
             ),
             // Double quotes
             (
                 "c i q",
-                "This is a \"qˇuote\" example.",
-                "This is a \"ˇ\" example.",
+                "This is a \"qË‡uote\" example.",
+                "This is a \"Ë‡\" example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "This is a \"qˇuote\" example.",
-                "This is a ˇexample.",
+                "This is a \"qË‡uote\" example.",
+                "This is a Ë‡example.",
                 Mode::Insert,
             ),
             (
                 "d i q",
-                "This is a \"qˇuote\" example.",
-                "This is a \"ˇ\" example.",
+                "This is a \"qË‡uote\" example.",
+                "This is a \"Ë‡\" example.",
                 Mode::Normal,
             ),
             (
                 "d a q",
-                "This is a \"qˇuote\" example.",
-                "This is a ˇexample.",
+                "This is a \"qË‡uote\" example.",
+                "This is a Ë‡example.",
                 Mode::Normal,
             ),
             // Back quotes
             (
                 "c i q",
-                "This is a `qˇuote` example.",
-                "This is a `ˇ` example.",
+                "This is a `qË‡uote` example.",
+                "This is a `Ë‡` example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "This is a `qˇuote` example.",
-                "This is a ˇexample.",
+                "This is a `qË‡uote` example.",
+                "This is a Ë‡example.",
                 Mode::Insert,
             ),
             (
                 "d i q",
-                "This is a `qˇuote` example.",
-                "This is a `ˇ` example.",
+                "This is a `qË‡uote` example.",
+                "This is a `Ë‡` example.",
                 Mode::Normal,
             ),
             (
                 "d a q",
-                "This is a `qˇuote` example.",
-                "This is a ˇexample.",
+                "This is a `qË‡uote` example.",
+                "This is a Ë‡example.",
                 Mode::Normal,
             ),
         ];
@@ -2455,18 +2455,18 @@ mod test {
         }
 
         const INVALID_CASES: &[(&str, &str, Mode)] = &[
-            ("c i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
-            ("c a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
-            ("d i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
-            ("d a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
-            ("c i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
-            ("c a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
-            ("d i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
-            ("d a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing back quote
-            ("c i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
-            ("c a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
-            ("d i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
-            ("d a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c i q", "this is a 'qË‡uote example.", Mode::Normal), // Missing closing simple quote
+            ("c a q", "this is a 'qË‡uote example.", Mode::Normal), // Missing closing simple quote
+            ("d i q", "this is a 'qË‡uote example.", Mode::Normal), // Missing closing simple quote
+            ("d a q", "this is a 'qË‡uote example.", Mode::Normal), // Missing closing simple quote
+            ("c i q", "this is a \"qË‡uote example.", Mode::Normal), // Missing closing double quote
+            ("c a q", "this is a \"qË‡uote example.", Mode::Normal), // Missing closing double quote
+            ("d i q", "this is a \"qË‡uote example.", Mode::Normal), // Missing closing double quote
+            ("d a q", "this is a \"qË‡uote example.", Mode::Normal), // Missing closing back quote
+            ("c i q", "this is a `qË‡uote example.", Mode::Normal), // Missing closing back quote
+            ("c a q", "this is a `qË‡uote example.", Mode::Normal), // Missing closing back quote
+            ("d i q", "this is a `qË‡uote example.", Mode::Normal), // Missing closing back quote
+            ("d a q", "this is a `qË‡uote example.", Mode::Normal), // Missing closing back quote
         ];
 
         for (keystrokes, initial_state, mode) in INVALID_CASES {
@@ -2487,8 +2487,8 @@ mod test {
             // the false string in the middle should not be considered
             (
                 "c i q",
-                "'first' false ˇstring 'second'",
-                "'first' false string 'ˇ'",
+                "'first' false Ë‡string 'second'",
+                "'first' false string 'Ë‡'",
                 Mode::Insert,
             ),
             // Multiline support :)! Same behavior as mini.ai plugin
@@ -2497,116 +2497,116 @@ mod test {
                 indoc! {"
                     `
                     first
-                    middle ˇstring
+                    middle Ë‡string
                     second
                     `
                 "},
                 indoc! {"
-                    `ˇ`
+                    `Ë‡`
                 "},
                 Mode::Insert,
             ),
             // If you are in the close quote and it is the only quote in the buffer, it should replace inside the quote
             // This is not working with the core motion ci' for this special edge case, so I am happy to fix it in MiniQuotes :)
-            // Bug reference: https://github.com/zed-industries/zed/issues/23889
-            ("c i q", "'quote«'ˇ»", "'ˇ'", Mode::Insert),
+            // Bug reference: https://github.com/CodeOrbit-industries/CodeOrbit/issues/23889
+            ("c i q", "'quoteÂ«'Ë‡Â»", "'Ë‡'", Mode::Insert),
             // Single quotes
             (
                 "c i q",
-                "Thisˇ is a 'quote' example.",
-                "This is a 'ˇ' example.",
+                "ThisË‡ is a 'quote' example.",
+                "This is a 'Ë‡' example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "Thisˇ is a 'quote' example.",
-                "This is a ˇ example.", // same mini.ai plugin behavior
+                "ThisË‡ is a 'quote' example.",
+                "This is a Ë‡ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
                 "c i q",
-                "This is a \"simple 'qˇuote'\" example.",
-                "This is a \"ˇ\" example.", // Not supported by Tree-sitter queries for now
+                "This is a \"simple 'qË‡uote'\" example.",
+                "This is a \"Ë‡\" example.", // Not supported by Tree-sitter queries for now
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "This is a \"simple 'qˇuote'\" example.",
-                "This is a ˇ example.", // Not supported by Tree-sitter queries for now
+                "This is a \"simple 'qË‡uote'\" example.",
+                "This is a Ë‡ example.", // Not supported by Tree-sitter queries for now
                 Mode::Insert,
             ),
             (
                 "c i q",
-                "This is a 'qˇuote' example.",
-                "This is a 'ˇ' example.",
+                "This is a 'qË‡uote' example.",
+                "This is a 'Ë‡' example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "This is a 'qˇuote' example.",
-                "This is a ˇ example.", // same mini.ai plugin behavior
+                "This is a 'qË‡uote' example.",
+                "This is a Ë‡ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
                 "d i q",
-                "This is a 'qˇuote' example.",
-                "This is a 'ˇ' example.",
+                "This is a 'qË‡uote' example.",
+                "This is a 'Ë‡' example.",
                 Mode::Normal,
             ),
             (
                 "d a q",
-                "This is a 'qˇuote' example.",
-                "This is a ˇ example.", // same mini.ai plugin behavior
+                "This is a 'qË‡uote' example.",
+                "This is a Ë‡ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
             // Double quotes
             (
                 "c i q",
-                "This is a \"qˇuote\" example.",
-                "This is a \"ˇ\" example.",
+                "This is a \"qË‡uote\" example.",
+                "This is a \"Ë‡\" example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "This is a \"qˇuote\" example.",
-                "This is a ˇ example.", // same mini.ai plugin behavior
+                "This is a \"qË‡uote\" example.",
+                "This is a Ë‡ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
                 "d i q",
-                "This is a \"qˇuote\" example.",
-                "This is a \"ˇ\" example.",
+                "This is a \"qË‡uote\" example.",
+                "This is a \"Ë‡\" example.",
                 Mode::Normal,
             ),
             (
                 "d a q",
-                "This is a \"qˇuote\" example.",
-                "This is a ˇ example.", // same mini.ai plugin behavior
+                "This is a \"qË‡uote\" example.",
+                "This is a Ë‡ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
             // Back quotes
             (
                 "c i q",
-                "This is a `qˇuote` example.",
-                "This is a `ˇ` example.",
+                "This is a `qË‡uote` example.",
+                "This is a `Ë‡` example.",
                 Mode::Insert,
             ),
             (
                 "c a q",
-                "This is a `qˇuote` example.",
-                "This is a ˇ example.", // same mini.ai plugin behavior
+                "This is a `qË‡uote` example.",
+                "This is a Ë‡ example.", // same mini.ai plugin behavior
                 Mode::Insert,
             ),
             (
                 "d i q",
-                "This is a `qˇuote` example.",
-                "This is a `ˇ` example.",
+                "This is a `qË‡uote` example.",
+                "This is a `Ë‡` example.",
                 Mode::Normal,
             ),
             (
                 "d a q",
-                "This is a `qˇuote` example.",
-                "This is a ˇ example.", // same mini.ai plugin behavior
+                "This is a `qË‡uote` example.",
+                "This is a Ë‡ example.", // same mini.ai plugin behavior
                 Mode::Normal,
             ),
         ];
@@ -2620,18 +2620,18 @@ mod test {
         }
 
         const INVALID_CASES: &[(&str, &str, Mode)] = &[
-            ("c i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
-            ("c a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
-            ("d i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
-            ("d a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
-            ("c i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
-            ("c a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
-            ("d i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
-            ("d a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing back quote
-            ("c i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
-            ("c a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
-            ("d i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
-            ("d a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c i q", "this is a 'qË‡uote example.", Mode::Normal), // Missing closing simple quote
+            ("c a q", "this is a 'qË‡uote example.", Mode::Normal), // Missing closing simple quote
+            ("d i q", "this is a 'qË‡uote example.", Mode::Normal), // Missing closing simple quote
+            ("d a q", "this is a 'qË‡uote example.", Mode::Normal), // Missing closing simple quote
+            ("c i q", "this is a \"qË‡uote example.", Mode::Normal), // Missing closing double quote
+            ("c a q", "this is a \"qË‡uote example.", Mode::Normal), // Missing closing double quote
+            ("d i q", "this is a \"qË‡uote example.", Mode::Normal), // Missing closing double quote
+            ("d a q", "this is a \"qË‡uote example.", Mode::Normal), // Missing closing back quote
+            ("c i q", "this is a `qË‡uote example.", Mode::Normal), // Missing closing back quote
+            ("c a q", "this is a `qË‡uote example.", Mode::Normal), // Missing closing back quote
+            ("d i q", "this is a `qË‡uote example.", Mode::Normal), // Missing closing back quote
+            ("d a q", "this is a `qË‡uote example.", Mode::Normal), // Missing closing back quote
         ];
 
         for (keystrokes, initial_state, mode) in INVALID_CASES {
@@ -2660,14 +2660,14 @@ mod test {
                 indoc! {"
                     {
                         {
-                            ˇprint('hello')
+                            Ë‡print('hello')
                         }
                     }
                 "},
                 indoc! {"
                     {
                         {
-                            ˇ
+                            Ë‡
                         }
                     }
                 "},
@@ -2676,100 +2676,100 @@ mod test {
             // Bracket (Parentheses)
             (
                 "c i b",
-                "Thisˇ is a (simple [quote]) example.",
-                "This is a (ˇ) example.",
+                "ThisË‡ is a (simple [quote]) example.",
+                "This is a (Ë‡) example.",
                 Mode::Insert,
             ),
             (
                 "c i b",
-                "This is a [simple (qˇuote)] example.",
-                "This is a [simple (ˇ)] example.",
+                "This is a [simple (qË‡uote)] example.",
+                "This is a [simple (Ë‡)] example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "This is a [simple (qˇuote)] example.",
-                "This is a [simple ˇ] example.",
+                "This is a [simple (qË‡uote)] example.",
+                "This is a [simple Ë‡] example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "Thisˇ is a (simple [quote]) example.",
-                "This is a ˇ example.",
+                "ThisË‡ is a (simple [quote]) example.",
+                "This is a Ë‡ example.",
                 Mode::Insert,
             ),
             (
                 "c i b",
-                "This is a (qˇuote) example.",
-                "This is a (ˇ) example.",
+                "This is a (qË‡uote) example.",
+                "This is a (Ë‡) example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "This is a (qˇuote) example.",
-                "This is a ˇ example.",
+                "This is a (qË‡uote) example.",
+                "This is a Ë‡ example.",
                 Mode::Insert,
             ),
             (
                 "d i b",
-                "This is a (qˇuote) example.",
-                "This is a (ˇ) example.",
+                "This is a (qË‡uote) example.",
+                "This is a (Ë‡) example.",
                 Mode::Normal,
             ),
             (
                 "d a b",
-                "This is a (qˇuote) example.",
-                "This is a ˇ example.",
+                "This is a (qË‡uote) example.",
+                "This is a Ë‡ example.",
                 Mode::Normal,
             ),
             // Square brackets
             (
                 "c i b",
-                "This is a [qˇuote] example.",
-                "This is a [ˇ] example.",
+                "This is a [qË‡uote] example.",
+                "This is a [Ë‡] example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "This is a [qˇuote] example.",
-                "This is a ˇ example.",
+                "This is a [qË‡uote] example.",
+                "This is a Ë‡ example.",
                 Mode::Insert,
             ),
             (
                 "d i b",
-                "This is a [qˇuote] example.",
-                "This is a [ˇ] example.",
+                "This is a [qË‡uote] example.",
+                "This is a [Ë‡] example.",
                 Mode::Normal,
             ),
             (
                 "d a b",
-                "This is a [qˇuote] example.",
-                "This is a ˇ example.",
+                "This is a [qË‡uote] example.",
+                "This is a Ë‡ example.",
                 Mode::Normal,
             ),
             // Curly brackets
             (
                 "c i b",
-                "This is a {qˇuote} example.",
-                "This is a {ˇ} example.",
+                "This is a {qË‡uote} example.",
+                "This is a {Ë‡} example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "This is a {qˇuote} example.",
-                "This is a ˇ example.",
+                "This is a {qË‡uote} example.",
+                "This is a Ë‡ example.",
                 Mode::Insert,
             ),
             (
                 "d i b",
-                "This is a {qˇuote} example.",
-                "This is a {ˇ} example.",
+                "This is a {qË‡uote} example.",
+                "This is a {Ë‡} example.",
                 Mode::Normal,
             ),
             (
                 "d a b",
-                "This is a {qˇuote} example.",
-                "This is a ˇ example.",
+                "This is a {qË‡uote} example.",
+                "This is a Ë‡ example.",
                 Mode::Normal,
             ),
         ];
@@ -2783,18 +2783,18 @@ mod test {
         }
 
         const INVALID_CASES: &[(&str, &str, Mode)] = &[
-            ("c i b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
-            ("c a b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
-            ("d i b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
-            ("d a b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
-            ("c i b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
-            ("c a b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
-            ("d i b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
-            ("d a b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
-            ("c i b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
-            ("c a b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
-            ("d i b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
-            ("d a b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
+            ("c i b", "this is a (qË‡uote example.", Mode::Normal), // Missing closing bracket
+            ("c a b", "this is a (qË‡uote example.", Mode::Normal), // Missing closing bracket
+            ("d i b", "this is a (qË‡uote example.", Mode::Normal), // Missing closing bracket
+            ("d a b", "this is a (qË‡uote example.", Mode::Normal), // Missing closing bracket
+            ("c i b", "this is a [qË‡uote example.", Mode::Normal), // Missing closing square bracket
+            ("c a b", "this is a [qË‡uote example.", Mode::Normal), // Missing closing square bracket
+            ("d i b", "this is a [qË‡uote example.", Mode::Normal), // Missing closing square bracket
+            ("d a b", "this is a [qË‡uote example.", Mode::Normal), // Missing closing square bracket
+            ("c i b", "this is a {qË‡uote example.", Mode::Normal), // Missing closing curly bracket
+            ("c a b", "this is a {qË‡uote example.", Mode::Normal), // Missing closing curly bracket
+            ("d i b", "this is a {qË‡uote example.", Mode::Normal), // Missing closing curly bracket
+            ("d a b", "this is a {qË‡uote example.", Mode::Normal), // Missing closing curly bracket
         ];
 
         for (keystrokes, initial_state, mode) in INVALID_CASES {
@@ -2826,14 +2826,14 @@ mod test {
                 indoc! {"
                     {
                         {
-                            ˇprint('hello')
+                            Ë‡print('hello')
                         }
                     }
                 "},
                 indoc! {"
                     {
                         {
-                            print(ˇ)
+                            print(Ë‡)
                         }
                     }
                 "},
@@ -2846,14 +2846,14 @@ mod test {
                 indoc! {"
                     {
                         {
-                            ˇ
+                            Ë‡
                             print('hello')
                         }
                     }
                 "},
                 indoc! {"
                     {
-                        {ˇ}
+                        {Ë‡}
                     }
                 "},
                 Mode::Insert,
@@ -2862,14 +2862,14 @@ mod test {
             (
                 "c i b",
                 indoc! {"
-                    «{ˇ»
+                    Â«{Ë‡Â»
                         {
                             print('hello')
                         }
                     }
                 "},
                 indoc! {"
-                    {ˇ}
+                    {Ë‡}
                 "},
                 Mode::Insert,
             ),
@@ -2881,110 +2881,110 @@ mod test {
                         {
                             print('hello')
                         }
-                    «}ˇ»
+                    Â«}Ë‡Â»
                 "},
                 indoc! {"
-                    {ˇ}
+                    {Ë‡}
                 "},
                 Mode::Insert,
             ),
             // Bracket (Parentheses)
             (
                 "c i b",
-                "Thisˇ is a (simple [quote]) example.",
-                "This is a (ˇ) example.",
+                "ThisË‡ is a (simple [quote]) example.",
+                "This is a (Ë‡) example.",
                 Mode::Insert,
             ),
             (
                 "c i b",
-                "This is a [simple (qˇuote)] example.",
-                "This is a [simple (ˇ)] example.",
+                "This is a [simple (qË‡uote)] example.",
+                "This is a [simple (Ë‡)] example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "This is a [simple (qˇuote)] example.",
-                "This is a [simple ˇ] example.",
+                "This is a [simple (qË‡uote)] example.",
+                "This is a [simple Ë‡] example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "Thisˇ is a (simple [quote]) example.",
-                "This is a ˇ example.",
+                "ThisË‡ is a (simple [quote]) example.",
+                "This is a Ë‡ example.",
                 Mode::Insert,
             ),
             (
                 "c i b",
-                "This is a (qˇuote) example.",
-                "This is a (ˇ) example.",
+                "This is a (qË‡uote) example.",
+                "This is a (Ë‡) example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "This is a (qˇuote) example.",
-                "This is a ˇ example.",
+                "This is a (qË‡uote) example.",
+                "This is a Ë‡ example.",
                 Mode::Insert,
             ),
             (
                 "d i b",
-                "This is a (qˇuote) example.",
-                "This is a (ˇ) example.",
+                "This is a (qË‡uote) example.",
+                "This is a (Ë‡) example.",
                 Mode::Normal,
             ),
             (
                 "d a b",
-                "This is a (qˇuote) example.",
-                "This is a ˇ example.",
+                "This is a (qË‡uote) example.",
+                "This is a Ë‡ example.",
                 Mode::Normal,
             ),
             // Square brackets
             (
                 "c i b",
-                "This is a [qˇuote] example.",
-                "This is a [ˇ] example.",
+                "This is a [qË‡uote] example.",
+                "This is a [Ë‡] example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "This is a [qˇuote] example.",
-                "This is a ˇ example.",
+                "This is a [qË‡uote] example.",
+                "This is a Ë‡ example.",
                 Mode::Insert,
             ),
             (
                 "d i b",
-                "This is a [qˇuote] example.",
-                "This is a [ˇ] example.",
+                "This is a [qË‡uote] example.",
+                "This is a [Ë‡] example.",
                 Mode::Normal,
             ),
             (
                 "d a b",
-                "This is a [qˇuote] example.",
-                "This is a ˇ example.",
+                "This is a [qË‡uote] example.",
+                "This is a Ë‡ example.",
                 Mode::Normal,
             ),
             // Curly brackets
             (
                 "c i b",
-                "This is a {qˇuote} example.",
-                "This is a {ˇ} example.",
+                "This is a {qË‡uote} example.",
+                "This is a {Ë‡} example.",
                 Mode::Insert,
             ),
             (
                 "c a b",
-                "This is a {qˇuote} example.",
-                "This is a ˇ example.",
+                "This is a {qË‡uote} example.",
+                "This is a Ë‡ example.",
                 Mode::Insert,
             ),
             (
                 "d i b",
-                "This is a {qˇuote} example.",
-                "This is a {ˇ} example.",
+                "This is a {qË‡uote} example.",
+                "This is a {Ë‡} example.",
                 Mode::Normal,
             ),
             (
                 "d a b",
-                "This is a {qˇuote} example.",
-                "This is a ˇ example.",
+                "This is a {qË‡uote} example.",
+                "This is a Ë‡ example.",
                 Mode::Normal,
             ),
         ];
@@ -2998,18 +2998,18 @@ mod test {
         }
 
         const INVALID_CASES: &[(&str, &str, Mode)] = &[
-            ("c i b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
-            ("c a b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
-            ("d i b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
-            ("d a b", "this is a (qˇuote example.", Mode::Normal), // Missing closing bracket
-            ("c i b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
-            ("c a b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
-            ("d i b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
-            ("d a b", "this is a [qˇuote example.", Mode::Normal), // Missing closing square bracket
-            ("c i b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
-            ("c a b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
-            ("d i b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
-            ("d a b", "this is a {qˇuote example.", Mode::Normal), // Missing closing curly bracket
+            ("c i b", "this is a (qË‡uote example.", Mode::Normal), // Missing closing bracket
+            ("c a b", "this is a (qË‡uote example.", Mode::Normal), // Missing closing bracket
+            ("d i b", "this is a (qË‡uote example.", Mode::Normal), // Missing closing bracket
+            ("d a b", "this is a (qË‡uote example.", Mode::Normal), // Missing closing bracket
+            ("c i b", "this is a [qË‡uote example.", Mode::Normal), // Missing closing square bracket
+            ("c a b", "this is a [qË‡uote example.", Mode::Normal), // Missing closing square bracket
+            ("d i b", "this is a [qË‡uote example.", Mode::Normal), // Missing closing square bracket
+            ("d a b", "this is a [qË‡uote example.", Mode::Normal), // Missing closing square bracket
+            ("c i b", "this is a {qË‡uote example.", Mode::Normal), // Missing closing curly bracket
+            ("c a b", "this is a {qË‡uote example.", Mode::Normal), // Missing closing curly bracket
+            ("d i b", "this is a {qË‡uote example.", Mode::Normal), // Missing closing curly bracket
+            ("d a b", "this is a {qË‡uote example.", Mode::Normal), // Missing closing curly bracket
         ];
 
         for (keystrokes, initial_state, mode) in INVALID_CASES {
@@ -3024,7 +3024,7 @@ mod test {
     #[gpui::test]
     async fn test_minibrackets_trailing_space(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.set_shared_state("(trailingˇ whitespace          )")
+        cx.set_shared_state("(trailingË‡ whitespace          )")
             .await;
         cx.simulate_shared_keystrokes("v i b").await;
         cx.shared_state().await.assert_matches();
@@ -3038,78 +3038,78 @@ mod test {
     async fn test_tags(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new_html(cx).await;
 
-        cx.set_state("<html><head></head><body><b>hˇi!</b></body>", Mode::Normal);
+        cx.set_state("<html><head></head><body><b>hË‡i!</b></body>", Mode::Normal);
         cx.simulate_keystrokes("v i t");
         cx.assert_state(
-            "<html><head></head><body><b>«hi!ˇ»</b></body>",
+            "<html><head></head><body><b>Â«hi!Ë‡Â»</b></body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes("a t");
         cx.assert_state(
-            "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            "<html><head></head><body>Â«<b>hi!</b>Ë‡Â»</body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes("a t");
         cx.assert_state(
-            "<html><head></head>«<body><b>hi!</b></body>ˇ»",
+            "<html><head></head>Â«<body><b>hi!</b></body>Ë‡Â»",
             Mode::Visual,
         );
 
         // The cursor is before the tag
         cx.set_state(
-            "<html><head></head><body> ˇ  <b>hi!</b></body>",
+            "<html><head></head><body> Ë‡  <b>hi!</b></body>",
             Mode::Normal,
         );
         cx.simulate_keystrokes("v i t");
         cx.assert_state(
-            "<html><head></head><body>   <b>«hi!ˇ»</b></body>",
+            "<html><head></head><body>   <b>Â«hi!Ë‡Â»</b></body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes("a t");
         cx.assert_state(
-            "<html><head></head><body>   «<b>hi!</b>ˇ»</body>",
+            "<html><head></head><body>   Â«<b>hi!</b>Ë‡Â»</body>",
             Mode::Visual,
         );
 
         // The cursor is in the open tag
         cx.set_state(
-            "<html><head></head><body><bˇ>hi!</b><b>hello!</b></body>",
+            "<html><head></head><body><bË‡>hi!</b><b>hello!</b></body>",
             Mode::Normal,
         );
         cx.simulate_keystrokes("v a t");
         cx.assert_state(
-            "<html><head></head><body>«<b>hi!</b>ˇ»<b>hello!</b></body>",
+            "<html><head></head><body>Â«<b>hi!</b>Ë‡Â»<b>hello!</b></body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes("i t");
         cx.assert_state(
-            "<html><head></head><body>«<b>hi!</b><b>hello!</b>ˇ»</body>",
+            "<html><head></head><body>Â«<b>hi!</b><b>hello!</b>Ë‡Â»</body>",
             Mode::Visual,
         );
 
         // current selection length greater than 1
         cx.set_state(
-            "<html><head></head><body><«b>hi!ˇ»</b></body>",
+            "<html><head></head><body><Â«b>hi!Ë‡Â»</b></body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes("i t");
         cx.assert_state(
-            "<html><head></head><body><b>«hi!ˇ»</b></body>",
+            "<html><head></head><body><b>Â«hi!Ë‡Â»</b></body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes("a t");
         cx.assert_state(
-            "<html><head></head><body>«<b>hi!</b>ˇ»</body>",
+            "<html><head></head><body>Â«<b>hi!</b>Ë‡Â»</body>",
             Mode::Visual,
         );
 
         cx.set_state(
-            "<html><head></head><body><«b>hi!</ˇ»b></body>",
+            "<html><head></head><body><Â«b>hi!</Ë‡Â»b></body>",
             Mode::Visual,
         );
         cx.simulate_keystrokes("a t");
         cx.assert_state(
-            "<html><head></head>«<body><b>hi!</b></body>ˇ»",
+            "<html><head></head>Â«<body><b>hi!</b></body>Ë‡Â»",
             Mode::Visual,
         );
     }
@@ -3117,32 +3117,32 @@ mod test {
     async fn test_around_containing_word_indent(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("    ˇconst f = (x: unknown) => {")
+        cx.set_shared_state("    Ë‡const f = (x: unknown) => {")
             .await;
         cx.simulate_shared_keystrokes("v a w").await;
         cx.shared_state()
             .await
-            .assert_eq("    «const ˇ»f = (x: unknown) => {");
+            .assert_eq("    Â«const Ë‡Â»f = (x: unknown) => {");
 
-        cx.set_shared_state("    ˇconst f = (x: unknown) => {")
+        cx.set_shared_state("    Ë‡const f = (x: unknown) => {")
             .await;
         cx.simulate_shared_keystrokes("y a w").await;
         cx.shared_clipboard().await.assert_eq("const ");
 
-        cx.set_shared_state("    ˇconst f = (x: unknown) => {")
+        cx.set_shared_state("    Ë‡const f = (x: unknown) => {")
             .await;
         cx.simulate_shared_keystrokes("d a w").await;
         cx.shared_state()
             .await
-            .assert_eq("    ˇf = (x: unknown) => {");
+            .assert_eq("    Ë‡f = (x: unknown) => {");
         cx.shared_clipboard().await.assert_eq("const ");
 
-        cx.set_shared_state("    ˇconst f = (x: unknown) => {")
+        cx.set_shared_state("    Ë‡const f = (x: unknown) => {")
             .await;
         cx.simulate_shared_keystrokes("c a w").await;
         cx.shared_state()
             .await
-            .assert_eq("    ˇf = (x: unknown) => {");
+            .assert_eq("    Ë‡f = (x: unknown) => {");
         cx.shared_clipboard().await.assert_eq("const ");
     }
 }

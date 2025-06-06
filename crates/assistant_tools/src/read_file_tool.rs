@@ -1,4 +1,4 @@
-use crate::schema::json_schema_for;
+﻿use crate::schema::json_schema_for;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use assistant_tool::{ToolResultContent, outline};
@@ -149,7 +149,7 @@ impl Tool for ReadFileTool {
         if image_store::is_image_file(&project, &project_path, cx) {
             if !model.supports_images() {
                 return Task::ready(Err(anyhow!(
-                    "Attempted to read an image, but Zed doesn't currently support sending images to {}.",
+                    "Attempted to read an image, but CodeOrbit doesn't currently support sending images to {}.",
                     model.name().0
                 )))
                 .into();
@@ -925,7 +925,7 @@ mod test {
                     "test.rs": "mod tests { fn test_it() {} }",
                     "fixture.sql": "CREATE TABLE users (id INT, name VARCHAR(255));"
                 },
-                ".zed": {
+                ".CodeOrbit": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/fixture.*"],
                         "private_files": ["**/secret.rs", "**/config.toml"]
@@ -948,7 +948,7 @@ mod test {
                     "README.md": "# Public Documentation",
                     "internal.md": "# Internal Secrets and Configuration"
                 },
-                ".zed": {
+                ".CodeOrbit": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/internal.*"],
                         "private_files": ["**/private.js", "**/data.json"]

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use client::Client;
@@ -7,7 +7,7 @@ use gpui::{App, AppContext, Context, Entity, Subscription, Task};
 use http_client::{HttpClient, Method};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use web_search::{WebSearchProvider, WebSearchProviderId};
-use zed_llm_client::{
+use codeorbit_llm_client::{
     CLIENT_SUPPORTS_EXA_WEB_SEARCH_PROVIDER_HEADER_NAME, WebSearchBody, WebSearchResponse,
 };
 
@@ -52,11 +52,11 @@ impl State {
     }
 }
 
-pub const ZED_WEB_SEARCH_PROVIDER_ID: &'static str = "zed.dev";
+pub const codeorbit_WEB_SEARCH_PROVIDER_ID: &'static str = "CodeOrbit.dev";
 
 impl WebSearchProvider for CloudWebSearchProvider {
     fn id(&self) -> WebSearchProviderId {
-        WebSearchProviderId(ZED_WEB_SEARCH_PROVIDER_ID.into())
+        WebSearchProviderId(codeorbit_WEB_SEARCH_PROVIDER_ID.into())
     }
 
     fn search(&self, query: String, cx: &mut App) -> Task<Result<WebSearchResponse>> {
@@ -79,7 +79,7 @@ async fn perform_web_search(
 
     let request = http_client::Request::builder()
         .method(Method::POST)
-        .uri(http_client.build_zed_llm_url("/web_search", &[])?.as_ref())
+        .uri(http_client.build_CodeOrbit_llm_url("/web_search", &[])?.as_ref())
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {token}"))
         .header(CLIENT_SUPPORTS_EXA_WEB_SEARCH_PROVIDER_HEADER_NAME, "true")

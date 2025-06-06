@@ -1,6 +1,6 @@
-# Go
+﻿# Go
 
-Go support is available natively in Zed.
+Go support is available natively in CodeOrbit.
 
 - Tree-sitter: [tree-sitter/tree-sitter-go](https://github.com/tree-sitter/tree-sitter-go)
 - Language Server: [golang/tools/tree/master/gopls](https://github.com/golang/tools/tree/master/gopls)
@@ -38,7 +38,7 @@ If `gopls` is not found you will likely need to add `export PATH="$PATH:$HOME/go
 
 ## Inlay Hints
 
-Zed sets the following initialization options for inlay hints:
+CodeOrbit sets the following initialization options for inlay hints:
 
 ```json
 "hints": {
@@ -52,7 +52,7 @@ Zed sets the following initialization options for inlay hints:
 }
 ```
 
-to make the language server send back inlay hints when Zed has them enabled in the settings.
+to make the language server send back inlay hints when CodeOrbit has them enabled in the settings.
 
 Use
 

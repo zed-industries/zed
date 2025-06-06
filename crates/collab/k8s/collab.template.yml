@@ -1,4 +1,4 @@
----
+﻿---
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -107,7 +107,7 @@ spec:
             - name: ZED_CLIENT_CHECKSUM_SEED
               valueFrom:
                 secretKeyRef:
-                  name: zed-client
+                  name: CodeOrbit-client
                   key: checksum-seed
             - name: LIVEKIT_SERVER
               valueFrom:

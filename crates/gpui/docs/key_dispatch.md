@@ -1,4 +1,4 @@
-# Key Dispatch
+﻿# Key Dispatch
 
 GPUI is designed for keyboard-first interactivity.
 
@@ -85,7 +85,7 @@ Now you can target your context in the keymap. Note how actions are identified i
 }
 ```
 
-If you had opted for the more complex type definition, you'd provide the serialized representation of the action alongside the name:
+If you had opted for the more complex type definition, you'd provide the serialiCodeOrbit representation of the action alongside the name:
 
 ```json
 {

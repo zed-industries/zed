@@ -1,6 +1,6 @@
-use std::{sync::Arc, time::Duration};
+﻿use std::{sync::Arc, time::Duration};
 
-use crate::{ZED_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
+use crate::{codeorbit_PREDICT_DATA_COLLECTION_CHOICE, onboarding_event};
 use anyhow::Context as _;
 use client::{Client, UserStore};
 use db::kvp::KEY_VALUE_STORE;
@@ -15,8 +15,8 @@ use ui::{Checkbox, TintColor, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::NotifyTaskExt};
 
-/// Introduces user to Zed's Edit Prediction feature and terms of service
-pub struct ZedPredictModal {
+/// Introduces user to CodeOrbit's Edit Prediction feature and terms of service
+pub struct CodeOrbitPredictModal {
     user_store: Entity<UserStore>,
     client: Arc<Client>,
     fs: Arc<dyn Fs>,
@@ -37,7 +37,7 @@ enum SignInStatus {
     SignedIn,
 }
 
-impl ZedPredictModal {
+impl CodeOrbitPredictModal {
     pub fn toggle(
         workspace: &mut Workspace,
         user_store: Entity<UserStore>,
@@ -59,21 +59,21 @@ impl ZedPredictModal {
     }
 
     fn view_terms(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/terms-of-service");
+        cx.open_url("https://CodeOrbit.dev/terms-of-service");
         cx.notify();
 
         onboarding_event!("ToS Link Clicked");
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/edit-prediction");
+        cx.open_url("https://CodeOrbit.dev/blog/edit-prediction");
         cx.notify();
 
         onboarding_event!("Blog Link clicked");
     }
 
     fn inline_completions_doc(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/docs/configuring-zed#disabled-globs");
+        cx.open_url("https://CodeOrbit.dev/docs/configuring-CodeOrbit#disabled-globs");
         cx.notify();
 
         onboarding_event!("Docs Link Clicked");
@@ -96,7 +96,7 @@ impl ZedPredictModal {
 
             KEY_VALUE_STORE
                 .write_kvp(
-                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                    codeorbit_PREDICT_DATA_COLLECTION_CHOICE.into(),
                     data_collection_opted_in.to_string(),
                 )
                 .await
@@ -120,7 +120,7 @@ impl ZedPredictModal {
                 update_settings_file::<AllLanguageSettings>(this.fs.clone(), cx, move |file, _| {
                     file.features
                         .get_or_insert(Default::default())
-                        .edit_prediction_provider = Some(EditPredictionProvider::Zed);
+                        .edit_prediction_provider = Some(EditPredictionProvider::CodeOrbit);
                 });
 
                 cx.emit(DismissEvent);
@@ -167,17 +167,17 @@ impl ZedPredictModal {
     }
 }
 
-impl EventEmitter<DismissEvent> for ZedPredictModal {}
+impl EventEmitter<DismissEvent> for CodeOrbitPredictModal {}
 
-impl Focusable for ZedPredictModal {
+impl Focusable for CodeOrbitPredictModal {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl ModalView for ZedPredictModal {}
+impl ModalView for CodeOrbitPredictModal {}
 
-impl ZedPredictModal {
+impl CodeOrbitPredictModal {
     fn render_data_collection_explanation(&self, cx: &Context<Self>) -> impl IntoElement {
         fn label_item(label_text: impl Into<SharedString>) -> impl Element {
             Label::new(label_text).color(Color::Muted).into_element()
@@ -221,12 +221,12 @@ impl ZedPredictModal {
                 "We collect data exclusively from open source projects.",
             ))
             .child(info_item(
-                "Zed automatically detects if your project is open source.",
+                "CodeOrbit automatically detects if your project is open source.",
             ))
             .child(info_item("Toggle participation at any time via the status bar menu."))
             .child(multiline_info_item(
                 "If turned on, this setting applies for all open source repositories",
-                label_item("you open in Zed.")
+                label_item("you open in CodeOrbit.")
             ))
             .child(multiline_info_item(
                 "Files with sensitive data, like `.env`, are excluded by default",
@@ -244,7 +244,7 @@ impl ZedPredictModal {
     }
 }
 
-impl Render for ZedPredictModal {
+impl Render for CodeOrbitPredictModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let window_height = window.viewport_size().height;
         let max_height = window_height - px(200.);
@@ -257,7 +257,7 @@ impl Render for ZedPredictModal {
 
         let base = v_flex()
             .id("edit-prediction-onboarding")
-            .key_context("ZedPredictModal")
+            .key_context("CodeOrbitPredictModal")
             .relative()
             .w(px(550.))
             .h_full()
@@ -290,7 +290,7 @@ impl Render for ZedPredictModal {
                     .h(px(200.))
                     .child(
                         svg()
-                            .path("icons/zed_predict_bg.svg")
+                            .path("icons/codeorbit_predict_bg.svg")
                             .text_color(cx.theme().colors().icon_disabled)
                             .w(px(530.))
                             .h(px(128.))
@@ -306,7 +306,7 @@ impl Render for ZedPredictModal {
                         v_flex()
                             .gap_1()
                             .child(
-                                Label::new("Introducing Zed AI's")
+                                Label::new("Introducing CodeOrbit AI's")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -373,7 +373,7 @@ impl Render for ZedPredictModal {
         if self.user_store.read(cx).current_user().is_some() {
             let copy = match self.sign_in_status {
                 SignInStatus::Idle => {
-                    "Zed can now predict your next edit on every keystroke. Powered by Zeta, our open-source, open-dataset language model."
+                    "CodeOrbit can now predict your next edit on every keystroke. Powered by Zeta, our open-source, open-dataset language model."
                 }
                 SignInStatus::SignedIn => "Almost there! Ensure you:",
                 SignInStatus::Waiting => unreachable!(),
@@ -400,9 +400,9 @@ impl Render for ZedPredictModal {
                                     "unlimited"
                                 },
                                 match plan {
-                                    proto::Plan::Free => "Zed Free plan",
-                                    proto::Plan::ZedPro => "Zed Pro plan",
-                                    proto::Plan::ZedProTrial => "Zed Pro trial",
+                                    proto::Plan::Free => "CodeOrbit Free plan",
+                                    proto::Plan::CodeOrbitPro => "CodeOrbit Pro plan",
+                                    proto::Plan::CodeOrbitProTrial => "CodeOrbit Pro trial",
                                 }
                             )),
                     ),
@@ -486,7 +486,7 @@ impl Render for ZedPredictModal {
                 )
         } else {
             base.child(
-                Label::new("To set Zed as your edit prediction provider, please sign in.")
+                Label::new("To set CodeOrbit as your edit prediction provider, please sign in.")
                     .color(Color::Muted),
             )
             .child(

@@ -1,5 +1,5 @@
-{
-  // The name of the Zed theme to use for the UI.
+﻿{
+  // The name of the CodeOrbit theme to use for the UI.
   //
   // `mode` is one of:
   // - "system": Use the theme that corresponds to the system's appearance
@@ -10,7 +10,7 @@
     "light": "One Light",
     "dark": "One Dark"
   },
-  "icon_theme": "Zed (Default)",
+  "icon_theme": "CodeOrbit (Default)",
   // The name of a base set of key bindings to use.
   // This setting can take six values, each named after another
   // text editor:
@@ -25,10 +25,10 @@
   // Features that can be globally enabled or disabled
   "features": {
     // Which edit prediction provider to use.
-    "edit_prediction_provider": "zed"
+    "edit_prediction_provider": "CodeOrbit"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": "CodeOrbit Plex Mono",
   // Set the buffer text's font fallbacks, this will be merged with
   // the platform's default fallbacks.
   "buffer_font_fallbacks": null,
@@ -54,7 +54,7 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
-  "ui_font_family": "Zed Plex Sans",
+  "ui_font_family": "CodeOrbit Plex Sans",
   // Set the UI's font fallbacks, this will be merged with the platform's
   // default font fallbacks.
   "ui_font_fallbacks": null,
@@ -112,9 +112,9 @@
   "hover_popover_enabled": true,
   // Time to wait in milliseconds before showing the informational hover box.
   "hover_popover_delay": 300,
-  // Whether to confirm before quitting Zed.
+  // Whether to confirm before quitting CodeOrbit.
   "confirm_quit": false,
-  // Whether to restore last closed project when fresh Zed instance is opened.
+  // Whether to restore last closed project when fresh CodeOrbit instance is opened.
   "restore_on_startup": "last_session",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
@@ -146,12 +146,12 @@
   //         "on_last_window_closed": "quit_app",
   "on_last_window_closed": "platform_default",
   // Whether to use the system provided dialogs for Open and Save As.
-  // When set to false, Zed will use the built-in keyboard-first pickers.
+  // When set to false, CodeOrbit will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
   // Whether to use the system provided dialogs for prompts, such as confirmation
   // prompts.
-  // When set to false, Zed will use its built-in prompts. Note that on Linux,
-  // this option is ignored and Zed will always use the built-in prompts.
+  // When set to false, CodeOrbit will use its built-in prompts. Note that on Linux,
+  // this option is ignored and CodeOrbit will always use the built-in prompts.
   "use_system_prompts": true,
   // Whether the cursor blinks in the editor.
   "cursor_blink": true,
@@ -229,12 +229,12 @@
   //
   // Which diagnostic indicators to show in the scrollbar, their level should be more or equal to the specified severity level.
   // Possible values:
-  //  - "off" — no diagnostics are allowed
+  //  - "off" â€” no diagnostics are allowed
   //  - "error"
   //  - "warning"
   //  - "info"
   //  - "hint"
-  //  - null — allow all diagnostics (default)
+  //  - null â€” allow all diagnostics (default)
   "diagnostics_max_severity": null,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
@@ -254,11 +254,11 @@
   "use_on_type_format": true,
   // Whether to automatically add matching closing characters when typing
   // opening parenthesis, bracket, brace, single or double quote characters.
-  // For example, when you type (, Zed will add a closing ) at the correct position.
+  // For example, when you type (, CodeOrbit will add a closing ) at the correct position.
   "use_autoclose": true,
   // Whether to automatically surround selected text when typing opening parenthesis,
   // bracket, brace, single or double quote characters.
-  // For example, when you select text and type (, Zed will surround the text with ().
+  // For example, when you select text and type (, CodeOrbit will surround the text with ().
   "use_auto_surround": true,
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,
@@ -307,7 +307,7 @@
   // - It is adjacent to an edge (start or end)
   // - It is adjacent to a whitespace (left or right)
   "show_whitespaces": "selection",
-  // Settings related to calls in Zed
+  // Settings related to calls in CodeOrbit
   "calls": {
     // Join calls with the microphone live by default
     "mute_on_join": false,
@@ -700,7 +700,7 @@
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
-    // For example: typing `:wave:` gets replaced with `👋`.
+    // For example: typing `:wave:` gets replaced with `ðŸ‘‹`.
     "auto_replace_emoji_shortcode": true
   },
   "notification_panel": {
@@ -729,7 +729,7 @@
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
-      "provider": "zed.dev",
+      "provider": "CodeOrbit.dev",
       // The model to use.
       "model": "claude-sonnet-4"
     },
@@ -750,7 +750,7 @@
       //
       // To set parameters for a specific provider and model:
       // {
-      //   "provider": "zed.dev",
+      //   "provider": "CodeOrbit.dev",
       //   "model": "claude-sonnet-4",
       //   "temperature": 1.0
       // }
@@ -846,14 +846,14 @@
   "linked_edits": true,
   // The list of language servers to use (or disable) for all languages.
   //
-  // This is typically customized on a per-language basis.
+  // This is typically customiCodeOrbit on a per-language basis.
   "language_servers": ["..."],
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
   // 1. Never automatically save:
   //     "autosave": "off",
-  // 2. Save when changing focus away from the Zed window:
+  // 2. Save when changing focus away from the CodeOrbit window:
   //     "autosave": "on_window_change",
   // 3. Save when changing focus away from a specific buffer:
   //     "autosave": "on_focus_change",
@@ -958,11 +958,11 @@
     // Whether to show the git status in the file finder.
     "git_status": true,
     // Whether to use gitignored files when searching.
-    // Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    // Only the file CodeOrbit had indexed will be used, not necessary all the gitignored files.
     //
     // Can accept 3 values:
     //   * `true`: Use all gitignored files
-    //   * `false`: Use only the files Zed had indexed
+    //   * `false`: Use only the files CodeOrbit had indexed
     //   * `null`: Be smart and search for ignored when called from a gitignored worktree
     "include_ignored": null
   },
@@ -989,9 +989,9 @@
   //         "arguments": ["--stdin-filepath", "{buffer_path}"]
   //       }
   //     }
-  // 3. Format code using Zed's Prettier integration:
+  // 3. Format code using CodeOrbit's Prettier integration:
   //     "formatter": "prettier"
-  // 4. Default. Format files using Zed's Prettier integration (if applicable),
+  // 4. Default. Format files using CodeOrbit's Prettier integration (if applicable),
   //    or falling back to formatting via language server:
   //     "formatter": "auto"
   "formatter": "auto",
@@ -1018,14 +1018,14 @@
   "tab_size": 4,
   // What debuggers are preferred by default for all languages.
   "debuggers": [],
-  // Control what info is collected by Zed.
+  // Control what info is collected by CodeOrbit.
   "telemetry": {
     // Send debug info like crash reports.
     "diagnostics": true,
-    // Send anonymized usage data like what languages you're using Zed with.
+    // Send anonymiCodeOrbit usage data like what languages you're using CodeOrbit with.
     "metrics": true
   },
-  // Automatically update Zed. This setting may be ignored on Linux if
+  // Automatically update CodeOrbit. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
   // Diagnostics configuration.
@@ -1056,12 +1056,12 @@
       "max_severity": null
     },
     "cargo": {
-      // When enabled, Zed disables rust-analyzer's check on save and starts to query
+      // When enabled, CodeOrbit disables rust-analyzer's check on save and starts to query
       // Cargo diagnostics separately.
       "fetch_cargo_diagnostics": false
     }
   },
-  // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
+  // Files or globs of files that will be excluded by CodeOrbit entirely. They will be skipped during file
   // scans, file searches, and not be displayed in the project file tree. Takes precedence over `file_scan_inclusions`.
   "file_scan_exclusions": [
     "**/.git",
@@ -1074,9 +1074,9 @@
     "**/.classpath",
     "**/.settings"
   ],
-  // Files or globs of files that will be included by Zed, even when ignored by git. This is useful
+  // Files or globs of files that will be included by CodeOrbit, even when ignored by git. This is useful
   // for files that are not tracked by git, but are still important to your project. Note that globs
-  // that are overly broad can slow down Zed's file scanning. `file_scan_exclusions` takes
+  // that are overly broad can slow down CodeOrbit's file scanning. `file_scan_exclusions` takes
   // precedence over these inclusions.
   "file_scan_inclusions": [".env*"],
   // Git gutter behavior configuration.
@@ -1189,7 +1189,7 @@
     //    this platform's home directory  (if we can find it)
     //      "working_directory": {
     //        "always": {
-    //          "directory": "~/zed/projects/"
+    //          "directory": "~/CodeOrbit/projects/"
     //        }
     //      }
     "working_directory": "current_project_directory",
@@ -1298,7 +1298,7 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Plex Mono",
+    // "font_family": "CodeOrbit Plex Mono",
     // Set the terminal's font fallbacks. If this option is not included,
     // the terminal will default to matching the buffer's font fallbacks.
     // This will be merged with the platform's default font fallbacks
@@ -1313,13 +1313,13 @@
   "tasks": {
     "variables": {},
     "enabled": true,
-    // Use LSP tasks over Zed language extension ones.
+    // Use LSP tasks over CodeOrbit language extension ones.
     // If no LSP tasks are returned due to error/timeout or regular execution,
-    // Zed language extension tasks will be used instead.
+    // CodeOrbit language extension tasks will be used instead.
     //
-    // Other Zed tasks will still be shown:
-    // * Zed task from either of the task config file
-    // * Zed task from history (e.g. one-off task was spawned before)
+    // Other CodeOrbit tasks will still be shown:
+    // * CodeOrbit task from either of the task config file
+    // * CodeOrbit task from history (e.g. one-off task was spawned before)
     //
     // Default: true
     "prefer_lsp": true
@@ -1337,26 +1337,26 @@
   // }
   //
   "file_types": {
-    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
+    "JSONC": ["**/.CodeOrbit/**/*.json", "**/CodeOrbit/**/*.json", "**/CodeOrbit/**/*.json", "**/.vscode/**/*.json"],
     "Shell Script": [".env.*"]
   },
   // Settings for which version of Node.js and NPM to use when installing
   // language servers and Copilot.
   //
-  // Note: changing this setting currently requires restarting Zed.
+  // Note: changing this setting currently requires restarting CodeOrbit.
   "node": {
-    // By default, Zed will look for `node` and `npm` on your `$PATH`, and use the
+    // By default, CodeOrbit will look for `node` and `npm` on your `$PATH`, and use the
     // existing executables if their version is recent enough. Set this to `true`
-    // to prevent this, and force Zed to always download and install its own
+    // to prevent this, and force CodeOrbit to always download and install its own
     // version of Node.
     "ignore_system_version": false,
     // You can also specify alternative paths to Node and NPM. If you specify
-    // `path`, but not `npm_path`, Zed will assume that `npm` is located at
+    // `path`, but not `npm_path`, CodeOrbit will assume that `npm` is located at
     // `${path}/../npm`.
     "path": null,
     "npm_path": null
   },
-  // The extensions that Zed should automatically install on startup.
+  // The extensions that CodeOrbit should automatically install on startup.
   //
   // If you don't want any of these extensions, add this field to your settings
   // and change the value to `false`.
@@ -1393,7 +1393,7 @@
     // When LSP servers give an `InsertReplaceEdit` completion, they provides two ranges: `insert` and `replace`. Usually, `insert`
     // contains the word prefix before your cursor and `replace` contains the whole word.
     //
-    // Effectively, this setting just changes whether Zed will use the received range for `insert` or `replace`, so the results may
+    // Effectively, this setting just changes whether CodeOrbit will use the received range for `insert` or `replace`, so the results may
     // differ depending on the underlying LSP server.
     //
     // Possible values:
@@ -1623,7 +1623,7 @@
       "api_url": "https://api.mistral.ai/v1"
     }
   },
-  // Zed's Prettier integration settings.
+  // CodeOrbit's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
@@ -1631,12 +1631,12 @@
     // "allowed": false,
     //
     // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
+    // // If Prettier is allowed, CodeOrbit will use this for its Prettier instance for any applicable file, if
     // // the project has no other Prettier installed.
     // "plugins": [],
     //
     // // Use regular Prettier json configuration.
-    // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
+    // // If Prettier is allowed, CodeOrbit will use this for its Prettier instance for any applicable file, if
     // // the project has no other Prettier installed.
     // "trailingComma": "es5",
     // "tabWidth": 4,
@@ -1653,7 +1653,7 @@
     // "rust-analyzer": {
     //     // A special flag for rust-analyzer integration, to use server-provided tasks
     //     enable_lsp_tasks": true,
-    //     // These initialization options are merged into Zed's defaults
+    //     // These initialization options are merged into CodeOrbit's defaults
     //     "initialization_options": {
     //         "check": {
     //             "command": "clippy" // rust-analyzer.check.command (default: "check")
@@ -1686,25 +1686,25 @@
     "cursor_shape": {}
   },
   // The server to connect to. If the environment variable
-  // ZED_SERVER_URL is set, it will override this setting.
-  "server_url": "https://zed.dev",
-  // Settings overrides to use when using Zed Preview.
-  // Mostly useful for developers who are managing multiple instances of Zed.
+  // codeorbit_SERVER_URL is set, it will override this setting.
+  "server_url": "https://CodeOrbit.dev",
+  // Settings overrides to use when using CodeOrbit Preview.
+  // Mostly useful for developers who are managing multiple instances of CodeOrbit.
   "preview": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using Zed Nightly.
-  // Mostly useful for developers who are managing multiple instances of Zed.
+  // Settings overrides to use when using CodeOrbit Nightly.
+  // Mostly useful for developers who are managing multiple instances of CodeOrbit.
   "nightly": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using Zed Stable.
-  // Mostly useful for developers who are managing multiple instances of Zed.
+  // Settings overrides to use when using CodeOrbit Stable.
+  // Mostly useful for developers who are managing multiple instances of CodeOrbit.
   "stable": {
     // "theme": "Andromeda"
   },
-  // Settings overrides to use when using Zed Dev.
-  // Mostly useful for developers who are managing multiple instances of Zed.
+  // Settings overrides to use when using CodeOrbit Dev.
+  // Mostly useful for developers who are managing multiple instances of CodeOrbit.
   "dev": {
     // "theme": "Andromeda"
   },
@@ -1720,7 +1720,7 @@
   // Supported URI scheme: `http`, `https`, `socks4`, `socks4a`, `socks5`,
   // `socks5h`. `http` will be used when no scheme is specified.
   //
-  // By default no proxy will be used, or Zed will try get proxy settings from
+  // By default no proxy will be used, or CodeOrbit will try get proxy settings from
   // environment variables.
   //
   // Examples:
@@ -1737,7 +1737,7 @@
   "command_aliases": {},
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
-  // Zed's ssh support will pull configuration from your ~/.ssh too.
+  // CodeOrbit's ssh support will pull configuration from your ~/.ssh too.
   // Examples:
   // [
   //   {
@@ -1745,7 +1745,7 @@
   //     // "port": 22, "username": "test", "args": ["-i", "/home/user/.ssh/id_rsa"]
   //     "projects": [
   //       {
-  //         "paths": ["/home/user/code/zed"]
+  //         "paths": ["/home/user/code/CodeOrbit"]
   //       }
   //     ]
   //   }

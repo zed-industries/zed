@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     collections::{HashMap, VecDeque},
     sync::{
         OnceLock, RwLock,
@@ -50,7 +50,7 @@ pub fn init_env_filter(filter: env_config::EnvFilter) {
         unsafe { LEVEL_ENABLED_MAX_STATIC = level_max }
     }
     if ENV_FILTER.set(filter).is_err() {
-        panic!("Environment filter cannot be initialized twice");
+        panic!("Environment filter cannot be initialiCodeOrbit twice");
     }
 }
 

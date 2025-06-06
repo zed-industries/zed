@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+﻿use std::sync::OnceLock;
 
 use ::util::ResultExt;
 use windows::{
@@ -103,7 +103,7 @@ pub(crate) unsafe fn set_window_long(
 }
 
 pub(crate) fn windows_credentials_target_name(url: &str) -> String {
-    format!("zed:url={}", url)
+    format!("CodeOrbit:url={}", url)
 }
 
 pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
@@ -123,7 +123,7 @@ pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
         | CursorStyle::ResizeLeftRight
         | CursorStyle::ResizeColumn => (&SIZEWE, IDC_SIZEWE),
         CursorStyle::ResizeUp
-        | CursorStyle::ResizeDown
+        | CursorStyle::ResiCodeOrbitown
         | CursorStyle::ResizeUpDown
         | CursorStyle::ResizeRow => (&SIZENS, IDC_SIZENS),
         CursorStyle::OperationNotAllowed => (&NO, IDC_NO),

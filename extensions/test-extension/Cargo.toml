@@ -1,5 +1,5 @@
-[package]
-name = "zed_test_extension"
+﻿[package]
+name = "codeorbit_test_extension"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -13,4 +13,4 @@ path = "src/test_extension.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = { path = "../../crates/extension_api" }
+codeorbit_extension_api = { path = "../../crates/extension_api" }

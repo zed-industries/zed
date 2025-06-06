@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
@@ -169,7 +169,7 @@ impl StyledText {
     }
 
     /// Set the styling attributes for the given text, as well as
-    /// as any ranges of text that have had their style customized.
+    /// as any ranges of text that have had their style customiCodeOrbit.
     pub fn with_default_highlights(
         mut self,
         default_style: &TextStyle,
@@ -185,7 +185,7 @@ impl StyledText {
     }
 
     /// Set the styling attributes for the given text, as well as
-    /// as any ranges of text that have had their style customized.
+    /// as any ranges of text that have had their style customiCodeOrbit.
     pub fn with_highlights(
         mut self,
         highlights: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,

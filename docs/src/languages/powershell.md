@@ -1,6 +1,6 @@
-# PowerShell
+﻿# PowerShell
 
-PowerShell language support in Zed is provided by the community-maintained [Zed PowerShell extension](https://github.com/wingyplus/zed-powershell). Please report issues to: [github.com/wingyplus/zed-powershell/issues](https://github.com/wingyplus/zed-powershell/issues)
+PowerShell language support in CodeOrbit is provided by the community-maintained [CodeOrbit PowerShell extension](https://github.com/wingyplus/CodeOrbit-powershell). Please report issues to: [github.com/wingyplus/CodeOrbit-powershell/issues](https://github.com/wingyplus/CodeOrbit-powershell/issues)
 
 - Tree-sitter: [airbus-cert/tree-sitter-powershell](https://github.com/airbus-cert/tree-sitter-powershell)
 - Language Server: [PowerShell/PowerShellEditorServices](https://github.com/PowerShell/PowerShellEditorServices)
@@ -16,13 +16,13 @@ PowerShell language support in Zed is provided by the community-maintained [Zed 
 - Ubuntu: [Install PowerShell on RHEL](https://learn.microsoft.com/en-us/powershell/scripting/install/install-ubuntu)
 - Windows: [Install PowerShell on Windows](https://learn.microsoft.com/en-us/powershell/scripting/install/installing-powershell-on-windows)
 
-The Zed PowerShell extension will default to the `pwsh` executable found in your path.
+The CodeOrbit PowerShell extension will default to the `pwsh` executable found in your path.
 
 ### Install PowerShell Editor Services (Optional) {#powershell-editor-services}
 
-The Zed PowerShell extensions will attempt to download [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices) automatically.
+The CodeOrbit PowerShell extensions will attempt to download [PowerShell Editor Services](https://github.com/PowerShell/PowerShellEditorServices) automatically.
 
-If want to use a specific binary, you can specify in your that in your Zed settings.json:
+If want to use a specific binary, you can specify in your that in your CodeOrbit settings.json:
 
 ```json
   "lsp": {

@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+﻿use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandResult,
@@ -84,7 +84,7 @@ impl SlashCommand for ContextServerSlashCommand {
 
         if let Some(server) = self.store.read(cx).get_running_server(&server_id) {
             cx.foreground_executor().spawn(async move {
-                let protocol = server.client().context("Context server not initialized")?;
+                let protocol = server.client().context("Context server not initialiCodeOrbit")?;
 
                 let completion_result = protocol
                     .completion(
@@ -137,7 +137,7 @@ impl SlashCommand for ContextServerSlashCommand {
         let store = self.store.read(cx);
         if let Some(server) = store.get_running_server(&server_id) {
             cx.foreground_executor().spawn(async move {
-                let protocol = server.client().context("Context server not initialized")?;
+                let protocol = server.client().context("Context server not initialiCodeOrbit")?;
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
 
                 anyhow::ensure!(
@@ -165,7 +165,7 @@ impl SlashCommand for ContextServerSlashCommand {
                 Ok(SlashCommandOutput {
                     sections: vec![SlashCommandOutputSection {
                         range: 0..(prompt.len()),
-                        icon: IconName::ZedAssistant,
+                        icon: IconName::CodeOrbitAssistant,
                         label: SharedString::from(
                             result
                                 .description

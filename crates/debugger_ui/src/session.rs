@@ -1,6 +1,6 @@
-pub mod running;
+﻿pub mod running;
 
-use crate::{StackTraceView, debugger_panel::DebugPanel, persistence::SerializedLayout};
+use crate::{StackTraceView, debugger_panel::DebugPanel, persistence::SerialiCodeOrbitLayout};
 use dap::client::SessionId;
 use gpui::{
     App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
@@ -40,7 +40,7 @@ impl DebugSession {
         workspace: WeakEntity<Workspace>,
         session: Entity<Session>,
         _debug_panel: WeakEntity<DebugPanel>,
-        serialized_layout: Option<SerializedLayout>,
+        serialiCodeOrbit_layout: Option<SerialiCodeOrbitLayout>,
         dock_axis: Axis,
         window: &mut Window,
         cx: &mut App,
@@ -50,7 +50,7 @@ impl DebugSession {
                 session.clone(),
                 project.clone(),
                 workspace.clone(),
-                serialized_layout,
+                serialiCodeOrbit_layout,
                 dock_axis,
                 window,
                 cx,

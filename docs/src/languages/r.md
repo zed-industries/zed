@@ -1,6 +1,6 @@
-# R
+﻿# R
 
-R support is available through the [R extension](https://github.com/ocsmit/zed-r).
+R support is available through the [R extension](https://github.com/ocsmit/CodeOrbit-r).
 
 - Tree-sitter: [r-lib/tree-sitter-r](https://github.com/r-lib/tree-sitter-r)
 - Language-Server: [REditorSupport/languageserver](https://github.com/REditorSupport/languageserver)
@@ -15,7 +15,7 @@ install.packages("languageserver")
 install.packages("lintr")
 ```
 
-3. Install the [R Zed extension](https://github.com/ocsmit/zed-r) through Zed's extensions manager.
+3. Install the [R CodeOrbit extension](https://github.com/ocsmit/CodeOrbit-r) through CodeOrbit's extensions manager.
 
 For example on macOS:
 
@@ -30,7 +30,7 @@ Rscript -e 'packageVersion("lintr")'
 
 ## Ark Installation
 
-To use the Zed REPL with R you need to install [Ark](https://github.com/posit-dev/ark), an R Kernel for Jupyter applications.
+To use the CodeOrbit REPL with R you need to install [Ark](https://github.com/posit-dev/ark), an R Kernel for Jupyter applications.
 You can down the latest version from the [Ark GitHub Releases](https://github.com/posit-dev/ark/releases) and then extract the `ark` binary to a directory in your `PATH`.
 
 For example to install the latest non-debug build:

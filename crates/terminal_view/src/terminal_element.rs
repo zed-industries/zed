@@ -1,4 +1,4 @@
-use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
+﻿use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase, Element,
     ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
@@ -749,8 +749,8 @@ impl Element for TerminalElement {
                     let mut size = bounds.size;
                     size.width -= gutter;
 
-                    // https://github.com/zed-industries/zed/issues/2750
-                    // if the terminal is one column wide, rendering 🦀
+                    // https://github.com/CodeOrbit-industries/CodeOrbit/issues/2750
+                    // if the terminal is one column wide, rendering ðŸ¦€
                     // causes alacritty to misbehave.
                     if size.width < cell_width * 2.0 {
                         size.width = cell_width * 2.0;

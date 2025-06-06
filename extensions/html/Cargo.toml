@@ -1,5 +1,5 @@
-[package]
-name = "zed_html"
+﻿[package]
+name = "codeorbit_html"
 version = "0.2.1"
 edition.workspace = true
 publish.workspace = true
@@ -13,4 +13,4 @@ path = "src/html.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.1.0"
+codeorbit_extension_api = "0.1.0"

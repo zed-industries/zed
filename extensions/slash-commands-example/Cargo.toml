@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "slash_commands_example"
 version = "0.1.0"
 edition.workspace = true
@@ -13,4 +13,4 @@ path = "src/slash_commands_example.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.1.0"
+codeorbit_extension_api = "0.1.0"

@@ -1,4 +1,4 @@
-// Doing `if let` gives you nice scoping with passes/encoders
+﻿// Doing `if let` gives you nice scoping with passes/encoders
 #![allow(irrefutable_let_patterns)]
 
 use super::{BladeAtlas, BladeContext, PATH_TEXTURE_FORMAT};
@@ -348,8 +348,8 @@ impl BladeRenderer {
             name: "main",
             buffer_count: 2,
         });
-        // workaround for https://github.com/zed-industries/zed/issues/26143
-        let path_sample_count = std::env::var("ZED_PATH_SAMPLE_COUNT")
+        // workaround for https://github.com/CodeOrbit-industries/CodeOrbit/issues/26143
+        let path_sample_count = std::env::var("codeorbit_PATH_SAMPLE_COUNT")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_PATH_SAMPLE_COUNT);
@@ -399,10 +399,10 @@ impl BladeRenderer {
                 #[cfg(target_os = "linux")]
                 if self.gpu.device_information().driver_name == "radv" {
                     log::error!(
-                        "there's a known bug with amdgpu/radv, try setting ZED_PATH_SAMPLE_COUNT=0 as a workaround"
+                        "there's a known bug with amdgpu/radv, try setting codeorbit_PATH_SAMPLE_COUNT=0 as a workaround"
                     );
                     log::error!(
-                        "if that helps you're running into https://github.com/zed-industries/zed/issues/26143"
+                        "if that helps you're running into https://github.com/CodeOrbit-industries/CodeOrbit/issues/26143"
                     );
                 }
                 log::error!(

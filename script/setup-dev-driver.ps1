@@ -1,4 +1,4 @@
-# Configures a drive for testing in CI.
+﻿# Configures a drive for testing in CI.
 
 # Currently, total CI requires almost 45GB of space, here we are creating a 100GB drive.
 $Volume = New-VHD -Path C:/zed_dev_drive.vhdx -SizeBytes 100GB |
@@ -34,6 +34,6 @@ Write-Output `
 	"DEV_DRIVE=$($Drive)" `
 	"RUSTUP_HOME=$($Drive)/.rustup" `
 	"CARGO_HOME=$($Drive)/.cargo" `
-	"ZED_WORKSPACE=$($Drive)/zed" `
+	"ZED_WORKSPACE=$($Drive)/CodeOrbit" `
 	"PATH=$($Drive)/.cargo/bin;$env:PATH" `
 	>> $env:GITHUB_ENV

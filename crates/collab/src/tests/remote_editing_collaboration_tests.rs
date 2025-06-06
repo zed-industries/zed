@@ -1,4 +1,4 @@
-use crate::tests::TestServer;
+﻿use crate::tests::TestServer;
 use call::ActiveCall;
 use collections::{HashMap, HashSet};
 
@@ -60,7 +60,7 @@ async fn test_sharing_an_ssh_remote_project(
             path!("/code"),
             json!({
                 "project1": {
-                    ".zed": {
+                    ".CodeOrbit": {
                         "settings.json": r#"{"languages":{"Rust":{"language_servers":["override-rust-analyzer"]}}}"#
                     },
                     "README.md": "# project 1",
@@ -123,8 +123,8 @@ async fn test_sharing_an_ssh_remote_project(
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
-                Path::new(".zed"),
-                Path::new(".zed/settings.json"),
+                Path::new(".CodeOrbit"),
+                Path::new(".CodeOrbit/settings.json"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
@@ -136,8 +136,8 @@ async fn test_sharing_an_ssh_remote_project(
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
-                Path::new(".zed"),
-                Path::new(".zed/settings.json"),
+                Path::new(".CodeOrbit"),
+                Path::new(".CodeOrbit/settings.json"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),

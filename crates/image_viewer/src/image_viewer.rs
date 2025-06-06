@@ -1,4 +1,4 @@
-mod image_info;
+﻿mod image_info;
 mod image_viewer_settings;
 
 use std::path::PathBuf;
@@ -183,7 +183,7 @@ impl Item for ImageView {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Some(cx.new(|cx| Self {
             image_item: self.image_item.clone(),
@@ -215,7 +215,7 @@ fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) ->
 }
 
 impl SerializableItem for ImageView {
-    fn serialized_item_kind() -> &'static str {
+    fn serialiCodeOrbit_item_kind() -> &'static str {
         "ImageView"
     }
 
@@ -386,7 +386,7 @@ impl ProjectItem for ImageView {
         cx: &mut Context<Self>,
     ) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Self::new(item, project, window, cx)
     }

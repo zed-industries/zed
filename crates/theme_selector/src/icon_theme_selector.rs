@@ -1,4 +1,4 @@
-use fs::Fs;
+﻿use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, UpdateGlobal, WeakEntity,
@@ -11,7 +11,7 @@ use theme::{Appearance, IconTheme, ThemeMeta, ThemeRegistry, ThemeSettings};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, ui::HighlightedLabel};
-use zed_actions::{ExtensionCategoryFilter, Extensions};
+use codeorbit_actions::{ExtensionCategoryFilter, Extensions};
 
 pub(crate) struct IconThemeSelector {
     picker: Entity<Picker<IconThemeSelectorDelegate>>,
@@ -317,7 +317,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .on_click(|_event, _window, cx| {
-                            cx.open_url("https://zed.dev/docs/icon-themes");
+                            cx.open_url("https://CodeOrbit.dev/docs/icon-themes");
                         }),
                 )
                 .child(

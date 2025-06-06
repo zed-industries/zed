@@ -1,4 +1,4 @@
-use crate::wasm_host::wit::since_v0_6_0::{
+﻿use crate::wasm_host::wit::since_v0_6_0::{
     dap::{
         StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, TcpArguments,
         TcpArgumentsTemplate,
@@ -41,11 +41,11 @@ wasmtime::component::bindgen!({
          "worktree": ExtensionWorktree,
          "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
+         "CodeOrbit:extension/http-client/http-response-stream": ExtensionHttpResponseStream
     },
 });
 
-pub use self::zed::extension::*;
+pub use self::CodeOrbit::extension::*;
 
 mod settings {
     include!(concat!(env!("OUT_DIR"), "/since_v0.6.0/settings.rs"));

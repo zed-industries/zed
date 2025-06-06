@@ -1,11 +1,11 @@
-use zed_extension_api::{
-    self as zed, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
+﻿use codeorbit_extension_api::{
+    self as CodeOrbit, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
     SlashCommandOutputSection, Worktree,
 };
 
 struct SlashCommandsExampleExtension;
 
-impl zed::Extension for SlashCommandsExampleExtension {
+impl CodeOrbit::Extension for SlashCommandsExampleExtension {
     fn new() -> Self {
         SlashCommandsExampleExtension
     }
@@ -14,7 +14,7 @@ impl zed::Extension for SlashCommandsExampleExtension {
         &self,
         command: SlashCommand,
         _args: Vec<String>,
-    ) -> Result<Vec<zed_extension_api::SlashCommandArgumentCompletion>, String> {
+    ) -> Result<Vec<codeorbit_extension_api::SlashCommandArgumentCompletion>, String> {
         match command.name.as_str() {
             "echo" => Ok(vec![]),
             "pick-one" => Ok(vec![
@@ -87,4 +87,4 @@ impl zed::Extension for SlashCommandsExampleExtension {
     }
 }
 
-zed::register_extension!(SlashCommandsExampleExtension);
+CodeOrbit::register_extension!(SlashCommandsExampleExtension);

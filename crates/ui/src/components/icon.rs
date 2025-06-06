@@ -1,4 +1,4 @@
-mod decorated_icon;
+﻿mod decorated_icon;
 mod icon_decoration;
 
 use std::path::{Path, PathBuf};
@@ -113,7 +113,7 @@ impl From<IconName> for Icon {
 
 /// The source of an icon.
 enum IconSource {
-    /// An SVG embedded in the Zed binary.
+    /// An SVG embedded in the CodeOrbit binary.
     Svg(SharedString),
     /// An image file located at the specified path.
     ///

@@ -1,12 +1,12 @@
-#!/usr/bin/env node --redirect-warnings=/dev/null
+﻿#!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
 let { GITHUB_ACCESS_TOKEN } = process.env;
 const GITHUB_URL = "https://github.com";
 const SKIPPABLE_NOTE_REGEX = /^\s*-?\s*n\/?a\s*/ims;
-const PULL_REQUEST_WEB_URL = "https://github.com/zed-industries/zed/pull";
+const PULL_REQUEST_WEB_URL = "https://github.com/CodeOrbit-industries/CodeOrbit/pull";
 const PULL_REQUEST_API_URL =
-  "https://api.github.com/repos/zed-industries/zed/pulls";
+  "https://api.github.com/repos/CodeOrbit-industries/CodeOrbit/pulls";
 const DIVIDER = "-".repeat(80);
 
 main();
@@ -26,7 +26,7 @@ async function main() {
     (
       await (
         await fetch(
-          "https://api.github.com/orgs/zed-industries/teams/staff/members",
+          "https://api.github.com/orgs/CodeOrbit-industries/teams/staff/members",
           {
             headers: {
               Authorization: `token ${GITHUB_ACCESS_TOKEN}`,

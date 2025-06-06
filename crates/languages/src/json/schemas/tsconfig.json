@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "http://json-schema.org/draft-04/schema#",
   "allowTrailingCommas": true,
   "allOf": [
@@ -434,9 +434,9 @@
                     "bundler"
                   ],
                   "markdownEnumDescriptions": [
-                    "It’s recommended to use `\"node16\"` instead",
+                    "Itâ€™s recommended to use `\"node16\"` instead",
                     "Deprecated, use `\"node10\"` in TypeScript 5.0+ instead",
-                    "It’s recommended to use `\"node16\"` instead",
+                    "Itâ€™s recommended to use `\"node16\"` instead",
                     "This is the recommended setting for libraries and Node.js applications",
                     "This is the recommended setting for libraries and Node.js applications",
                     "This is the recommended setting in TypeScript 5.0+ for applications that use a bundler"
@@ -1370,7 +1370,7 @@
             },
             "ignore": {
               "default": ["(?:^|/)node_modules/"],
-              "description": "Paths which should not be compiled.\n\nEach string in the array is converted to a regular expression via `new RegExp()` and tested against source paths prior to compilation.\n\nSource paths are normalized to posix-style separators, relative to the directory containing `tsconfig.json` or to cwd if no `tsconfig.json` is loaded.\n\nDefault is to ignore all node_modules subdirectories.",
+              "description": "Paths which should not be compiled.\n\nEach string in the array is converted to a regular expression via `new RegExp()` and tested against source paths prior to compilation.\n\nSource paths are normaliCodeOrbit to posix-style separators, relative to the directory containing `tsconfig.json` or to cwd if no `tsconfig.json` is loaded.\n\nDefault is to ignore all node_modules subdirectories.",
               "items": {
                 "type": ["string", "null"]
               },

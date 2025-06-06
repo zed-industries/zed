@@ -1,11 +1,11 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 # This script is intended to be run after `snap-build`.
 #
 # It expects a version to be passed as the first argument, and expects
 # the built `.snap` for that version to be in the current directory.
 #
-# This will uninstall the current `zed` snap, replacing it with a snap
+# This will uninstall the current `CodeOrbit` snap, replacing it with a snap
 # that directly uses the `snap/unpacked` directory.
 
 set -euxo pipefail
@@ -18,7 +18,7 @@ fi
 # Rerun as root
 [ "$UID" -eq 0 ] || exec sudo bash -e "$0" "$@"
 
-snap remove zed || true
+snap remove CodeOrbit || true
 mkdir -p snap
 rm -rf snap/unpacked
 unsquashfs -dest snap/unpacked "zed_$1_amd64.snap"

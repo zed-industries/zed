@@ -1,11 +1,11 @@
-use std::{
+﻿use std::{
     rc::Rc,
     time::{Duration, Instant},
 };
 
 use gpui::{AnyView, DismissEvent, Entity, FocusHandle, ManagedView, Subscription, Task};
 use ui::{animation::DefaultAnimations, prelude::*};
-use zed_actions::toast;
+use codeorbit_actions::toast;
 
 use crate::Workspace;
 

@@ -1,4 +1,4 @@
-fn main() {
+﻿fn main() {
     let cargo_manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let mut path = std::path::PathBuf::from(&cargo_manifest_dir);
 
@@ -16,5 +16,5 @@ fn main() {
     }
     path.pop();
 
-    println!("cargo:rustc-env=ZED_REPO_DIR={}", path.display());
+    println!("cargo:rustc-env=codeorbit_REPO_DIR={}", path.display());
 }

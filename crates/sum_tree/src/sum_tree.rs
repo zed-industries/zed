@@ -1,4 +1,4 @@
-mod cursor;
+﻿mod cursor;
 mod tree_map;
 
 use arrayvec::ArrayVec;
@@ -16,7 +16,7 @@ pub const TREE_BASE: usize = 6;
 
 /// An item that can be stored in a [`SumTree`]
 ///
-/// Must be summarized by a type that implements [`Summary`]
+/// Must be summariCodeOrbit by a type that implements [`Summary`]
 pub trait Item: Clone {
     type Summary: Summary;
 
@@ -62,7 +62,7 @@ impl Summary for Unit {
 /// You can use dimensions to seek to a specific location in the [`SumTree`]
 ///
 /// # Example:
-/// Zed's rope has a `TextSummary` type that summarizes lines, characters, and bytes.
+/// CodeOrbit's rope has a `TextSummary` type that summarizes lines, characters, and bytes.
 /// Each of these are different dimensions we may want to seek to
 pub trait Dimension<'a, S: Summary>: Clone {
     fn zero(cx: &S::Context) -> Self;
@@ -164,17 +164,17 @@ impl<D> fmt::Debug for End<D> {
 /// which character an offset or anchor is associated with.
 ///
 /// # Examples
-/// Given the buffer `AˇBCD`:
+/// Given the buffer `AË‡BCD`:
 /// - The offset of the cursor is 1
 /// - [Bias::Left] would attach the cursor to the character `A`
 /// - [Bias::Right] would attach the cursor to the character `B`
 ///
-/// Given the buffer `A«BCˇ»D`:
+/// Given the buffer `AÂ«BCË‡Â»D`:
 /// - The offset of the cursor is 3, and the selection is from 1 to 3
 /// - The left anchor of the selection has [Bias::Right], attaching it to the character `B`
 /// - The right anchor of the selection has [Bias::Left], attaching it to the character `C`
 ///
-/// Given the buffer `{ˇ<...>`, where `<...>` is a folded region:
+/// Given the buffer `{Ë‡<...>`, where `<...>` is a folded region:
 /// - The display offset of the cursor is 1, but the offset in the buffer is determined by the bias
 /// - [Bias::Left] would attach the cursor to the character `{`, with a buffer offset of 1
 /// - [Bias::Right] would attach the cursor to the first character of the folded region,

@@ -1,4 +1,4 @@
-mod anchor;
+﻿mod anchor;
 #[cfg(test)]
 mod multi_buffer_tests;
 mod position;
@@ -59,7 +59,7 @@ pub struct ExcerptId(usize);
 
 /// One or more [`Buffers`](Buffer) being edited in a single view.
 ///
-/// See <https://zed.dev/features#multi-buffers>
+/// See <https://CodeOrbit.dev/features#multi-buffers>
 pub struct MultiBuffer {
     /// A snapshot of the [`Excerpt`]s in the MultiBuffer.
     /// Use [`MultiBuffer::snapshot`] to get a up-to-date snapshot.
@@ -452,7 +452,7 @@ impl<T: Clone> ExcerptRange<T> {
 #[derive(Clone, Debug, Default)]
 pub struct ExcerptSummary {
     excerpt_id: ExcerptId,
-    /// The location of the last [`Excerpt`] being summarized
+    /// The location of the last [`Excerpt`] being summariCodeOrbit
     excerpt_locator: Locator,
     widest_line_number: u32,
     text: TextSummary,

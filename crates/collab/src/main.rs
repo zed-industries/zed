@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+﻿use anyhow::{Context as _, anyhow};
 use axum::headers::HeaderMapExt;
 use axum::{
     Extension, Router,
@@ -115,7 +115,7 @@ async fn main() -> Result<()> {
 
                     let epoch = state
                         .db
-                        .create_server(&state.config.zed_environment)
+                        .create_server(&state.config.codeorbit_environment)
                         .await?;
                     let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                     rpc_server.start().await?;
@@ -318,7 +318,7 @@ async fn setup_llm_database(config: &Config) -> Result<()> {
 }
 
 async fn handle_root(Extension(mode): Extension<ServiceMode>) -> String {
-    format!("zed:{mode} v{VERSION} ({})", REVISION.unwrap_or("unknown"))
+    format!("CodeOrbit:{mode} v{VERSION} ({})", REVISION.unwrap_or("unknown"))
 }
 
 async fn handle_liveness_probe(app_state: Option<Extension<Arc<AppState>>>) -> Result<String> {

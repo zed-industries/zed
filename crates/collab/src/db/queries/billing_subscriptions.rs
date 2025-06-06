@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+﻿use anyhow::Context as _;
 
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
@@ -197,7 +197,7 @@ impl Database {
         .await
     }
 
-    pub async fn get_active_zed_pro_billing_subscriptions(
+    pub async fn get_active_CodeOrbit_pro_billing_subscriptions(
         &self,
         user_ids: HashSet<UserId>,
     ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
@@ -212,7 +212,7 @@ impl Database {
                         billing_subscription::Column::StripeSubscriptionStatus
                             .eq(StripeSubscriptionStatus::Active),
                     )
-                    .filter(billing_subscription::Column::Kind.eq(SubscriptionKind::ZedPro))
+                    .filter(billing_subscription::Column::Kind.eq(SubscriptionKind::CodeOrbitPro))
                     .order_by_asc(billing_subscription::Column::Id)
                     .stream(&*tx)
                     .await?;

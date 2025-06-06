@@ -1,6 +1,6 @@
-# Zed Perplexity Extension
+﻿# CodeOrbit Perplexity Extension
 
-This example extension adds the `/perplexity` [slash command](https://zed.dev/docs/assistant/commands) to the Zed AI assistant.
+This example extension adds the `/perplexity` [slash command](https://CodeOrbit.dev/docs/assistant/commands) to the CodeOrbit AI assistant.
 
 ## Usage
 
@@ -12,27 +12,27 @@ Open the AI Assistant panel (`cmd-r` or `ctrl-r`) and enter:
 
 ## Development Setup
 
-1. Install the Rust toolchain and clone the zed repo:
+1. Install the Rust toolchain and clone the CodeOrbit repo:
 
    ```
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
    mkdir -p ~/code
    cd ~/code
-   git clone https://github.com/zed-industries/zed
+   git clone https://github.com/CodeOrbit-industries/CodeOrbit
    ```
 
-1. Open Zed
-1. Open Zed Extensions (`cmd-shift-x` / `ctrl-shift-x`)
+1. Open CodeOrbit
+1. Open CodeOrbit Extensions (`cmd-shift-x` / `ctrl-shift-x`)
 1. Click "Install Dev Extension"
-1. Navigate to the "extensions/perplexity" folder inside the zed git repo.
+1. Navigate to the "extensions/perplexity" folder inside the CodeOrbit git repo.
 1. Ensure your `PERPLEXITY_API_KEY` environment variable is set (instructions below)
 
    ```sh
    env | grep PERPLEXITY_API_KEY
    ```
 
-1. Quit and relaunch Zed
+1. Quit and relaunch CodeOrbit
 
 ## PERPLEXITY_API_KEY
 

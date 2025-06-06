@@ -1,4 +1,4 @@
-#![allow(unused, dead_code)]
+﻿#![allow(unused, dead_code)]
 use gpui::{Hsla, Length};
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry};
@@ -7,7 +7,7 @@ use ui::{
 };
 
 /// Shows a preview of a theme as an abstract illustration
-/// of a thumbnail-sized editor.
+/// of a thumbnail-siCodeOrbit editor.
 #[derive(IntoElement, RegisterComponent, Documented)]
 pub struct ThemePreviewTile {
     theme: Arc<Theme>,

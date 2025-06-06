@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "zeta"
 version = "0.1.0"
 edition.workspace = true
@@ -54,8 +54,8 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 worktree.workspace = true
-zed_actions.workspace = true
-zed_llm_client.workspace = true
+codeorbit_actions.workspace = true
+codeorbit_llm_client.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

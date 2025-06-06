@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use anyhow::Result;
 use gpui::App;
@@ -12,7 +12,7 @@ use crate::provider::{
     self,
     anthropic::AnthropicSettings,
     bedrock::AmazonBedrockSettings,
-    cloud::{self, ZedDotDevSettings},
+    cloud::{self, CodeOrbitDotDevSettings},
     copilot_chat::CopilotChatSettings,
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
@@ -63,7 +63,7 @@ pub struct AllLanguageModelSettings {
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
     pub open_router: OpenRouterSettings,
-    pub zed_dot_dev: ZedDotDevSettings,
+    pub codeorbit_dot_dev: CodeOrbitDotDevSettings,
     pub google: GoogleSettings,
     pub copilot_chat: CopilotChatSettings,
     pub lmstudio: LmStudioSettings,
@@ -79,8 +79,8 @@ pub struct AllLanguageModelSettingsContent {
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
-    #[serde(rename = "zed.dev")]
-    pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
+    #[serde(rename = "CodeOrbit.dev")]
+    pub codeorbit_dot_dev: Option<CodeOrbitDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
@@ -267,7 +267,7 @@ pub struct GoogleSettingsContent {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct ZedDotDevSettingsContent {
+pub struct CodeOrbitDotDevSettingsContent {
     available_models: Option<Vec<cloud::AvailableModel>>,
 }
 
@@ -390,9 +390,9 @@ impl settings::Settings for AllLanguageModelSettings {
                 openai.as_ref().and_then(|s| s.available_models.clone()),
             );
             merge(
-                &mut settings.zed_dot_dev.available_models,
+                &mut settings.codeorbit_dot_dev.available_models,
                 value
-                    .zed_dot_dev
+                    .codeorbit_dot_dev
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );

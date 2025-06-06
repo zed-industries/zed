@@ -1,4 +1,4 @@
-use client::Client;
+﻿use client::Client;
 use futures::channel::oneshot;
 use gpui::Application;
 use http_client::HttpClientWithUrl;
@@ -29,7 +29,7 @@ fn main() {
 
         let http = Arc::new(HttpClientWithUrl::new(
             Arc::new(
-                reqwest_client::ReqwestClient::user_agent("Zed semantic index example").unwrap(),
+                reqwest_client::ReqwestClient::user_agent("CodeOrbit semantic index example").unwrap(),
             ),
             "http://localhost:11434",
             None,
@@ -122,7 +122,7 @@ fn main() {
                 let content = content[search_result.range].to_owned();
 
                 println!(
-                    "✄✄✄✄✄✄✄✄✄✄✄✄✄✄ {:?} @ {} ✄✄✄✄✄✄✄✄✄✄✄✄✄✄",
+                    "âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„ {:?} @ {} âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„âœ„",
                     path, search_result.score
                 );
                 println!("{:?}:{:?}:{:?}", path, range.start, range.end);

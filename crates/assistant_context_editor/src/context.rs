@@ -1,4 +1,4 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 mod context_tests;
 
 use agent_settings::AgentSettings;
@@ -45,7 +45,7 @@ use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
-use zed_llm_client::CompletionIntent;
+use codeorbit_llm_client::CompletionIntent;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -813,7 +813,7 @@ impl AssistantContext {
         let buffer = self.buffer.read(cx);
         SavedContext {
             id: Some(self.id.clone()),
-            zed: "context".into(),
+            CodeOrbit: "context".into(),
             version: SavedContext::VERSION.into(),
             text: buffer.text(),
             messages: self
@@ -1674,7 +1674,7 @@ impl AssistantContext {
         let version = self.version.clone();
         let command_id = InvokedSlashCommandId(self.next_timestamp());
 
-        const PENDING_OUTPUT_END_MARKER: &str = "…";
+        const PENDING_OUTPUT_END_MARKER: &str = "â€¦";
 
         let (command_range, command_source_range, insert_position, first_transaction) =
             self.buffer.update(cx, |buffer, cx| {
@@ -2664,7 +2664,7 @@ impl AssistantContext {
                 cache: false,
             });
 
-            // If there is no summary, it is set with `done: false` so that "Loading Summary…" can
+            // If there is no summary, it is set with `done: false` so that "Loading Summaryâ€¦" can
             // be displayed.
             match self.summary {
                 ContextSummary::Pending | ContextSummary::Error => {
@@ -2882,7 +2882,7 @@ impl AssistantContext {
                 let mut new_path;
                 loop {
                     new_path = contexts_dir().join(&format!(
-                        "{} - {}.zed.json",
+                        "{} - {}.CodeOrbit.json",
                         summary.trim(),
                         discriminant
                     ));
@@ -3013,7 +3013,7 @@ pub struct SavedMessage {
 #[derive(Serialize, Deserialize)]
 pub struct SavedContext {
     pub id: Option<ContextId>,
-    pub zed: String,
+    pub CodeOrbit: String,
     pub version: String,
     pub text: String,
     pub messages: Vec<SavedMessage>,
@@ -3052,7 +3052,7 @@ impl SavedContext {
                         serde_json::from_value::<SavedContextV0_1_0>(saved_context_json)?;
                     Ok(saved_context.upgrade())
                 }
-                _ => anyhow::bail!("unrecognized saved context version: {version:?}"),
+                _ => anyhow::bail!("unrecogniCodeOrbit saved context version: {version:?}"),
             },
             _ => anyhow::bail!("version not found on saved context"),
         }
@@ -3170,7 +3170,7 @@ struct SavedMessageMetadataPreV0_4_0 {
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_3_0 {
     id: Option<ContextId>,
-    zed: String,
+    CodeOrbit: String,
     version: String,
     text: String,
     messages: Vec<SavedMessagePreV0_4_0>,
@@ -3185,7 +3185,7 @@ impl SavedContextV0_3_0 {
     fn upgrade(self) -> SavedContext {
         SavedContext {
             id: self.id,
-            zed: self.zed,
+            CodeOrbit: self.CodeOrbit,
             version: SavedContext::VERSION.into(),
             text: self.text,
             messages: self
@@ -3219,7 +3219,7 @@ impl SavedContextV0_3_0 {
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_2_0 {
     id: Option<ContextId>,
-    zed: String,
+    CodeOrbit: String,
     version: String,
     text: String,
     messages: Vec<SavedMessagePreV0_4_0>,
@@ -3233,7 +3233,7 @@ impl SavedContextV0_2_0 {
     fn upgrade(self) -> SavedContext {
         SavedContextV0_3_0 {
             id: self.id,
-            zed: self.zed,
+            CodeOrbit: self.CodeOrbit,
             version: SavedContextV0_3_0::VERSION.to_string(),
             text: self.text,
             messages: self.messages,
@@ -3248,7 +3248,7 @@ impl SavedContextV0_2_0 {
 #[derive(Serialize, Deserialize)]
 struct SavedContextV0_1_0 {
     id: Option<ContextId>,
-    zed: String,
+    CodeOrbit: String,
     version: String,
     text: String,
     messages: Vec<SavedMessagePreV0_4_0>,
@@ -3264,7 +3264,7 @@ impl SavedContextV0_1_0 {
     fn upgrade(self) -> SavedContext {
         SavedContextV0_2_0 {
             id: self.id,
-            zed: self.zed,
+            CodeOrbit: self.CodeOrbit,
             version: SavedContextV0_2_0::VERSION.to_string(),
             text: self.text,
             messages: self.messages,

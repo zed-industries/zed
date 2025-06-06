@@ -1,4 +1,4 @@
-#[cfg(target_os = "macos")]
+﻿#[cfg(target_os = "macos")]
 mod mac_watcher;
 
 #[cfg(not(target_os = "macos"))]
@@ -465,14 +465,14 @@ impl Fs for RealFs {
 
     #[cfg(target_os = "windows")]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use util::paths::SanitizedPath;
+        use util::paths::SanitiCodeOrbitPath;
         use windows::{
             Storage::{StorageDeleteOption, StorageFile},
             core::HSTRING,
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path = SanitizedPath::from(path.canonicalize()?);
+        let path = SanitiCodeOrbitPath::from(path.canonicalize()?);
         let path_string = path.to_string();
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
         file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
@@ -491,7 +491,7 @@ impl Fs for RealFs {
 
     #[cfg(target_os = "windows")]
     async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use util::paths::SanitizedPath;
+        use util::paths::SanitiCodeOrbitPath;
         use windows::{
             Storage::{StorageDeleteOption, StorageFolder},
             core::HSTRING,
@@ -499,7 +499,7 @@ impl Fs for RealFs {
 
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path = SanitizedPath::from(path.canonicalize()?);
+        let path = SanitiCodeOrbitPath::from(path.canonicalize()?);
         let path_string = path.to_string();
         let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
         folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
@@ -531,7 +531,7 @@ impl Fs for RealFs {
             let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
                 // Use the directory of the destination as temp dir to avoid
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-                // See https://github.com/zed-industries/zed/pull/8437 for more details.
+                // See https://github.com/CodeOrbit-industries/CodeOrbit/pull/8437 for more details.
                 tempfile::NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
             } else {
                 tempfile::NamedTempFile::new()
@@ -559,7 +559,7 @@ impl Fs for RealFs {
             // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#remarks
             //
             // So we use the directory of the destination as a temp dir to avoid it.
-            // https://github.com/zed-industries/zed/issues/16571
+            // https://github.com/CodeOrbit-industries/CodeOrbit/issues/16571
             let temp_dir = TempDir::new_in(path.parent().unwrap_or(paths::temp_dir()))?;
             let temp_file = {
                 let temp_file_path = temp_dir.path().join("temp_file");
@@ -741,7 +741,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
-        use util::{ResultExt as _, paths::SanitizedPath};
+        use util::{ResultExt as _, paths::SanitiCodeOrbitPath};
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
@@ -763,7 +763,7 @@ impl Fs for RealFs {
                 if let Some(parent) = path.parent() {
                     target = parent.join(target);
                     if let Ok(canonical) = self.canonicalize(&target).await {
-                        target = SanitizedPath::from(canonical).as_path().to_path_buf();
+                        target = SanitiCodeOrbitPath::from(canonical).as_path().to_path_buf();
                     }
                 }
             }
@@ -2941,7 +2941,7 @@ mod tests {
     #[gpui::test]
     async fn test_realfs_atomic_write(executor: BackgroundExecutor) {
         // With the file handle still open, the file should be replaced
-        // https://github.com/zed-industries/zed/issues/30054
+        // https://github.com/CodeOrbit-industries/CodeOrbit/issues/30054
         let fs = RealFs {
             git_binary_path: None,
             executor,

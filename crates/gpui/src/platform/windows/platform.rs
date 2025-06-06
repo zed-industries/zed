@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     cell::RefCell,
     mem::ManuallyDrop,
     path::{Path, PathBuf},
@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use ::util::{ResultExt, paths::SanitizedPath};
+use ::util::{ResultExt, paths::SanitiCodeOrbitPath};
 use anyhow::{Context as _, Result, anyhow};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
@@ -794,7 +794,7 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
         if let Some(full_path) = directory.canonicalize().log_err() {
-            let full_path = SanitizedPath::from(full_path);
+            let full_path = SanitiCodeOrbitPath::from(full_path);
             let full_path_string = full_path.to_string();
             let path_item: IShellItem =
                 unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
@@ -859,7 +859,7 @@ mod tests {
 
     #[test]
     fn test_clipboard() {
-        let item = ClipboardItem::new_string("你好，我是张小白".to_string());
+        let item = ClipboardItem::new_string("ä½ å¥½ï¼Œæˆ‘æ˜¯å¼ å°ç™½".to_string());
         write_to_clipboard(item.clone());
         assert_eq!(read_from_clipboard(), Some(item));
 

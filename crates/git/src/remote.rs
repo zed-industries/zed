@@ -1,4 +1,4 @@
-use std::sync::LazyLock;
+﻿use std::sync::LazyLock;
 
 use derive_more::Deref;
 use regex::Regex;
@@ -35,34 +35,34 @@ mod tests {
     fn test_parsing_valid_remote_urls() {
         let valid_urls = vec![
             (
-                "https://github.com/octocat/zed.git",
+                "https://github.com/octocat/CodeOrbit.git",
                 "https",
                 "github.com",
-                "/octocat/zed.git",
+                "/octocat/CodeOrbit.git",
             ),
             (
-                "git@github.com:octocat/zed.git",
+                "git@github.com:octocat/CodeOrbit.git",
                 "ssh",
                 "github.com",
-                "/octocat/zed.git",
+                "/octocat/CodeOrbit.git",
             ),
             (
-                "org-000000@github.com:octocat/zed.git",
+                "org-000000@github.com:octocat/CodeOrbit.git",
                 "ssh",
                 "github.com",
-                "/octocat/zed.git",
+                "/octocat/CodeOrbit.git",
             ),
             (
-                "ssh://git@github.com/octocat/zed.git",
+                "ssh://git@github.com/octocat/CodeOrbit.git",
                 "ssh",
                 "github.com",
-                "/octocat/zed.git",
+                "/octocat/CodeOrbit.git",
             ),
             (
-                "file:///path/to/local/zed",
+                "file:///path/to/local/CodeOrbit",
                 "file",
                 "",
-                "/path/to/local/zed",
+                "/path/to/local/CodeOrbit",
             ),
         ];
 

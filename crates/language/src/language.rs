@@ -1,4 +1,4 @@
-//! The `language` crate provides a large chunk of Zed's language-related
+﻿//! The `language` crate provides a large chunk of CodeOrbit's language-related
 //! features (the other big contributors being project and lsp crates that revolve around LSP features).
 //! Namely, this crate:
 //! - Provides [`Language`], [`Grammar`] and [`LanguageRegistry`] types that
@@ -356,7 +356,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             //
             //      worktree 1: user-installed at `.bin/gopls`
             //      worktree 2: user-installed at `~/bin/gopls`
-            //      worktree 3: no gopls found in PATH -> fallback to Zed installation
+            //      worktree 3: no gopls found in PATH -> fallback to CodeOrbit installation
             //
             // We only want to cache when we fall back to the global one,
             // because we don't want to download and overwrite our global one
@@ -614,25 +614,25 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     /// Method only implemented by the default JSON language server adapter.
     /// Used to provide dynamic reloading of the JSON schemas used to
-    /// provide autocompletion and diagnostics in Zed setting and keybind
+    /// provide autocompletion and diagnostics in CodeOrbit setting and keybind
     /// files
-    fn is_primary_zed_json_schema_adapter(&self) -> bool {
+    fn is_primary_CodeOrbit_json_schema_adapter(&self) -> bool {
         false
     }
 
     /// Method only implemented by the default JSON language server adapter.
     /// Used to clear the cache of JSON schemas that are used to provide
-    /// autocompletion and diagnostics in Zed settings and keybinds files.
+    /// autocompletion and diagnostics in CodeOrbit settings and keybinds files.
     /// Should not be called unless the callee is sure that
-    /// `Self::is_primary_zed_json_schema_adapter` returns `true`
-    async fn clear_zed_json_schema_cache(&self) {
+    /// `Self::is_primary_CodeOrbit_json_schema_adapter` returns `true`
+    async fn clear_CodeOrbit_json_schema_cache(&self) {
         unreachable!(
             "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
         );
     }
 }
 
-async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
+async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?SiCodeOrbit>(
     adapter: &L,
     delegate: &Arc<dyn LspAdapterDelegate>,
     container_dir: PathBuf,
@@ -736,7 +736,7 @@ pub struct LanguageConfig {
     pub scope_opt_in_language_servers: Vec<LanguageServerName>,
     #[serde(default)]
     pub overrides: HashMap<String, LanguageConfigOverride>,
-    /// A list of characters that Zed should treat as word characters for the
+    /// A list of characters that CodeOrbit should treat as word characters for the
     /// purpose of features that operate on word boundaries, like 'move to next word end'
     /// or a whole-word search in buffer search.
     #[serde(default)]
@@ -762,7 +762,7 @@ pub struct LanguageConfig {
     /// If configured, this language contains JSX style tags, and should support auto-closing of those tags.
     #[serde(default)]
     pub jsx_tag_auto_close: Option<JsxTagAutoCloseConfig>,
-    /// A list of characters that Zed should treat as word characters for completion queries.
+    /// A list of characters that CodeOrbit should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
     /// A list of preferred debuggers for this language.
@@ -1774,7 +1774,7 @@ impl LanguageScope {
 
     /// Returns a list of language-specific word characters.
     ///
-    /// By default, Zed treats alphanumeric characters (and '_') as word characters for
+    /// By default, CodeOrbit treats alphanumeric characters (and '_') as word characters for
     /// the purpose of actions like 'move to next word end` or whole-word search.
     /// It additionally accounts for language's additional word characters.
     pub fn word_characters(&self) -> Option<&HashSet<char>> {

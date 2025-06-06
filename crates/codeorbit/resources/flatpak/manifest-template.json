@@ -1,0 +1,60 @@
+﻿{
+  "id": "$APP_ID",
+  "runtime": "org.freedesktop.Platform",
+  "runtime-version": "23.08",
+  "sdk": "org.freedesktop.Sdk",
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
+  "command": "CodeOrbit",
+  "finish-args": [
+    "--talk-name=org.freedesktop.Flatpak",
+    "--device=dri",
+    "--share=ipc",
+    "--share=network",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",
+    "--filesystem=host"
+  ],
+  "build-options": {
+    "append-path": "/usr/lib/sdk/rust-stable/bin"
+  },
+  "modules": [
+    {
+      "name": "CodeOrbit",
+      "buildsystem": "simple",
+      "build-options": {
+        "env": {
+          "APP_ID": "$APP_ID",
+          "APP_ICON": "$APP_ID",
+          "APP_NAME": "$APP_NAME",
+          "BRANDING_LIGHT": "$BRANDING_LIGHT",
+          "BRANDING_DARK": "$BRANDING_DARK",
+          "APP_CLI": "CodeOrbit",
+          "APP_ARGS": "--foreground %U",
+          "DO_STARTUP_NOTIFY": "false"
+        }
+      },
+      "build-commands": [
+        "install -Dm644 $ICON_FILE.png /app/share/icons/hicolor/512x512/apps/$APP_ID.png",
+        "envsubst < CodeOrbit.desktop.in > CodeOrbit.desktop && install -Dm644 CodeOrbit.desktop /app/share/applications/$APP_ID.desktop",
+        "envsubst < flatpak/CodeOrbit.metainfo.xml.in > CodeOrbit.metainfo.xml && install -Dm644 CodeOrbit.metainfo.xml /app/share/metainfo/$APP_ID.metainfo.xml",
+        "sed -i -e '/@release_info@/{r flatpak/release-info/$CHANNEL' -e 'd}' /app/share/metainfo/$APP_ID.metainfo.xml",
+        "install -Dm755 bin/CodeOrbit /app/bin/CodeOrbit",
+        "install -Dm755 libexec/CodeOrbit-editor /app/libexec/CodeOrbit-editor",
+        "install -Dm755 lib/* -t /app/lib"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "path": "./target/release/$ARCHIVE"
+        },
+        {
+          "type": "dir",
+          "path": "./crates/CodeOrbit/resources"
+        }
+      ]
+    }
+  ]
+}

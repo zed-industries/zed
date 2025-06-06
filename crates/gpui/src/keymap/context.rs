@@ -1,4 +1,4 @@
-use crate::SharedString;
+﻿use crate::SharedString;
 use anyhow::{Context as _, Result};
 use std::fmt;
 
@@ -556,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_parenthesized_expressions() {
+    fn test_parse_parenthesiCodeOrbit_expressions() {
         assert_eq!(
             KeyBindingContextPredicate::parse("a && (b == c || d != e)").unwrap(),
             And(

@@ -1,4 +1,4 @@
-package zed:extension;
+﻿package CodeOrbit:extension;
 
 world extension {
     import github;
@@ -69,7 +69,7 @@ world extension {
         env: env-vars,
     }
 
-    /// A Zed worktree.
+    /// A CodeOrbit worktree.
     resource worktree {
         /// Returns the ID of the worktree.
         id: func() -> u64;

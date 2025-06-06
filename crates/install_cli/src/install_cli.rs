@@ -1,5 +1,5 @@
-use anyhow::{Context as _, Result};
-use client::ZED_URL_SCHEME;
+﻿use anyhow::{Context as _, Result};
+use client::codeorbit_URL_SCHEME;
 use gpui::{AppContext as _, AsyncApp, Context, PromptLevel, Window, actions};
 use release_channel::ReleaseChannel;
 use std::ops::Deref;
@@ -8,11 +8,11 @@ use util::ResultExt;
 use workspace::notifications::{DetachAndPromptErr, NotificationId};
 use workspace::{Toast, Workspace};
 
-actions!(cli, [Install, RegisterZedScheme]);
+actions!(cli, [Install, RegisterCodeOrbitScheme]);
 
 async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
     let cli_path = cx.update(|cx| cx.path_for_auxiliary_executable("cli"))??;
-    let link_path = Path::new("/usr/local/bin/zed");
+    let link_path = Path::new("/usr/local/bin/CodeOrbit");
     let bin_dir_path = link_path.parent().unwrap();
 
     // Don't re-create symlink if it points to the same CLI binary.
@@ -59,13 +59,13 @@ async fn install_script(cx: &AsyncApp) -> Result<PathBuf> {
     Ok(link_path.into())
 }
 
-pub async fn register_zed_scheme(cx: &AsyncApp) -> anyhow::Result<()> {
-    cx.update(|cx| cx.register_url_scheme(ZED_URL_SCHEME))?
+pub async fn register_CodeOrbit_scheme(cx: &AsyncApp) -> anyhow::Result<()> {
+    cx.update(|cx| cx.register_url_scheme(codeorbit_URL_SCHEME))?
         .await
 }
 
 pub fn install_cli(window: &mut Window, cx: &mut Context<Workspace>) {
-    const LINUX_PROMPT_DETAIL: &str = "If you installed Zed from our official release add ~/.local/bin to your PATH.\n\nIf you installed Zed from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named zeditor, zedit, zed-editor or something else.";
+    const LINUX_PROMPT_DETAIL: &str = "If you installed CodeOrbit from our official release add ~/.local/bin to your PATH.\n\nIf you installed CodeOrbit from a different source like your package manager, then you may need to create an alias/symlink manually.\n\nDepending on your package manager, the CLI might be named codeorbit-editor, codeorbit-edit, CodeOrbit-editor or something else.";
 
     cx.spawn_in(window, async move |workspace, cx| {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -83,13 +83,13 @@ pub fn install_cli(window: &mut Window, cx: &mut Context<Workspace>) {
             .context("error creating CLI symlink")?;
 
         workspace.update_in(cx, |workspace, _, cx| {
-            struct InstalledZedCli;
+            struct InstalledCodeOrbitCli;
 
             workspace.show_toast(
                 Toast::new(
-                    NotificationId::unique::<InstalledZedCli>(),
+                    NotificationId::unique::<InstalledCodeOrbitCli>(),
                     format!(
-                        "Installed `zed` to {}. You can launch {} from your terminal.",
+                        "Installed `CodeOrbit` to {}. You can launch {} from your terminal.",
                         path.to_string_lossy(),
                         ReleaseChannel::global(cx).display_name()
                     ),
@@ -97,8 +97,8 @@ pub fn install_cli(window: &mut Window, cx: &mut Context<Workspace>) {
                 cx,
             )
         })?;
-        register_zed_scheme(&cx).await.log_err();
+        register_CodeOrbit_scheme(&cx).await.log_err();
         Ok(())
     })
-    .detach_and_prompt_err("Error installing zed cli", window, cx, |_, _, _| None);
+    .detach_and_prompt_err("Error installing CodeOrbit cli", window, cx, |_, _, _| None);
 }

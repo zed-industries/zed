@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "language_model"
 version = "0.1.0"
 edition.workspace = true
@@ -36,7 +36,7 @@ telemetry_events.workspace = true
 thiserror.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
+codeorbit_llm_client.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+﻿use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayString;
 use fs::{Fs, MTime};
 use futures::{TryFutureExt, stream::StreamExt};
@@ -36,7 +36,7 @@ pub struct FileSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct UnsummarizedFile {
+struct UnsummariCodeOrbitFile {
     // Path to the file on disk
     path: Arc<Path>,
     // The mtime of the file on disk
@@ -48,7 +48,7 @@ struct UnsummarizedFile {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct SummarizedFile {
+struct SummariCodeOrbitFile {
     // Path to the file on disk
     path: String,
     // The mtime of the file on disk
@@ -69,12 +69,12 @@ pub struct FileDigest {
 }
 
 struct NeedsSummary {
-    files: channel::Receiver<UnsummarizedFile>,
+    files: channel::Receiver<UnsummariCodeOrbitFile>,
     task: Task<Result<()>>,
 }
 
 struct SummarizeFiles {
-    files: channel::Receiver<SummarizedFile>,
+    files: channel::Receiver<SummariCodeOrbitFile>,
     task: Task<Result<()>>,
 }
 
@@ -94,7 +94,7 @@ struct Backlogged {
 }
 
 struct MightNeedSummaryFiles {
-    files: channel::Receiver<UnsummarizedFile>,
+    files: channel::Receiver<UnsummariCodeOrbitFile>,
     task: Task<Result<()>>,
 }
 
@@ -248,7 +248,7 @@ impl SummaryIndex {
 
     fn check_summary_cache(
         &self,
-        might_need_summary: channel::Receiver<UnsummarizedFile>,
+        might_need_summary: channel::Receiver<UnsummariCodeOrbitFile>,
         cx: &App,
     ) -> NeedsSummary {
         let db_connection = self.db_connection.clone();
@@ -265,10 +265,10 @@ impl SummaryIndex {
                     Ok(opt_answer) => {
                         if opt_answer.is_none() {
                             // It's not in the summary cache db, so we need to summarize it.
-                            log::debug!("File {:?} (digest {:?}) was NOT in the db cache and needs to be resummarized.", file.path.display(), &file.digest);
+                            log::debug!("File {:?} (digest {:?}) was NOT in the db cache and needs to be resummariCodeOrbit.", file.path.display(), &file.digest);
                             needs_summary_tx.send(file).await?;
                         } else {
-                            log::debug!("File {:?} (digest {:?}) was in the db cache and does not need to be resummarized.", file.path.display(), &file.digest);
+                            log::debug!("File {:?} (digest {:?}) was in the db cache and does not need to be resummariCodeOrbit.", file.path.display(), &file.digest);
                         }
                     }
                     Err(err) => {
@@ -433,7 +433,7 @@ impl SummaryIndex {
                                     let entry_abs_path = worktree_abs_path.join(&path);
 
                                     // Load the file's contents and compute its hash digest.
-                                    let unsummarized_file = {
+                                    let unsummariCodeOrbit_file = {
                                         let Some(contents) = fs
                                             .load(&entry_abs_path)
                                             .await
@@ -455,7 +455,7 @@ impl SummaryIndex {
                                             hasher.finalize().to_hex()
                                         };
 
-                                        UnsummarizedFile {
+                                        UnsummariCodeOrbitFile {
                                             digest,
                                             contents,
                                             path,
@@ -464,7 +464,7 @@ impl SummaryIndex {
                                     };
 
                                     if let Err(err) = rx
-                                        .send(unsummarized_file)
+                                        .send(unsummariCodeOrbit_file)
                                         .map_err(|error| anyhow!(error))
                                         .await
                                     {
@@ -486,12 +486,12 @@ impl SummaryIndex {
 
     fn summarize_files(
         &self,
-        unsummarized_files: channel::Receiver<UnsummarizedFile>,
+        unsummariCodeOrbit_files: channel::Receiver<UnsummariCodeOrbitFile>,
         cx: &App,
     ) -> SummarizeFiles {
-        let (summarized_tx, summarized_rx) = channel::bounded(512);
+        let (summariCodeOrbit_tx, summariCodeOrbit_rx) = channel::bounded(512);
         let task = cx.spawn(async move |cx| {
-            while let Ok(file) = unsummarized_files.recv().await {
+            while let Ok(file) = unsummariCodeOrbit_files.recv().await {
                 log::debug!("Summarizing {:?}", file);
                 let summary = cx
                     .update(|cx| Self::summarize_code(&file.contents, &file.path, cx))?
@@ -508,8 +508,8 @@ impl SummaryIndex {
                 // Note that the summary could be empty because of an error talking to a cloud provider,
                 // e.g. because the context limit was exceeded. In that case, we return Ok(String::new()).
                 if !summary.is_empty() {
-                    summarized_tx
-                        .send(SummarizedFile {
+                    summariCodeOrbit_tx
+                        .send(SummariCodeOrbitFile {
                             path: file.path.display().to_string(),
                             digest: file.digest,
                             summary,
@@ -523,7 +523,7 @@ impl SummaryIndex {
         });
 
         SummarizeFiles {
-            files: summarized_rx,
+            files: summariCodeOrbit_rx,
             task,
         }
     }
@@ -606,7 +606,7 @@ impl SummaryIndex {
 
     fn persist_summaries(
         &self,
-        summaries: channel::Receiver<SummarizedFile>,
+        summaries: channel::Receiver<SummariCodeOrbitFile>,
         cx: &App,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
@@ -643,7 +643,7 @@ impl SummaryIndex {
         })
     }
 
-    /// Empty out the backlog of files that haven't been resummarized, and resummarize them immediately.
+    /// Empty out the backlog of files that haven't been resummariCodeOrbit, and resummarize them immediately.
     pub(crate) fn flush_backlog(
         &self,
         worktree_abs_path: Arc<Path>,

@@ -1,4 +1,4 @@
-use time::{OffsetDateTime, UtcOffset};
+﻿use time::{OffsetDateTime, UtcOffset};
 
 /// The formatting style for a timestamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub enum TimestampFormat {
 }
 
 /// Formats a timestamp, which respects the user's date and time preferences/custom format.
-pub fn format_localized_timestamp(
+pub fn format_localiCodeOrbit_timestamp(
     timestamp: OffsetDateTime,
     reference: OffsetDateTime,
     timezone: UtcOffset,
@@ -429,7 +429,7 @@ fn format_timestamp_fallback(timestamp: OffsetDateTime, reference: OffsetDateTim
     format_timestamp_naive(timestamp, reference, is_12_hour_time)
 }
 
-/// Returns `true` if the locale is recognized as a 12-hour time locale.
+/// Returns `true` if the locale is recogniCodeOrbit as a 12-hour time locale.
 #[cfg(not(target_os = "macos"))]
 fn is_12_hour_time_by_locale(locale: &str) -> bool {
     [

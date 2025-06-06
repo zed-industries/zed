@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     ActiveDiagnostic, BlockId, COLUMNAR_SELECTION_MODIFIERS, CURSORS_VISIBLE_FOR,
     ChunkRendererContext, ChunkReplacement, CodeActionSource, ConflictsOurs, ConflictsOursMarker,
     ConflictsOuter, ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape,
@@ -3065,7 +3065,7 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         editor_width: Pixels,
         scroll_width: &mut Pixels,
-        resized_blocks: &mut HashMap<CustomBlockId, u32>,
+        resiCodeOrbit_blocks: &mut HashMap<CustomBlockId, u32>,
         row_block_types: &mut HashMap<DisplayRow, bool>,
         selections: &[Selection<Point>],
         selected_buffer_ids: &Vec<BufferId>,
@@ -3209,11 +3209,11 @@ impl EditorElement {
             window,
             cx,
         );
-        let quantized_height = (preliminary_size.height / line_height).ceil() * line_height;
-        let final_size = if preliminary_size.height == quantized_height {
+        let quantiCodeOrbit_height = (preliminary_size.height / line_height).ceil() * line_height;
+        let final_size = if preliminary_size.height == quantiCodeOrbit_height {
             preliminary_size
         } else {
-            element.layout_as_root(size(available_width, quantized_height.into()), window, cx)
+            element.layout_as_root(size(available_width, quantiCodeOrbit_height.into()), window, cx)
         };
         let mut element_height_in_lines = ((final_size.height / line_height).ceil() as u32).max(1);
 
@@ -3246,7 +3246,7 @@ impl EditorElement {
                     }
                 };
                 if element_height_in_lines != block.height() {
-                    resized_blocks.insert(custom_block_id, element_height_in_lines);
+                    resiCodeOrbit_blocks.insert(custom_block_id, element_height_in_lines);
                 }
             }
         }
@@ -3477,7 +3477,7 @@ impl EditorElement {
             .update(cx, |editor, _| editor.take_focused_block());
         let mut fixed_block_max_width = Pixels::ZERO;
         let mut blocks = Vec::new();
-        let mut resized_blocks = HashMap::default();
+        let mut resiCodeOrbit_blocks = HashMap::default();
         let mut row_block_types = HashMap::default();
 
         for (row, block) in fixed_blocks {
@@ -3502,7 +3502,7 @@ impl EditorElement {
                 text_hitbox,
                 editor_width,
                 scroll_width,
-                &mut resized_blocks,
+                &mut resiCodeOrbit_blocks,
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
@@ -3559,7 +3559,7 @@ impl EditorElement {
                 text_hitbox,
                 editor_width,
                 scroll_width,
-                &mut resized_blocks,
+                &mut resiCodeOrbit_blocks,
                 &mut row_block_types,
                 selections,
                 selected_buffer_ids,
@@ -3613,7 +3613,7 @@ impl EditorElement {
                             text_hitbox,
                             editor_width,
                             scroll_width,
-                            &mut resized_blocks,
+                            &mut resiCodeOrbit_blocks,
                             &mut row_block_types,
                             selections,
                             selected_buffer_ids,
@@ -3638,12 +3638,12 @@ impl EditorElement {
             }
         }
 
-        if resized_blocks.is_empty() {
+        if resiCodeOrbit_blocks.is_empty() {
             *scroll_width =
                 (*scroll_width).max(fixed_block_max_width - editor_margins.gutter.width);
             Ok((blocks, row_block_types))
         } else {
-            Err(resized_blocks)
+            Err(resiCodeOrbit_blocks)
         }
     }
 
@@ -4055,7 +4055,7 @@ impl EditorElement {
         viewport_bounds: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut App,
-        make_sized_popovers: impl FnOnce(
+        make_siCodeOrbit_popovers: impl FnOnce(
             Pixels,
             Pixels,
             bool,
@@ -4121,7 +4121,7 @@ impl EditorElement {
             // TODO: Use viewport_bounds.width as a max width so that it doesn't get clipped on the left
             // for very narrow windows.
             let popovers =
-                make_sized_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
+                make_siCodeOrbit_popovers(height, max_width_for_stable_x, y_flipped, window, cx);
             if popovers.is_empty() {
                 return None;
             }
@@ -6866,7 +6866,7 @@ impl LineWithInvisibles {
         let mut line_exceeded_max_len = false;
         let font_size = text_style.font_size.to_pixels(window.rem_size());
 
-        let ellipsis = SharedString::from("⋯");
+        let ellipsis = SharedString::from("â‹¯");
 
         for highlighted_chunk in chunks.chain([HighlightedChunk {
             text: "\n",
@@ -7502,11 +7502,11 @@ impl Element for EditorElement {
                         window.request_layout(style, None, cx)
                     }
                     EditorMode::Full {
-                        sized_by_content, ..
+                        siCodeOrbit_by_content, ..
                     } => {
                         let mut style = Style::default();
                         style.size.width = relative(1.).into();
-                        if sized_by_content {
+                        if siCodeOrbit_by_content {
                             let snapshot = editor.snapshot(window, cx);
                             let line_height =
                                 self.style.text.line_height_in_pixels(window.rem_size());
@@ -7681,7 +7681,7 @@ impl Element for EditorElement {
                         EditorMode::SingleLine { .. }
                             | EditorMode::AutoHeight { .. }
                             | EditorMode::Full {
-                                sized_by_content: true,
+                                siCodeOrbit_by_content: true,
                                 ..
                             }
                     ) {
@@ -8086,9 +8086,9 @@ impl Element for EditorElement {
                     });
                     let (mut blocks, row_block_types) = match blocks {
                         Ok(blocks) => blocks,
-                        Err(resized_blocks) => {
+                        Err(resiCodeOrbit_blocks) => {
                             self.editor.update(cx, |editor, cx| {
-                                editor.resize_blocks(resized_blocks, autoscroll_request, cx)
+                                editor.resize_blocks(resiCodeOrbit_blocks, autoscroll_request, cx)
                             });
                             return self.prepaint(None, _inspector_id, bounds, &mut (), window, cx);
                         }
@@ -8491,10 +8491,10 @@ impl Element for EditorElement {
 
                     let invisible_symbol_font_size = font_size / 2.;
                     let tab_invisible = window.text_system().shape_line(
-                        "→".into(),
+                        "â†’".into(),
                         invisible_symbol_font_size,
                         &[TextRun {
-                            len: "→".len(),
+                            len: "â†’".len(),
                             font: self.style.text.font(),
                             color: cx.theme().colors().editor_invisible,
                             background_color: None,
@@ -8503,10 +8503,10 @@ impl Element for EditorElement {
                         }],
                     );
                     let space_invisible = window.text_system().shape_line(
-                        "•".into(),
+                        "â€¢".into(),
                         invisible_symbol_font_size,
                         &[TextRun {
-                            len: "•".len(),
+                            len: "â€¢".len(),
                             font: self.style.text.font(),
                             color: cx.theme().colors().editor_invisible,
                             background_color: None,
@@ -8975,7 +8975,7 @@ impl ScrollbarLayout {
         show_thumb: bool,
     ) -> Self {
         // The scrollbar thumb size is calculated as
-        // (visible_content/total_content) × scrollbar_track_length.
+        // (visible_content/total_content) Ã— scrollbar_track_length.
         //
         // For the minimap's thumb layout, we leverage this by setting the
         // scrollbar track length to the entire document size (using minimap line
@@ -8983,7 +8983,7 @@ impl ScrollbarLayout {
         // viewport scaled to minimap proportions.
         //
         // We adjust the thumb position relative to `minimap_scroll_top` to
-        // accommodate for the deliberately oversized track.
+        // accommodate for the deliberately oversiCodeOrbit track.
         //
         // This approach ensures that the minimap thumb accurately reflects the
         // editor's current scroll position whilst nicely synchronizing the minimap

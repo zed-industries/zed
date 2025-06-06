@@ -1,4 +1,4 @@
-[files]
+﻿[files]
 ignore-files = true
 ignore-hidden = false
 extend-exclude = [
@@ -36,7 +36,7 @@ extend-exclude = [
     "crates/git/test_data/golden/blame_incremental_complex.json",
     # We have some base64-encoded data that is incorrectly being flagged.
     "crates/rpc/src/auth.rs",
-    # glsl isn't recognized by this tool.
+    # glsl isn't recogniCodeOrbit by this tool.
     "extensions/glsl/languages/glsl/",
     # Windows likes its abbreviations.
     "crates/gpui/src/platform/windows/",
@@ -46,7 +46,7 @@ extend-exclude = [
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria
     "crates/eval/src/examples/",
-    # typos-cli doesn't understand our `vˇariable` markup
+    # typos-cli doesn't understand our `vË‡ariable` markup
     "crates/editor/src/hover_links.rs",
     # typos-cli doesn't understand `setis` is intentional test case
     "crates/editor/src/code_completion_tests.rs"

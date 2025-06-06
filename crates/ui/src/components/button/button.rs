@@ -1,4 +1,4 @@
-use crate::component_prelude::*;
+﻿use crate::component_prelude::*;
 use gpui::{AnyElement, AnyView, DefiniteLength};
 use ui_macros::RegisterComponent;
 
@@ -102,7 +102,7 @@ impl Button {
     ///
     /// This is the primary constructor for a [`Button`] component. It initializes
     /// the button with the provided identifier and label text, setting all other
-    /// properties to their default values, which can be customized using the
+    /// properties to their default values, which can be customiCodeOrbit using the
     /// builder pattern methods provided by this struct.
     pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
         Self {
@@ -206,7 +206,7 @@ impl Button {
         self
     }
 
-    /// Truncates overflowing labels with an ellipsis (`…`) if needed.
+    /// Truncates overflowing labels with an ellipsis (`â€¦`) if needed.
     ///
     /// Buttons with static labels should _never_ be truncated, ensure
     /// this is only used when the label is dynamic and may overflow.

@@ -1,4 +1,4 @@
-use crate::{ChatPanelButton, ChatPanelSettings, collab_panel};
+﻿use crate::{ChatPanelButton, ChatPanelSettings, collab_panel};
 use anyhow::Result;
 use call::{ActiveCall, room};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};
@@ -67,7 +67,7 @@ pub struct ChatPanel {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SerializedChatPanel {
+struct SerialiCodeOrbitChatPanel {
     width: Option<Pixels>,
 }
 
@@ -200,22 +200,22 @@ impl ChatPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            let serialized_panel = if let Some(panel) = cx
+            let serialiCodeOrbit_panel = if let Some(panel) = cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(CHAT_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedChatPanel>(&panel)?)
+                Some(serde_json::from_str::<SerialiCodeOrbitChatPanel>(&panel)?)
             } else {
                 None
             };
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
-                if let Some(serialized_panel) = serialized_panel {
+                if let Some(serialiCodeOrbit_panel) = serialiCodeOrbit_panel {
                     panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width.map(|r| r.round());
+                        panel.width = serialiCodeOrbit_panel.width.map(|r| r.round());
                         cx.notify();
                     });
                 }
@@ -231,7 +231,7 @@ impl ChatPanel {
                 KEY_VALUE_STORE
                     .write_kvp(
                         CHAT_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedChatPanel { width })?,
+                        serde_json::to_string(&SerialiCodeOrbitChatPanel { width })?,
                     )
                     .await?;
                 anyhow::Ok(())
@@ -515,7 +515,7 @@ impl ChatPanel {
                                             .weight(FontWeight::BOLD),
                                     )
                                     .child(
-                                        Label::new(time_format::format_localized_timestamp(
+                                        Label::new(time_format::format_localiCodeOrbit_timestamp(
                                             message.timestamp,
                                             OffsetDateTime::now_utc(),
                                             self.local_timezone,
@@ -790,7 +790,7 @@ impl ChatPanel {
             ));
 
             if let Some(edit_timestamp) = message.edited_at {
-                let edit_timestamp_text = time_format::format_localized_timestamp(
+                let edit_timestamp_text = time_format::format_localiCodeOrbit_timestamp(
                     edit_timestamp,
                     OffsetDateTime::now_utc(),
                     local_timezone,
@@ -1208,7 +1208,7 @@ mod tests {
     #[gpui::test]
     fn test_render_markdown_with_mentions(cx: &mut App) {
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-        let (body, ranges) = marked_text_ranges("*hi*, «@abc», let's **call** «@fgh»", false);
+        let (body, ranges) = marked_text_ranges("*hi*, Â«@abcÂ», let's **call** Â«@fghÂ»", false);
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
             body,
@@ -1234,8 +1234,8 @@ mod tests {
             cx,
         );
 
-        // Note that the "'" was replaced with ’ due to smart punctuation.
-        let (body, ranges) = marked_text_ranges("«hi», «@abc», let’s «call» «@fgh»", false);
+        // Note that the "'" was replaced with â€™ due to smart punctuation.
+        let (body, ranges) = marked_text_ranges("Â«hiÂ», Â«@abcÂ», letâ€™s Â«callÂ» Â«@fghÂ»", false);
         assert_eq!(message.text, body);
         assert_eq!(
             message.highlights,
@@ -1267,7 +1267,7 @@ mod tests {
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
-            body: "Here is a link https://zed.dev to zeds website".to_string(),
+            body: "Here is a link https://CodeOrbit.dev to CodeOrbits website".to_string(),
             timestamp: OffsetDateTime::now_utc(),
             sender: Arc::new(client::User {
                 github_login: "fgh".into(),
@@ -1290,9 +1290,9 @@ mod tests {
             cx,
         );
 
-        // Note that the "'" was replaced with ’ due to smart punctuation.
+        // Note that the "'" was replaced with â€™ due to smart punctuation.
         let (body, ranges) =
-            marked_text_ranges("Here is a link «https://zed.dev» to zeds website", false);
+            marked_text_ranges("Here is a link Â«https://CodeOrbit.devÂ» to CodeOrbits website", false);
         assert_eq!(message.text, body);
         assert_eq!(1, ranges.len());
         assert_eq!(
@@ -1316,7 +1316,7 @@ mod tests {
         let language_registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
         let message = channel::ChannelMessage {
             id: ChannelMessageId::Saved(0),
-            body: "**Here is a link https://zed.dev to zeds website**".to_string(),
+            body: "**Here is a link https://CodeOrbit.dev to CodeOrbits website**".to_string(),
             timestamp: OffsetDateTime::now_utc(),
             sender: Arc::new(client::User {
                 github_login: "fgh".into(),
@@ -1339,9 +1339,9 @@ mod tests {
             cx,
         );
 
-        // Note that the "'" was replaced with ’ due to smart punctuation.
+        // Note that the "'" was replaced with â€™ due to smart punctuation.
         let (body, ranges) = marked_text_ranges(
-            "«Here is a link »«https://zed.dev»« to zeds website»",
+            "Â«Here is a link Â»Â«https://CodeOrbit.devÂ»Â« to CodeOrbits websiteÂ»",
             false,
         );
         assert_eq!(message.text, body);

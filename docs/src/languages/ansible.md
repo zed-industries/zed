@@ -1,15 +1,15 @@
-# Ansible
+﻿# Ansible
 
-Support for Ansible in Zed is provided via a community-maintained [Ansible extension](https://github.com/kartikvashistha/zed-ansible).
+Support for Ansible in CodeOrbit is provided via a community-maintained [Ansible extension](https://github.com/kartikvashistha/CodeOrbit-ansible).
 
-- Tree-sitter: [zed-industries/tree-sitter-yaml](https://github.com/zed-industries/tree-sitter-yaml)
+- Tree-sitter: [CodeOrbit-industries/tree-sitter-yaml](https://github.com/CodeOrbit-industries/tree-sitter-yaml)
 - Language Server: [ansible/vscode-ansible](https://github.com/ansible/vscode-ansible/tree/main/packages/ansible-language-server)
 
 ## Setup
 
 ### File detection
 
-To avoid mishandling non-Ansible YAML files, the Ansible Language is not associated with any file extensions by default. To change this behavior you can add a `"file_types"` section to Zed settings inside your project (`.zed/settings.json`) or your Zed user settings (`~/.config/zed/settings.json`) to match your folder/naming conventions. For example:
+To avoid mishandling non-Ansible YAML files, the Ansible Language is not associated with any file extensions by default. To change this behavior you can add a `"file_types"` section to CodeOrbit settings inside your project (`.CodeOrbit/settings.json`) or your CodeOrbit user settings (`~/.config/CodeOrbit/settings.json`) to match your folder/naming conventions. For example:
 
 ```json
 "file_types": {
@@ -48,7 +48,7 @@ If your inventory file is in the YAML format, you can either:
 # yaml-language-server: $schema=https://raw.githubusercontent.com/ansible/ansible-lint/main/src/ansiblelint/schemas/inventory.json
 ```
 
-- Or configure the yaml language server settings to set this schema for all your inventory files, that match your inventory pattern, under your Zed settings ([ref](https://zed.dev/docs/languages/yaml)):
+- Or configure the yaml language server settings to set this schema for all your inventory files, that match your inventory pattern, under your CodeOrbit settings ([ref](https://CodeOrbit.dev/docs/languages/yaml)):
 
 ```json
 "lsp": {
@@ -97,11 +97,11 @@ By default, the following default config is passed to the Ansible language serve
 > [!NOTE]
 > In order for linting to work, ensure that `ansible-lint` is installed and discoverable on your PATH
 
-When desired, any of the above default settings can be overridden under the `"lsp"` section of your Zed settings file. For example:
+When desired, any of the above default settings can be overridden under the `"lsp"` section of your CodeOrbit settings file. For example:
 
 ```json
 "lsp": {
-  // Note, the Zed Ansible extension prefixes all settings with `ansible`
+  // Note, the CodeOrbit Ansible extension prefixes all settings with `ansible`
   // so instead of using `ansible.ansible.path` use `ansible.path`.
   "ansible-language-server": {
     "settings": {

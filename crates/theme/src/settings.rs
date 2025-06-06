@@ -1,4 +1,4 @@
-use crate::fallback_themes::zed_default_dark;
+﻿use crate::fallback_themes::codeorbit_default_dark;
 use crate::{
     Appearance, DEFAULT_ICON_THEME_NAME, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme,
     ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
@@ -40,7 +40,7 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
 )]
 
 /// Specifies the density of the UI.
-/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
+/// Note: This setting is still experimental. See [this tracking issue](https://github.com/CodeOrbit-industries/CodeOrbit/issues/18078)
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
     /// A denser UI with tighter spacing and smaller elements.
@@ -120,7 +120,7 @@ pub struct ThemeSettings {
     pub active_theme: Arc<Theme>,
     /// Manual overrides for the active theme.
     ///
-    /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
+    /// Note: This setting is still experimental. See [this tracking issue](https://github.com/CodeOrbit-industries/CodeOrbit/issues/18078)
     pub theme_overrides: Option<ThemeStyleContent>,
     /// The current icon theme selection.
     pub icon_theme_selection: Option<IconThemeSelection>,
@@ -419,7 +419,7 @@ pub struct ThemeSettingsContent {
     /// The font size for the agent panel.
     #[serde(default)]
     pub agent_font_size: Option<f32>,
-    /// The name of the Zed theme to use.
+    /// The name of the CodeOrbit theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.
@@ -844,7 +844,7 @@ impl settings::Settings for ThemeSettings {
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
-                .or(themes.get(&zed_default_dark().name))
+                .or(themes.get(&codeorbit_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
             icon_theme_selection: defaults.icon_theme.clone(),

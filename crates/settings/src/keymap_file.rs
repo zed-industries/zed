@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
@@ -61,7 +61,7 @@ pub struct KeymapSection {
     /// `Workspace`, the bindings will be active in that context. Boolean expressions like `X && Y`,
     /// `X || Y`, `!X` are also supported. Some more complex logic including checking OS and the
     /// current file extension are also supported - see [the
-    /// documentation](https://zed.dev/docs/key-bindings#contexts) for more details.
+    /// documentation](https://CodeOrbit.dev/docs/key-bindings#contexts) for more details.
     #[serde(default)]
     context: String,
     /// This option enables specifying keys based on their position on a QWERTY keyboard, by using
@@ -79,7 +79,7 @@ pub struct KeymapSection {
     #[serde(default)]
     bindings: Option<IndexMap<String, KeymapAction>>,
     #[serde(flatten)]
-    unrecognized_fields: IndexMap<String, Value>,
+    unrecogniCodeOrbit_fields: IndexMap<String, Value>,
     // This struct intentionally uses permissive types for its fields, rather than validating during
     // deserialization. The purpose of this is to allow loading the portion of the keymap that doesn't
     // have errors. The downside of this is that the errors are not reported with line+column info.
@@ -222,7 +222,7 @@ impl KeymapFile {
             context,
             use_key_equivalents,
             bindings,
-            unrecognized_fields,
+            unrecogniCodeOrbit_fields,
         } in keymap_file.0.iter()
         {
             let context_predicate: Option<Rc<KeyBindingContextPredicate>> = if context.is_empty() {
@@ -250,11 +250,11 @@ impl KeymapFile {
 
             let mut section_errors = String::new();
 
-            if !unrecognized_fields.is_empty() {
+            if !unrecogniCodeOrbit_fields.is_empty() {
                 write!(
                     section_errors,
-                    "\n\n - Unrecognized fields: {}",
-                    MarkdownInlineCode(&format!("{:?}", unrecognized_fields.keys()))
+                    "\n\n - UnrecogniCodeOrbit fields: {}",
+                    MarkdownInlineCode(&format!("{:?}", unrecogniCodeOrbit_fields.keys()))
                 )
                 .unwrap();
             }

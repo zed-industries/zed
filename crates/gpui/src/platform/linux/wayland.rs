@@ -1,4 +1,4 @@
-mod client;
+﻿mod client;
 mod clipboard;
 mod cursor;
 mod display;
@@ -24,7 +24,7 @@ impl CursorStyle {
             CursorStyle::ResizeRight => Shape::EResize,
             CursorStyle::ResizeLeftRight => Shape::EwResize,
             CursorStyle::ResizeUp => Shape::NResize,
-            CursorStyle::ResizeDown => Shape::SResize,
+            CursorStyle::ResiCodeOrbitown => Shape::SResize,
             CursorStyle::ResizeUpDown => Shape::NsResize,
             CursorStyle::ResizeUpLeftDownRight => Shape::NwseResize,
             CursorStyle::ResizeUpRightDownLeft => Shape::NeswResize,

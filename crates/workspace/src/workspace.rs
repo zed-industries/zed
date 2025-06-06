@@ -1,4 +1,4 @@
-pub mod dock;
+﻿pub mod dock;
 pub mod history_manager;
 pub mod item;
 mod modal_layer;
@@ -58,12 +58,12 @@ use notifications::{
 pub use pane::*;
 pub use pane_group::*;
 use persistence::{
-    DB, SerializedWindowBounds,
-    model::{SerializedSshProject, SerializedWorkspace},
+    DB, SerialiCodeOrbitWindowBounds,
+    model::{SerialiCodeOrbitSshProject, SerialiCodeOrbitWorkspace},
 };
 pub use persistence::{
     DB as WORKSPACE_DB, WorkspaceDb, delete_unloaded_items,
-    model::{ItemId, LocalPaths, SerializedWorkspaceLocation},
+    model::{ItemId, LocalPaths, SerialiCodeOrbitWorkspaceLocation},
 };
 use postage::stream::Stream;
 use project::{
@@ -101,30 +101,30 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
+use util::{ResultExt, TryFutureExt, paths::SanitiCodeOrbitPath, serde::default_true};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
 };
-use zed_actions::{Spawn, feedback::FileBugReport};
+use codeorbit_actions::{Spawn, feedback::FileBugReport};
 
 use crate::notifications::NotificationId;
 use crate::persistence::{
-    SerializedAxis,
-    model::{DockData, DockStructure, SerializedItem, SerializedPane, SerializedPaneGroup},
+    SerialiCodeOrbitAxis,
+    model::{DockData, DockStructure, Serialicodeorbit-editem, SerialiCodeOrbitPane, SerialiCodeOrbitPaneGroup},
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
 
-static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
-    env::var("ZED_WINDOW_SIZE")
+static codeorbit_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
+    env::var("codeorbit_WINDOW_SIZE")
         .ok()
         .as_deref()
         .and_then(parse_pixel_size_env_var)
 });
 
-static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
-    env::var("ZED_WINDOW_POSITION")
+static codeorbit_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
+    env::var("codeorbit_WINDOW_POSITION")
         .ok()
         .as_deref()
         .and_then(parse_pixel_position_env_var)
@@ -693,7 +693,7 @@ impl SerializableItemRegistry {
 }
 
 pub fn register_serializable_item<I: SerializableItem>(cx: &mut App) {
-    let serialized_item_kind = I::serialized_item_kind();
+    let serialiCodeOrbit_item_kind = I::serialiCodeOrbit_item_kind();
 
     let registry = cx.default_global::<SerializableItemRegistry>();
     let descriptor = SerializableItemDescriptor {
@@ -709,7 +709,7 @@ pub fn register_serializable_item<I: SerializableItem>(cx: &mut App) {
     };
     registry
         .descriptors_by_kind
-        .insert(Arc::from(serialized_item_kind), descriptor);
+        .insert(Arc::from(serialiCodeOrbit_item_kind), descriptor);
     registry
         .descriptors_by_type
         .insert(TypeId::of::<I>(), descriptor);
@@ -965,7 +965,7 @@ pub struct Workspace {
     terminal_provider: Option<Box<dyn TerminalProvider>>,
     debugger_provider: Option<Arc<dyn DebuggerProvider>>,
     serializable_items_tx: UnboundedSender<Box<dyn SerializableItemHandle>>,
-    serialized_ssh_project: Option<SerializedSshProject>,
+    serialiCodeOrbit_ssh_project: Option<SerialiCodeOrbitSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
 }
@@ -1219,7 +1219,7 @@ impl Workspace {
                                     cx.background_executor()
                                         .spawn(DB.set_window_open_status(
                                             database_id,
-                                            SerializedWindowBounds(window_bounds),
+                                            SerialiCodeOrbitWindowBounds(window_bounds),
                                             display_uuid,
                                         ))
                                         .detach_and_log_err(cx);
@@ -1299,7 +1299,7 @@ impl Workspace {
             serializable_items_tx,
             _items_serializer,
             session_id: Some(session_id),
-            serialized_ssh_project: None,
+            serialiCodeOrbit_ssh_project: None,
         }
     }
 
@@ -1335,14 +1335,14 @@ impl Workspace {
                 }
             }
 
-            let serialized_workspace =
+            let serialiCodeOrbit_workspace =
                 persistence::DB.workspace_for_roots(paths_to_open.as_slice());
 
-            let workspace_location = serialized_workspace
+            let workspace_location = serialiCodeOrbit_workspace
                 .as_ref()
                 .map(|ws| &ws.location)
                 .and_then(|loc| match loc {
-                    SerializedWorkspaceLocation::Local(_, order) => {
+                    SerialiCodeOrbitWorkspaceLocation::Local(_, order) => {
                         Some((loc.sorted_paths(), order.order()))
                     }
                     _ => None,
@@ -1378,8 +1378,8 @@ impl Workspace {
                 }
             }
 
-            let workspace_id = if let Some(serialized_workspace) = serialized_workspace.as_ref() {
-                serialized_workspace.id
+            let workspace_id = if let Some(serialiCodeOrbit_workspace) = serialiCodeOrbit_workspace.as_ref() {
+                serialiCodeOrbit_workspace.id
             } else {
                 DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
@@ -1417,7 +1417,7 @@ impl Workspace {
                 let (window_bounds, display) = if let Some(bounds) = window_bounds_override {
                     (Some(WindowBounds::Windowed(bounds)), None)
                 } else {
-                    let restorable_bounds = serialized_workspace
+                    let restorable_bounds = serialiCodeOrbit_workspace
                         .as_ref()
                         .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
                         .or_else(|| {
@@ -1425,17 +1425,17 @@ impl Workspace {
                             Some((display?, window_bounds?))
                         });
 
-                    if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                        (Some(serialized_status.0), Some(serialized_display))
+                    if let Some((serialiCodeOrbit_display, serialiCodeOrbit_status)) = restorable_bounds {
+                        (Some(serialiCodeOrbit_status.0), Some(serialiCodeOrbit_display))
                     } else {
                         (None, None)
                     }
                 };
 
-                // Use the serialized workspace to construct the new window
+                // Use the serialiCodeOrbit workspace to construct the new window
                 let mut options = cx.update(|cx| (app_state.build_window_options)(display, cx))?;
                 options.window_bounds = window_bounds;
-                let centered_layout = serialized_workspace
+                let centered_layout = serialiCodeOrbit_workspace
                     .as_ref()
                     .map(|w| w.centered_layout)
                     .unwrap_or(false);
@@ -1461,7 +1461,7 @@ impl Workspace {
             notify_if_database_failed(window, cx);
             let opened_items = window
                 .update(cx, |_workspace, window, cx| {
-                    open_items(serialized_workspace, project_paths, window, cx)
+                    open_items(serialiCodeOrbit_workspace, project_paths, window, cx)
                 })?
                 .await
                 .unwrap_or_default();
@@ -1851,12 +1851,12 @@ impl Workspace {
         self.debugger_provider.clone()
     }
 
-    pub fn serialized_ssh_project(&self) -> Option<SerializedSshProject> {
-        self.serialized_ssh_project.clone()
+    pub fn serialiCodeOrbit_ssh_project(&self) -> Option<SerialiCodeOrbitSshProject> {
+        self.serialiCodeOrbit_ssh_project.clone()
     }
 
-    pub fn set_serialized_ssh_project(&mut self, serialized_ssh_project: SerializedSshProject) {
-        self.serialized_ssh_project = Some(serialized_ssh_project);
+    pub fn set_serialiCodeOrbit_ssh_project(&mut self, serialiCodeOrbit_ssh_project: SerialiCodeOrbitSshProject) {
+        self.serialiCodeOrbit_ssh_project = Some(serialiCodeOrbit_ssh_project);
     }
 
     pub fn prompt_for_open_path(
@@ -2375,7 +2375,7 @@ impl Workspace {
                 };
 
                 let this = this.clone();
-                let abs_path: Arc<Path> = SanitizedPath::from(abs_path.clone()).into();
+                let abs_path: Arc<Path> = SanitiCodeOrbitPath::from(abs_path.clone()).into();
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
@@ -4185,15 +4185,15 @@ impl Workspace {
                 });
 
             if let Some(filename) = filename {
-                title.push_str(" — ");
+                title.push_str(" â€” ");
                 title.push_str(filename.as_ref());
             }
         }
 
         if project.is_via_collab() {
-            title.push_str(" ↙");
+            title.push_str(" â†™");
         } else if project.is_shared() {
-            title.push_str(" ↗");
+            title.push_str(" â†—");
         }
 
         window.set_window_title(&title);
@@ -4450,7 +4450,7 @@ impl Workspace {
 
             let Some(task) = task else {
                 anyhow::bail!(
-                    "failed to construct view from leader (maybe from a different version of zed?)"
+                    "failed to construct view from leader (maybe from a different version of CodeOrbit?)"
                 );
             };
 
@@ -4938,7 +4938,7 @@ impl Workspace {
             pane_handle: &Entity<Pane>,
             window: &mut Window,
             cx: &mut App,
-        ) -> SerializedPane {
+        ) -> SerialiCodeOrbitPane {
             let (items, active, pinned_count) = {
                 let pane = pane_handle.read(cx);
                 let active_item_id = pane.active_item().map(|item| item.item_id());
@@ -4947,8 +4947,8 @@ impl Workspace {
                         .filter_map(|handle| {
                             let handle = handle.to_serializable_item_handle(cx)?;
 
-                            Some(SerializedItem {
-                                kind: Arc::from(handle.serialized_item_kind()),
+                            Some(Serialicodeorbit-editem {
+                                kind: Arc::from(handle.serialiCodeOrbit_item_kind()),
                                 item_id: handle.item_id().as_u64(),
                                 active: Some(handle.item_id()) == active_item_id,
                                 preview: pane.is_active_preview_item(handle.item_id()),
@@ -4960,35 +4960,35 @@ impl Workspace {
                 )
             };
 
-            SerializedPane::new(items, active, pinned_count)
+            SerialiCodeOrbitPane::new(items, active, pinned_count)
         }
 
-        fn build_serialized_pane_group(
+        fn build_serialiCodeOrbit_pane_group(
             pane_group: &Member,
             window: &mut Window,
             cx: &mut App,
-        ) -> SerializedPaneGroup {
+        ) -> SerialiCodeOrbitPaneGroup {
             match pane_group {
                 Member::Axis(PaneAxis {
                     axis,
                     members,
                     flexes,
                     bounding_boxes: _,
-                }) => SerializedPaneGroup::Group {
-                    axis: SerializedAxis(*axis),
+                }) => SerialiCodeOrbitPaneGroup::Group {
+                    axis: SerialiCodeOrbitAxis(*axis),
                     children: members
                         .iter()
-                        .map(|member| build_serialized_pane_group(member, window, cx))
+                        .map(|member| build_serialiCodeOrbit_pane_group(member, window, cx))
                         .collect::<Vec<_>>(),
                     flexes: Some(flexes.lock().clone()),
                 },
                 Member::Pane(pane_handle) => {
-                    SerializedPaneGroup::Pane(serialize_pane_handle(pane_handle, window, cx))
+                    SerialiCodeOrbitPaneGroup::Pane(serialize_pane_handle(pane_handle, window, cx))
                 }
             }
         }
 
-        fn build_serialized_docks(
+        fn build_serialiCodeOrbit_docks(
             this: &Workspace,
             window: &mut Window,
             cx: &mut App,
@@ -5050,10 +5050,10 @@ impl Workspace {
                     .all_source_breakpoints(cx)
             });
 
-            let center_group = build_serialized_pane_group(&self.center.root, window, cx);
-            let docks = build_serialized_docks(self, window, cx);
-            let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
-            let serialized_workspace = SerializedWorkspace {
+            let center_group = build_serialiCodeOrbit_pane_group(&self.center.root, window, cx);
+            let docks = build_serialiCodeOrbit_docks(self, window, cx);
+            let window_bounds = Some(SerialiCodeOrbitWindowBounds(window.window_bounds()));
+            let serialiCodeOrbit_workspace = SerialiCodeOrbitWorkspace {
                 id: database_id,
                 location,
                 center_group,
@@ -5067,18 +5067,18 @@ impl Workspace {
             };
 
             return window.spawn(cx, async move |_| {
-                persistence::DB.save_workspace(serialized_workspace).await;
+                persistence::DB.save_workspace(serialiCodeOrbit_workspace).await;
             });
         }
         Task::ready(())
     }
 
-    fn serialize_workspace_location(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
-        if let Some(ssh_project) = &self.serialized_ssh_project {
-            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
+    fn serialize_workspace_location(&self, cx: &App) -> Option<SerialiCodeOrbitWorkspaceLocation> {
+        if let Some(ssh_project) = &self.serialiCodeOrbit_ssh_project {
+            Some(SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_project.clone()))
         } else if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.is_empty() {
-                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
+                Some(SerialiCodeOrbitWorkspaceLocation::from_local_paths(local_paths))
             } else {
                 None
             }
@@ -5148,7 +5148,7 @@ impl Workspace {
     }
 
     pub(crate) fn load_workspace(
-        serialized_workspace: SerializedWorkspace,
+        serialiCodeOrbit_workspace: SerialiCodeOrbitWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -5160,9 +5160,9 @@ impl Workspace {
             let mut center_items = None;
 
             // Traverse the splits tree and add to things
-            if let Some((group, active_pane, items)) = serialized_workspace
+            if let Some((group, active_pane, items)) = serialiCodeOrbit_workspace
                 .center_group
-                .deserialize(&project, serialized_workspace.id, workspace.clone(), cx)
+                .deserialize(&project, serialiCodeOrbit_workspace.id, workspace.clone(), cx)
                 .await
             {
                 center_items = Some(items);
@@ -5171,12 +5171,12 @@ impl Workspace {
 
             let mut items_by_project_path = HashMap::default();
             let mut item_ids_by_kind = HashMap::default();
-            let mut all_deserialized_items = Vec::default();
+            let mut all_deserialiCodeOrbit_items = Vec::default();
             cx.update(|_, cx| {
                 for item in center_items.unwrap_or_default().into_iter().flatten() {
                     if let Some(serializable_item_handle) = item.to_serializable_item_handle(cx) {
                         item_ids_by_kind
-                            .entry(serializable_item_handle.serialized_item_kind())
+                            .entry(serializable_item_handle.serialiCodeOrbit_item_kind())
                             .or_insert(Vec::new())
                             .push(item.item_id().as_u64() as ItemId);
                     }
@@ -5184,7 +5184,7 @@ impl Workspace {
                     if let Some(project_path) = item.project_path(cx) {
                         items_by_project_path.insert(project_path, item.clone());
                     }
-                    all_deserialized_items.push(item);
+                    all_deserialiCodeOrbit_items.push(item);
                 }
             })?;
 
@@ -5211,9 +5211,9 @@ impl Workspace {
                     }
                 }
 
-                let docks = serialized_workspace.docks;
+                let docks = serialiCodeOrbit_workspace.docks;
 
-                for (dock, serialized_dock) in [
+                for (dock, serialiCodeOrbit_dock) in [
                     (&mut workspace.right_dock, docks.right),
                     (&mut workspace.left_dock, docks.left),
                     (&mut workspace.bottom_dock, docks.bottom),
@@ -5221,7 +5221,7 @@ impl Workspace {
                 .iter_mut()
                 {
                     dock.update(cx, |dock, cx| {
-                        dock.serialized_dock = Some(serialized_dock.clone());
+                        dock.serialiCodeOrbit_dock = Some(serialiCodeOrbit_dock.clone());
                         dock.restore_state(window, cx);
                     });
                 }
@@ -5235,7 +5235,7 @@ impl Workspace {
                         .breakpoint_store()
                         .update(cx, |breakpoint_store, cx| {
                             breakpoint_store
-                                .with_serialized_breakpoints(serialized_workspace.breakpoints, cx)
+                                .with_serialiCodeOrbit_breakpoints(serialiCodeOrbit_workspace.breakpoints, cx)
                         })
                 })?
                 .await;
@@ -5251,7 +5251,7 @@ impl Workspace {
                     .map(|(item_kind, loaded_items)| {
                         SerializableItemRegistry::cleanup(
                             item_kind,
-                            serialized_workspace.id,
+                            serialiCodeOrbit_workspace.id,
                             loaded_items,
                             window,
                             cx,
@@ -5622,8 +5622,8 @@ fn leader_border_for_pane(
 }
 
 fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
-    ZED_WINDOW_POSITION
-        .zip(*ZED_WINDOW_SIZE)
+    codeorbit_WINDOW_POSITION
+        .zip(*codeorbit_WINDOW_SIZE)
         .map(|(position, size)| Bounds {
             origin: position,
             size,
@@ -5631,14 +5631,14 @@ fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
 }
 
 fn open_items(
-    serialized_workspace: Option<SerializedWorkspace>,
+    serialiCodeOrbit_workspace: Option<SerialiCodeOrbitWorkspace>,
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> + use<> {
-    let restored_items = serialized_workspace.map(|serialized_workspace| {
+    let restored_items = serialiCodeOrbit_workspace.map(|serialiCodeOrbit_workspace| {
         Workspace::load_workspace(
-            serialized_workspace,
+            serialiCodeOrbit_workspace,
             project_paths_to_open
                 .iter()
                 .map(|(_, project_path)| project_path)
@@ -6428,14 +6428,14 @@ impl std::fmt::Debug for OpenPaths {
     }
 }
 
-pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
+pub async fn last_opened_workspace_location() -> Option<SerialiCodeOrbitWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<SerializedWorkspaceLocation>> {
+) -> Option<Vec<SerialiCodeOrbitWorkspaceLocation>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
@@ -6451,7 +6451,7 @@ actions!(
         ScreenShare
     ]
 );
-actions!(zed, [OpenLog]);
+actions!(CodeOrbit, [OpenLog]);
 
 async fn join_channel_internal(
     channel_id: ChannelId,
@@ -6648,7 +6648,7 @@ pub fn join_channel(
                                 "Please sign in to continue.".into()
                             }
                             ErrorCode::UpgradeRequired => {
-                                "Your are running an unsupported version of Zed. Please update to continue.".into()
+                                "Your are running an unsupported version of CodeOrbit. Please update to continue.".into()
                             }
                             ErrorCode::NoSuchChannel => {
                                 "No matching channel was found. Please check the link and try again.".into()
@@ -6686,7 +6686,7 @@ pub async fn get_any_active_workspace(
         cx.update(|cx| Workspace::new_local(vec![], app_state.clone(), None, None, cx))?
             .await?;
     }
-    activate_any_workspace_window(&mut cx).context("could not open zed")
+    activate_any_workspace_window(&mut cx).context("could not open CodeOrbit")
 }
 
 fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Workspace>> {
@@ -6918,7 +6918,7 @@ pub fn open_ssh_project_with_new_connection(
     cx: &mut App,
 ) -> Task<Result<()>> {
     cx.spawn(async move |cx| {
-        let (serialized_ssh_project, workspace_id, serialized_workspace) =
+        let (serialiCodeOrbit_ssh_project, workspace_id, serialiCodeOrbit_workspace) =
             serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
 
         let session = match cx
@@ -6952,9 +6952,9 @@ pub fn open_ssh_project_with_new_connection(
         open_ssh_project_inner(
             project,
             paths,
-            serialized_ssh_project,
+            serialiCodeOrbit_ssh_project,
             workspace_id,
-            serialized_workspace,
+            serialiCodeOrbit_workspace,
             app_state,
             window,
             cx,
@@ -6972,15 +6972,15 @@ pub fn open_ssh_project_with_existing_connection(
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
     cx.spawn(async move |cx| {
-        let (serialized_ssh_project, workspace_id, serialized_workspace) =
+        let (serialiCodeOrbit_ssh_project, workspace_id, serialiCodeOrbit_workspace) =
             serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
 
         open_ssh_project_inner(
             project,
             paths,
-            serialized_ssh_project,
+            serialiCodeOrbit_ssh_project,
             workspace_id,
-            serialized_workspace,
+            serialiCodeOrbit_workspace,
             app_state,
             window,
             cx,
@@ -6992,9 +6992,9 @@ pub fn open_ssh_project_with_existing_connection(
 async fn open_ssh_project_inner(
     project: Entity<Project>,
     paths: Vec<PathBuf>,
-    serialized_ssh_project: SerializedSshProject,
+    serialiCodeOrbit_ssh_project: SerialiCodeOrbitSshProject,
     workspace_id: WorkspaceId,
-    serialized_workspace: Option<SerializedWorkspace>,
+    serialiCodeOrbit_workspace: Option<SerialiCodeOrbitWorkspace>,
     app_state: Arc<AppState>,
     window: WindowHandle<Workspace>,
     cx: &mut AsyncApp,
@@ -7034,7 +7034,7 @@ async fn open_ssh_project_inner(
 
             let mut workspace =
                 Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
-            workspace.set_serialized_ssh_project(serialized_ssh_project);
+            workspace.set_serialiCodeOrbit_ssh_project(serialiCodeOrbit_ssh_project);
             workspace.update_history(cx);
             workspace
         });
@@ -7043,7 +7043,7 @@ async fn open_ssh_project_inner(
     window
         .update(cx, |_, window, cx| {
             window.activate_window();
-            open_items(serialized_workspace, project_paths_to_open, window, cx)
+            open_items(serialiCodeOrbit_workspace, project_paths_to_open, window, cx)
         })?
         .await?;
 
@@ -7068,13 +7068,13 @@ fn serialize_ssh_project(
     cx: &AsyncApp,
 ) -> Task<
     Result<(
-        SerializedSshProject,
+        SerialiCodeOrbitSshProject,
         WorkspaceId,
-        Option<SerializedWorkspace>,
+        Option<SerialiCodeOrbitWorkspace>,
     )>,
 > {
     cx.background_spawn(async move {
-        let serialized_ssh_project = persistence::DB
+        let serialiCodeOrbit_ssh_project = persistence::DB
             .get_or_create_ssh_project(
                 connection_options.host.clone(),
                 connection_options.port,
@@ -7086,18 +7086,18 @@ fn serialize_ssh_project(
             )
             .await?;
 
-        let serialized_workspace =
-            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+        let serialiCodeOrbit_workspace =
+            persistence::DB.workspace_for_ssh_project(&serialiCodeOrbit_ssh_project);
 
         let workspace_id = if let Some(workspace_id) =
-            serialized_workspace.as_ref().map(|workspace| workspace.id)
+            serialiCodeOrbit_workspace.as_ref().map(|workspace| workspace.id)
         {
             workspace_id
         } else {
             persistence::DB.next_id().await?
         };
 
-        Ok((serialized_ssh_project, workspace_id, serialized_workspace))
+        Ok((serialiCodeOrbit_ssh_project, workspace_id, serialiCodeOrbit_workspace))
     })
 }
 
@@ -7623,17 +7623,17 @@ pub fn ssh_workspace_position_from_db(
         .collect::<Vec<_>>();
 
     cx.background_spawn(async move {
-        let serialized_ssh_project = persistence::DB
+        let serialiCodeOrbit_ssh_project = persistence::DB
             .get_or_create_ssh_project(host, port, paths, user)
             .await
-            .context("fetching serialized ssh project")?;
-        let serialized_workspace =
-            persistence::DB.workspace_for_ssh_project(&serialized_ssh_project);
+            .context("fetching serialiCodeOrbit ssh project")?;
+        let serialiCodeOrbit_workspace =
+            persistence::DB.workspace_for_ssh_project(&serialiCodeOrbit_ssh_project);
 
         let (window_bounds, display) = if let Some(bounds) = window_bounds_env_override() {
             (Some(WindowBounds::Windowed(bounds)), None)
         } else {
-            let restorable_bounds = serialized_workspace
+            let restorable_bounds = serialiCodeOrbit_workspace
                 .as_ref()
                 .and_then(|workspace| Some((workspace.display?, workspace.window_bounds?)))
                 .or_else(|| {
@@ -7641,14 +7641,14 @@ pub fn ssh_workspace_position_from_db(
                     Some((display?, window_bounds?))
                 });
 
-            if let Some((serialized_display, serialized_status)) = restorable_bounds {
-                (Some(serialized_status.0), Some(serialized_display))
+            if let Some((serialiCodeOrbit_display, serialiCodeOrbit_status)) = restorable_bounds {
+                (Some(serialiCodeOrbit_status.0), Some(serialiCodeOrbit_display))
             } else {
                 (None, None)
             }
         };
 
-        let centered_layout = serialized_workspace
+        let centered_layout = serialiCodeOrbit_workspace
             .as_ref()
             .map(|w| w.centered_layout)
             .unwrap_or(false);
@@ -7806,13 +7806,13 @@ mod tests {
                     .map(|e| e.id)
             );
         });
-        assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 â€” one.txt"));
 
         // Add a second item to a non-empty pane
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item2), None, true, window, cx)
         });
-        assert_eq!(cx.window_title().as_deref(), Some("root1 — two.txt"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 â€” two.txt"));
         project.update(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -7828,7 +7828,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 â€” one.txt"));
         project.update(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -7845,11 +7845,11 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(cx.window_title().as_deref(), Some("root1, root2 — one.txt"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1, root2 â€” one.txt"));
 
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-        assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
+        assert_eq!(cx.window_title().as_deref(), Some("root2 â€” one.txt"));
     }
 
     #[gpui::test]
@@ -8860,7 +8860,7 @@ mod tests {
                 px(1337.)
             );
 
-            // Now we move panel_2 to the left
+            // Now we move panel_2Â to the left
             panel_2.set_position(DockPosition::Left, window, cx);
         });
 
@@ -8907,7 +8907,7 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             // Since panel_1 was visible on the left, we close the left dock.
             assert!(!workspace.left_dock().read(cx).is_open());
-            // The bottom dock is sized based on the panel's default size,
+            // The bottom dock is siCodeOrbit based on the panel's default size,
             // since the panel orientation changed from vertical to horizontal.
             let bottom_dock = workspace.bottom_dock();
             assert_eq!(
@@ -9950,7 +9950,7 @@ mod tests {
                 cx: &mut Context<Self>,
             ) -> Self
             where
-                Self: Sized,
+                Self: SiCodeOrbit,
             {
                 Self {
                     focus_handle: cx.focus_handle(),
@@ -10025,7 +10025,7 @@ mod tests {
                 cx: &mut Context<Self>,
             ) -> Self
             where
-                Self: Sized,
+                Self: SiCodeOrbit,
             {
                 Self {
                     focus_handle: cx.focus_handle(),
@@ -10072,7 +10072,7 @@ mod tests {
                 cx: &mut Context<Self>,
             ) -> Self
             where
-                Self: Sized,
+                Self: SiCodeOrbit,
             {
                 Self {
                     focus_handle: cx.focus_handle(),

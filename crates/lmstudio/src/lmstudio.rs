@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
@@ -291,8 +291,8 @@ pub async fn complete(
         .uri(uri)
         .header("Content-Type", "application/json");
 
-    let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+    let serialiCodeOrbit_request = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(serialiCodeOrbit_request))?;
 
     let mut response = client.send(request).await?;
     if response.status().is_success() {

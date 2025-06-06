@@ -1,4 +1,4 @@
-name: Issue Response
+﻿name: Issue Response
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   issue-response:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on: ubuntu-latest
 
     steps:

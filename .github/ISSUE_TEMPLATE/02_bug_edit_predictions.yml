@@ -1,5 +1,5 @@
-name: Bug Report (Edit Predictions)
-description: Zed Edit Predictions bugs
+﻿name: Bug Report (Edit Predictions)
+description: CodeOrbit Edit Predictions bugs
 type: "Bug"
 labels: ["ai", "inline completion", "zeta"]
 title: "Edit Predictions: <a short description of the Edit Prediction bug>"
@@ -13,7 +13,7 @@ body:
         SUMMARY_SENTENCE_HERE
 
         ### Description
-        <!--  Describe with sufficient detail to reproduce from a clean Zed install. -->
+        <!--  Describe with sufficient detail to reproduce from a clean CodeOrbit install. -->
         <!--  Please include the LLM provider and model name you are using -->
         Steps to trigger the problem:
         1.
@@ -28,9 +28,9 @@ body:
   - type: textarea
     id: environment
     attributes:
-      label: Zed Version and System Specs
-      description: 'Open Zed, and in the command palette select "zed: copy system specs into clipboard"'
+      label: CodeOrbit Version and System Specs
+      description: 'Open CodeOrbit, and in the command palette select "CodeOrbit: copy system specs into clipboard"'
       placeholder: |
-        Output of "zed: copy system specs into clipboard"
+        Output of "CodeOrbit: copy system specs into clipboard"
     validations:
       required: true

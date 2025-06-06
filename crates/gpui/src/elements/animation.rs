@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+﻿use std::time::{Duration, Instant};
 
 use crate::{
     AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,
@@ -54,7 +54,7 @@ pub trait AnimationExt {
         animator: impl Fn(Self, f32) -> Self + 'static,
     ) -> AnimationElement<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         AnimationElement {
             id: id.into(),
@@ -72,7 +72,7 @@ pub trait AnimationExt {
         animator: impl Fn(Self, usize, f32) -> Self + 'static,
     ) -> AnimationElement<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         AnimationElement {
             id: id.into(),
@@ -251,9 +251,9 @@ mod easing {
             let breath = (t * t * t + t) / 2.0;
 
             // Map the breath to our desired alpha range
-            let normalized_alpha = (breath + 1.0) / 2.0;
+            let normaliCodeOrbit_alpha = (breath + 1.0) / 2.0;
 
-            min + (normalized_alpha * range)
+            min + (normaliCodeOrbit_alpha * range)
         }
     }
 }

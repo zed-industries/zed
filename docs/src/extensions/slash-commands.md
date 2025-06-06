@@ -1,10 +1,10 @@
-# Slash Commands
+﻿# Slash Commands
 
 Extensions may provide slash commands for use in the Assistant.
 
 ## Example extension
 
-To see a working example of an extension that provides slash commands, check out the [`slash-commands-example` extension](https://github.com/zed-industries/zed/tree/main/extensions/slash-commands-example).
+To see a working example of an extension that provides slash commands, check out the [`slash-commands-example` extension](https://github.com/CodeOrbit-industries/CodeOrbit/tree/main/extensions/slash-commands-example).
 
 This extension can be [installed as a dev extension](./developing-extensions.md#developing-an-extension-locally) if you want to try it out for yourself.
 
@@ -40,7 +40,7 @@ This method returns `SlashCommandOutput`, which contains the textual output of t
 Your extension should `match` on the command name (without the leading `/`) and then execute behavior accordingly:
 
 ```rs
-impl zed::Extension for MyExtension {
+impl CodeOrbit::Extension for MyExtension {
     fn run_slash_command(
         &self,
         command: SlashCommand,
@@ -106,7 +106,7 @@ A `SlashCommandArgumentCompletion` consists of the following properties:
 Once again, your extension should `match` on the command name (without the leading `/`) and return the desired argument completions:
 
 ```rs
-impl zed::Extension for MyExtension {
+impl CodeOrbit::Extension for MyExtension {
     fn complete_slash_command_argument(
         &self,
         command: SlashCommand,

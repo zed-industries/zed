@@ -1,4 +1,4 @@
-mod agent_profile;
+﻿mod agent_profile;
 
 use std::sync::Arc;
 
@@ -52,8 +52,8 @@ pub enum NotifyWhenAgentWaiting {
 #[serde(tag = "name", rename_all = "snake_case")]
 #[schemars(deny_unknown_fields)]
 pub enum AgentProviderContentV1 {
-    #[serde(rename = "zed.dev")]
-    ZedDotDev { default_model: Option<String> },
+    #[serde(rename = "CodeOrbit.dev")]
+    CodeOrbitDotDev { default_model: Option<String> },
     #[serde(rename = "openai")]
     OpenAi {
         default_model: Option<OpenAiModel>,
@@ -227,9 +227,9 @@ impl AgentSettingsContent {
                         .provider
                         .clone()
                         .and_then(|provider| match provider {
-                            AgentProviderContentV1::ZedDotDev { default_model } => default_model
+                            AgentProviderContentV1::CodeOrbitDotDev { default_model } => default_model
                                 .map(|model| LanguageModelSelection {
-                                    provider: "zed.dev".into(),
+                                    provider: "CodeOrbit.dev".into(),
                                     model,
                                 }),
                             AgentProviderContentV1::OpenAi { default_model, .. } => default_model
@@ -346,8 +346,8 @@ impl AgentSettingsContent {
         match &mut self.inner {
             Some(AgentSettingsContentInner::Versioned(settings)) => match **settings {
                 VersionedAgentSettingsContent::V1(ref mut settings) => match provider.as_ref() {
-                    "zed.dev" => {
-                        log::warn!("attempted to set zed.dev model on outdated settings");
+                    "CodeOrbit.dev" => {
+                        log::warn!("attempted to set CodeOrbit.dev model on outdated settings");
                     }
                     "anthropic" => {
                         let api_url = match &settings.provider {
@@ -695,11 +695,11 @@ pub enum CompletionMode {
     Burn,
 }
 
-impl From<CompletionMode> for zed_llm_client::CompletionMode {
+impl From<CompletionMode> for codeorbit_llm_client::CompletionMode {
     fn from(value: CompletionMode) -> Self {
         match value {
-            CompletionMode::Normal => zed_llm_client::CompletionMode::Normal,
-            CompletionMode::Burn => zed_llm_client::CompletionMode::Max,
+            CompletionMode::Normal => codeorbit_llm_client::CompletionMode::Normal,
+            CompletionMode::Burn => codeorbit_llm_client::CompletionMode::Max,
         }
     }
 }
@@ -727,7 +727,7 @@ impl JsonSchema for LanguageModelProviderSetting {
                 "lmstudio".into(),
                 "ollama".into(),
                 "openai".into(),
-                "zed.dev".into(),
+                "CodeOrbit.dev".into(),
                 "copilot_chat".into(),
                 "deepseek".into(),
                 "openrouter".into(),
@@ -801,7 +801,7 @@ pub struct AgentSettingsContentV1 {
     default_height: Option<f32>,
     /// The provider of the Agent service.
     ///
-    /// This can be "openai", "anthropic", "ollama", "lmstudio", "deepseek", "zed.dev"
+    /// This can be "openai", "anthropic", "ollama", "lmstudio", "deepseek", "CodeOrbit.dev"
     /// each with their respective default models and configurations.
     provider: Option<AgentProviderContentV1>,
 }
@@ -1000,7 +1000,7 @@ mod tests {
             assert_eq!(
                 AgentSettings::get_global(cx).default_model,
                 LanguageModelSelection {
-                    provider: "zed.dev".into(),
+                    provider: "CodeOrbit.dev".into(),
                     model: "claude-sonnet-4".into(),
                 }
             );
@@ -1072,7 +1072,7 @@ mod tests {
                 "enabled": true,
                 "version": "2",
                 "default_model": {
-                  "provider": "zed.dev",
+                  "provider": "CodeOrbit.dev",
                   "model": "gpt-99"
                 },
             }}"#;

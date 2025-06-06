@@ -1,4 +1,4 @@
-mod persistence;
+﻿mod persistence;
 
 use std::{
     cmp::{self, Reverse},
@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use client::parse_zed_link;
+use client::parse_CodeOrbit_link;
 use command_palette_hooks::{
     CommandInterceptResult, CommandPaletteFilter, CommandPaletteInterceptor,
 };
@@ -24,7 +24,7 @@ use settings::Settings;
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, h_flex, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, WorkspaceSettings};
-use zed_actions::{OpenZedUrl, command_palette::Toggle};
+use codeorbit_actions::{OpenCodeOrbitUrl, command_palette::Toggle};
 
 pub fn init(cx: &mut App) {
     client::init_settings(cx);
@@ -40,7 +40,7 @@ pub struct CommandPalette {
 
 /// Removes subsequent whitespace characters and double colons from the query.
 ///
-/// This improves the likelihood of a match by either humanized name or keymap-style name.
+/// This improves the likelihood of a match by either humaniCodeOrbit name or keymap-style name.
 fn normalize_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_char = None;
@@ -200,9 +200,9 @@ impl CommandPaletteDelegate {
             .map(|interceptor| interceptor.intercept(&query, cx))
             .unwrap_or_default();
 
-        if parse_zed_link(&query, cx).is_some() {
+        if parse_CodeOrbit_link(&query, cx).is_some() {
             intercept_results = vec![CommandInterceptResult {
-                action: OpenZedUrl { url: query.clone() }.boxed_clone(),
+                action: OpenCodeOrbitUrl { url: query.clone() }.boxed_clone(),
                 string: query.clone(),
                 positions: vec![],
             }]
@@ -600,7 +600,7 @@ mod tests {
         });
     }
     #[gpui::test]
-    async fn test_normalized_matches(cx: &mut TestAppContext) {
+    async fn test_normaliCodeOrbit_matches(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
         let project = Project::test(app_state.fs.clone(), [], cx).await;
         let (workspace, cx) =

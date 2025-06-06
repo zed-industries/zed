@@ -1,6 +1,6 @@
-//! # UI – Zed UI Primitives & Components
+﻿//! # UI â€“ CodeOrbit UI Primitives & Components
 //!
-//! This crate provides a set of UI primitives and components that are used to build all of the elements in Zed's UI.
+//! This crate provides a set of UI primitives and components that are used to build all of the elements in CodeOrbit's UI.
 //!
 //! ## Related Crates:
 //!

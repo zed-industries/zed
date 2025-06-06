@@ -1,4 +1,4 @@
-#[cfg(test)]
+﻿#[cfg(test)]
 mod tab_switcher_tests;
 
 use collections::HashMap;
@@ -450,7 +450,7 @@ impl PickerDelegate for TabSwitcherDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search all tabs…".into()
+        "Search all tabsâ€¦".into()
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
@@ -525,7 +525,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             detail: Some(tab_match.detail),
             selected: true,
             preview: tab_match.preview,
-            deemphasized: false,
+            deemphasiCodeOrbit: false,
         };
         let label = tab_match.item.tab_content(params, window, cx);
 

@@ -1,6 +1,6 @@
-# CSS
+﻿# CSS
 
-Zed has built-in support for CSS.
+CodeOrbit has built-in support for CSS.
 
 - Tree-sitter: [tree-sitter/tree-sitter-css](https://github.com/tree-sitter/tree-sitter-css)
 - Language Servers:
@@ -9,7 +9,7 @@ Zed has built-in support for CSS.
 
 ## Tailwind CSS
 
-Zed also supports [Tailwind CSS](./tailwindcss.md) out-of-the-box for languages and frameworks like JavaScript, Astro, Svelte, and more.
+CodeOrbit also supports [Tailwind CSS](./tailwindcss.md) out-of-the-box for languages and frameworks like JavaScript, Astro, Svelte, and more.
 
 <!-- TBD: Document CS -->
 

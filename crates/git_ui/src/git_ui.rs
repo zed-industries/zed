@@ -1,4 +1,4 @@
-use std::any::Any;
+﻿use std::any::Any;
 
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
@@ -105,12 +105,12 @@ pub fn init(cx: &mut App) {
         });
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&[
-                zed_actions::OpenGitIntegrationOnboarding.type_id(),
+                codeorbit_actions::OpenGitIntegrationOnboarding.type_id(),
                 // ResetOnboarding.type_id(),
             ]);
         });
         workspace.register_action(
-            move |workspace, _: &zed_actions::OpenGitIntegrationOnboarding, window, cx| {
+            move |workspace, _: &codeorbit_actions::OpenGitIntegrationOnboarding, window, cx| {
                 GitOnboardingModal::toggle(workspace, window, cx)
             },
         );

@@ -1,4 +1,4 @@
-use collections::HashMap;
+﻿use collections::HashMap;
 use gpui::SharedString;
 use serde::Deserialize;
 use util::ResultExt as _;
@@ -40,7 +40,7 @@ struct VsCodeDebugTaskDefinition {
 }
 
 impl VsCodeDebugTaskDefinition {
-    fn try_to_zed(self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugScenario> {
+    fn try_to_CodeOrbit(self, replacer: &EnvVariableReplacer) -> anyhow::Result<DebugScenario> {
         let label = replacer.replace(&self.name).into();
         // TODO based on grep.app results it seems that vscode supports whitespace-splitting this field (ugh)
         let definition = DebugScenario {
@@ -80,7 +80,7 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
         let templates = file
             .configurations
             .into_iter()
-            .filter_map(|config| config.try_to_zed(&replacer).log_err())
+            .filter_map(|config| config.try_to_CodeOrbit(&replacer).log_err())
             .collect::<Vec<_>>();
         Ok(DebugTaskFile(templates))
     }
@@ -133,9 +133,9 @@ mod tests {
         "#;
         let parsed: VsCodeDebugTaskFile =
             serde_json_lenient::from_str(&raw).expect("deserializing launch.json");
-        let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
+        let CodeOrbit = DebugTaskFile::try_from(parsed).expect("converting to CodeOrbit debug templates");
         pretty_assertions::assert_eq!(
-            zed,
+            CodeOrbit,
             DebugTaskFile(vec![DebugScenario {
                 label: "Debug my JS app".into(),
                 adapter: "JavaScript".into(),

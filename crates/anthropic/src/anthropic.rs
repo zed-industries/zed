@@ -1,4 +1,4 @@
-use std::str::FromStr;
+﻿use std::str::FromStr;
 
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -324,10 +324,10 @@ pub async fn complete(
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
 
-    let serialized_request =
+    let serialiCodeOrbit_request =
         serde_json::to_string(&request).context("failed to serialize request")?;
     let request = request_builder
-        .body(AsyncBody::from(serialized_request))
+        .body(AsyncBody::from(serialiCodeOrbit_request))
         .context("failed to construct request body")?;
 
     let mut response = client
@@ -471,10 +471,10 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("Anthropic-Beta", beta_headers)
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
-    let serialized_request =
+    let serialiCodeOrbit_request =
         serde_json::to_string(&request).context("failed to serialize request")?;
     let request = request_builder
-        .body(AsyncBody::from(serialized_request))
+        .body(AsyncBody::from(serialiCodeOrbit_request))
         .context("failed to construct request body")?;
 
     let mut response = client

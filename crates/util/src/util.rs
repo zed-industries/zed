@@ -1,4 +1,4 @@
-pub mod arc_cow;
+﻿pub mod arc_cow;
 pub mod archive;
 pub mod command;
 pub mod fs;
@@ -107,7 +107,7 @@ pub fn truncate_and_trailoff(s: &str, max_chars: usize) -> String {
     }
     let truncation_ix = s.char_indices().map(|(i, _)| i).nth(max_chars);
     match truncation_ix {
-        Some(index) => s[..index].to_string() + "…",
+        Some(index) => s[..index].to_string() + "â€¦",
         _ => s.to_string(),
     }
 }
@@ -128,7 +128,7 @@ pub fn truncate_and_remove_front(s: &str, max_chars: usize) -> String {
         .map(|(i, _)| i)
         .nth_back(suffix_char_length);
     match truncation_ix {
-        Some(index) if index > 0 => "…".to_string() + &s[index..],
+        Some(index) if index > 0 => "â€¦".to_string() + &s[index..],
         _ => s.to_string(),
     }
 }
@@ -140,7 +140,7 @@ pub fn truncate_lines_and_trailoff(s: &str, max_lines: usize) -> String {
     let mut lines = s.lines().take(max_lines).collect::<Vec<_>>();
     if lines.len() > max_lines - 1 {
         lines.pop();
-        lines.join("\n") + "\n…"
+        lines.join("\n") + "\nâ€¦"
     } else {
         lines.join("\n")
     }
@@ -199,10 +199,10 @@ fn test_truncate_lines_to_byte_limit() {
     assert_eq!(truncate_lines_to_byte_limit(text, 6), "Line ");
 
     // Test with non-ASCII characters
-    let text_utf8 = "Line 1\nLíne 2\nLine 3";
+    let text_utf8 = "Line 1\nLÃ­ne 2\nLine 3";
     assert_eq!(
         truncate_lines_to_byte_limit(text_utf8, 15),
-        "Line 1\nLíne 2\n"
+        "Line 1\nLÃ­ne 2\n"
     );
 }
 
@@ -419,14 +419,14 @@ pub fn merge_non_null_json_value_into(source: serde_json::Value, target: &mut se
 }
 
 pub fn measure<R>(label: &str, f: impl FnOnce() -> R) -> R {
-    static ZED_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
-    let zed_measurements = ZED_MEASUREMENTS.get_or_init(|| {
-        env::var("ZED_MEASUREMENTS")
+    static codeorbit_MEASUREMENTS: OnceLock<bool> = OnceLock::new();
+    let codeorbit_measurements = codeorbit_MEASUREMENTS.get_or_init(|| {
+        env::var("codeorbit_MEASUREMENTS")
             .map(|measurements| measurements == "1" || measurements == "true")
             .unwrap_or(false)
     });
 
-    if *zed_measurements {
+    if *codeorbit_measurements {
         let start = Instant::now();
         let result = f();
         let elapsed = start.elapsed();
@@ -692,18 +692,18 @@ pub fn log_err<E: std::fmt::Debug>(error: &E) {
 pub trait TryFutureExt {
     fn log_err(self) -> LogErrorFuture<Self>
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
 
     fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
 
     fn warn_on_err(self) -> LogErrorFuture<Self>
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
     fn unwrap(self) -> UnwrapFuture<Self>
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
 }
 
 impl<F, T, E> TryFutureExt for F
@@ -714,7 +714,7 @@ where
     #[track_caller]
     fn log_err(self) -> LogErrorFuture<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         let location = Location::caller();
         LogErrorFuture(self, log::Level::Error, *location)
@@ -722,7 +722,7 @@ where
 
     fn log_tracked_err(self, location: core::panic::Location<'static>) -> LogErrorFuture<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         LogErrorFuture(self, log::Level::Error, location)
     }
@@ -730,7 +730,7 @@ where
     #[track_caller]
     fn warn_on_err(self) -> LogErrorFuture<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         let location = Location::caller();
         LogErrorFuture(self, log::Level::Warn, *location)
@@ -738,7 +738,7 @@ where
 
     fn unwrap(self) -> UnwrapFuture<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         UnwrapFuture(self)
     }
@@ -850,13 +850,13 @@ mod rng {
                 // whitespace
                 0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
                 // two-byte greek letters
-                20..=32 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
+                20..=32 => char::from_u32(self.rng.gen_range(('Î±' as u32)..('Ï‰' as u32 + 1))),
                 // // three-byte characters
-                33..=45 => ['✋', '✅', '❌', '❎', '⭐']
+                33..=45 => ['âœ‹', 'âœ…', 'âŒ', 'âŽ', 'â­']
                     .choose(&mut self.rng)
                     .copied(),
                 // // four-byte characters
-                46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
+                46..=58 => ['ðŸ', 'ðŸ€', 'ðŸ—', 'ðŸŽ‰'].choose(&mut self.rng).copied(),
                 // ascii letters
                 _ => Some(self.rng.gen_range(b'a'..b'z' + 1).into()),
             }
@@ -979,7 +979,7 @@ impl PartialOrd for NumericPrefixWithSuffix<'_> {
 /// Capitalizes the first character of a string.
 ///
 /// This function takes a string slice as input and returns a new `String` with the first character
-/// capitalized.
+/// capitaliCodeOrbit.
 ///
 /// # Examples
 ///
@@ -1005,7 +1005,7 @@ fn emoji_regex() -> &'static Regex {
 }
 
 /// Returns true if the given string consists of emojis only.
-/// E.g. "👨‍👩‍👧‍👧👋" will return true, but "👋!" will return false.
+/// E.g. "ðŸ‘¨â€ðŸ‘©â€ðŸ‘§â€ðŸ‘§ðŸ‘‹" will return true, but "ðŸ‘‹!" will return false.
 pub fn word_consists_of_emojis(s: &str) -> bool {
     let mut prev_end = 0;
     for capture in emoji_regex().find_iter(s) {
@@ -1138,10 +1138,10 @@ mod tests {
         assert_eq!(truncate_and_trailoff("", 5), "");
         assert_eq!(truncate_and_trailoff("aaaaaa", 7), "aaaaaa");
         assert_eq!(truncate_and_trailoff("aaaaaa", 6), "aaaaaa");
-        assert_eq!(truncate_and_trailoff("aaaaaa", 5), "aaaaa…");
-        assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
-        assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");
-        assert_eq!(truncate_and_trailoff("èèèèèè", 5), "èèèèè…");
+        assert_eq!(truncate_and_trailoff("aaaaaa", 5), "aaaaaâ€¦");
+        assert_eq!(truncate_and_trailoff("Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨", 7), "Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨");
+        assert_eq!(truncate_and_trailoff("Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨", 6), "Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨");
+        assert_eq!(truncate_and_trailoff("Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨", 5), "Ã¨Ã¨Ã¨Ã¨Ã¨â€¦");
     }
 
     #[test]
@@ -1149,10 +1149,10 @@ mod tests {
         assert_eq!(truncate_and_remove_front("", 5), "");
         assert_eq!(truncate_and_remove_front("aaaaaa", 7), "aaaaaa");
         assert_eq!(truncate_and_remove_front("aaaaaa", 6), "aaaaaa");
-        assert_eq!(truncate_and_remove_front("aaaaaa", 5), "…aaaaa");
-        assert_eq!(truncate_and_remove_front("èèèèèè", 7), "èèèèèè");
-        assert_eq!(truncate_and_remove_front("èèèèèè", 6), "èèèèèè");
-        assert_eq!(truncate_and_remove_front("èèèèèè", 5), "…èèèèè");
+        assert_eq!(truncate_and_remove_front("aaaaaa", 5), "â€¦aaaaa");
+        assert_eq!(truncate_and_remove_front("Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨", 7), "Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨");
+        assert_eq!(truncate_and_remove_front("Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨", 6), "Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨");
+        assert_eq!(truncate_and_remove_front("Ã¨Ã¨Ã¨Ã¨Ã¨Ã¨", 5), "â€¦Ã¨Ã¨Ã¨Ã¨Ã¨");
     }
 
     #[test]
@@ -1212,7 +1212,7 @@ mod tests {
         sorted.sort_by_key(|s| NumericPrefixWithSuffix::from_numeric_prefixed_str(s));
         assert_eq!(sorted, ["1-abc", "2", "10", "11def", "21-abc"]);
 
-        for numeric_prefix_less in ["numeric_prefix_less", "aaa", "~™£"] {
+        for numeric_prefix_less in ["numeric_prefix_less", "aaa", "~â„¢Â£"] {
             assert_eq!(
                 NumericPrefixWithSuffix::from_numeric_prefixed_str(numeric_prefix_less),
                 NumericPrefixWithSuffix(None, numeric_prefix_less),
@@ -1224,12 +1224,12 @@ mod tests {
     #[test]
     fn test_word_consists_of_emojis() {
         let words_to_test = vec![
-            ("👨‍👩‍👧‍👧👋🥒", true),
-            ("👋", true),
-            ("!👋", false),
-            ("👋!", false),
-            ("👋 ", false),
-            (" 👋", false),
+            ("ðŸ‘¨â€ðŸ‘©â€ðŸ‘§â€ðŸ‘§ðŸ‘‹ðŸ¥’", true),
+            ("ðŸ‘‹", true),
+            ("!ðŸ‘‹", false),
+            ("ðŸ‘‹!", false),
+            ("ðŸ‘‹ ", false),
+            (" ðŸ‘‹", false),
             ("Test", false),
         ];
 
@@ -1247,14 +1247,14 @@ Line 3"#;
         assert_eq!(
             truncate_lines_and_trailoff(text, 2),
             r#"Line 1
-…"#
+â€¦"#
         );
 
         assert_eq!(
             truncate_lines_and_trailoff(text, 3),
             r#"Line 1
 Line 2
-…"#
+â€¦"#
         );
 
         assert_eq!(
@@ -1356,11 +1356,11 @@ Line 3"#
         assert_eq!(result.len(), 1);
         assert_eq!(result[0], (0..2, "hi"));
 
-        let input = "héllo🦀world";
-        let result = split_str_with_ranges(input, |c| c == '🦀');
+        let input = "hÃ©lloðŸ¦€world";
+        let result = split_str_with_ranges(input, |c| c == 'ðŸ¦€');
 
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
-        assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
+        assert_eq!(result[0], (0..6, "hÃ©llo")); // 'Ã©' is 2 bytes
+        assert_eq!(result[1], (10..15, "world")); // 'ðŸ¦€' is 4 bytes
     }
 }

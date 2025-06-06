@@ -1,4 +1,4 @@
-import { danger, message, warn, fail } from "danger";
+﻿import { danger, message, warn, fail } from "danger";
 const { prHygiene } = require("danger-plugin-pr-hygiene");
 
 prHygiene({
@@ -46,7 +46,7 @@ const includesIssueUrl = ISSUE_LINK_PATTERN.test(bodyWithoutReleaseNotes);
 if (includesIssueUrl) {
   const matches = bodyWithoutReleaseNotes.match(ISSUE_LINK_PATTERN) ?? [];
   const issues = matches
-    .map((match) => match.replace(/^#/, "").replace(/https:\/\/github\.com\/zed-industries\/zed\/issues\//, ""))
+    .map((match) => match.replace(/^#/, "").replace(/https:\/\/github\.com\/CodeOrbit-industries\/CodeOrbit\/issues\//, ""))
     .filter((issue, index, self) => self.indexOf(issue) === index);
 
   const issuesToReport = issues.map((issue) => `#${issue}`).join(", ");
@@ -88,7 +88,7 @@ for (const promptPath of modifiedPrompts) {
       [
         `Modifying the "${promptPath}" prompt may require corresponding changes in the LLM Worker.`,
         "If you are ensure what this entails, talk to @maxdeviant or another AI team member.",
-        `Once you have made the changes—or determined that none are necessary—add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
+        `Once you have made the changesâ€”or determined that none are necessaryâ€”add "${PROMPT_CHANGE_ATTESTATION}" to the PR description.`,
       ].join("\n"),
     );
   }

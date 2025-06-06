@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use collections::FxHashMap;
 use gpui::SharedString;
 use log as _;
@@ -246,7 +246,7 @@ pub enum Request {
 /// This struct represent a user created debug task from the new session modal
 #[derive(Deserialize, Serialize, PartialEq, Eq, Clone, Debug, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub struct ZedDebugConfig {
+pub struct CodeOrbitDebugConfig {
     /// Name of the debug task
     pub label: SharedString,
     /// The debug adapter to use
@@ -395,9 +395,9 @@ mod tests {
             }
         }"#;
 
-        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
-        assert!(deserialized.build.is_some());
-        match deserialized.build.as_ref().unwrap() {
+        let deserialiCodeOrbit: DebugScenario = serde_json::from_str(json).unwrap();
+        assert!(deserialiCodeOrbit.build.is_some());
+        match deserialiCodeOrbit.build.as_ref().unwrap() {
             crate::BuildTaskDefinition::Template { task_template, .. } => {
                 assert_eq!("debug-build", task_template.label);
                 assert_eq!("rust", task_template.command);
@@ -405,9 +405,9 @@ mod tests {
             }
             _ => panic!("Expected Template variant"),
         }
-        assert_eq!(json!({}), deserialized.config);
-        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
-        assert_eq!("Build & debug rust", deserialized.label.as_ref());
+        assert_eq!(json!({}), deserialiCodeOrbit.config);
+        assert_eq!("CodeLLDB", deserialiCodeOrbit.adapter.as_ref());
+        assert_eq!("Build & debug rust", deserialiCodeOrbit.label.as_ref());
     }
 
     #[test]
@@ -418,11 +418,11 @@ mod tests {
             "adapter": "CodeLLDB"
         }"#;
 
-        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        let deserialiCodeOrbit: DebugScenario = serde_json::from_str(json).unwrap();
 
-        assert_eq!(json!({}), deserialized.config);
-        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
-        assert_eq!("Build & debug rust", deserialized.label.as_ref());
+        assert_eq!(json!({}), deserialiCodeOrbit.config);
+        assert_eq!("CodeLLDB", deserialiCodeOrbit.adapter.as_ref());
+        assert_eq!("Build & debug rust", deserialiCodeOrbit.label.as_ref());
     }
 
     #[test]
@@ -435,14 +435,14 @@ mod tests {
             "args": ["--test"]
         }"#;
 
-        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        let deserialiCodeOrbit: DebugScenario = serde_json::from_str(json).unwrap();
 
         assert_eq!(
             json!({ "request": "launch", "program": "target/debug/myapp", "args": ["--test"] }),
-            deserialized.config
+            deserialiCodeOrbit.config
         );
-        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
-        assert_eq!("Launch program", deserialized.label.as_ref());
+        assert_eq!("CodeLLDB", deserialiCodeOrbit.adapter.as_ref());
+        assert_eq!("Launch program", deserialiCodeOrbit.label.as_ref());
     }
 
     #[test]
@@ -454,14 +454,14 @@ mod tests {
             "request": "attach"
         }"#;
 
-        let deserialized: DebugScenario = serde_json::from_str(json).unwrap();
+        let deserialiCodeOrbit: DebugScenario = serde_json::from_str(json).unwrap();
 
         assert_eq!(
             json!({ "request": "attach", "process_id": 1234 }),
-            deserialized.config
+            deserialiCodeOrbit.config
         );
-        assert_eq!("CodeLLDB", deserialized.adapter.as_ref());
-        assert_eq!("Attach to process", deserialized.label.as_ref());
+        assert_eq!("CodeLLDB", deserialiCodeOrbit.adapter.as_ref());
+        assert_eq!("Attach to process", deserialiCodeOrbit.label.as_ref());
     }
 
     #[test]
@@ -469,8 +469,8 @@ mod tests {
         use crate::BuildTaskDefinition;
 
         let json = r#""my_build_task""#;
-        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
-        match deserialized {
+        let deserialiCodeOrbit: BuildTaskDefinition = serde_json::from_str(json).unwrap();
+        match deserialiCodeOrbit {
             BuildTaskDefinition::ByName(name) => assert_eq!("my_build_task", name.as_ref()),
             _ => panic!("Expected ByName variant"),
         }
@@ -479,8 +479,8 @@ mod tests {
             "command": "cargo",
             "args": ["build", "--release"]
         }"#;
-        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
-        match deserialized {
+        let deserialiCodeOrbit: BuildTaskDefinition = serde_json::from_str(json).unwrap();
+        match deserialiCodeOrbit {
             BuildTaskDefinition::Template { task_template, .. } => {
                 assert_eq!("debug-build", task_template.label);
                 assert_eq!("cargo", task_template.command);
@@ -494,8 +494,8 @@ mod tests {
             "command": "cargo",
             "args": ["build", "--release"]
         }"#;
-        let deserialized: BuildTaskDefinition = serde_json::from_str(json).unwrap();
-        match deserialized {
+        let deserialiCodeOrbit: BuildTaskDefinition = serde_json::from_str(json).unwrap();
+        match deserialiCodeOrbit {
             BuildTaskDefinition::Template { task_template, .. } => {
                 assert_eq!("Build Release", task_template.label);
                 assert_eq!("cargo", task_template.command);

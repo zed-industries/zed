@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -17,7 +17,7 @@ echo "Generating cargo licenses"
 set -x
 cargo about generate \
     --fail \
-    -c script/licenses/zed-licenses.toml \
+    -c script/licenses/CodeOrbit-licenses.toml \
     $TEMPLATE_FILE \
     | awk 'NR==1{print;next} NF{print | "sort"}' \
     > "$OUTPUT_FILE"

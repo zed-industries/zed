@@ -1,4 +1,4 @@
-services:
+﻿services:
   postgres:
     image: postgres:15
     container_name: zed_postgres
@@ -39,7 +39,7 @@ services:
     ports:
       - 8081:8081
     environment:
-      PGRST_DB_URI: postgres://postgres@postgres:5432/zed
+      PGRST_DB_URI: postgres://postgres@postgres:5432/CodeOrbit
     volumes:
       - ./crates/collab/postgrest_app.conf:/etc/postgrest.conf
     command: postgrest /etc/postgrest.conf

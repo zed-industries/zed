@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+﻿use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,7 +16,7 @@ use rpc::ExtensionProvides;
 use tree_sitter::{Language, Query, WasmStore};
 
 #[derive(Parser, Debug)]
-#[command(name = "zed-extension")]
+#[command(name = "CodeOrbit-extension")]
 struct Args {
     /// The path to the extension directory
     #[arg(long)]
@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
     log::info!("compiling extension");
 
     let user_agent = format!(
-        "Zed Extension CLI/{} ({}; {})",
+        "CodeOrbit Extension CLI/{} ({}; {})",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH

@@ -1,4 +1,4 @@
-use std::any::Any;
+﻿use std::any::Any;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -134,9 +134,9 @@ impl LspAdapter for ExtensionLspAdapter {
 
             let path = self.extension.path_from_extension(command.command.as_ref());
 
-            // TODO: This should now be done via the `zed::make_file_executable` function in
-            // Zed extension API, but we're leaving these existing usages in place temporarily
-            // to avoid any compatibility issues between Zed and the extension versions.
+            // TODO: This should now be done via the `CodeOrbit::make_file_executable` function in
+            // CodeOrbit extension API, but we're leaving these existing usages in place temporarily
+            // to avoid any compatibility issues between CodeOrbit and the extension versions.
             //
             // We can remove once the following extension versions no longer see any use:
             // - toml@0.0.2
@@ -207,7 +207,7 @@ impl LspAdapter for ExtensionLspAdapter {
     fn language_ids(&self) -> HashMap<String, String> {
         // TODO: The language IDs can be provided via the language server options
         // in `extension.toml now but we're leaving these existing usages in place temporarily
-        // to avoid any compatibility issues between Zed and the extension versions.
+        // to avoid any compatibility issues between CodeOrbit and the extension versions.
         //
         // We can remove once the following extension versions no longer see any use:
         // - php@0.0.1
@@ -551,7 +551,7 @@ fn test_build_code_label() {
     use util::test::marked_text_ranges;
 
     let (code, code_ranges) = marked_text_ranges(
-        "«const» «a»: «fn»(«Bcd»(«Efgh»)) -> «Ijklm» = pqrs.tuv",
+        "Â«constÂ» Â«aÂ»: Â«fnÂ»(Â«BcdÂ»(Â«EfghÂ»)) -> Â«IjklmÂ» = pqrs.tuv",
         false,
     );
     let code_runs = code_ranges
@@ -576,7 +576,7 @@ fn test_build_code_label() {
     .unwrap();
 
     let (label_text, label_ranges) =
-        marked_text_ranges("pqrs.tuv: «fn»(«Bcd»(«Efgh»)) -> «Ijklm»", false);
+        marked_text_ranges("pqrs.tuv: Â«fnÂ»(Â«BcdÂ»(Â«EfghÂ»)) -> Â«IjklmÂ»", false);
     let label_runs = label_ranges
         .into_iter()
         .map(|range| (range, HighlightId(0)))
@@ -596,7 +596,7 @@ fn test_build_code_label() {
 fn test_build_code_label_with_invalid_ranges() {
     use util::test::marked_text_ranges;
 
-    let (code, code_ranges) = marked_text_ranges("const «a»: «B» = '🏀'", false);
+    let (code, code_ranges) = marked_text_ranges("const Â«aÂ»: Â«BÂ» = 'ðŸ€'", false);
     let code_runs = code_ranges
         .into_iter()
         .map(|range| (range, HighlightId(0)))
@@ -610,7 +610,7 @@ fn test_build_code_label_with_invalid_ranges() {
                 extension::CodeLabelSpan::CodeRange(
                     code.find('B').unwrap()..code.find(" = ").unwrap(),
                 ),
-                extension::CodeLabelSpan::CodeRange((code.find('🏀').unwrap() + 1)..code.len()),
+                extension::CodeLabelSpan::CodeRange((code.find('ðŸ€').unwrap() + 1)..code.len()),
             ],
             filter_range: 0.."B".len(),
             code,

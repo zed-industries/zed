@@ -1,6 +1,6 @@
-# Language Extensions
+﻿# Language Extensions
 
-Language support in Zed has several components:
+Language support in CodeOrbit has several components:
 
 - Language metadata and configuration
 - Grammar
@@ -9,7 +9,7 @@ Language support in Zed has several components:
 
 ## Language Metadata
 
-Each language supported by Zed must be defined in a subdirectory inside the `languages` directory of your extension.
+Each language supported by CodeOrbit must be defined in a subdirectory inside the `languages` directory of your extension.
 
 This subdirectory must contain a file called `config.toml` file with the following structure:
 
@@ -26,7 +26,7 @@ line_comments = ["# "]
 - `line_comments` is an array of strings that are used to identify line comments in the language. This is used for the `editor::ToggleComments` keybind: {#kb editor::ToggleComments} for toggling lines of code.
 - `tab_size` defines the indentation/tab size used for this language (default is `4`).
 - `hard_tabs` whether to indent with tabs (`true`) or spaces (`false`, the default).
-- `first_line_pattern` is a regular expression, that in addition to `path_suffixes` (above) or `file_types` in settings can be used to match files which should use this language. For example Zed uses this to identify Shell Scripts by matching the [shebangs lines](https://github.com/zed-industries/zed/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
+- `first_line_pattern` is a regular expression, that in addition to `path_suffixes` (above) or `file_types` in settings can be used to match files which should use this language. For example CodeOrbit uses this to identify Shell Scripts by matching the [shebangs lines](https://github.com/CodeOrbit-industries/CodeOrbit/blob/main/crates/languages/src/bash/config.toml) in the first line of a script.
 
 <!--
 TBD: Document `language_name/config.toml` keys
@@ -46,7 +46,7 @@ TBD: Document `language_name/config.toml` keys
 
 ## Grammar
 
-Zed uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to provide built-in language-specific features. There are grammars available for many languages, and you can also [develop your own grammar](https://tree-sitter.github.io/tree-sitter/creating-parsers#writing-the-grammar). A growing list of Zed features are built using pattern matching over syntax trees with Tree-sitter queries. As mentioned above, every language that is defined in an extension must specify the name of a Tree-sitter grammar that is used for parsing. These grammars are then registered separately in extensions' `extension.toml` file, like this:
+CodeOrbit uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to provide built-in language-specific features. There are grammars available for many languages, and you can also [develop your own grammar](https://tree-sitter.github.io/tree-sitter/creating-parsers#writing-the-grammar). A growing list of CodeOrbit features are built using pattern matching over syntax trees with Tree-sitter queries. As mentioned above, every language that is defined in an extension must specify the name of a Tree-sitter grammar that is used for parsing. These grammars are then registered separately in extensions' `extension.toml` file, like this:
 
 ```toml
 [grammars.gleam]
@@ -58,7 +58,7 @@ The `repository` field must specify a repository where the Tree-sitter grammar s
 
 ## Tree-sitter Queries
 
-Zed uses the syntax tree produced by the [Tree-sitter](https://tree-sitter.github.io) query language to implement
+CodeOrbit uses the syntax tree produced by the [Tree-sitter](https://tree-sitter.github.io) query language to implement
 several features:
 
 - Syntax highlighting
@@ -72,7 +72,7 @@ several features:
 - Selecting classes, functions, etc.
 
 The following sections elaborate on how [Tree-sitter queries](https://tree-sitter.github.io/tree-sitter/using-parsers#query-syntax) enable these
-features in Zed, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
+features in CodeOrbit, using [JSON syntax](https://www.json.org/json-en.html) as a guiding example.
 
 ### Syntax highlighting
 
@@ -100,8 +100,8 @@ This query marks strings, object keys, and numbers for highlighting. The followi
 | @constant                | Captures constants                     |
 | @constructor             | Captures constructors                  |
 | @embedded                | Captures embedded content              |
-| @emphasis                | Captures emphasized text               |
-| @emphasis.strong         | Captures strongly emphasized text      |
+| @emphasis                | Captures emphasiCodeOrbit text               |
+| @emphasis.strong         | Captures strongly emphasiCodeOrbit text      |
 | @enum                    | Captures enumerations                  |
 | @function                | Captures functions                     |
 | @hint                    | Captures hints                         |
@@ -264,15 +264,15 @@ For example, in JavaScript, we also disable auto-closing of single quotes within
 
 ### Text objects
 
-The `textobjects.scm` file defines rules for navigating by text objects. This was added in Zed v0.165 and is currently used only in Vim mode.
+The `textobjects.scm` file defines rules for navigating by text objects. This was added in CodeOrbit v0.165 and is currently used only in Vim mode.
 
 Vim provides two levels of granularity for navigating around files. Section-by-section with `[]` etc., and method-by-method with `]m` etc. Even languages that don't support functions and classes can work well by defining similar concepts. For example CSS defines a rule-set as a method, and a media-query as a class.
 
-For languages with closures, these typically should not count as functions in Zed. This is best-effort however, as languages like Javascript do not syntactically differentiate syntactically between closures and top-level function declarations.
+For languages with closures, these typically should not count as functions in CodeOrbit. This is best-effort however, as languages like Javascript do not syntactically differentiate syntactically between closures and top-level function declarations.
 
 For languages with declarations like C, provide queries that match `@class.around` or `@function.around`. The `if` and `ic` text objects will default to these if there is no inside.
 
-If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many languages. You can refer to the Zed [built-in languages](https://github.com/zed-industries/zed/tree/main/crates/languages/src) to see how to adapt these.
+If you are not sure what to put in textobjects.scm, both [nvim-treesitter-textobjects](https://github.com/nvim-treesitter/nvim-treesitter-textobjects), and the [Helix editor](https://github.com/helix-editor/helix) have queries for many languages. You can refer to the CodeOrbit [built-in languages](https://github.com/CodeOrbit-industries/CodeOrbit/tree/main/crates/languages/src) to see how to adapt these.
 
 | Capture          | Description                                                             | Vim mode                                         |
 | ---------------- | ----------------------------------------------------------------------- | ------------------------------------------------ |
@@ -349,7 +349,7 @@ Here's an example from an `runnables.scm` file for JSON:
 
 This query detects runnable scripts in package.json and composer.json files.
 
-The `@run` capture specifies where the run button should appear in the editor. Other captures, except those prefixed with an underscore, are exposed as environment variables with a prefix of `ZED_CUSTOM_$(capture_name)` when running the code.
+The `@run` capture specifies where the run button should appear in the editor. Other captures, except those prefixed with an underscore, are exposed as environment variables with a prefix of `codeorbit_CUSTOM_$(capture_name)` when running the code.
 
 | Capture | Description                                            |
 | ------- | ------------------------------------------------------ |
@@ -363,7 +363,7 @@ TBD: `#set! tag`
 
 ## Language Servers
 
-Zed uses the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) to provide advanced language support.
+CodeOrbit uses the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) to provide advanced language support.
 
 An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language(s) it applies to:
 
@@ -376,13 +376,13 @@ languages = ["My Language"]
 Then, in the Rust code for your extension, implement the `language_server_command` method on your extension:
 
 ```rust
-impl zed::Extension for MyExtension {
+impl CodeOrbit::Extension for MyExtension {
     fn language_server_command(
         &mut self,
         language_server_id: &LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<zed::Command> {
-        Ok(zed::Command {
+        worktree: &CodeOrbit::Worktree,
+    ) -> Result<CodeOrbit::Command> {
+        Ok(CodeOrbit::Command {
             command: get_path_to_language_server_executable()?,
             args: get_args_for_language_server()?,
             env: get_env_for_language_server()?,
@@ -391,4 +391,4 @@ impl zed::Extension for MyExtension {
 }
 ```
 
-You can customize the handling of the language server using several optional methods in the `Extension` trait. For example, you can control how completions are styled using the `label_for_completion` method. For a complete list of methods, see the [API docs for the Zed extension API](https://docs.rs/zed_extension_api).
+You can customize the handling of the language server using several optional methods in the `Extension` trait. For example, you can control how completions are styled using the `label_for_completion` method. For a complete list of methods, see the [API docs for the CodeOrbit extension API](https://docs.rs/codeorbit_extension_api).

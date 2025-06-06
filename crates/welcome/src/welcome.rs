@@ -1,4 +1,4 @@
-use client::{TelemetrySettings, telemetry::Telemetry};
+﻿use client::{TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
@@ -28,7 +28,7 @@ mod welcome_ui;
 actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
-pub const DOCS_URL: &str = "https://zed.dev/docs/";
+pub const DOCS_URL: &str = "https://CodeOrbit.dev/docs/";
 
 pub fn init(cx: &mut App) {
     BaseKeymap::register(cx);
@@ -76,11 +76,11 @@ pub struct WelcomePage {
 
 impl Render for WelcomePage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let edit_prediction_provider_is_zed =
+        let edit_prediction_provider_is_CodeOrbit =
             all_language_settings(None, cx).edit_predictions.provider
-                == EditPredictionProvider::Zed;
+                == EditPredictionProvider::CodeOrbit;
 
-        let edit_prediction_label = if edit_prediction_provider_is_zed {
+        let edit_prediction_label = if edit_prediction_provider_is_CodeOrbit {
             "Edit Prediction Enabled"
         } else {
             "Try Edit Prediction"
@@ -111,7 +111,7 @@ impl Render for WelcomePage {
                                 h_flex()
                                     .w_full()
                                     .justify_center()
-                                    .child(Headline::new("Welcome to Zed")),
+                                    .child(Headline::new("Welcome to CodeOrbit")),
                             )
                             .child(
                                 h_flex().w_full().justify_center().child(
@@ -148,7 +148,7 @@ impl Render for WelcomePage {
                                                 telemetry::event!("Welcome Theme Changed");
                                                 this.workspace
                                                     .update(cx, |_workspace, cx| {
-                                                        window.dispatch_action(zed_actions::theme_selector::Toggle::default().boxed_clone(), cx);
+                                                        window.dispatch_action(codeorbit_actions::theme_selector::Toggle::default().boxed_clone(), cx);
                                                     })
                                                     .ok();
                                             })),
@@ -174,18 +174,18 @@ impl Render for WelcomePage {
                                     )
                                     .child(
                                         Button::new(
-                                            "try-zed-edit-prediction",
+                                            "try-CodeOrbit-edit-prediction",
                                             edit_prediction_label,
                                         )
-                                        .disabled(edit_prediction_provider_is_zed)
-                                        .icon(IconName::ZedPredict)
+                                        .disabled(edit_prediction_provider_is_CodeOrbit)
+                                        .icon(IconName::CodeOrbitPredict)
                                         .icon_size(IconSize::XSmall)
                                         .icon_color(Color::Muted)
                                         .icon_position(IconPosition::Start)
                                         .on_click(
                                             cx.listener(|_, _, window, cx| {
                                                 telemetry::event!("Welcome Screen Try Edit Prediction clicked");
-                                                window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
+                                                window.dispatch_action(codeorbit_actions::OpenCodeOrbitPredictOnboarding.boxed_clone(), cx);
                                             }),
                                         ),
                                     )
@@ -198,7 +198,7 @@ impl Render for WelcomePage {
                                             .on_click(cx.listener(|_, _, window, cx| {
                                                 telemetry::event!("Welcome Settings Edited");
                                                 window.dispatch_action(Box::new(
-                                                    zed_actions::OpenSettings,
+                                                    codeorbit_actions::OpenSettings,
                                                 ), cx);
                                             })),
                                     )
@@ -249,7 +249,7 @@ impl Render for WelcomePage {
                                             .on_click(cx.listener(|_, _, window, cx| {
                                                 telemetry::event!("Welcome Extensions Page Opened");
                                                 window.dispatch_action(Box::new(
-                                                    zed_actions::Extensions::default(),
+                                                    codeorbit_actions::Extensions::default(),
                                                 ), cx);
                                             })),
                                     )

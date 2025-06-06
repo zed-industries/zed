@@ -1,4 +1,4 @@
-use adapters::latest_github_release;
+﻿use adapters::latest_github_release;
 use anyhow::Context as _;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
@@ -104,17 +104,17 @@ impl DebugAdapter for JsDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    fn config_from_CodeOrbit_format(&self, codeorbit_scenario: CodeOrbitDebugConfig) -> Result<DebugScenario> {
         let mut args = json!({
             "type": "pwa-node",
-            "request": match zed_scenario.request {
+            "request": match codeorbit_scenario.request {
                 DebugRequest::Launch(_) => "launch",
                 DebugRequest::Attach(_) => "attach",
             },
         });
 
         let map = args.as_object_mut().unwrap();
-        match &zed_scenario.request {
+        match &codeorbit_scenario.request {
             DebugRequest::Attach(attach) => {
                 map.insert("processId".into(), attach.process_id.into());
             }
@@ -132,7 +132,7 @@ impl DebugAdapter for JsDebugAdapter {
                     map.insert("env".into(), launch.env_json());
                 }
 
-                if let Some(stop_on_entry) = zed_scenario.stop_on_entry {
+                if let Some(stop_on_entry) = codeorbit_scenario.stop_on_entry {
                     map.insert("stopOnEntry".into(), stop_on_entry.into());
                 }
                 if let Some(cwd) = launch.cwd.as_ref() {
@@ -142,8 +142,8 @@ impl DebugAdapter for JsDebugAdapter {
         };
 
         Ok(DebugScenario {
-            adapter: zed_scenario.adapter,
-            label: zed_scenario.label,
+            adapter: codeorbit_scenario.adapter,
+            label: codeorbit_scenario.label,
             build: None,
             config: args,
             tcp_connection: None,
@@ -227,7 +227,7 @@ impl DebugAdapter for JsDebugAdapter {
                                     "items": {
                                         "type": "string"
                                     },
-                                    "default": ["${ZED_WORKTREE_ROOT}/**/*.js", "!**/node_modules/**"]
+                                    "default": ["${codeorbit_WORKTREE_ROOT}/**/*.js", "!**/node_modules/**"]
                                 },
                                 "sourceMaps": {
                                     "type": "boolean",
@@ -263,7 +263,7 @@ impl DebugAdapter for JsDebugAdapter {
                                 "webRoot": {
                                     "type": "string",
                                     "description": "Workspace absolute path to the webserver root",
-                                    "default": "${ZED_WORKTREE_ROOT}"
+                                    "default": "${codeorbit_WORKTREE_ROOT}"
                                 },
                                 "userDataDir": {
                                     "type": ["string", "boolean"],
@@ -355,7 +355,7 @@ impl DebugAdapter for JsDebugAdapter {
                                     "items": {
                                         "type": "string"
                                     },
-                                    "default": ["${ZED_WORKTREE_ROOT}/**/*.js", "!**/node_modules/**"]
+                                    "default": ["${codeorbit_WORKTREE_ROOT}/**/*.js", "!**/node_modules/**"]
                                 },
                                 "url": {
                                     "type": "string",
@@ -364,7 +364,7 @@ impl DebugAdapter for JsDebugAdapter {
                                 "webRoot": {
                                     "type": "string",
                                     "description": "Workspace absolute path to the webserver root",
-                                    "default": "${ZED_WORKTREE_ROOT}"
+                                    "default": "${codeorbit_WORKTREE_ROOT}"
                                 },
                                 "skipFiles": {
                                     "type": "array",

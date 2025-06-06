@@ -1,5 +1,5 @@
-syntax = "proto3";
-package zed.messages;
+﻿syntax = "proto3";
+package CodeOrbit.messages;
 
 import "core.proto";
 import "buffer.proto";

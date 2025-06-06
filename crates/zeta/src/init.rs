@@ -1,4 +1,4 @@
-use std::any::{Any, TypeId};
+﻿use std::any::{Any, TypeId};
 
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
@@ -8,7 +8,7 @@ use settings::update_settings_file;
 use ui::App;
 use workspace::Workspace;
 
-use crate::{RateCompletionModal, onboarding_modal::ZedPredictModal};
+use crate::{RateCompletionModal, onboarding_modal::CodeOrbitPredictModal};
 
 actions!(edit_prediction, [ResetOnboarding, RateCompletions]);
 
@@ -21,8 +21,8 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(
-            move |workspace, _: &zed_actions::OpenZedPredictOnboarding, window, cx| {
-                ZedPredictModal::toggle(
+            move |workspace, _: &codeorbit_actions::OpenCodeOrbitPredictOnboarding, window, cx| {
+                CodeOrbitPredictModal::toggle(
                     workspace,
                     workspace.user_store().clone(),
                     workspace.client().clone(),
@@ -55,7 +55,7 @@ fn feature_gate_predict_edits_rating_actions(cx: &mut App) {
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_action_types(&rate_completion_action_types);
-        filter.hide_action_types(&[zed_actions::OpenZedPredictOnboarding.type_id()]);
+        filter.hide_action_types(&[codeorbit_actions::OpenCodeOrbitPredictOnboarding.type_id()]);
     });
 
     cx.observe_flag::<PredictEditsRateCompletionsFeatureFlag, _>(move |is_enabled, cx| {

@@ -1,6 +1,6 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
-# Use a docker BASE_IMAGE to test building Zed.
+# Use a docker BASE_IMAGE to test building CodeOrbit.
 # e.g: ./script/bundle-docker ubuntu:20.04
 #
 # Increasing resources available to podman may speed this up:

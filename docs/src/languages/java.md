@@ -1,9 +1,9 @@
-# Java
+﻿# Java
 
-There are two extensions that provide Java language support for Zed:
+There are two extensions that provide Java language support for CodeOrbit:
 
-- Zed Java: [zed-extensions/java](https://github.com/zed-extensions/java) and
-- Java with Eclipse JDTLS: [zed-java-eclipse-jdtls](https://github.com/ABckh/zed-java-eclipse-jdtls).
+- CodeOrbit Java: [CodeOrbit-extensions/java](https://github.com/CodeOrbit-extensions/java) and
+- Java with Eclipse JDTLS: [CodeOrbit-java-eclipse-jdtls](https://github.com/ABckh/CodeOrbit-java-eclipse-jdtls).
 
 Both use:
 
@@ -23,7 +23,7 @@ Or manually download and install [OpenJDK 23](https://jdk.java.net/23/).
 
 ## Extension Install
 
-You can install either by opening {#action zed::Extensions}({#kb zed::Extensions}) and searching for `java`.
+You can install either by opening {#action CodeOrbit::Extensions}({#kb CodeOrbit::Extensions}) and searching for `java`.
 
 We recommend you install one or the other and not both.
 
@@ -33,9 +33,9 @@ Both extensions will automatically download the language server, see: [Manual JD
 
 For available `initialization_options` please see the [Initialize Request section of the Eclipse.jdt.ls Wiki](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request).
 
-You can add these customizations to your Zed Settings by launching {#action zed::OpenSettings}({#kb zed::OpenSettings}) or by using a `.zed/setting.json` inside your project.
+You can add these customizations to your CodeOrbit Settings by launching {#action CodeOrbit::OpenSettings}({#kb CodeOrbit::OpenSettings}) or by using a `.CodeOrbit/setting.json` inside your project.
 
-### Zed Java Settings
+### CodeOrbit Java Settings
 
 ```json
 {
@@ -62,7 +62,7 @@ You can add these customizations to your Zed Settings by launching {#action zed:
 
 ## Example Configs
 
-### Zed Java Initialization Options
+### CodeOrbit Java Initialization Options
 
 There are also many more options you can pass directly to the language server, for example:
 
@@ -152,7 +152,7 @@ There are also many more options you can pass directly to the language server, f
 }
 ```
 
-### Java with Eclipse JTDLS Configuration {#zed-java-eclipse-configuration}
+### Java with Eclipse JTDLS Configuration {#CodeOrbit-java-eclipse-configuration}
 
 Configuration options match those provided in the [redhat-developer/vscode-java extension](https://github.com/redhat-developer/vscode-java#supported-vs-code-settings).
 
@@ -184,12 +184,12 @@ Or manually download install:
 
 ## See also
 
-- [Zed Java Readme](https://github.com/zed-extensions/java)
-- [Java with Eclipse JDTLS Readme](https://github.com/ABckh/zed-java-eclipse-jdtls)
+- [CodeOrbit Java Readme](https://github.com/CodeOrbit-extensions/java)
+- [Java with Eclipse JDTLS Readme](https://github.com/ABckh/CodeOrbit-java-eclipse-jdtls)
 
 ## Support
 
 If you have issues with either of these plugins, please open issues on their respective repositories:
 
-- [Zed Java Issues](https://github.com/zed-extensions/java/issues)
-- [Java with Eclipse JDTLS Issues](https://github.com/ABckh/zed-java-eclipse-jdtls/issues)
+- [CodeOrbit Java Issues](https://github.com/CodeOrbit-extensions/java/issues)
+- [Java with Eclipse JDTLS Issues](https://github.com/ABckh/CodeOrbit-java-eclipse-jdtls/issues)

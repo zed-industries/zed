@@ -1,4 +1,4 @@
-pub(crate) mod breakpoint_list;
+﻿pub(crate) mod breakpoint_list;
 pub(crate) mod console;
 pub(crate) mod loaded_source_list;
 pub(crate) mod module_list;
@@ -10,7 +10,7 @@ use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 use crate::{
     ToggleExpandItem,
     new_process_modal::resolve_path,
-    persistence::{self, DebuggerPaneItem, SerializedLayout},
+    persistence::{self, DebuggerPaneItem, SerialiCodeOrbitLayout},
 };
 
 use super::DebugPanelItemEvent;
@@ -42,7 +42,7 @@ use serde_json::Value;
 use settings::Settings;
 use stack_frame_list::StackFrameList;
 use task::{
-    BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskContext, ZedDebugConfig,
+    BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskContext, CodeOrbitDebugConfig,
     substitute_variables_in_str,
 };
 use terminal_view::TerminalView;
@@ -396,7 +396,7 @@ pub(crate) fn new_debugger_pane(
                                 let selected = active_pane_item
                                     .as_ref()
                                     .map_or(false, |active| active.item_id() == item.item_id());
-                                let deemphasized = !pane.has_focus(window, cx);
+                                let deemphasiCodeOrbit = !pane.has_focus(window, cx);
                                 let item_ = item.boxed_clone();
                                 div()
                                     .id(SharedString::from(format!(
@@ -413,7 +413,7 @@ pub(crate) fn new_debugger_pane(
                                         let theme = cx.theme();
                                         if selected {
                                             let color = theme.colors().tab_active_background;
-                                            let color = if deemphasized {
+                                            let color = if deemphasiCodeOrbit {
                                                 color.opacity(0.5)
                                             } else {
                                                 color
@@ -433,7 +433,7 @@ pub(crate) fn new_debugger_pane(
                                     .child(item.tab_content(
                                         TabContentParams {
                                             selected,
-                                            deemphasized,
+                                            deemphasiCodeOrbit,
                                             ..Default::default()
                                         },
                                         window,
@@ -559,8 +559,8 @@ impl RunningState {
                     .for_each(|value| Self::substitute_variables_in_config(value, context));
             }
             serde_json::Value::String(s) => {
-                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
-                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                // Some built-in CodeOrbit tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$codeorbit_") && s.ends_with('"') {
                     *s = s[1..s.len() - 1].to_string();
                 }
                 if let Some(substituted) = substitute_variables_in_str(&s, context) {
@@ -587,8 +587,8 @@ impl RunningState {
                     .for_each(|value| Self::relativize_paths(None, value, context));
             }
             serde_json::Value::String(s) if key == Some("program") || key == Some("cwd") => {
-                // Some built-in zed tasks wrap their arguments in quotes as they might contain spaces.
-                if s.starts_with("\"$ZED_") && s.ends_with('"') {
+                // Some built-in CodeOrbit tasks wrap their arguments in quotes as they might contain spaces.
+                if s.starts_with("\"$codeorbit_") && s.ends_with('"') {
                     *s = s[1..s.len() - 1].to_string();
                 }
                 resolve_path(s);
@@ -605,7 +605,7 @@ impl RunningState {
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        serialized_pane_layout: Option<SerializedLayout>,
+        serialiCodeOrbit_pane_layout: Option<SerialiCodeOrbitLayout>,
         dock_axis: Axis,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -694,10 +694,10 @@ impl RunningState {
         ];
 
         let mut pane_close_subscriptions = HashMap::default();
-        let panes = if let Some(root) = serialized_pane_layout.and_then(|serialized_layout| {
+        let panes = if let Some(root) = serialiCodeOrbit_pane_layout.and_then(|serialiCodeOrbit_layout| {
             persistence::deserialize_pane_layout(
-                serialized_layout.panes,
-                dock_axis != serialized_layout.dock_axis,
+                serialiCodeOrbit_layout.panes,
+                dock_axis != serialiCodeOrbit_layout.dock_axis,
                 &workspace,
                 &project,
                 &stack_frame_list,
@@ -944,7 +944,7 @@ impl RunningState {
                     })?
                     .await?;
 
-                let zed_config = ZedDebugConfig {
+                let codeorbit_config = CodeOrbitDebugConfig {
                     label: label.clone(),
                     adapter: adapter.clone(),
                     request,
@@ -954,14 +954,14 @@ impl RunningState {
                 let scenario = dap_registry
                     .adapter(&adapter)
                     .ok_or_else(|| anyhow!("{}: is not a valid adapter name", &adapter))
-                    .map(|adapter| adapter.config_from_zed_format(zed_config))??;
+                    .map(|adapter| adapter.config_from_CodeOrbit_format(codeorbit_config))??;
                 config = scenario.config;
                 Self::substitute_variables_in_config(&mut config, &task_context);
             } else {
                 let Err(e) = request_type else {
                     unreachable!();
                 };
-                anyhow::bail!("Zed cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
+                anyhow::bail!("CodeOrbit cannot determine how to run this debug scenario. `build` field was not provided and Debug Adapter won't accept provided configuration because: {e}");
             };
 
             Ok(DebugTaskDefinition {
@@ -1215,7 +1215,7 @@ impl RunningState {
                         let adapter_name = this.session.read(cx).adapter();
                         (
                             adapter_name,
-                            persistence::build_serialized_layout(
+                            persistence::build_serialiCodeOrbit_layout(
                                 &this.panes.root,
                                 this.dock_axis,
                                 cx,
@@ -1349,8 +1349,8 @@ impl RunningState {
     }
 
     #[cfg(test)]
-    pub(crate) fn serialized_layout(&self, cx: &App) -> SerializedLayout {
-        persistence::build_serialized_layout(&self.panes.root, self.dock_axis, cx)
+    pub(crate) fn serialiCodeOrbit_layout(&self, cx: &App) -> SerialiCodeOrbitLayout {
+        persistence::build_serialiCodeOrbit_layout(&self.panes.root, self.dock_axis, cx)
     }
 
     pub fn capabilities(&self, cx: &App) -> Capabilities {

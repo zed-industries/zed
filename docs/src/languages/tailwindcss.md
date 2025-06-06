@@ -1,6 +1,6 @@
-# Tailwind CSS
+﻿# Tailwind CSS
 
-Zed has built-in support for Tailwind CSS autocomplete, linting, and hover previews.
+CodeOrbit has built-in support for Tailwind CSS autocomplete, linting, and hover previews.
 
 - Language Server: [tailwindlabs/tailwindcss-intellisense](https://github.com/tailwindlabs/tailwindcss-intellisense)
 
@@ -10,7 +10,7 @@ Zed has built-in support for Tailwind CSS autocomplete, linting, and hover previ
 TBD: Document Tailwind CSS Configuration
 -->
 
-Languages which can be used with Tailwind CSS in Zed:
+Languages which can be used with Tailwind CSS in CodeOrbit:
 
 - [Astro](./astro.md)
 - [CSS](./css.md)
@@ -25,7 +25,7 @@ Languages which can be used with Tailwind CSS in Zed:
 
 ### Prettier Plugin
 
-Zed supports Prettier out of the box, which means that if you have the [Tailwind CSS Prettier plugin](https://github.com/tailwindlabs/prettier-plugin-tailwindcss) installed, adding it to your Prettier configuration will make it work automatically:
+CodeOrbit supports Prettier out of the box, which means that if you have the [Tailwind CSS Prettier plugin](https://github.com/tailwindlabs/prettier-plugin-tailwindcss) installed, adding it to your Prettier configuration will make it work automatically:
 
 ```json
 // .prettierrc

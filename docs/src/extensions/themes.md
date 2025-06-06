@@ -1,16 +1,16 @@
-# Themes
+﻿# Themes
 
 The `themes` directory in an extension should contain one or more theme files.
 
-Each theme file should adhere to the JSON schema specified at [`https://zed.dev/schema/themes/v0.2.0.json`](https://zed.dev/schema/themes/v0.2.0.json).
+Each theme file should adhere to the JSON schema specified at [`https://CodeOrbit.dev/schema/themes/v0.2.0.json`](https://CodeOrbit.dev/schema/themes/v0.2.0.json).
 
-See [this blog post](https://zed.dev/blog/user-themes-now-in-preview) for more details about creating themes.
+See [this blog post](https://CodeOrbit.dev/blog/user-themes-now-in-preview) for more details about creating themes.
 
 ## Theme JSON Structure
 
-The structure of a Zed theme is defined in the [Zed Theme JSON Schema](https://zed.dev/schema/themes/v0.2.0.json).
+The structure of a CodeOrbit theme is defined in the [CodeOrbit Theme JSON Schema](https://CodeOrbit.dev/schema/themes/v0.2.0.json).
 
-A Zed theme consists of a Theme Family object including:
+A CodeOrbit theme consists of a Theme Family object including:
 
 - `name`: The name for the theme family
 - `author`: The name of the author of the theme family
@@ -50,4 +50,4 @@ The core components a Theme object include:
 6. Terminal Colors:
    - ANSI color definitions for the integrated terminal
 
-We recommend looking at our [existing themes](https://github.com/zed-industries/zed/tree/main/assets/themes) to get a more comprehensive idea of what can be styled.
+We recommend looking at our [existing themes](https://github.com/CodeOrbit-industries/CodeOrbit/tree/main/assets/themes) to get a more comprehensive idea of what can be styled.

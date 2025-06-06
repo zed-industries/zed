@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "eval"
 version = "0.1.0"
 publish.workspace = true
@@ -67,4 +67,4 @@ unindent.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
+codeorbit_llm_client.workspace = true

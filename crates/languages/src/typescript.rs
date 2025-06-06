@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -610,7 +610,7 @@ impl LspAdapter for TypeScriptLspAdapter {
         let tsdk_path = Self::tsdk_path(fs, adapter).await;
         Ok(Some(json!({
             "provideFormatter": true,
-            "hostInfo": "zed",
+            "hostInfo": "CodeOrbit",
             "tsserver": {
                 "path": tsdk_path,
             },
@@ -756,7 +756,7 @@ impl LspAdapter for EsLintLspAdapter {
             "problems": {},
             "codeActionOnSave": {
                 // We enable this, but without also configuring code_actions_on_format
-                // in the Zed configuration, it doesn't have an effect.
+                // in the CodeOrbit configuration, it doesn't have an effect.
                 "enable": true,
             },
             "codeAction": {
@@ -796,7 +796,7 @@ impl LspAdapter for EsLintLspAdapter {
         _delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let url = build_asset_url(
-            "zed-industries/vscode-eslint",
+            "CodeOrbit-industries/vscode-eslint",
             Self::CURRENT_VERSION_TAG_NAME,
             Self::GITHUB_ASSET_KIND,
         )?;

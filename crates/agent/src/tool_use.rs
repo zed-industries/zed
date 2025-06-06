@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_tool::{
@@ -17,7 +17,7 @@ use ui::{IconName, Window};
 use util::truncate_lines_to_byte_limit;
 
 use crate::thread::{MessageId, PromptId, ThreadId};
-use crate::thread_store::SerializedMessage;
+use crate::thread_store::SerialiCodeOrbitMessage;
 
 #[derive(Debug)]
 pub struct ToolUse {
@@ -51,15 +51,15 @@ impl ToolUseState {
         }
     }
 
-    /// Constructs a [`ToolUseState`] from the given list of [`SerializedMessage`]s.
+    /// Constructs a [`ToolUseState`] from the given list of [`SerialiCodeOrbitMessage`]s.
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
     ///
     /// If `window` is `None` (e.g., when in headless mode or when running evals),
-    /// tool cards won't be deserialized
-    pub fn from_serialized_messages(
+    /// tool cards won't be deserialiCodeOrbit
+    pub fn from_serialiCodeOrbit_messages(
         tools: Entity<ToolWorkingSet>,
-        messages: &[SerializedMessage],
+        messages: &[SerialiCodeOrbitMessage],
         project: Entity<Project>,
         window: Option<&mut Window>, // None in headless mode
         cx: &mut App,

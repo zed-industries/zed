@@ -1,4 +1,4 @@
-use super::{
+﻿use super::{
     breakpoint_store::BreakpointStore,
     dap_command::EvaluateCommand,
     locators,
@@ -56,14 +56,14 @@ use worktree::Worktree;
 #[derive(Debug)]
 pub enum DapStoreEvent {
     DebugClientStarted(SessionId),
-    DebugSessionInitialized(SessionId),
+    DebugSessionInitialiCodeOrbit(SessionId),
     DebugClientShutdown(SessionId),
     DebugClientEvent {
         session_id: SessionId,
         message: Message,
     },
     Notification(String),
-    RemoteHasInitialized,
+    RemoteHasInitialiCodeOrbit,
 }
 
 enum DapStoreMode {

@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::Path};
+﻿use std::{borrow::Cow, path::Path};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -37,7 +37,7 @@ impl DapLocator for NodeLocator {
             return None;
         }
         let test_library = build_config.args.first()?;
-        let program_path = Path::new("$ZED_WORKTREE_ROOT")
+        let program_path = Path::new("$codeorbit_WORKTREE_ROOT")
             .join("node_modules")
             .join(".bin")
             .join(test_library);

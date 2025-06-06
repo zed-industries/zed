@@ -1,4 +1,4 @@
-5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 6 6 3
+﻿5c4f3c0ceaa0b2270c8f4fc8ee32b85c70810206 6 6 3
 author Mahdy M. Karam
 author-mail <64036912+mmkaram@users.noreply.github.com>
 author-time 1708621949
@@ -30,7 +30,7 @@ previous c6826a61a0a947acf09d65ada568c9c4e4494cb2 crates/vim/src/utils.rs
 filename crates/vim/src/utils.rs
 3635d2dcedd83f1b6702f33ca2673317f7fa4695 1 1 2
 author Conrad Irwin
-author-mail <conrad@zed.dev>
+author-mail <conrad@CodeOrbit.dev>
 author-time 1707520689
 author-tz -0700
 committer GitHub
@@ -87,11 +87,11 @@ previous 6457ccf9ece3b36a37e675783abee9748a443115 crates/vim/src/utils.rs
 filename crates/vim/src/utils.rs
 b02bd9bce1db3a68dcd606718fa02709020860af 29 61 1
 author Conrad Irwin
-author-mail <conrad@zed.dev>
+author-mail <conrad@CodeOrbit.dev>
 author-time 1694798044
 author-tz -0600
 committer Conrad Irwin
-committer-mail <conrad@zed.dev>
+committer-mail <conrad@CodeOrbit.dev>
 committer-time 1694798044
 committer-tz -0600
 summary Fix Y on last line with no trailing new line
@@ -102,11 +102,11 @@ previous 7c77baa7c17eea106330622e70513ea9389d50a1 crates/vim/src/utils.rs
 filename crates/vim/src/utils.rs
 e4794e3134b6449e36ed2771a8849046489cc252 13 45 1
 author Conrad Irwin
-author-mail <conrad@zed.dev>
+author-mail <conrad@CodeOrbit.dev>
 author-time 1692855942
 author-tz -0600
 committer Conrad Irwin
-committer-mail <conrad@zed.dev>
+committer-mail <conrad@CodeOrbit.dev>
 committer-time 1692856812
 committer-tz -0600
 summary vim: Fix linewise copy of last line with no trailing newline
@@ -126,11 +126,11 @@ previous 26c3312049a9c73bc3350528c1defd3820a7a8c7 crates/vim/src/utils.rs
 filename crates/vim/src/utils.rs
 33d7fe02ee560f6ed57d1425c43e60aef3b66e64 10 43 1
 author Conrad Irwin
-author-mail <conrad@zed.dev>
+author-mail <conrad@CodeOrbit.dev>
 author-time 1692644159
 author-tz -0600
 committer Conrad Irwin
-committer-mail <conrad@zed.dev>
+committer-mail <conrad@CodeOrbit.dev>
 committer-time 1692732477
 committer-tz -0600
 summary Rewrite paste

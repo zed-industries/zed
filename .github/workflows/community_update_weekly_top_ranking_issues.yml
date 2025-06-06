@@ -1,4 +1,4 @@
-name: Update Weekly Top Ranking Issues
+﻿name: Update Weekly Top Ranking Issues
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 jobs:
   update_top_ranking_issues:
     runs-on: ubuntu-latest
-    if: github.repository == 'zed-industries/zed'
+    if: github.repository == 'CodeOrbit-industries/CodeOrbit'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - name: Set up uv

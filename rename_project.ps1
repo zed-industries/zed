@@ -1,4 +1,4 @@
-# PowerShell script to rename Zed to CodeOrbit in all files
+﻿# PowerShell script to rename CodeOrbit to CodeOrbit in all files
 
 $rootDir = Get-Location
 $files = Get-ChildItem -Path $rootDir -Recurse -File -Exclude "*.git*", "*.dll", "*.exe", "*.png", "*.jpg", "*.jpeg", "*.gif", "*.ico", "*.svg", "*.woff", "*.woff2", "*.ttf", "*.eot"
@@ -20,9 +20,9 @@ foreach ($file in $files) {
 
 # Rename files and directories
 Get-ChildItem -Path $rootDir -Recurse -File | 
-    Where-Object { $_.Name -match 'zed' -or $_.Name -match 'Zed' } | 
+    Where-Object { $_.Name -match 'CodeOrbit' -or $_.Name -match 'CodeOrbit' } | 
     ForEach-Object {
-        $newName = $_.Name -replace 'zed', 'codeorbit' -replace 'Zed', 'CodeOrbit'
+        $newName = $_.Name -replace 'CodeOrbit', 'codeorbit' -replace 'CodeOrbit', 'CodeOrbit'
         if ($_.Name -ne $newName) {
             $newPath = Join-Path $_.Directory.FullName $newName
             Write-Host "Renaming $($_.FullName) to $newPath"

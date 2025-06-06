@@ -1,4 +1,4 @@
-use crate::{SuppressNotification, Toast, Workspace};
+﻿use crate::{SuppressNotification, Toast, Workspace};
 use anyhow::Context as _;
 use gpui::{
     AnyView, App, AppContext as _, AsyncWindowContext, ClickEvent, ClipboardItem, Context,
@@ -135,7 +135,7 @@ impl Workspace {
             cx.new(|cx| {
                 ErrorMessagePrompt::new(err.to_string(), cx).with_link_button(
                     "See docs",
-                    "https://zed.dev/docs/linux#i-cant-open-any-files",
+                    "https://CodeOrbit.dev/docs/linux#i-cant-open-any-files",
                 )
             })
         });
@@ -953,7 +953,7 @@ pub trait NotifyTaskExt {
 
 impl<R, E> NotifyTaskExt for Task<std::result::Result<R, E>>
 where
-    E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
+    E: std::fmt::Debug + std::fmt::Display + SiCodeOrbit + 'static,
     R: 'static,
 {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {

@@ -1,6 +1,6 @@
-# Zed Schema Generator
+﻿# CodeOrbit Schema Generator
 
-Prints various Zed schemas to stdout.
+Prints various CodeOrbit schemas to stdout.
 
 ## Usage
 

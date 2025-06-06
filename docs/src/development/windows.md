@@ -1,10 +1,10 @@
-# Building Zed for Windows
+﻿# Building CodeOrbit for Windows
 
 > The following commands may be executed in any shell.
 
 ## Repository
 
-Clone down the [Zed repository](https://github.com/zed-industries/zed).
+Clone down the [CodeOrbit repository](https://github.com/CodeOrbit-industries/CodeOrbit).
 
 ## Dependencies
 
@@ -16,7 +16,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 - Install Windows 11 or 10 SDK depending on your system, but ensure that at least `Windows 10 SDK version 2104 (10.0.20348.0)` is installed on your machine. You can download it from the [Windows SDK Archive](https://developer.microsoft.com/windows/downloads/windows-sdk/)
 - Install [CMake](https://cmake.org/download) (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/)). Or you can install it through Visual Studio Installer, then manually add the `bin` directory to your `PATH`, for example: `C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
 
-If you can't compile Zed, make sure that you have at least the following components installed in case of a Visual Studio installation:
+If you can't compile CodeOrbit, make sure that you have at least the following components installed in case of a Visual Studio installation:
 
 ```json
 {
@@ -70,7 +70,7 @@ The list can be obtained as follows:
 
 > This section is still in development. The instructions are not yet complete.
 
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
+If you are developing collaborative features of CodeOrbit, you'll need to install the dependencies of CodeOrbit's `collab` server:
 
 - Install [Postgres](https://www.postgresql.org/download/windows/)
 - Install [Livekit](https://github.com/livekit/livekit), optionally you can add the `livekit-server` binary to your `PATH`.
@@ -103,7 +103,7 @@ After this, you should restart the `postgresql` service. Press the `win` key + `
 
 ## Building from source
 
-Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
+Once you have the dependencies installed, you can build CodeOrbit using [Cargo](https://doc.rust-lang.org/cargo/).
 
 For a debug build:
 
@@ -125,18 +125,18 @@ cargo test --workspace
 
 ## Installing from msys2
 
-[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64, MINGW64 and CLANG64 repositories. To download it, run
+[MSYS2](https://msys2.org/) distribution provides CodeOrbit as a package [mingw-w64-CodeOrbit](https://packages.msys2.org/base/mingw-w64-CodeOrbit). The package is available for UCRT64, MINGW64 and CLANG64 repositories. To download it, run
 
 ```sh
 pacman -Syu
-pacman -S $MINGW_PACKAGE_PREFIX-zed
+pacman -S $MINGW_PACKAGE_PREFIX-CodeOrbit
 ```
 
-then you can run `zeditor` CLI. Editor executable is installed under `$MINGW_PREFIX/lib/zed` directory
+then you can run `codeorbit-editor` CLI. Editor executable is installed under `$MINGW_PREFIX/lib/CodeOrbit` directory
 
-You can see the [build script](https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-zed/PKGBUILD) for more details on build process.
+You can see the [build script](https://github.com/msys2/MINGW-packages/blob/master/mingw-w64-CodeOrbit/PKGBUILD) for more details on build process.
 
-> Please, report any issue in [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed) first.
+> Please, report any issue in [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+CodeOrbit) first.
 
 Note that `collab` is not supported for MSYS2.
 
@@ -144,7 +144,7 @@ Note that `collab` is not supported for MSYS2.
 
 ### Setting `RUSTFLAGS` env var breaks builds
 
-If you set the `RUSTFLAGS` env var, it will override the `rustflags` settings in `.cargo/config.toml` which is required to properly build Zed.
+If you set the `RUSTFLAGS` env var, it will override the `rustflags` settings in `.cargo/config.toml` which is required to properly build CodeOrbit.
 
 Since these settings can vary from time to time, the build errors you receive may vary from linker errors, to other stranger errors.
 
@@ -169,18 +169,18 @@ rustflags = [
 ]
 ```
 
-Or, you can create a new `.cargo/config.toml` in the same folder as the Zed repo (see below). This is particularly useful if you are doing CI builds since you don't have to edit the original `.cargo/config.toml`.
+Or, you can create a new `.cargo/config.toml` in the same folder as the CodeOrbit repo (see below). This is particularly useful if you are doing CI builds since you don't have to edit the original `.cargo/config.toml`.
 
 ```
 upper_dir
-├── .cargo          // <-- Make this folder
-│   └── config.toml // <-- Make this file
-└── zed
-    ├── .cargo
-    │   └── config.toml
-    └── crates
-        ├── assistant
-        └── ...
+â”œâ”€â”€ .cargo          // <-- Make this folder
+â”‚   â””â”€â”€ config.toml // <-- Make this file
+â””â”€â”€ CodeOrbit
+    â”œâ”€â”€ .cargo
+    â”‚   â””â”€â”€ config.toml
+    â””â”€â”€ crates
+        â”œâ”€â”€ assistant
+        â””â”€â”€ ...
 ```
 
 In the new (above) `.cargo/config.toml`, if we wanted to add `--cfg gles` to our rustflags, it would look like this
@@ -198,22 +198,22 @@ Try `cargo clean` and `cargo build`.
 
 This error can happen if you are using the "rust-lld.exe" linker. Consider trying a different linker.
 
-If you are using a global config, consider moving the Zed repository to a nested directory and add a `.cargo/config.toml` with a custom linker config in the parent directory.
+If you are using a global config, consider moving the CodeOrbit repository to a nested directory and add a `.cargo/config.toml` with a custom linker config in the parent directory.
 
-See this issue for more information [#12041](https://github.com/zed-industries/zed/issues/12041)
+See this issue for more information [#12041](https://github.com/CodeOrbit-industries/CodeOrbit/issues/12041)
 
 ### Invalid RC path selected
 
-Sometimes, depending on the security rules applied to your laptop, you may get the following error while compiling Zed:
+Sometimes, depending on the security rules applied to your laptop, you may get the following error while compiling CodeOrbit:
 
 ```
-error: failed to run custom build command for `zed(C:\Users\USER\src\zed\crates\zed)`
+error: failed to run custom build command for `CodeOrbit(C:\Users\USER\src\CodeOrbit\crates\CodeOrbit)`
 
 Caused by:
-  process didn't exit successfully: `C:\Users\USER\src\zed\target\debug\build\zed-b24f1e9300107efc\build-script-build` (exit code: 1)
+  process didn't exit successfully: `C:\Users\USER\src\CodeOrbit\target\debug\build\CodeOrbit-b24f1e9300107efc\build-script-build` (exit code: 1)
   --- stdout
   cargo:rerun-if-changed=../../.git/logs/HEAD
-  cargo:rustc-env=ZED_COMMIT_SHA=25e2e9c6727ba9b77415588cfa11fd969612adb7
+  cargo:rustc-env=codeorbit_COMMIT_SHA=25e2e9c6727ba9b77415588cfa11fd969612adb7
   cargo:rustc-link-arg=/stack:8388608
   cargo:rerun-if-changed=resources/windows/app-icon.ico
   package.metadata.winresource does not exist
@@ -224,17 +224,17 @@ Caused by:
 warning: build failed, waiting for other jobs to finish...
 ```
 
-In order to fix this issue, you can manually set the `ZED_RC_TOOLKIT_PATH` environment variable to the RC toolkit path. Usually, you can set it to:
+In order to fix this issue, you can manually set the `codeorbit_RC_TOOLKIT_PATH` environment variable to the RC toolkit path. Usually, you can set it to:
 `C:\Program Files (x86)\Windows Kits\10\bin\<SDK_version>\x64`.
 
-See this [issue](https://github.com/zed-industries/zed/issues/18393) for more information.
+See this [issue](https://github.com/CodeOrbit-industries/CodeOrbit/issues/18393) for more information.
 
 ### Build fails: Path too long
 
 You may receive an error like the following when building
 
 ```
-error: failed to get `pet` as a dependency of package `languages v0.1.0 (D:\a\zed-windows-builds\zed-windows-builds\crates\languages)`
+error: failed to get `pet` as a dependency of package `languages v0.1.0 (D:\a\CodeOrbit-windows-builds\CodeOrbit-windows-builds\crates\languages)`
 
 Caused by:
   failed to load source for dependency `pet`
@@ -262,20 +262,20 @@ For more information on this, please see [win32 docs](https://learn.microsoft.co
 
 ### Graphics issues
 
-#### Zed fails to launch
+#### CodeOrbit fails to launch
 
-Currently, Zed uses Vulkan as its graphics API on Windows. However, Vulkan isn't always the most reliable on Windows, so if Zed fails to launch, it's likely a Vulkan-related issue.
+Currently, CodeOrbit uses Vulkan as its graphics API on Windows. However, Vulkan isn't always the most reliable on Windows, so if CodeOrbit fails to launch, it's likely a Vulkan-related issue.
 
-You can check the Zed log at:
-`C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
+You can check the CodeOrbit log at:
+`C:\Users\YOU\AppData\Local\CodeOrbit\logs\CodeOrbit.log`
 
 If you see messages like:
 
-- `Zed failed to open a window: NoSupportedDeviceFound`
+- `CodeOrbit failed to open a window: NoSupportedDeviceFound`
 - `ERROR_INITIALIZATION_FAILED`
 - `GPU Crashed`
 - `ERROR_SURFACE_LOST_KHR`
 
 Then Vulkan might not be working properly on your system. In most cases, updating your GPU drivers may help resolve this.
 
-If there's nothing Vulkan-related in the logs and you happen to have Bandicam installed, try uninstalling it. Zed is currently not compatible with Bandicam.
+If there's nothing Vulkan-related in the logs and you happen to have Bandicam installed, try uninstalling it. CodeOrbit is currently not compatible with Bandicam.

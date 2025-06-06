@@ -1,4 +1,4 @@
-mod providers;
+﻿mod providers;
 mod settings;
 
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub fn init(cx: &mut App) {
 /// Registers additional Git hosting providers.
 ///
 /// These require information from the Git repository to construct, so their
-/// registration is deferred until we have a Git repository initialized.
+/// registration is deferred until we have a Git repository initialiCodeOrbit.
 pub fn register_additional_providers(
     provider_registry: Arc<GitHostingProviderRegistry>,
     repository: Arc<dyn GitRepository>,
@@ -75,11 +75,11 @@ mod tests {
                 Some("github.com".to_string()),
             ),
             (
-                "git@github.com:zed-industries/zed.git",
+                "git@github.com:CodeOrbit-industries/CodeOrbit.git",
                 Some("github.com".to_string()),
             ),
             (
-                "git@my.super.long.subdomain.com:zed-industries/zed.git",
+                "git@my.super.long.subdomain.com:CodeOrbit-industries/CodeOrbit.git",
                 Some("my.super.long.subdomain.com".to_string()),
             ),
         ];

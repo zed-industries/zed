@@ -1,4 +1,4 @@
-{
+﻿{
   lib,
   stdenv,
 
@@ -69,11 +69,11 @@ let
   gpu-lib = if withGLES then libglvnd else vulkan-loader;
   commonArgs =
     let
-      zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/zed/Cargo.toml);
+      zedCargoLock = builtins.fromTOML (builtins.readFile ../crates/CodeOrbit/Cargo.toml);
       stdenv' = stdenv;
     in
     rec {
-      pname = "zed-editor";
+      pname = "CodeOrbit-editor";
       version = zedCargoLock.package.version + "-nightly";
       src = builtins.path {
         path = ../.;
@@ -98,9 +98,9 @@ let
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [
           (cargo-bundle.overrideAttrs (
             new: old: {
-              version = "0.6.1-zed";
+              version = "0.6.1-CodeOrbit";
               src = fetchFromGitHub {
-                owner = "zed-industries";
+                owner = "CodeOrbit-industries";
                 repo = "cargo-bundle";
                 rev = "2be2669972dff3ddd4daf89a2cb29d2d06cad7c7";
                 hash = "sha256-cSvW0ND148AGdIGWg/ku0yIacVgW+9f1Nsi+kAQxVrI=";
@@ -149,7 +149,7 @@ let
           (darwinMinVersionHook "10.15")
         ];
 
-      cargoExtraArgs = "-p zed -p cli --locked --features=gpui/runtime_shaders";
+      cargoExtraArgs = "-p CodeOrbit -p cli --locked --features=gpui/runtime_shaders";
 
       stdenv =
         pkgs:
@@ -175,7 +175,7 @@ let
             ../assets/fonts/plex-sans
           ];
         };
-        ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
+        ZED_UPDATE_EXPLANATION = "CodeOrbit has been installed using Nix. Auto-updates have thus been disabled.";
         RELEASE_VERSION = version;
         LK_CUSTOM_WEBRTC = livekit-libwebrtc;
 
@@ -244,11 +244,11 @@ craneLib.buildPackage (
     dontUseCmakeConfigure = true;
 
     # without the env var generate-licenses fails due to crane's fetchCargoVendor, see:
-    # https://github.com/zed-industries/zed/issues/19971#issuecomment-2688455390
+    # https://github.com/CodeOrbit-industries/CodeOrbit/issues/19971#issuecomment-2688455390
     # TODO: put this in a separate derivation that depends on src to avoid running it on every build
     preBuild = ''
       ALLOW_MISSING_LICENSES=yes bash script/generate-licenses
-      echo nightly > crates/zed/RELEASE_CHANNEL
+      echo nightly > crates/CodeOrbit/RELEASE_CHANNEL
     '';
 
     installPhase =
@@ -256,21 +256,21 @@ craneLib.buildPackage (
         ''
           runHook preInstall
 
-          pushd crates/zed
+          pushd crates/CodeOrbit
           sed -i "s/package.metadata.bundle-nightly/package.metadata.bundle/" Cargo.toml
           export CARGO_BUNDLE_SKIP_BUILD=true
           app_path="$(cargo bundle --profile $CARGO_PROFILE | xargs)"
           popd
 
           mkdir -p $out/Applications $out/bin
-          # Zed expects git next to its own binary
+          # CodeOrbit expects git next to its own binary
           ln -s ${git}/bin/git "$app_path/Contents/MacOS/git"
           mv $TARGET_DIR/cli "$app_path/Contents/MacOS/cli"
           mv "$app_path" $out/Applications/
 
           # Physical location of the CLI must be inside the app bundle as this is used
           # to determine which app to start
-          ln -s "$out/Applications/Zed Nightly.app/Contents/MacOS/cli" $out/bin/zed
+          ln -s "$out/Applications/CodeOrbit Nightly.app/Contents/MacOS/cli" $out/bin/CodeOrbit
 
           runHook postInstall
         ''
@@ -279,25 +279,25 @@ craneLib.buildPackage (
           runHook preInstall
 
           mkdir -p $out/bin $out/libexec
-          cp $TARGET_DIR/zed $out/libexec/zed-editor
-          cp $TARGET_DIR/cli  $out/bin/zed
-          ln -s $out/bin/zed $out/bin/zeditor  # home-manager expects the CLI binary to be here
+          cp $TARGET_DIR/CodeOrbit $out/libexec/CodeOrbit-editor
+          cp $TARGET_DIR/cli  $out/bin/CodeOrbit
+          ln -s $out/bin/CodeOrbit $out/bin/zeditor  # home-manager expects the CLI binary to be here
 
 
-          install -D "crates/zed/resources/app-icon-nightly@2x.png" \
-            "$out/share/icons/hicolor/1024x1024@2x/apps/zed.png"
-          install -D crates/zed/resources/app-icon-nightly.png \
-            $out/share/icons/hicolor/512x512/apps/zed.png
+          install -D "crates/CodeOrbit/resources/app-icon-nightly@2x.png" \
+            "$out/share/icons/hicolor/1024x1024@2x/apps/CodeOrbit.png"
+          install -D crates/CodeOrbit/resources/app-icon-nightly.png \
+            $out/share/icons/hicolor/512x512/apps/CodeOrbit.png
 
-          # TODO: icons should probably be named "zed-nightly"
+          # TODO: icons should probably be named "CodeOrbit-nightly"
           (
             export DO_STARTUP_NOTIFY="true"
-            export APP_CLI="zed"
-            export APP_ICON="zed"
-            export APP_NAME="Zed Nightly"
+            export APP_CLI="CodeOrbit"
+            export APP_ICON="CodeOrbit"
+            export APP_NAME="CodeOrbit Nightly"
             export APP_ARGS="%U"
             mkdir -p "$out/share/applications"
-            ${lib.getExe envsubst} < "crates/zed/resources/zed.desktop.in" > "$out/share/applications/dev.zed.Zed-Nightly.desktop"
+            ${lib.getExe envsubst} < "crates/CodeOrbit/resources/CodeOrbit.desktop.in" > "$out/share/applications/dev.CodeOrbit.CodeOrbit-Nightly.desktop"
           )
 
           runHook postInstall
@@ -305,15 +305,15 @@ craneLib.buildPackage (
 
     # TODO: why isn't this also done on macOS?
     postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
-      wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
+      wrapProgram $out/libexec/CodeOrbit-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
     '';
 
     meta = {
       description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
-      homepage = "https://zed.dev";
-      changelog = "https://zed.dev/releases/preview";
+      homepage = "https://CodeOrbit.dev";
+      changelog = "https://CodeOrbit.dev/releases/preview";
       license = lib.licenses.gpl3Only;
-      mainProgram = "zed";
+      mainProgram = "CodeOrbit";
       platforms = lib.platforms.linux ++ lib.platforms.darwin;
     };
   }

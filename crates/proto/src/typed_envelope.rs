@@ -1,4 +1,4 @@
-use crate::{Envelope, PeerId};
+﻿use crate::{Envelope, PeerId};
 use anyhow::{Context as _, Result};
 use serde::Serialize;
 use std::{
@@ -10,7 +10,7 @@ use std::{
 };
 use std::{marker::PhantomData, time::Instant};
 
-pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
+pub trait EnvelopedMessage: Clone + Debug + Serialize + SiCodeOrbit + Send + Sync + 'static {
     const NAME: &'static str;
     const PRIORITY: MessagePriority;
     fn into_envelope(

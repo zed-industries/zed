@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 use std::{fmt::Debug, path::Path};
 
 use anyhow::{Context as _, Result};
@@ -89,9 +89,9 @@ impl ThemeRegistry {
             assets,
         };
 
-        // We're loading the Zed default theme, as we need a theme to be loaded
+        // We're loading the CodeOrbit default theme, as we need a theme to be loaded
         // for tests.
-        registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
+        registry.insert_theme_families([crate::fallback_themes::codeorbit_default_themes()]);
 
         let default_icon_theme = crate::default_icon_theme();
         registry
@@ -178,7 +178,7 @@ impl ThemeRegistry {
             .cloned()
     }
 
-    /// Loads the themes bundled with the Zed binary and adds them to the registry.
+    /// Loads the themes bundled with the CodeOrbit binary and adds them to the registry.
     pub fn load_bundled_themes(&self) {
         let theme_paths = self
             .assets

@@ -1,4 +1,4 @@
-use collections::FxHashMap;
+﻿use collections::FxHashMap;
 use language::LanguageRegistry;
 use paths::local_debug_file_relative_path;
 use std::{
@@ -23,7 +23,7 @@ use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{ProjectPath, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::{Settings, initial_local_debug_tasks_content};
-use task::{DebugScenario, RevealTarget, ZedDebugConfig};
+use task::{DebugScenario, RevealTarget, CodeOrbitDebugConfig};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -320,7 +320,7 @@ impl NewProcessModal {
             None
         };
 
-        let session_scenario = ZedDebugConfig {
+        let session_scenario = CodeOrbitDebugConfig {
             adapter: debugger.to_owned().into(),
             label,
             request: request,
@@ -329,7 +329,7 @@ impl NewProcessModal {
 
         cx.global::<DapRegistry>()
             .adapter(&session_scenario.adapter)
-            .and_then(|adapter| adapter.config_from_zed_format(session_scenario).ok())
+            .and_then(|adapter| adapter.config_from_CodeOrbit_format(session_scenario).ok())
     }
 
     fn start_new_session(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -796,7 +796,7 @@ impl Render for NewProcessModal {
                                         InteractiveText::new(
                                             "open-debug-json",
                                             StyledText::new(
-                                                "Open .zed/debug.json for advanced configuration",
+                                                "Open .CodeOrbit/debug.json for advanced configuration",
                                             )
                                             .with_highlights([(
                                                 5..20,
@@ -899,12 +899,12 @@ impl ConfigureMode {
     pub(super) fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("ENV=Zed ~/bin/program --option", cx);
+            this.set_placeholder_text("ENV=CodeOrbit ~/bin/program --option", cx);
         });
 
         let cwd = cx.new(|cx| Editor::single_line(window, cx));
         cwd.update(cx, |this, cx| {
-            this.set_placeholder_text("Ex: $ZED_WORKTREE_ROOT", cx);
+            this.set_placeholder_text("Ex: $codeorbit_WORKTREE_ROOT", cx);
         });
 
         cx.new(|_| Self {
@@ -1043,7 +1043,7 @@ impl ConfigureMode {
 
 #[derive(Clone)]
 pub(super) struct AttachMode {
-    pub(super) definition: ZedDebugConfig,
+    pub(super) definition: CodeOrbitDebugConfig,
     pub(super) attach_picker: Entity<AttachModal>,
 }
 
@@ -1054,7 +1054,7 @@ impl AttachMode {
         window: &mut Window,
         cx: &mut Context<NewProcessModal>,
     ) -> Entity<Self> {
-        let definition = ZedDebugConfig {
+        let definition = CodeOrbitDebugConfig {
             adapter: debugger.unwrap_or(DebugAdapterName("".into())).0,
             label: "Attach New Session Setup".into(),
             request: dap::DebugRequest::Attach(task::AttachRequest { process_id: None }),
@@ -1363,7 +1363,7 @@ pub(crate) fn resolve_path(path: &mut String) {
         *path = trimmed_path.replacen('~', &home, 1);
     } else if let Some(strip_path) = path.strip_prefix(&format!(".{}", std::path::MAIN_SEPARATOR)) {
         *path = format!(
-            "$ZED_WORKTREE_ROOT{}{}",
+            "$codeorbit_WORKTREE_ROOT{}{}",
             std::path::MAIN_SEPARATOR,
             &strip_path
         );

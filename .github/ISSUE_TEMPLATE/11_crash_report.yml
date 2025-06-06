@@ -1,5 +1,5 @@
-name: Crash Report
-description: Zed is Crashing or Hanging
+﻿name: Crash Report
+description: CodeOrbit is Crashing or Hanging
 type: "Crash"
 body:
   - type: textarea
@@ -11,7 +11,7 @@ body:
         SUMMARY_SENTENCE_HERE
 
         ### Description
-        <!-- Include all steps necessary to reproduce from a clean Zed installation. Be verbose -->
+        <!-- Include all steps necessary to reproduce from a clean CodeOrbit installation. Be verbose -->
         Steps to trigger the problem:
         1.
         2.
@@ -25,21 +25,21 @@ body:
   - type: textarea
     id: environment
     attributes:
-      label: Zed Version and System Specs
-      description: 'Open Zed, and in the command palette select "zed: copy system specs into clipboard"'
+      label: CodeOrbit Version and System Specs
+      description: 'Open CodeOrbit, and in the command palette select "CodeOrbit: copy system specs into clipboard"'
       placeholder: |
-        Output of "zed: copy system specs into clipboard"
+        Output of "CodeOrbit: copy system specs into clipboard"
     validations:
       required: true
   - type: textarea
     attributes:
-      label: If applicable, attach your `~/Library/Logs/Zed/Zed.log` file to this issue.
+      label: If applicable, attach your `~/Library/Logs/CodeOrbit/CodeOrbit.log` file to this issue.
       description: |
-        macOS: `~/Library/Logs/Zed/Zed.log`
-        Linux: `~/.local/share/zed/logs/Zed.log` or $XDG_DATA_HOME
-        If you only need the most recent lines, you can run the `zed: open log` command palette action to see the last 1000.
+        macOS: `~/Library/Logs/CodeOrbit/CodeOrbit.log`
+        Linux: `~/.local/share/CodeOrbit/logs/CodeOrbit.log` or $XDG_DATA_HOME
+        If you only need the most recent lines, you can run the `CodeOrbit: open log` command palette action to see the last 1000.
       value: |
-        <details><summary>Zed.log</summary>
+        <details><summary>CodeOrbit.log</summary>
 
         <!-- Paste your log inside the code block. -->
         ```log

@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
@@ -248,8 +248,8 @@ pub async fn complete(
         .uri(uri)
         .header("Content-Type", "application/json");
 
-    let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+    let serialiCodeOrbit_request = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(serialiCodeOrbit_request))?;
 
     let mut response = client.send(request).await?;
 
@@ -456,7 +456,7 @@ mod tests {
                 assert!(tool_calls.is_some_and(|v| !v.is_empty()));
                 assert!(thinking.is_none());
             }
-            _ => panic!("Deserialized wrong role"),
+            _ => panic!("DeserialiCodeOrbit wrong role"),
         }
     }
 
@@ -534,9 +534,9 @@ mod tests {
             tools: vec![],
         };
 
-        let serialized = serde_json::to_string(&request).unwrap();
-        assert!(serialized.contains("images"));
-        assert!(serialized.contains(base64_image));
+        let serialiCodeOrbit = serde_json::to_string(&request).unwrap();
+        assert!(serialiCodeOrbit.contains("images"));
+        assert!(serialiCodeOrbit.contains(base64_image));
     }
 
     #[test]
@@ -554,8 +554,8 @@ mod tests {
             tools: vec![],
         };
 
-        let serialized = serde_json::to_string(&request).unwrap();
-        assert!(!serialized.contains("images"));
+        let serialiCodeOrbit = serde_json::to_string(&request).unwrap();
+        assert!(!serialiCodeOrbit.contains("images"));
     }
 
     #[test]
@@ -575,9 +575,9 @@ mod tests {
             tools: vec![],
         };
 
-        let serialized = serde_json::to_string(&request).unwrap();
+        let serialiCodeOrbit = serde_json::to_string(&request).unwrap();
 
-        let parsed: serde_json::Value = serde_json::from_str(&serialized).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&serialiCodeOrbit).unwrap();
         let message_images = parsed["messages"][0]["images"].as_array().unwrap();
         assert_eq!(message_images.len(), 1);
         assert_eq!(message_images[0].as_str().unwrap(), base64_image);

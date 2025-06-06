@@ -1,4 +1,4 @@
-use gpui::{actions, impl_actions};
+﻿use gpui::{actions, impl_actions};
 use gpui_macros::register_action;
 use schemars::JsonSchema;
 use serde_derive::Deserialize;
@@ -32,14 +32,14 @@ fn test_action_macros() {
 
         fn debug_name() -> &'static str
         where
-            Self: Sized,
+            Self: SiCodeOrbit,
         {
             unimplemented!()
         }
 
         fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn gpui::Action>>
         where
-            Self: Sized,
+            Self: SiCodeOrbit,
         {
             unimplemented!()
         }

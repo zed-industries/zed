@@ -1,4 +1,4 @@
-use collections::{HashMap, VecDeque};
+﻿use collections::{HashMap, VecDeque};
 use copilot::Copilot;
 use editor::{Editor, EditorEvent, actions::MoveToEnd, scroll::Autoscroll};
 use futures::{StreamExt, channel::mpsc};
@@ -1071,7 +1071,7 @@ impl Item for LspLogView {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Some(cx.new(|cx| {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);

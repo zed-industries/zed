@@ -1,6 +1,6 @@
-//! # Table Output for REPL
+﻿//! # Table Output for REPL
 //!
-//! This module provides functionality to render tabular data in Zed's REPL output.
+//! This module provides functionality to render tabular data in CodeOrbit's REPL output.
 //!
 //! It supports the [Frictionless Data Table Schema](https://specs.frictionlessdata.io/table-schema/)
 //! for data interchange, implemented by Pandas in Python and Polars for Deno.

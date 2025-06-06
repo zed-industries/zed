@@ -1,4 +1,4 @@
-mod ids;
+﻿mod ids;
 mod queries;
 mod tables;
 #[cfg(test)]
@@ -269,7 +269,7 @@ impl Database {
 
     /// room_transaction runs the block in a transaction. It returns a RoomGuard, that keeps
     /// the database locked until it is dropped. This ensures that updates sent to clients are
-    /// properly serialized with respect to database changes.
+    /// properly serialiCodeOrbit with respect to database changes.
     async fn room_transaction<F, Fut, T>(
         &self,
         room_id: RoomId,
@@ -387,13 +387,13 @@ impl Database {
         const SLEEPS: [f32; 10] = [10., 20., 40., 80., 160., 320., 640., 1280., 2560., 5120.];
         if is_serialization_error(error) && prev_attempt_count < SLEEPS.len() {
             let base_delay = SLEEPS[prev_attempt_count];
-            let randomized_delay = base_delay * self.rng.lock().await.gen_range(0.5..=2.0);
+            let randomiCodeOrbit_delay = base_delay * self.rng.lock().await.gen_range(0.5..=2.0);
             log::warn!(
                 "retrying transaction after serialization error. delay: {} ms.",
-                randomized_delay
+                randomiCodeOrbit_delay
             );
             self.executor
-                .sleep(Duration::from_millis(randomized_delay as u64))
+                .sleep(Duration::from_millis(randomiCodeOrbit_delay as u64))
                 .await;
             true
         } else {

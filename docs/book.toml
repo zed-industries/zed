@@ -1,9 +1,9 @@
-[book]
-authors = ["The Zed Team"]
+﻿[book]
+authors = ["The CodeOrbit Team"]
 language = "en"
 multilingual = false
 src = "src"
-title = "Zed"
+title = "CodeOrbit"
 site-url = "/docs/"
 
 [output.html]
@@ -23,7 +23,7 @@ enable = false
 "/adding-new-languages.html" = "/docs/extensions/languages.html"
 "/language-model-integration.html" = "/docs/assistant/assistant.html"
 "/assistant.html" = "/docs/assistant/assistant.html"
-"/developing-zed.html" = "/docs/development.html"
+"/developing-CodeOrbit.html" = "/docs/development.html"
 "/conversations.html" = "/community-links"
 "/ai.html" = "/docs/ai/overview.html"
 "/assistant/assistant.html" = "/docs/ai/overview.html"
@@ -42,6 +42,6 @@ enable = false
 # and other docs-related functions.
 #
 # Comment the below section out if you need to bypass the preprocessor for some reason.
-[preprocessor.zed_docs_preprocessor]
+[preprocessor.codeorbit_docs_preprocessor]
 command = "cargo run -p docs_preprocessor --"
 renderer = ["html"]

@@ -1,4 +1,4 @@
-//! Project-wide storage of the tasks available, capable of updating itself from the sources set.
+﻿//! Project-wide storage of the tasks available, capable of updating itself from the sources set.
 
 use std::{
     borrow::Cow,
@@ -118,13 +118,13 @@ impl<T> Default for InventoryFor<T> {
 pub enum TaskSourceKind {
     /// bash-like commands spawned by users, not associated with any path
     UserInput,
-    /// Tasks from the worktree's .zed/task.json
+    /// Tasks from the worktree's .CodeOrbit/task.json
     Worktree {
         id: WorktreeId,
         directory_in_worktree: PathBuf,
         id_base: Cow<'static, str>,
     },
-    /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
+    /// ~/.config/CodeOrbit/task.json - like global files with task definitions, applicable to any path
     AbsPath {
         id_base: Cow<'static, str>,
         abs_path: PathBuf,
@@ -520,7 +520,7 @@ impl Inventory {
         }
     }
 
-    /// Registers task "usage" as being scheduled – to be used for LRU sorting when listing all tasks.
+    /// Registers task "usage" as being scheduled â€“ to be used for LRU sorting when listing all tasks.
     pub fn task_scheduled(
         &mut self,
         task_source_kind: TaskSourceKind,
@@ -867,7 +867,7 @@ impl ContextProvider for BasicContextProvider {
         let current_file = buffer
             .file()
             .and_then(|file| file.as_local())
-            .map(|file| file.abs_path(cx).to_sanitized_string());
+            .map(|file| file.abs_path(cx).to_sanitiCodeOrbit_string());
         let Point { row, column } = location.range.start.to_point(&buffer_snapshot);
         let row = row + 1;
         let column = column + 1;
@@ -899,14 +899,14 @@ impl ContextProvider for BasicContextProvider {
         if let Some(worktree_path) = worktree_root_dir {
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree_path.to_sanitized_string(),
+                worktree_path.to_sanitiCodeOrbit_string(),
             );
             if let Some(full_path) = current_file.as_ref() {
                 let relative_path = pathdiff::diff_paths(full_path, worktree_path);
                 if let Some(relative_file) = relative_path {
                     task_variables.insert(
                         VariableName::RelativeFile,
-                        relative_file.to_sanitized_string(),
+                        relative_file.to_sanitiCodeOrbit_string(),
                     );
                     if let Some(relative_dir) = relative_file.parent() {
                         task_variables.insert(
@@ -914,7 +914,7 @@ impl ContextProvider for BasicContextProvider {
                             if relative_dir.as_os_str().is_empty() {
                                 String::from(".")
                             } else {
-                                relative_dir.to_sanitized_string()
+                                relative_dir.to_sanitiCodeOrbit_string()
                             },
                         );
                     }
@@ -1195,16 +1195,16 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    directory_in_worktree: PathBuf::from(".zed"),
-                    id_base: "local worktree tasks from directory \".zed\"".into(),
+                    directory_in_worktree: PathBuf::from(".CodeOrbit"),
+                    id_base: "local worktree tasks from directory \".CodeOrbit\"".into(),
                 },
                 common_name.to_string(),
             ),
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    directory_in_worktree: PathBuf::from(".zed"),
-                    id_base: "local worktree tasks from directory \".zed\"".into(),
+                    directory_in_worktree: PathBuf::from(".CodeOrbit"),
+                    id_base: "local worktree tasks from directory \".CodeOrbit\"".into(),
                 },
                 "worktree_1".to_string(),
             ),
@@ -1213,16 +1213,16 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    directory_in_worktree: PathBuf::from(".zed"),
-                    id_base: "local worktree tasks from directory \".zed\"".into(),
+                    directory_in_worktree: PathBuf::from(".CodeOrbit"),
+                    id_base: "local worktree tasks from directory \".CodeOrbit\"".into(),
                 },
                 common_name.to_string(),
             ),
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    directory_in_worktree: PathBuf::from(".zed"),
-                    id_base: "local worktree tasks from directory \".zed\"".into(),
+                    directory_in_worktree: PathBuf::from(".CodeOrbit"),
+                    id_base: "local worktree tasks from directory \".CodeOrbit\"".into(),
                 },
                 "worktree_2".to_string(),
             ),
@@ -1243,7 +1243,7 @@ mod tests {
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_1,
-                        path: Path::new(".zed"),
+                        path: Path::new(".CodeOrbit"),
                     }),
                     Some(&mock_tasks_from_names(
                         worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
@@ -1254,7 +1254,7 @@ mod tests {
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_2,
-                        path: Path::new(".zed"),
+                        path: Path::new(".CodeOrbit"),
                     }),
                     Some(&mock_tasks_from_names(
                         worktree_2_tasks.iter().map(|(_, name)| name.as_str()),

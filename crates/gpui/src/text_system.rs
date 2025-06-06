@@ -1,4 +1,4 @@
-mod font_fallbacks;
+﻿mod font_fallbacks;
 mod font_features;
 mod line;
 mod line_layout;
@@ -65,7 +65,7 @@ impl TextSystem {
             font_runs_pool: Mutex::default(),
             fallback_font_stack: smallvec![
                 // TODO: Remove this when Linux have implemented setting fallbacks.
-                font("Zed Plex Mono"),
+                font("CodeOrbit Plex Mono"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
                 font("Cantarell"), // Gnome
@@ -281,7 +281,7 @@ impl TextSystem {
         }
     }
 
-    /// Get the rasterized size and location of a specific, rendered glyph.
+    /// Get the rasteriCodeOrbit size and location of a specific, rendered glyph.
     pub(crate) fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let raster_bounds = self.raster_bounds.upgradable_read();
         if let Some(bounds) = raster_bounds.get(params) {

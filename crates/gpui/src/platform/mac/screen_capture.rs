@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     DevicePixels, ForegroundExecutor, Size,
     platform::{ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream},
     size,
@@ -99,7 +99,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let mut error: id = nil;
             let _: () = msg_send![stream, addStreamOutput:output type:SCStreamOutputTypeScreen sampleHandlerQueue:0 error:&mut error as *mut id];
             if error != nil {
-                let message: id = msg_send![error, localizedDescription];
+                let message: id = msg_send![error, localiCodeOrbitDescription];
                 tx.send(Err(anyhow!("failed to add stream  output {message:?}")))
                     .ok();
                 return rx;
@@ -115,7 +115,7 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
                         };
                         Ok(Box::new(stream) as Box<dyn ScreenCaptureStream>)
                     } else {
-                        let message: id = msg_send![error, localizedDescription];
+                        let message: id = msg_send![error, localiCodeOrbitDescription];
                         Err(anyhow!("failed to stop screen capture stream {message:?}"))
                     };
                     if let Some(tx) = tx.borrow_mut().take() {
@@ -146,13 +146,13 @@ impl Drop for MacScreenCaptureStream {
             let mut error: id = nil;
             let _: () = msg_send![self.sc_stream, removeStreamOutput:self.sc_stream_output type:SCStreamOutputTypeScreen error:&mut error as *mut _];
             if error != nil {
-                let message: id = msg_send![error, localizedDescription];
+                let message: id = msg_send![error, localiCodeOrbitDescription];
                 log::error!("failed to add stream  output {message:?}");
             }
 
             let handler = ConcreteBlock::new(move |error: id| {
                 if error != nil {
-                    let message: id = msg_send![error, localizedDescription];
+                    let message: id = msg_send![error, localiCodeOrbitDescription];
                     log::error!("failed to stop screen capture stream {message:?}");
                 }
             });
@@ -185,7 +185,7 @@ pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptur
                 }
                 Ok(result)
             } else {
-                let msg: id = msg_send![error, localizedDescription];
+                let msg: id = msg_send![error, localiCodeOrbitDescription];
                 Err(anyhow!(
                     "Screen share failed: {:?}",
                     NSStringExt::to_str(&msg)

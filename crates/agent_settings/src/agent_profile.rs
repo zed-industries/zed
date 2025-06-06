@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use collections::IndexMap;
 use gpui::SharedString;
@@ -61,7 +61,7 @@ impl Default for AgentProfileId {
     }
 }
 
-/// A profile for the Zed Agent that controls its behavior.
+/// A profile for the CodeOrbit Agent that controls its behavior.
 #[derive(Debug, Clone)]
 pub struct AgentProfile {
     /// The name of the profile.

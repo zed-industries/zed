@@ -1,4 +1,4 @@
-use crate::{PlatformDispatcher, TaskLabel};
+﻿use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use backtrace::Backtrace;
 use collections::{HashMap, HashSet, VecDeque};
@@ -30,7 +30,7 @@ struct TestDispatcherState {
     random: StdRng,
     foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
     background: Vec<Runnable>,
-    deprioritized_background: Vec<Runnable>,
+    deprioritiCodeOrbit_background: Vec<Runnable>,
     delayed: Vec<(Duration, Runnable)>,
     start_time: Instant,
     time: Duration,
@@ -39,7 +39,7 @@ struct TestDispatcherState {
     allow_parking: bool,
     waiting_hint: Option<String>,
     waiting_backtrace: Option<Backtrace>,
-    deprioritized_task_labels: HashSet<TaskLabel>,
+    deprioritiCodeOrbit_task_labels: HashSet<TaskLabel>,
     block_on_ticks: RangeInclusive<usize>,
 }
 
@@ -50,7 +50,7 @@ impl TestDispatcher {
             random,
             foreground: HashMap::default(),
             background: Vec::new(),
-            deprioritized_background: Vec::new(),
+            deprioritiCodeOrbit_background: Vec::new(),
             delayed: Vec::new(),
             time: Duration::ZERO,
             start_time: Instant::now(),
@@ -59,7 +59,7 @@ impl TestDispatcher {
             allow_parking: false,
             waiting_hint: None,
             waiting_backtrace: None,
-            deprioritized_task_labels: Default::default(),
+            deprioritiCodeOrbit_task_labels: Default::default(),
             block_on_ticks: 0..=1000,
         };
 
@@ -147,13 +147,13 @@ impl TestDispatcher {
         let runnable;
         let main_thread;
         if foreground_len == 0 && background_len == 0 {
-            let deprioritized_background_len = state.deprioritized_background.len();
-            if deprioritized_background_len == 0 {
+            let deprioritiCodeOrbit_background_len = state.deprioritiCodeOrbit_background.len();
+            if deprioritiCodeOrbit_background_len == 0 {
                 return false;
             }
-            let ix = state.random.gen_range(0..deprioritized_background_len);
+            let ix = state.random.gen_range(0..deprioritiCodeOrbit_background_len);
             main_thread = false;
-            runnable = state.deprioritized_background.swap_remove(ix);
+            runnable = state.deprioritiCodeOrbit_background.swap_remove(ix);
         } else {
             main_thread = state.random.gen_ratio(
                 foreground_len as u32,
@@ -187,7 +187,7 @@ impl TestDispatcher {
     pub fn deprioritize(&self, task_label: TaskLabel) {
         self.state
             .lock()
-            .deprioritized_task_labels
+            .deprioritiCodeOrbit_task_labels
             .insert(task_label);
     }
 
@@ -271,9 +271,9 @@ impl PlatformDispatcher for TestDispatcher {
         {
             let mut state = self.state.lock();
             if label.map_or(false, |label| {
-                state.deprioritized_task_labels.contains(&label)
+                state.deprioritiCodeOrbit_task_labels.contains(&label)
             }) {
-                state.deprioritized_background.push(runnable);
+                state.deprioritiCodeOrbit_background.push(runnable);
             } else {
                 state.background.push(runnable);
             }

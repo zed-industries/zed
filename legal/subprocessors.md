@@ -1,9 +1,9 @@
----
+﻿---
 title: Subprocessor List
 slug: subprocessors
 ---
 
-This page provides information about the Subprocessors Zed has engaged to provide processing activities on Customer Data as defined in the [Zed End User Terms](https://zed.dev/terms).
+This page provides information about the Subprocessors CodeOrbit has engaged to provide processing activities on Customer Data as defined in the [CodeOrbit End User Terms](https://CodeOrbit.dev/terms).
 
 | Subprocessor        | Purpose                  | Location      |
 | ------------------- | ------------------------ | ------------- |

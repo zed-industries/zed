@@ -1,0 +1,12 @@
+﻿[
+  {
+    "label": "Debug CodeOrbit (CodeLLDB)",
+    "adapter": "CodeLLDB",
+    "build": { "label": "Build CodeOrbit", "command": "cargo", "args": ["build"] }
+  },
+  {
+    "label": "Debug CodeOrbit (GDB)",
+    "adapter": "GDB",
+    "build": { "label": "Build CodeOrbit", "command": "cargo", "args": ["build"] }
+  }
+]

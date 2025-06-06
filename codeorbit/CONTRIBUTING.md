@@ -1,4 +1,4 @@
-# Contributing to CodeOrbit
+﻿# Contributing to CodeOrbit
 
 Thank you for your interest in contributing to CodeOrbit! We welcome contributions from everyone, whether you're a developer, designer, writer, or just someone who wants to help make CodeOrbit better.
 
@@ -6,7 +6,7 @@ Thank you for your interest in contributing to CodeOrbit! We welcome contributio
 
 ### Reporting Bugs
 
-1. Check if the bug has already been reported in the [issue tracker](https://github.com/your-org/codeorbit-zed/issues).
+1. Check if the bug has already been reported in the [issue tracker](https://github.com/your-org/codeorbit-CodeOrbit/issues).
 2. If not, create a new issue with a clear title and description.
 3. Include steps to reproduce the bug, expected behavior, and actual behavior.
 4. Add any relevant screenshots or error messages.

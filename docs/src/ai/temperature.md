@@ -1,6 +1,6 @@
-# Model Temperature
+﻿# Model Temperature
 
-Zed's settings allow you to specify a custom temperature for a provider and/or model:
+CodeOrbit's settings allow you to specify a custom temperature for a provider and/or model:
 
 ```json
 "model_parameters": [
@@ -15,7 +15,7 @@ Zed's settings allow you to specify a custom temperature for a provider and/or m
       },
       // To set parameters for a specific provider and model:
       {
-        "provider": "zed.dev",
+        "provider": "CodeOrbit.dev",
         "model": "claude-sonnet-4",
         "temperature": 1.0
       }

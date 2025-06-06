@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     App, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
     Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
     StyleRefinement, Styled, TransformationMatrix, Window, geometry::Negate as _, point, px,
@@ -97,7 +97,7 @@ impl Element for Svg {
         window: &mut Window,
         cx: &mut App,
     ) where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity.paint(
             global_id,

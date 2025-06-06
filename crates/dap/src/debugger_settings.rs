@@ -1,4 +1,4 @@
-use dap_types::SteppingGranularity;
+﻿use dap_types::SteppingGranularity;
 use gpui::{App, Global};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ pub struct DebuggerSettings {
     ///
     /// Default: line
     pub stepping_granularity: SteppingGranularity,
-    /// Whether the breakpoints should be reused across Zed sessions.
+    /// Whether the breakpoints should be reused across CodeOrbit sessions.
     ///
     /// Default: true
     pub save_breakpoints: bool,
@@ -31,7 +31,7 @@ pub struct DebuggerSettings {
     ///
     /// Default: 2000ms
     pub timeout: u64,
-    /// Whether to log messages between active debug adapters and Zed
+    /// Whether to log messages between active debug adapters and CodeOrbit
     ///
     /// Default: true
     pub log_dap_communications: bool,

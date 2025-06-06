@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use anyhow::Context as _;
 use prost::Message;
 use text::{EditOperation, UndoOperation};
@@ -154,7 +154,7 @@ impl Database {
                     .await?;
 
                 // If the buffer epoch hasn't changed since the client lost
-                // connection, then the client's buffer can be synchronized with
+                // connection, then the client's buffer can be synchroniCodeOrbit with
                 // the server's buffer.
                 if buffer.epoch as u64 != client_buffer.epoch {
                     log::info!("can't rejoin buffer, epoch has changed");

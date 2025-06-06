@@ -1,4 +1,4 @@
-use std::ops::Range;
+﻿use std::ops::Range;
 use std::str::FromStr as _;
 
 use anyhow::{Context as _, Result};
@@ -6,7 +6,7 @@ use gpui::http_client::http::{HeaderMap, HeaderValue};
 use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
 use project::Project;
-use zed_llm_client::{
+use codeorbit_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
 
@@ -92,7 +92,7 @@ impl EditPredictionUsage {
     }
 }
 
-pub trait EditPredictionProvider: 'static + Sized {
+pub trait EditPredictionProvider: 'static + SiCodeOrbit {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
     fn show_completions_in_menu() -> bool;

@@ -1,8 +1,8 @@
-#![deny(missing_docs)]
+﻿#![deny(missing_docs)]
 
 //! # Theme
 //!
-//! This crate provides the theme system for Zed.
+//! This crate provides the theme system for CodeOrbit.
 //!
 //! ## Overview
 //!

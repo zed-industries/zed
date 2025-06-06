@@ -1,4 +1,4 @@
-use crate::ProjectIndex;
+﻿use crate::ProjectIndex;
 use gpui::{
     AnyElement, App, CursorStyle, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     ListOffset, ListState, MouseMoveEvent, Render, UniformListScrollHandle, canvas, div, list,
@@ -300,7 +300,7 @@ impl Item for ProjectIndexDebugView {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Some(cx.new(|cx| Self::new(self.index.clone(), window, cx)))
     }

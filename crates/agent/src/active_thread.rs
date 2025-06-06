@@ -1,4 +1,4 @@
-use crate::context::{AgentContextHandle, RULES_ICON};
+﻿use crate::context::{AgentContextHandle, RULES_ICON};
 use crate::context_picker::{ContextPicker, MentionLink};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
@@ -54,8 +54,8 @@ use ui::{
 use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
 use workspace::{CollaboratorId, Workspace};
-use zed_actions::assistant::OpenRulesLibrary;
-use zed_llm_client::CompletionIntent;
+use codeorbit_actions::assistant::OpenRulesLibrary;
+use codeorbit_llm_client::CompletionIntent;
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -1006,7 +1006,7 @@ impl ActiveThread {
                         } else {
                             "New message"
                         },
-                        IconName::ZedAssistant,
+                        IconName::CodeOrbitAssistant,
                         window,
                         cx,
                     );
@@ -1239,7 +1239,7 @@ impl ActiveThread {
 
                                 let workspace_handle = this.workspace.clone();
 
-                                // If there are multiple Zed windows, activate the correct one.
+                                // If there are multiple CodeOrbit windows, activate the correct one.
                                 cx.defer(move |cx| {
                                     handle
                                         .update(cx, |_view, window, _cx| {
@@ -1918,7 +1918,7 @@ impl ActiveThread {
                 .child(
                     div().visible_on_hover("feedback_container").child(
                         Label::new(
-                            "Rating the thread sends all of your current conversation to the Zed team.",
+                            "Rating the thread sends all of your current conversation to the CodeOrbit team.",
                         )
                         .color(Color::Muted)
                     .size(LabelSize::XSmall)
@@ -2839,7 +2839,7 @@ impl ActiveThread {
                                         ),
                                 )
                                 .child(
-                                    Label::new("Running…")
+                                    Label::new("Runningâ€¦")
                                         .size(LabelSize::XSmall)
                                         .color(Color::Muted)
                                         .buffer_font(cx),

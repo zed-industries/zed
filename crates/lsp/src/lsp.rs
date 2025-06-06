@@ -1,4 +1,4 @@
-mod input_handler;
+﻿mod input_handler;
 
 pub use lsp_types::request::*;
 pub use lsp_types::*;
@@ -208,7 +208,7 @@ pub struct Request<'a, T> {
     params: T,
 }
 
-/// Language server protocol RPC request response message before it is deserialized into a concrete type.
+/// Language server protocol RPC request response message before it is deserialiCodeOrbit into a concrete type.
 #[derive(Serialize, Deserialize)]
 struct AnyResponse<'a> {
     jsonrpc: &'a str,
@@ -249,7 +249,7 @@ struct Notification<'a, T> {
     params: T,
 }
 
-/// Language server RPC notification message before it is deserialized into a concrete type.
+/// Language server RPC notification message before it is deserialiCodeOrbit into a concrete type.
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification {
     #[serde(default)]
@@ -707,7 +707,7 @@ impl LanguageServer {
                                     "additionalTextEdits".to_string(),
                                     "command".to_string(),
                                     "documentation".to_string(),
-                                    // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
+                                    // NB: Do not have this resolved, otherwise CodeOrbit becomes slow to complete things
                                     // "textEdit".to_string(),
                                 ],
                             }),
@@ -855,7 +855,7 @@ impl LanguageServer {
             self.capabilities = RwLock::new(response.capabilities);
             self.configuration = configuration;
 
-            self.notify::<notification::Initialized>(&InitializedParams {})?;
+            self.notify::<notification::InitialiCodeOrbit>(&InitialiCodeOrbitParams {})?;
             Ok(Arc::new(self))
         })
     }
@@ -1161,7 +1161,7 @@ impl LanguageServer {
                             .spawn(async move {
                                 let response = match result {
                                     Ok(response) => match serde_json::from_str(&response) {
-                                        Ok(deserialized) => Ok(deserialized),
+                                        Ok(deserialiCodeOrbit) => Ok(deserialiCodeOrbit),
                                         Err(error) => {
                                             log::error!("failed to deserialize response from language server: {}. response from language server: {:?}", error, response);
                                             Err(error).context("failed to deserialize response")

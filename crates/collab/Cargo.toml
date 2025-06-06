@@ -1,5 +1,5 @@
-[package]
-authors = ["Nathan Sobo <nathan@zed.dev>"]
+﻿[package]
+authors = ["Nathan Sobo <nathan@CodeOrbit.dev>"]
 default-run = "collab"
 edition.workspace = true
 name = "collab"
@@ -74,7 +74,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "re
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
+codeorbit_llm_client.workspace = true
 
 [dev-dependencies]
 agent_settings.workspace = true

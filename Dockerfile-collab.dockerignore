@@ -1,11 +1,11 @@
-.git
+﻿.git
 .github
 **/.gitignore
 **/.gitkeep
 .gitattributes
 .mailmap
 **/target
-zed.xcworkspace
+CodeOrbit.xcworkspace
 .DS_Store
 compose.yml
 plugins/bin

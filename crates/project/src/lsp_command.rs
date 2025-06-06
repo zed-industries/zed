@@ -1,4 +1,4 @@
-mod signature_help;
+﻿mod signature_help;
 
 use crate::{
     CodeAction, CompletionSource, CoreCompletion, CoreCompletionResponse, DocumentHighlight,
@@ -74,7 +74,7 @@ pub(crate) fn make_lsp_text_document_position(
 }
 
 #[async_trait(?Send)]
-pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
+pub trait LspCommand: 'static + SiCodeOrbit + Send + std::fmt::Debug {
     type Response: 'static + Default + Send + std::fmt::Debug;
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
@@ -1720,25 +1720,25 @@ impl LspCommand for GetDocumentSymbols {
         _: AsyncApp,
     ) -> Result<Vec<DocumentSymbol>> {
         let mut symbols = Vec::with_capacity(message.symbols.len());
-        for serialized_symbol in message.symbols {
+        for serialiCodeOrbit_symbol in message.symbols {
             fn deserialize_symbol_with_children(
-                serialized_symbol: proto::DocumentSymbol,
+                serialiCodeOrbit_symbol: proto::DocumentSymbol,
             ) -> Result<DocumentSymbol> {
                 let kind =
-                    unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
+                    unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialiCodeOrbit_symbol.kind) };
 
-                let start = serialized_symbol.start.context("invalid start")?;
-                let end = serialized_symbol.end.context("invalid end")?;
+                let start = serialiCodeOrbit_symbol.start.context("invalid start")?;
+                let end = serialiCodeOrbit_symbol.end.context("invalid end")?;
 
-                let selection_start = serialized_symbol
+                let selection_start = serialiCodeOrbit_symbol
                     .selection_start
                     .context("invalid selection start")?;
-                let selection_end = serialized_symbol
+                let selection_end = serialiCodeOrbit_symbol
                     .selection_end
                     .context("invalid selection end")?;
 
                 Ok(DocumentSymbol {
-                    name: serialized_symbol.name,
+                    name: serialiCodeOrbit_symbol.name,
                     kind,
                     range: Unclipped(PointUtf16::new(start.row, start.column))
                         ..Unclipped(PointUtf16::new(end.row, end.column)),
@@ -1747,7 +1747,7 @@ impl LspCommand for GetDocumentSymbols {
                         selection_start.column,
                     ))
                         ..Unclipped(PointUtf16::new(selection_end.row, selection_end.column)),
-                    children: serialized_symbol
+                    children: serialiCodeOrbit_symbol
                         .children
                         .into_iter()
                         .filter_map(|symbol| deserialize_symbol_with_children(symbol).ok())
@@ -1755,7 +1755,7 @@ impl LspCommand for GetDocumentSymbols {
                 })
             }
 
-            symbols.push(deserialize_symbol_with_children(serialized_symbol)?);
+            symbols.push(deserialize_symbol_with_children(serialiCodeOrbit_symbol)?);
         }
 
         Ok(symbols)

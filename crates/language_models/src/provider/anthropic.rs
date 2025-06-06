@@ -1,4 +1,4 @@
-use crate::AllLanguageModelSettings;
+﻿use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
 use anthropic::{
     AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
@@ -39,7 +39,7 @@ const PROVIDER_NAME: &str = "Anthropic";
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
     pub api_url: String,
-    /// Extend Zed's list of Anthropic models.
+    /// Extend CodeOrbit's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
     pub needs_setting_migration: bool,
 }
@@ -48,7 +48,7 @@ pub struct AnthropicSettings {
 pub struct AvailableModel {
     /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
     pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    /// The model's name in CodeOrbit's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
     /// The model's context window size.
     pub max_tokens: usize,
@@ -1015,7 +1015,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use CodeOrbit's assistant with Anthropic, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(
@@ -1043,7 +1043,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {ANTHROPIC_API_KEY_VAR} environment variable and restart CodeOrbit."),
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

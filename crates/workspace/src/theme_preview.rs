@@ -1,4 +1,4 @@
-#![allow(unused, dead_code)]
+﻿#![allow(unused, dead_code)]
 use gpui::{AnyElement, App, Entity, EventEmitter, FocusHandle, Focusable, Hsla, actions, hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
@@ -96,7 +96,7 @@ impl Item for ThemePreview {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Some(cx.new(|cx| Self::new(window, cx)))
     }

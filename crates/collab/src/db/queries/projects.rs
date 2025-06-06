@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+﻿use anyhow::Context as _;
 use collections::HashSet;
 use util::ResultExt;
 
@@ -324,9 +324,9 @@ impl Database {
                     .await?;
             }
 
-            // Backward-compatibility for old Zed clients.
+            // Backward-compatibility for old CodeOrbit clients.
             //
-            // Remove this block when Zed 1.80 stable has been out for a week.
+            // Remove this block when CodeOrbit 1.80 stable has been out for a week.
             {
                 if !update.updated_repositories.is_empty() {
                     project_repository::Entity::insert_many(
@@ -1145,7 +1145,7 @@ impl Database {
         .map(|guard| guard.into_inner())
     }
 
-    /// Returns the current project if the given user is authorized to access it with the specified capability.
+    /// Returns the current project if the given user is authoriCodeOrbit to access it with the specified capability.
     pub async fn access_project(
         &self,
         project_id: ProjectId,
@@ -1174,12 +1174,12 @@ impl Database {
         match capability {
             Capability::ReadWrite => {
                 if !role.can_edit_projects() {
-                    return Err(anyhow!("not authorized to edit projects"))?;
+                    return Err(anyhow!("not authoriCodeOrbit to edit projects"))?;
                 }
             }
             Capability::ReadOnly => {
                 if !role.can_read_projects() {
-                    return Err(anyhow!("not authorized to read projects"))?;
+                    return Err(anyhow!("not authoriCodeOrbit to read projects"))?;
                 }
             }
         }

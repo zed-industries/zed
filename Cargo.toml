@@ -1,4 +1,4 @@
-[workspace]
+﻿[workspace]
 resolver = "2"
 members = [
     "crates/activity_indicator",
@@ -170,8 +170,8 @@ members = [
     "crates/welcome",
     "crates/workspace",
     "crates/worktree",
-    "crates/zed",
-    "crates/zed_actions",
+    "crates/CodeOrbit",
+    "crates/codeorbit_actions",
     "crates/zeta",
     "crates/zlog",
     "crates/zlog_settings",
@@ -198,7 +198,7 @@ members = [
     "tooling/workspace-hack",
     "tooling/xtask",
 ]
-default-members = ["crates/zed"]
+default-members = ["crates/CodeOrbit"]
 
 [workspace.package]
 publish = false
@@ -378,8 +378,8 @@ web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
-zed = { path = "crates/zed" }
-zed_actions = { path = "crates/zed_actions" }
+CodeOrbit = { path = "crates/CodeOrbit" }
+codeorbit_actions = { path = "crates/codeorbit_actions" }
 zeta = { path = "crates/zeta" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
@@ -389,7 +389,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
+alacritty_terminal = { git = "https://github.com/CodeOrbit-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -398,7 +398,7 @@ async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "2.1"
-async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
+async-pipe = { git = "https://github.com/CodeOrbit-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
@@ -434,7 +434,7 @@ core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "68516de327fa1be15214133a0a2e52a12982ce75" }
+dap-types = { git = "https://github.com/CodeOrbit-industries/dap-types", rev = "68516de327fa1be15214133a0a2e52a12982ce75" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -476,7 +476,7 @@ libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
+lsp-types = { git = "https://github.com/CodeOrbit-industries/lsp-types", rev = "c9c189f1c5dd53c624a419ce35bc77ad6a908d18" }
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
 mlua = { version = "0.10", features = ["lua54", "vendored", "async", "send"] }
@@ -515,7 +515,7 @@ rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
 repair_json = "0.1.0"
-reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c770a32f1998d6e999cef3e59e0013e6c4415", default-features = false, features = [
+reqwest = { git = "https://github.com/CodeOrbit-industries/reqwest.git", rev = "951c770a32f1998d6e999cef3e59e0013e6c4415", default-features = false, features = [
     "charset",
     "http2",
     "macos-system-configuration",
@@ -532,7 +532,7 @@ rustc-demangle = "0.1.23"
 rustc-hash = "2.1.0"
 rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
-scap = { git = "https://github.com/zed-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
+scap = { git = "https://github.com/CodeOrbit-industries/scap", rev = "08f0a01417505cc0990b9931a37e5120db92e0d0", default-features = false }
 schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -582,11 +582,11 @@ tree-sitter-css = "0.23"
 tree-sitter-diff = "0.1.0"
 tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
-tree-sitter-gitcommit = { git = "https://github.com/zed-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
+tree-sitter-gitcommit = { git = "https://github.com/CodeOrbit-industries/tree-sitter-git-commit", rev = "88309716a69dd13ab83443721ba6e0b491d37ee9" }
 tree-sitter-go = "0.23"
 tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c", package = "tree-sitter-gomod" }
-tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
-tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
+tree-sitter-gowork = { git = "https://github.com/CodeOrbit-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
+tree-sitter-heex = { git = "https://github.com/CodeOrbit-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
 tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
@@ -596,7 +596,7 @@ tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.24"
 tree-sitter-typescript = "0.23"
-tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
+tree-sitter-yaml = { git = "https://github.com/CodeOrbit-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
 unicode-script = "0.5.7"
 unicode-segmentation = "1.10"
@@ -619,11 +619,11 @@ wasmtime = { version = "29", default-features = false, features = [
 wasmtime-wasi = "29"
 which = "6.0.0"
 workspace-hack = "0.1.0"
-zed_llm_client = "0.8.4"
+codeorbit_llm_client = "0.8.4"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
-git = "https://github.com/zed-industries/async-stripe"
+git = "https://github.com/CodeOrbit-industries/async-stripe"
 rev = "3672dd4efb7181aa597bf580bf5a2f5d23db6735"
 default-features = false
 features = [
@@ -683,9 +683,9 @@ features = [
 
 # TODO livekit https://github.com/RustAudio/cpal/pull/891
 [patch.crates-io]
-cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
-notify = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
-notify-types = { git = "https://github.com/zed-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+cpal = { git = "https://github.com/CodeOrbit-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
+notify = { git = "https://github.com/CodeOrbit-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
+notify-types = { git = "https://github.com/CodeOrbit-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 
 # Makes the workspace hack crate refer to the local one, but only when you're building locally
 workspace-hack = { path = "tooling/workspace-hack" }
@@ -740,7 +740,7 @@ telemetry_events = { codegen-units = 1 }
 theme_selector = { codegen-units = 1 }
 time_format = { codegen-units = 1 }
 ui_input = { codegen-units = 1 }
-zed_actions = { codegen-units = 1 }
+codeorbit_actions = { codegen-units = 1 }
 
 [profile.release]
 debug = "limited"
@@ -748,7 +748,7 @@ lto = "thin"
 codegen-units = 1
 
 [profile.release.package]
-zed = { codegen-units = 16 }
+CodeOrbit = { codegen-units = 16 }
 
 [profile.release-fast]
 inherits = "release"
@@ -767,7 +767,7 @@ todo = "deny"
 # warning on this rule produces a lot of noise.
 single_range_in_vec_init = "allow"
 
-# These are all of the rules that currently have violations in the Zed
+# These are all of the rules that currently have violations in the CodeOrbit
 # codebase.
 #
 # We'll want to drive this list down by either:

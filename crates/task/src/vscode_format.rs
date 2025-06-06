@@ -1,4 +1,4 @@
-use anyhow::bail;
+﻿use anyhow::bail;
 use collections::HashMap;
 use serde::Deserialize;
 use util::ResultExt;
@@ -42,7 +42,7 @@ enum Command {
 }
 
 impl VsCodeTaskDefinition {
-    fn into_zed_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<TaskTemplate> {
+    fn into_CodeOrbit_format(self, replacer: &EnvVariableReplacer) -> anyhow::Result<TaskTemplate> {
         if self.other_attributes.contains_key("dependsOn") {
             bail!("Encountered unsupported `dependsOn` key during deserialization");
         }
@@ -101,7 +101,7 @@ impl TryFrom<VsCodeTaskFile> for TaskTemplates {
         let templates = value
             .tasks
             .into_iter()
-            .filter_map(|vscode_definition| vscode_definition.into_zed_format(&replacer).log_err())
+            .filter_map(|vscode_definition| vscode_definition.into_CodeOrbit_format(&replacer).log_err())
             .collect();
         Ok(Self(templates))
     }
@@ -145,15 +145,15 @@ mod tests {
         // And now, the actual replacing
         let replacer = EnvVariableReplacer::new(HashMap::from_iter([(
             "PATH".to_owned(),
-            "ZED_PATH".to_owned(),
+            "codeorbit_PATH".to_owned(),
         )]));
         assert_eq!(replacer.replace("Food"), "Food");
         assert_eq!(
             replacer.replace("$PATH is an environment variable"),
-            "${ZED_PATH} is an environment variable"
+            "${codeorbit_PATH} is an environment variable"
         );
-        assert_eq!(replacer.replace("${PATH}"), "${ZED_PATH}");
-        assert_eq!(replacer.replace("${PATH:food}"), "${ZED_PATH:food}");
+        assert_eq!(replacer.replace("${PATH}"), "${codeorbit_PATH}");
+        assert_eq!(replacer.replace("${PATH:food}"), "${codeorbit_PATH:food}");
     }
 
     #[test]
@@ -221,9 +221,9 @@ mod tests {
                 label: "tsc: watch ./src".to_string(),
                 command: "node".to_string(),
                 args: vec![
-                    "${ZED_WORKTREE_ROOT}/node_modules/typescript/lib/tsc.js".to_string(),
+                    "${codeorbit_WORKTREE_ROOT}/node_modules/typescript/lib/tsc.js".to_string(),
                     "--build".to_string(),
-                    "${ZED_WORKTREE_ROOT}/src".to_string(),
+                    "${codeorbit_WORKTREE_ROOT}/src".to_string(),
                     "--watch".to_string(),
                 ],
                 ..Default::default()

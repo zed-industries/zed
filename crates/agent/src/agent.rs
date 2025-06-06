@@ -1,4 +1,4 @@
-mod active_thread;
+﻿mod active_thread;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
@@ -51,7 +51,7 @@ pub use crate::context::{ContextLoadResult, LoadedContext};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use crate::thread::{Message, MessageSegment, Thread, ThreadEvent};
-pub use crate::thread_store::{SerializedThread, TextThreadStore, ThreadStore};
+pub use crate::thread_store::{SerialiCodeOrbitThread, TextThreadStore, ThreadStore};
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use context_store::ContextStore;
 pub use ui::preview::{all_agent_previews, get_agent_preview};

@@ -1,4 +1,4 @@
-use agent::{Message, MessageSegment, SerializedThread, ThreadStore};
+﻿use agent::{Message, MessageSegment, SerialiCodeOrbitThread, ThreadStore};
 use anyhow::{Context as _, Result, anyhow, bail};
 use assistant_tool::ToolWorkingSet;
 use client::proto::LspWorkProgress;
@@ -33,7 +33,7 @@ use crate::assertions::{AssertionsReport, RanAssertion, RanAssertionResult};
 use crate::example::{Example, ExampleContext, FailedAssertion, JudgeAssertion};
 use crate::{AgentAppState, ToolMetrics};
 
-pub const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed.git";
+pub const codeorbit_REPO_URL: &str = "https://github.com/CodeOrbit-industries/CodeOrbit.git";
 
 #[derive(Clone)]
 pub struct ExampleInstance {
@@ -182,7 +182,7 @@ impl ExampleInstance {
             .await?;
         }
 
-        if meta.url == ZED_REPO_URL {
+        if meta.url == codeorbit_REPO_URL {
             std::fs::write(worktree_path.join(".rules"), std::fs::read(".rules")?)?;
         }
 
@@ -296,11 +296,11 @@ impl ExampleInstance {
                 None
             };
 
-            anyhow::ensure!(std::env::var("ZED_EVAL_SETUP_ONLY").is_err(), "Setup only mode");
+            anyhow::ensure!(std::env::var("codeorbit_EVAL_SETUP_ONLY").is_err(), "Setup only mode");
 
             let last_diff_file_path = this.run_directory.join("last.diff");
 
-            // Write an empty "last.diff" so that it can be opened in Zed for convenient view of the
+            // Write an empty "last.diff" so that it can be opened in CodeOrbit for convenient view of the
             // history using undo/redo.
             std::fs::write(&last_diff_file_path, "")?;
 
@@ -312,8 +312,8 @@ impl ExampleInstance {
             let thread =
                 thread_store.update(cx, |thread_store, cx| {
                     if let Some(json) = &meta.existing_thread_json {
-                        let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
-                        thread_store.create_thread_from_serialized(serialized, cx)
+                        let serialiCodeOrbit = SerialiCodeOrbitThread::from_json(json.as_bytes()).expect("Can't read serialiCodeOrbit thread");
+                        thread_store.create_thread_from_serialiCodeOrbit(serialiCodeOrbit, cx)
                     } else {
                         thread_store.create_thread(cx)
                     }
@@ -436,7 +436,7 @@ impl ExampleInstance {
         let worktree_path = self.worktree_path();
         run_git(&worktree_path, &["add", "."]).await?;
         let mut diff_args = vec!["diff", "--staged"];
-        if self.thread.meta().url == ZED_REPO_URL {
+        if self.thread.meta().url == codeorbit_REPO_URL {
             diff_args.push(":(exclude).rules");
         }
         run_git(&worktree_path, &diff_args).await
@@ -602,9 +602,9 @@ impl ExampleInstance {
                 };
 
                 if result.is_ok() {
-                    println!("{}✅ {}", log_prefix, assertion.id);
+                    println!("{}âœ… {}", log_prefix, assertion.id);
                 } else {
-                    println!("{}❌ {}", log_prefix, assertion.id);
+                    println!("{}âŒ {}", log_prefix, assertion.id);
                 }
 
                 (
@@ -636,11 +636,11 @@ pub fn wait_for_lang_server(
     log_prefix: String,
     cx: &mut AsyncApp,
 ) -> Task<Result<()>> {
-    if std::env::var("ZED_EVAL_SKIP_LS").is_ok() {
+    if std::env::var("codeorbit_EVAL_SKIP_LS").is_ok() {
         return Task::ready(Ok(()));
     }
 
-    println!("{}⏵ Waiting for language server", log_prefix);
+    println!("{}âµ Waiting for language server", log_prefix);
 
     let (mut tx, mut rx) = mpsc::channel(1);
 
@@ -680,7 +680,7 @@ pub fn wait_for_lang_server(
                                 },
                             ),
                         ..
-                    } => println!("{}⟲ {message}", log_prefix),
+                    } => println!("{}âŸ² {message}", log_prefix),
                     _ => {}
                 }
             }),
@@ -705,7 +705,7 @@ pub fn wait_for_lang_server(
         let timeout = cx.background_executor().timer(Duration::new(60 * 5, 0));
         let result = futures::select! {
             _ = rx.next() => {
-                println!("{}⚑ Language server idle", log_prefix);
+                println!("{}âš‘ Language server idle", log_prefix);
                 anyhow::Ok(())
             },
             _ = timeout.fuse() => {
@@ -855,10 +855,10 @@ fn messages_to_markdown<'a>(message_iter: impl IntoIterator<Item = &'a Message>)
 
 fn push_role(role: &Role, buf: &mut String, assistant_message_number: &mut u32) {
     match role {
-        Role::System => buf.push_str("# ⚙️ SYSTEM\n\n"),
-        Role::User => buf.push_str("# 👤 USER\n\n"),
+        Role::System => buf.push_str("# âš™ï¸ SYSTEM\n\n"),
+        Role::User => buf.push_str("# ðŸ‘¤ USER\n\n"),
         Role::Assistant => {
-            buf.push_str(&format!("# 🤖 ASSISTANT {assistant_message_number}\n\n"));
+            buf.push_str(&format!("# ðŸ¤– ASSISTANT {assistant_message_number}\n\n"));
             *assistant_message_number = *assistant_message_number + 1;
         }
     }

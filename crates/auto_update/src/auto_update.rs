@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use client::{Client, TelemetrySettings};
 use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
@@ -165,8 +165,8 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
             .map(|channel| channel.poll_for_updates())
             .unwrap_or(false);
 
-        if option_env!("ZED_UPDATE_EXPLANATION").is_none()
-            && env::var("ZED_UPDATE_EXPLANATION").is_err()
+        if option_env!("codeorbit_UPDATE_EXPLANATION").is_none()
+            && env::var("codeorbit_UPDATE_EXPLANATION").is_err()
             && poll_for_updates
         {
             let mut update_subscription = AutoUpdateSetting::get_global(cx)
@@ -191,10 +191,10 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 }
 
 pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
-    if let Some(message) = option_env!("ZED_UPDATE_EXPLANATION") {
+    if let Some(message) = option_env!("codeorbit_UPDATE_EXPLANATION") {
         drop(window.prompt(
             gpui::PromptLevel::Info,
-            "Zed was installed via a package manager.",
+            "CodeOrbit was installed via a package manager.",
             Some(message),
             &["Ok"],
             cx,
@@ -202,10 +202,10 @@ pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
         return;
     }
 
-    if let Ok(message) = env::var("ZED_UPDATE_EXPLANATION") {
+    if let Ok(message) = env::var("codeorbit_UPDATE_EXPLANATION") {
         drop(window.prompt(
             gpui::PromptLevel::Info,
-            "Zed was installed via a package manager.",
+            "CodeOrbit was installed via a package manager.",
             Some(&message),
             &["Ok"],
             cx,
@@ -247,10 +247,10 @@ pub fn view_release_notes(_: &ViewReleaseNotes, cx: &mut App) -> Option<()> {
             cx.open_url(url);
         }
         ReleaseChannel::Nightly => {
-            cx.open_url("https://github.com/zed-industries/zed/commits/nightly/");
+            cx.open_url("https://github.com/CodeOrbit-industries/CodeOrbit/commits/nightly/");
         }
         ReleaseChannel::Dev => {
-            cx.open_url("https://github.com/zed-industries/zed/commits/main/");
+            cx.open_url("https://github.com/CodeOrbit-industries/CodeOrbit/commits/main/");
         }
     }
     None
@@ -264,7 +264,7 @@ impl InstallerDir {
     async fn new() -> Result<Self> {
         Ok(Self(
             tempfile::Builder::new()
-                .prefix("zed-auto-update")
+                .prefix("CodeOrbit-auto-update")
                 .tempdir()?,
         ))
     }
@@ -282,7 +282,7 @@ impl InstallerDir {
     async fn new() -> Result<Self> {
         let installer_dir = std::env::current_exe()?
             .parent()
-            .context("No parent dir for Zed.exe")?
+            .context("No parent dir for CodeOrbit.exe")?
             .join("updates");
         if smol::fs::metadata(&installer_dir).await.is_ok() {
             smol::fs::remove_dir_all(&installer_dir).await?;
@@ -357,7 +357,7 @@ impl AutoUpdater {
         true
     }
 
-    // If you are packaging Zed and need to override the place it downloads SSH remotes from,
+    // If you are packaging CodeOrbit and need to override the place it downloads SSH remotes from,
     // you can override this function. You should also update get_remote_server_release_url to return
     // Ok(None).
     pub async fn download_remote_server_release(
@@ -371,12 +371,12 @@ impl AutoUpdater {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
                 .clone()
-                .context("auto-update not initialized")
+                .context("auto-update not initialiCodeOrbit")
         })??;
 
         let release = Self::get_release(
             &this,
-            "zed-remote-server",
+            "CodeOrbit-remote-server",
             os,
             arch,
             version,
@@ -395,7 +395,7 @@ impl AutoUpdater {
 
         if smol::fs::metadata(&version_path).await.is_err() {
             log::info!(
-                "downloading zed-remote-server {os} {arch} version {}",
+                "downloading CodeOrbit-remote-server {os} {arch} version {}",
                 release.version
             );
             download_remote_server_binary(&version_path, release, client, cx).await?;
@@ -415,12 +415,12 @@ impl AutoUpdater {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
                 .clone()
-                .context("auto-update not initialized")
+                .context("auto-update not initialiCodeOrbit")
         })??;
 
         let release = Self::get_release(
             &this,
-            "zed-remote-server",
+            "CodeOrbit-remote-server",
             os,
             arch,
             version,
@@ -512,7 +512,7 @@ impl AutoUpdater {
         })?;
 
         let fetched_release_data =
-            Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
+            Self::get_latest_release(&this, "CodeOrbit", OS, ARCH, release_channel, &mut cx).await?;
         let fetched_version = fetched_release_data.clone().version;
         let app_commit_sha = cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full()));
         let newer_version = Self::check_if_fetched_version_is_newer(
@@ -611,9 +611,9 @@ impl AutoUpdater {
 
     async fn target_path(installer_dir: &InstallerDir) -> Result<PathBuf> {
         let filename = match OS {
-            "macos" => anyhow::Ok("Zed.dmg"),
-            "linux" => Ok("zed.tar.gz"),
-            "windows" => Ok("ZedUpdateInstaller.exe"),
+            "macos" => anyhow::Ok("CodeOrbit.dmg"),
+            "linux" => Ok("CodeOrbit.tar.gz"),
+            "windows" => Ok("CodeOrbitUpdateInstaller.exe"),
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
 
@@ -776,7 +776,7 @@ async fn install_release_linux(
     let home_dir = PathBuf::from(env::var("HOME").context("no HOME env var set")?);
     let running_app_path = cx.update(|cx| cx.app_path())??;
 
-    let extracted = temp_dir.path().join("zed");
+    let extracted = temp_dir.path().join("CodeOrbit");
     fs::create_dir_all(&extracted)
         .await
         .context("failed to create directory into which to extract update")?;
@@ -802,12 +802,12 @@ async fn install_release_linux(
     } else {
         String::default()
     };
-    let app_folder_name = format!("zed{}.app", suffix);
+    let app_folder_name = format!("CodeOrbit{}.app", suffix);
 
     let from = extracted.join(&app_folder_name);
     let mut to = home_dir.join(".local");
 
-    let expected_suffix = format!("{}/libexec/zed-editor", app_folder_name);
+    let expected_suffix = format!("{}/libexec/CodeOrbit-editor", app_folder_name);
 
     if let Some(prefix) = running_app_path
         .to_str()
@@ -825,7 +825,7 @@ async fn install_release_linux(
 
     anyhow::ensure!(
         output.status.success(),
-        "failed to copy Zed update from {:?} to {:?}: {:?}",
+        "failed to copy CodeOrbit update from {:?} to {:?}: {:?}",
         from,
         to,
         String::from_utf8_lossy(&output.stderr)
@@ -844,7 +844,7 @@ async fn install_release_macos(
         .file_name()
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
 
-    let mount_path = temp_dir.path().join("Zed");
+    let mount_path = temp_dir.path().join("CodeOrbit");
     let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
 
     mounted_app_path.push("/");

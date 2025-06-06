@@ -1,11 +1,11 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 
 use gpui::{AppContext, Entity, Global, MenuItem};
 use smallvec::SmallVec;
 use ui::App;
 use util::{ResultExt, paths::PathExt};
 
-use crate::{NewWindow, SerializedWorkspaceLocation, WORKSPACE_DB, WorkspaceId};
+use crate::{NewWindow, SerialiCodeOrbitWorkspaceLocation, WORKSPACE_DB, WorkspaceId};
 
 pub fn init(cx: &mut App) {
     let manager = cx.new(|_| HistoryManager::new());
@@ -118,7 +118,7 @@ impl HistoryManager {
 }
 
 impl HistoryManagerEntry {
-    pub fn new(id: WorkspaceId, location: &SerializedWorkspaceLocation) -> Self {
+    pub fn new(id: WorkspaceId, location: &SerialiCodeOrbitWorkspaceLocation) -> Self {
         let path = location
             .sorted_paths()
             .iter()

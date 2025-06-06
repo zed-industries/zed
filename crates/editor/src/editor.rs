@@ -1,10 +1,10 @@
-#![allow(rustdoc::private_intra_doc_links)]
+﻿#![allow(rustdoc::private_intra_doc_links)]
 //! This is the place where everything editor-related is stored (data-wise) and displayed (ui-wise).
-//! The main point of interest in this crate is [`Editor`] type, which is used in every other Zed part as a user input element.
+//! The main point of interest in this crate is [`Editor`] type, which is used in every other CodeOrbit part as a user input element.
 //! It comes in different flavors: single line, multiline and a fixed height one.
 //!
 //! Editor contains of multiple large submodules:
-//! * [`element`] — the place where all rendering happens
+//! * [`element`] â€” the place where all rendering happens
 //! * [`display_map`] - chunks up text in the editor into the logical blocks, establishes coordinates and mapping between each of them.
 //!   Contains all metadata related to text transformations (folds, fake inlay text insertions, soft wraps, tab markup, etc.).
 //! * [`inlay_hint_cache`] - is a storage of inlay hints out of LSP requests, responsible for querying LSP and updating `display_map`'s state accordingly.
@@ -488,7 +488,7 @@ pub enum EditorMode {
         /// When set to `true`, the editor will render a background for the active line.
         show_active_line_background: bool,
         /// When set to `true`, the editor's height will be determined by its content.
-        sized_by_content: bool,
+        siCodeOrbit_by_content: bool,
     },
     Minimap {
         parent: WeakEntity<Editor>,
@@ -500,7 +500,7 @@ impl EditorMode {
         Self::Full {
             scale_ui_elements_with_buffer_font_size: true,
             show_active_line_background: true,
-            sized_by_content: false,
+            siCodeOrbit_by_content: false,
         }
     }
 
@@ -920,7 +920,7 @@ struct PhantomBreakpointIndicator {
     is_active: bool,
     collides_with_existing_breakpoint: bool,
 }
-/// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
+/// CodeOrbit's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
 pub struct Editor {
@@ -1635,7 +1635,7 @@ impl Editor {
                     .rounded_xs()
                     .size_full()
                     .cursor_pointer()
-                    .child("⋯")
+                    .child("â‹¯")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |_, _window, cx| {
                         editor
@@ -2284,7 +2284,7 @@ impl Editor {
             cx,
             |e, _, _| match e.error_code() {
                 ErrorCode::RemoteUpgradeRequired => Some(format!(
-                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                "The remote instance of CodeOrbit does not support this yet. It must be upgraded to {}",
                 e.error_tag("required").unwrap_or("the latest version")
             )),
                 _ => None,
@@ -2355,7 +2355,7 @@ impl Editor {
         .detach_and_prompt_err("Failed to create buffer", window, cx, |e, _, _| {
             match e.error_code() {
                 ErrorCode::RemoteUpgradeRequired => Some(format!(
-                "The remote instance of Zed does not support this yet. It must be upgraded to {}",
+                "The remote instance of CodeOrbit does not support this yet. It must be upgraded to {}",
                 e.error_tag("required").unwrap_or("the latest version")
             )),
                 _ => None,
@@ -5002,8 +5002,8 @@ impl Editor {
             return None;
         }
 
-        // OnTypeFormatting returns a list of edits, no need to pass them between Zed instances,
-        // hence we do LSP request & edit on host side only — add formats to host's history.
+        // OnTypeFormatting returns a list of edits, no need to pass them between CodeOrbit instances,
+        // hence we do LSP request & edit on host side only â€”Â add formats to host's history.
         let push_to_lsp_host_history = true;
         // If this is not the host, append its history with new edits.
         let push_to_client_history = project.read(cx).is_via_collab();
@@ -8519,7 +8519,7 @@ impl Editor {
                 el.bg(status_colors.error_background)
                     .border_color(status_colors.error.opacity(0.6))
                     .pl_2()
-                    .child(Icon::new(IconName::ZedPredictError).color(Color::Error))
+                    .child(Icon::new(IconName::CodeOrbitPredictError).color(Color::Error))
                     .cursor_default()
                     .hoverable_tooltip(move |_window, cx| {
                         cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
@@ -8594,7 +8594,7 @@ impl Editor {
                         cx.stop_propagation();
                         this.report_editor_event("Edit Prediction Provider ToS Clicked", None, cx);
                         window.dispatch_action(
-                            zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                            codeorbit_actions::OpenCodeOrbitPredictOnboarding.boxed_clone(),
                             cx,
                         );
                     }))
@@ -8602,7 +8602,7 @@ impl Editor {
                         h_flex()
                             .flex_1()
                             .gap_2()
-                            .child(Icon::new(IconName::ZedPredict))
+                            .child(Icon::new(IconName::CodeOrbitPredict))
                             .child(Label::new("Accept Terms of Service"))
                             .child(div().w_full())
                             .child(
@@ -8623,7 +8623,7 @@ impl Editor {
                 .h_full()
                 .flex_1()
                 .gap_2()
-                .child(Icon::new(IconName::ZedPredict))
+                .child(Icon::new(IconName::CodeOrbitPredict))
         }
 
         let completion = match &self.active_inline_completion {
@@ -8648,12 +8648,12 @@ impl Editor {
                                     use text::ToPoint as _;
                                     if target.text_anchor.to_point(&snapshot).row > cursor_point.row
                                     {
-                                        Icon::new(IconName::ZedPredictDown)
+                                        Icon::new(IconName::CodeOrbitPredictDown)
                                     } else {
-                                        Icon::new(IconName::ZedPredictUp)
+                                        Icon::new(IconName::CodeOrbitPredictUp)
                                     }
                                 }
-                                InlineCompletion::Edit { .. } => Icon::new(IconName::ZedPredict),
+                                InlineCompletion::Edit { .. } => Icon::new(IconName::CodeOrbitPredict),
                             }))
                             .child(
                                 h_flex()
@@ -8838,9 +8838,9 @@ impl Editor {
                     .flex_1()
                     .child(
                         if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
-                            Icon::new(IconName::ZedPredictDown)
+                            Icon::new(IconName::CodeOrbitPredictDown)
                         } else {
-                            Icon::new(IconName::ZedPredictUp)
+                            Icon::new(IconName::CodeOrbitPredictUp)
                         },
                     )
                     .child(Label::new("Jump to Edit")),
@@ -8870,13 +8870,13 @@ impl Editor {
                     .gap_1()
                     .min_w_16()
                     .child(styled_text)
-                    .when(has_more_lines, |parent| parent.child("…"));
+                    .when(has_more_lines, |parent| parent.child("â€¦"));
 
                 let left = if first_edit_row != cursor_point.row {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    Icon::new(IconName::ZedPredict).into_any_element()
+                    Icon::new(IconName::CodeOrbitPredict).into_any_element()
                 };
 
                 Some(
@@ -11419,7 +11419,7 @@ impl Editor {
                     "No entry in selection_history found for undo. \
                      This may correspond to a bug where undo does not update the selection. \
                      If this is occurring, please add details to \
-                     https://github.com/zed-industries/zed/issues/22692"
+                     https://github.com/CodeOrbit-industries/CodeOrbit/issues/22692"
                 );
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
@@ -11449,7 +11449,7 @@ impl Editor {
                     "No entry in selection_history found for redo. \
                      This may correspond to a bug where undo does not update the selection. \
                      If this is occurring, please add details to \
-                     https://github.com/zed-industries/zed/issues/22692"
+                     https://github.com/CodeOrbit-industries/CodeOrbit/issues/22692"
                 );
             }
             self.request_autoscroll(Autoscroll::fit(), cx);
@@ -15387,7 +15387,7 @@ impl Editor {
                 &editor,
                 workspace,
                 project_transaction,
-                format!("Rename: {} → {}", old_name, new_name),
+                format!("Rename: {} â†’ {}", old_name, new_name),
                 cx,
             )
             .await?;
@@ -17537,7 +17537,7 @@ impl Editor {
 
     pub fn copy_path(
         &mut self,
-        _: &zed_actions::workspace::CopyPath,
+        _: &codeorbit_actions::workspace::CopyPath,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -17550,7 +17550,7 @@ impl Editor {
 
     pub fn copy_relative_path(
         &mut self,
-        _: &zed_actions::workspace::CopyRelativePath,
+        _: &codeorbit_actions::workspace::CopyRelativePath,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -20083,7 +20083,7 @@ fn is_grapheme_whitespace(text: &str) -> bool {
 
 fn should_stay_with_preceding_ideograph(text: &str) -> bool {
     text.chars().next().map_or(false, |ch| {
-        matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…')
+        matches!(ch, 'ã€‚' | 'ã€' | 'ï¼Œ' | 'ï¼Ÿ' | 'ï¼' | 'ï¼š' | 'ï¼›' | 'â€¦')
     })
 }
 
@@ -20166,13 +20166,13 @@ fn test_word_breaking_tokenizer() {
     let tests: &[(&str, &[WordBreakToken<'static>])] = &[
         ("", &[]),
         ("  ", &[whitespace("  ", 2)]),
-        ("Ʒ", &[word("Ʒ", 1)]),
-        ("Ǽ", &[word("Ǽ", 1)]),
-        ("⋑", &[word("⋑", 1)]),
-        ("⋑⋑", &[word("⋑⋑", 2)]),
+        ("Æ·", &[word("Æ·", 1)]),
+        ("Ç¼", &[word("Ç¼", 1)]),
+        ("â‹‘", &[word("â‹‘", 1)]),
+        ("â‹‘â‹‘", &[word("â‹‘â‹‘", 2)]),
         (
-            "原理，进而",
-            &[word("原", 1), word("理，", 2), word("进", 1), word("而", 1)],
+            "åŽŸç†ï¼Œè¿›è€Œ",
+            &[word("åŽŸ", 1), word("ç†ï¼Œ", 2), word("è¿›", 1), word("è€Œ", 1)],
         ),
         (
             "hello world",
@@ -20192,20 +20192,20 @@ fn test_word_breaking_tokenizer() {
             ],
         ),
         (
-            "这是什么 \n 钢笔",
+            "è¿™æ˜¯ä»€ä¹ˆ \n é’¢ç¬”",
             &[
-                word("这", 1),
-                word("是", 1),
-                word("什", 1),
-                word("么", 1),
+                word("è¿™", 1),
+                word("æ˜¯", 1),
+                word("ä»€", 1),
+                word("ä¹ˆ", 1),
                 whitespace(" ", 1),
                 newline(),
                 whitespace(" ", 1),
-                word("钢", 1),
-                word("笔", 1),
+                word("é’¢", 1),
+                word("ç¬”", 1),
             ],
         ),
-        (" mutton", &[whitespace(" ", 1), word("mutton", 6)]),
+        ("â€ƒmutton", &[whitespace("â€ƒ", 1), word("mutton", 6)]),
     ];
 
     fn word(token: &'static str, grapheme_len: usize) -> WordBreakToken<'static> {
@@ -20355,12 +20355,12 @@ fn test_wrap_with_prefix() {
     assert_eq!(
         wrap_with_prefix(
             String::new(),
-            "这是什么 \n 钢笔".to_string(),
+            "è¿™æ˜¯ä»€ä¹ˆ \n é’¢ç¬”".to_string(),
             3,
             NonZeroU32::new(4).unwrap(),
             false,
         ),
-        "这是什\n么 钢\n笔"
+        "è¿™æ˜¯ä»€\nä¹ˆ é’¢\nç¬”"
     );
 }
 
@@ -21997,7 +21997,7 @@ pub(crate) fn split_words(text: &str) -> impl std::iter::Iterator<Item = &str> +
         })
 }
 
-pub trait RangeToAnchorExt: Sized {
+pub trait RangeToAnchorExt: SiCodeOrbit {
     fn to_anchors(self, snapshot: &MultiBufferSnapshot) -> Range<Anchor>;
 
     fn to_display_points(self, snapshot: &EditorSnapshot) -> Range<DisplayPoint> {
@@ -22338,10 +22338,10 @@ impl Render for MissingEditPredictionKeybindingTooltip {
                         .items_end()
                         .w_full()
                         .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact).on_click(|_ev, window, cx| {
-                            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx)
+                            window.dispatch_action(codeorbit_actions::OpenKeymap.boxed_clone(), cx)
                         }))
                         .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact).on_click(|_ev, _window, cx| {
-                            cx.open_url("https://zed.dev/docs/completions#edit-predictions-missing-keybinding");
+                            cx.open_url("https://CodeOrbit.dev/docs/completions#edit-predictions-missing-keybinding");
                         })),
                 )
         })

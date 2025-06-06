@@ -1,4 +1,4 @@
-use std::ffi::{c_uint, c_void};
+﻿use std::ffi::{c_uint, c_void};
 
 use ::util::ResultExt;
 use windows::Win32::UI::{
@@ -133,7 +133,7 @@ impl AutoHideTaskbarPosition {
                 return Ok(Some(Self::Right));
             }
             log::error!(
-                "Unrecognized taskbar bounds {:?} give display bounds {:?}",
+                "UnrecogniCodeOrbit taskbar bounds {:?} give display bounds {:?}",
                 taskbar_bounds,
                 display_bounds
             );
@@ -153,14 +153,14 @@ impl AutoHideTaskbarPosition {
                 return Ok(Some(Self::Left));
             }
             log::error!(
-                "Unrecognized taskbar bounds {:?} give display bounds {:?}",
+                "UnrecogniCodeOrbit taskbar bounds {:?} give display bounds {:?}",
                 taskbar_bounds,
                 display_bounds
             );
             return Ok(None);
         }
         log::error!(
-            "Unrecognized taskbar bounds {:?} give display bounds {:?}",
+            "UnrecogniCodeOrbit taskbar bounds {:?} give display bounds {:?}",
             taskbar_bounds,
             display_bounds
         );

@@ -1,10 +1,10 @@
-# Telemetry in Zed
+﻿# Telemetry in CodeOrbit
 
-Zed collects anonymous telemetry data to help the team understand how people are using the application and to see what sort of issues they are experiencing.
+CodeOrbit collects anonymous telemetry data to help the team understand how people are using the application and to see what sort of issues they are experiencing.
 
 ## Configuring Telemetry Settings
 
-You have full control over what data is sent out by Zed. To enable or disable some or all telemetry types, open your `settings.json` file via {#action zed::OpenSettings}({#kb zed::OpenSettings}) from the command palette.
+You have full control over what data is sent out by CodeOrbit. To enable or disable some or all telemetry types, open your `settings.json` file via {#action CodeOrbit::OpenSettings}({#kb CodeOrbit::OpenSettings}) from the command palette.
 
 Insert and tweak the following:
 
@@ -29,13 +29,13 @@ Telemetry is sent from the application to our servers. Data is proxied through o
 
 ### Diagnostics
 
-Diagnostic events include debug information (stack traces) from crash reports. Reports are sent on the first application launch after the crash occurred. We've built dashboards that allow us to visualize the frequency and severity of issues experienced by users. Having these reports sent automatically allows us to begin implementing fixes without the user needing to file a report in our issue tracker. The plots in the dashboards also give us an informal measurement of the stability of Zed.
+Diagnostic events include debug information (stack traces) from crash reports. Reports are sent on the first application launch after the crash occurred. We've built dashboards that allow us to visualize the frequency and severity of issues experienced by users. Having these reports sent automatically allows us to begin implementing fixes without the user needing to file a report in our issue tracker. The plots in the dashboards also give us an informal measurement of the stability of CodeOrbit.
 
-You can see what data is sent when a panic occurs by inspecting the `Panic` struct in [crates/telemetry_events/src/telemetry_events.rs](https://github.com/zed-industries/zed/blob/main/crates/telemetry_events/src/telemetry_events.rs) in the Zed repo. You can find additional information in the [Debugging Crashes](./development/debugging-crashes.md) documentation.
+You can see what data is sent when a panic occurs by inspecting the `Panic` struct in [crates/telemetry_events/src/telemetry_events.rs](https://github.com/CodeOrbit-industries/CodeOrbit/blob/main/crates/telemetry_events/src/telemetry_events.rs) in the CodeOrbit repo. You can find additional information in the [Debugging Crashes](./development/debugging-crashes.md) documentation.
 
 ### Usage Data (Metrics) {#metrics}
 
-To improve Zed and understand how it is being used in the wild, Zed optionally collects usage data like the following:
+To improve CodeOrbit and understand how it is being used in the wild, CodeOrbit optionally collects usage data like the following:
 
 - (a) file extensions of opened files;
 - (b) features and tools You use within the Editor;
@@ -44,12 +44,12 @@ To improve Zed and understand how it is being used in the wild, Zed optionally c
 
 Usage Data does not include any of Your software code or sensitive project details. Metric events are reported over HTTPS, and requests are rate-limited to avoid using significant network bandwidth.
 
-Usage Data is associated with a secure random telemetry ID which may be linked to Your email address. This linkage currently serves two purposes: (1) it allows Zed to analyze usage patterns over time while maintaining Your privacy; and (2) it enables Zed to reach out to specific user groups for feedback and improvement suggestions.
+Usage Data is associated with a secure random telemetry ID which may be linked to Your email address. This linkage currently serves two purposes: (1) it allows CodeOrbit to analyze usage patterns over time while maintaining Your privacy; and (2) it enables CodeOrbit to reach out to specific user groups for feedback and improvement suggestions.
 
-You can audit the metrics data that Zed has reported by running the command {#action zed::OpenTelemetryLog} from the command palette, or clicking `Help > View Telemetry Log` in the application menu.
+You can audit the metrics data that CodeOrbit has reported by running the command {#action CodeOrbit::OpenTelemetryLog} from the command palette, or clicking `Help > View Telemetry Log` in the application menu.
 
-You can see the full list of the event types and exactly the data sent for each by inspecting the `Event` enum and the associated structs in [crates/telemetry_events/src/telemetry_events.rs](https://github.com/zed-industries/zed/blob/main/crates/telemetry_events/src/telemetry_events.rs) in the Zed repository.
+You can see the full list of the event types and exactly the data sent for each by inspecting the `Event` enum and the associated structs in [crates/telemetry_events/src/telemetry_events.rs](https://github.com/CodeOrbit-industries/CodeOrbit/blob/main/crates/telemetry_events/src/telemetry_events.rs) in the CodeOrbit repository.
 
 ## Concerns and Questions
 
-If you have concerns about telemetry, please feel free to [open an issue](https://github.com/zed-industries/zed/issues/new/choose).
+If you have concerns about telemetry, please feel free to [open an issue](https://github.com/CodeOrbit-industries/CodeOrbit/issues/new/choose).

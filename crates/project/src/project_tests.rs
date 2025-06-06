@@ -1,4 +1,4 @@
-#![allow(clippy::format_collect)]
+﻿#![allow(clippy::format_collect)]
 
 use crate::{
     Event, git_store::StatusEntry, task_inventory::TaskContexts, task_store::TaskSettingsLocation,
@@ -143,7 +143,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         [*.js]
             tab_width = 10
         "#,
-        ".zed": {
+        ".CodeOrbit": {
             "settings.json": r#"{
                 "tab_size": 8,
                 "hard_tabs": false,
@@ -200,7 +200,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         let settings_c = settings_for("c.js");
         let settings_readme = settings_for("README.json");
 
-        // .editorconfig overrides .zed/settings
+        // .editorconfig overrides .CodeOrbit/settings
         assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
         assert_eq!(settings_a.hard_tabs, true);
         assert_eq!(settings_a.ensure_final_newline_on_save, true);
@@ -232,7 +232,7 @@ async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(
         path!("/dir"),
         json!({
-            ".zed": {
+            ".CodeOrbit": {
                 "settings.json": r#"{
                     "git_hosting_providers": [
                         {
@@ -263,7 +263,7 @@ async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
     });
 
     fs.atomic_write(
-        Path::new(path!("/dir/.zed/settings.json")).to_owned(),
+        Path::new(path!("/dir/.CodeOrbit/settings.json")).to_owned(),
         "{}".into(),
     )
     .await
@@ -291,7 +291,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
     fs.insert_tree(
         path!("/dir"),
         json!({
-            ".zed": {
+            ".CodeOrbit": {
                 "settings.json": r#"{ "tab_size": 8 }"#,
                 "tasks.json": r#"[{
                     "label": "cargo check all",
@@ -303,7 +303,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 "a.rs": "fn a() {\n    A\n}"
             },
             "b": {
-                ".zed": {
+                ".CodeOrbit": {
                     "settings.json": r#"{ "tab_size": 2 }"#,
                     "tasks.json": r#"[{
                         "label": "cargo check",
@@ -332,8 +332,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let topmost_local_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
-        directory_in_worktree: PathBuf::from(".zed"),
-        id_base: "local worktree tasks from directory \".zed\"".into(),
+        directory_in_worktree: PathBuf::from(".CodeOrbit"),
+        id_base: "local worktree tasks from directory \".CodeOrbit\"".into(),
     };
 
     let all_tasks = cx
@@ -373,11 +373,11 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: PathBuf::from(separator!("b/.zed")),
+                    directory_in_worktree: PathBuf::from(separator!("b/.CodeOrbit")),
                     id_base: if cfg!(windows) {
-                        "local worktree tasks from directory \"b\\\\.zed\"".into()
+                        "local worktree tasks from directory \"b\\\\.CodeOrbit\"".into()
                     } else {
-                        "local worktree tasks from directory \"b/.zed\"".into()
+                        "local worktree tasks from directory \"b/.CodeOrbit\"".into()
                     },
                 },
                 "cargo check".to_string(),
@@ -456,11 +456,11 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: PathBuf::from(separator!("b/.zed")),
+                    directory_in_worktree: PathBuf::from(separator!("b/.CodeOrbit")),
                     id_base: if cfg!(windows) {
-                        "local worktree tasks from directory \"b\\\\.zed\"".into()
+                        "local worktree tasks from directory \"b\\\\.CodeOrbit\"".into()
                     } else {
-                        "local worktree tasks from directory \"b/.zed\"".into()
+                        "local worktree tasks from directory \"b/.CodeOrbit\"".into()
                     },
                 },
                 "cargo check".to_string(),
@@ -496,10 +496,10 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(
         path!("/dir"),
         json!({
-            ".zed": {
+            ".CodeOrbit": {
                 "tasks.json": r#"[{
                     "label": "test worktree root",
-                    "command": "echo $ZED_WORKTREE_ROOT"
+                    "command": "echo $codeorbit_WORKTREE_ROOT"
                 }]"#,
             },
             "a": {
@@ -534,7 +534,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
     });
     assert!(
         active_non_worktree_item_tasks.is_empty(),
-        "A task can not be resolved with context with no ZED_WORKTREE_ROOT data"
+        "A task can not be resolved with context with no codeorbit_WORKTREE_ROOT data"
     );
 
     let active_worktree_tasks = cx.update(|cx| {
@@ -567,11 +567,11 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         vec![(
             TaskSourceKind::Worktree {
                 id: worktree_id,
-                directory_in_worktree: PathBuf::from(separator!(".zed")),
+                directory_in_worktree: PathBuf::from(separator!(".CodeOrbit")),
                 id_base: if cfg!(windows) {
-                    "local worktree tasks from directory \".zed\"".into()
+                    "local worktree tasks from directory \".CodeOrbit\"".into()
                 } else {
-                    "local worktree tasks from directory \".zed\"".into()
+                    "local worktree tasks from directory \".CodeOrbit\"".into()
                 },
             },
             "echo /dir".to_string(),
@@ -4336,7 +4336,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
     let (initial_contents, initial_offsets) =
-        marked_text_offsets("one twoˇ\nthree ˇfourˇ five\nsixˇ seven\n");
+        marked_text_offsets("one twoË‡\nthree Ë‡fourË‡ five\nsixË‡ seven\n");
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/dir"),
@@ -4364,7 +4364,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     });
 
     let (new_contents, new_offsets) =
-        marked_text_offsets("oneˇ\nthree ˇFOURˇ five\nsixtyˇ seven\n");
+        marked_text_offsets("oneË‡\nthree Ë‡FOURË‡ five\nsixtyË‡ seven\n");
     fs.save(
         path!("/dir/the-file").as_ref(),
         &new_contents.as_str().into(),
@@ -5661,16 +5661,16 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     fs.insert_tree(
         path!("/dir"),
         json!({
-            "one.rs": "// ПРИВЕТ? привет!",
-            "two.rs": "// ПРИВЕТ.",
-            "three.rs": "// привет",
+            "one.rs": "// ÐŸÐ Ð˜Ð’Ð•Ð¢? Ð¿Ñ€Ð¸Ð²ÐµÑ‚!",
+            "two.rs": "// ÐŸÐ Ð˜Ð’Ð•Ð¢.",
+            "three.rs": "// Ð¿Ñ€Ð¸Ð²ÐµÑ‚",
         }),
     )
     .await;
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
 
     let unicode_case_sensitive_query = SearchQuery::text(
-        "привет",
+        "Ð¿Ñ€Ð¸Ð²ÐµÑ‚",
         false,
         true,
         false,
@@ -5691,7 +5691,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     );
 
     let unicode_case_insensitive_query = SearchQuery::text(
-        "привет",
+        "Ð¿Ñ€Ð¸Ð²ÐµÑ‚",
         false,
         false,
         false,
@@ -5719,7 +5719,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
         search(
             &project,
             SearchQuery::text(
-                "привет.",
+                "Ð¿Ñ€Ð¸Ð²ÐµÑ‚.",
                 false,
                 false,
                 false,
@@ -5896,7 +5896,7 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         let new_server_name = new_server.server.name();
         assert!(
             !servers_with_hover_requests.contains_key(&new_server_name),
-            "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
+            "Unexpected: initialiCodeOrbit server with the same name twice. Name: `{new_server_name}`"
         );
         match new_server_name.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
@@ -6204,7 +6204,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
 
         assert!(
             !servers_with_actions_requests.contains_key(&new_server_name),
-            "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
+            "Unexpected: initialiCodeOrbit server with the same name twice. Name: `{new_server_name}`"
         );
         match new_server_name.0.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
@@ -8897,7 +8897,7 @@ fn git_remove_index(path: &Path, repo: &git2::Repository) {
 fn git_commit(msg: &'static str, repo: &git2::Repository) {
     use git2::Signature;
 
-    let signature = Signature::now("test", "test@zed.dev").unwrap();
+    let signature = Signature::now("test", "test@CodeOrbit.dev").unwrap();
     let oid = repo.index().unwrap().write_tree().unwrap();
     let tree = repo.find_tree(oid).unwrap();
     if let Ok(head) = repo.head() {
@@ -8930,7 +8930,7 @@ fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
 fn git_stash(repo: &mut git2::Repository) {
     use git2::Signature;
 
-    let signature = Signature::now("test", "test@zed.dev").unwrap();
+    let signature = Signature::now("test", "test@CodeOrbit.dev").unwrap();
     repo.stash_save(&signature, "N/A", None)
         .expect("Failed to stash");
 }
@@ -9014,7 +9014,7 @@ async fn test_find_project_path_abs(
     )
     .await;
 
-    // Make sure the worktrees are fully initialized
+    // Make sure the worktrees are fully initialiCodeOrbit
     for worktree in project.read_with(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>()) {
         worktree
             .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())

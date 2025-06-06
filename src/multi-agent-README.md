@@ -1,6 +1,6 @@
-# CodeOrbit Multi-Agent System
+﻿# CodeOrbit Multi-Agent System
 
-A modular, extensible multi-agent system for the CodeOrbit IDE extension, enabling intelligent task routing and collaboration between specialized AI agents.
+A modular, extensible multi-agent system for the CodeOrbit IDE extension, enabling intelligent task routing and collaboration between specialiCodeOrbit AI agents.
 
 ## Overview
 
@@ -106,7 +106,7 @@ The `main.ts` file includes several example scenarios that demonstrate the syste
 
 - **IDE Integration**: Connect to the CodeOrbit IDE extension
 - **External Services**: Integrate with external APIs and services
-- **AI/ML Models**: Add specialized AI capabilities
+- **AI/ML Models**: Add specialiCodeOrbit AI capabilities
 
 ## Best Practices
 

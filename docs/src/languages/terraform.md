@@ -1,6 +1,6 @@
-# Terraform
+﻿# Terraform
 
-Terraform support is available through the [Terraform extension](https://github.com/zed-extensions/terraform).
+Terraform support is available through the [Terraform extension](https://github.com/CodeOrbit-extensions/terraform).
 
 - Tree-sitter: [MichaHoffmann/tree-sitter-hcl](https://github.com/MichaHoffmann/tree-sitter-hcl)
 - Language Server: [hashicorp/terraform-ls](https://github.com/hashicorp/terraform-ls)

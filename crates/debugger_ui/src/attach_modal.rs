@@ -1,9 +1,9 @@
-use dap::{DapRegistry, DebugRequest};
+﻿use dap::{DapRegistry, DebugRequest};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Render};
 use gpui::{Subscription, WeakEntity};
 use picker::{Picker, PickerDelegate};
-use task::ZedDebugConfig;
+use task::CodeOrbitDebugConfig;
 use util::debug_panic;
 
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub(crate) struct AttachModalDelegate {
     selected_index: usize,
     matches: Vec<StringMatch>,
     placeholder_text: Arc<str>,
-    pub(crate) definition: ZedDebugConfig,
+    pub(crate) definition: CodeOrbitDebugConfig,
     workspace: WeakEntity<Workspace>,
     candidates: Arc<[Candidate]>,
 }
@@ -33,7 +33,7 @@ pub(crate) struct AttachModalDelegate {
 impl AttachModalDelegate {
     fn new(
         workspace: WeakEntity<Workspace>,
-        definition: ZedDebugConfig,
+        definition: CodeOrbitDebugConfig,
         candidates: Arc<[Candidate]>,
     ) -> Self {
         Self {
@@ -54,7 +54,7 @@ pub struct AttachModal {
 
 impl AttachModal {
     pub fn new(
-        definition: ZedDebugConfig,
+        definition: CodeOrbitDebugConfig,
         workspace: WeakEntity<Workspace>,
         modal: bool,
         window: &mut Window,
@@ -83,7 +83,7 @@ impl AttachModal {
 
     pub(super) fn with_processes(
         workspace: WeakEntity<Workspace>,
-        definition: ZedDebugConfig,
+        definition: CodeOrbitDebugConfig,
         processes: Arc<[Candidate]>,
         modal: bool,
         window: &mut Window,
@@ -231,7 +231,7 @@ impl PickerDelegate for AttachModalDelegate {
         let Some(scenario) = cx.read_global::<DapRegistry, _>(|registry, _| {
             registry
                 .adapter(&self.definition.adapter)
-                .and_then(|adapter| adapter.config_from_zed_format(self.definition.clone()).ok())
+                .and_then(|adapter| adapter.config_from_CodeOrbit_format(self.definition.clone()).ok())
         }) else {
             return;
         };

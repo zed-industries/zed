@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "notifications"
 version = "0.1.0"
 edition.workspace = true
@@ -35,7 +35,7 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
-zed_actions.workspace = true
+codeorbit_actions.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

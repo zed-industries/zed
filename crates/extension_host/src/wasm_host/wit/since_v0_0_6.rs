@@ -1,4 +1,4 @@
-use super::{latest, since_v0_1_0};
+﻿use super::{latest, since_v0_1_0};
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use extension::WorktreeDelegate;
@@ -14,10 +14,10 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.0.6",
     with: {
          "worktree": ExtensionWorktree,
-         "zed:extension/github": latest::zed::extension::github,
-         "zed:extension/lsp": since_v0_1_0::zed::extension::lsp,
-         "zed:extension/nodejs": latest::zed::extension::nodejs,
-         "zed:extension/platform": latest::zed::extension::platform,
+         "CodeOrbit:extension/github": latest::CodeOrbit::extension::github,
+         "CodeOrbit:extension/lsp": since_v0_1_0::CodeOrbit::extension::lsp,
+         "CodeOrbit:extension/nodejs": latest::CodeOrbit::extension::nodejs,
+         "CodeOrbit:extension/platform": latest::CodeOrbit::extension::platform,
     },
 });
 

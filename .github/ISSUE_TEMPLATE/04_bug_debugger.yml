@@ -1,5 +1,5 @@
-name: Bug Report (Debugger)
-description: Zed Debugger-Related Bugs
+﻿name: Bug Report (Debugger)
+description: CodeOrbit Debugger-Related Bugs
 type: "Bug"
 labels: ["debugger"]
 title: "Debugger: <a short description of the Debugger bug>"
@@ -13,7 +13,7 @@ body:
         SUMMARY_SENTENCE_HERE
 
         ### Description
-        <!--  Describe with sufficient detail to reproduce from a clean Zed install. -->
+        <!--  Describe with sufficient detail to reproduce from a clean CodeOrbit install. -->
         Steps to trigger the problem:
         1.
         2.
@@ -27,9 +27,9 @@ body:
   - type: textarea
     id: environment
     attributes:
-      label: Zed Version and System Specs
-      description: 'Open Zed, and in the command palette select "zed: copy system specs into clipboard"'
+      label: CodeOrbit Version and System Specs
+      description: 'Open CodeOrbit, and in the command palette select "CodeOrbit: copy system specs into clipboard"'
       placeholder: |
-        Output of "zed: copy system specs into clipboard"
+        Output of "CodeOrbit: copy system specs into clipboard"
     validations:
       required: true

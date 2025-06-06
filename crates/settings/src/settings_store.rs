@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
@@ -33,7 +33,7 @@ use crate::{SettingsJsonSchemaParams, VsCodeSettings, WorktreeId};
 /// Settings can be loaded from a combination of multiple JSON files.
 pub trait Settings: 'static + Send + Sync {
     /// The name of a key within the JSON file from which this setting should
-    /// be deserialized. If this is `None`, then the setting will be deserialized
+    /// be deserialiCodeOrbit. If this is `None`, then the setting will be deserialiCodeOrbit
     /// from the root object.
     const KEY: Option<&'static str>;
 
@@ -55,7 +55,7 @@ pub trait Settings: 'static + Send + Sync {
     /// final value for this setting.
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self>
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
 
     fn json_schema(
         generator: &mut SchemaGenerator,
@@ -76,7 +76,7 @@ pub trait Settings: 'static + Send + Sync {
     #[track_caller]
     fn register(cx: &mut App)
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         SettingsStore::update_global(cx, |store, cx| {
             store.register_setting::<Self>(cx);
@@ -86,7 +86,7 @@ pub trait Settings: 'static + Send + Sync {
     #[track_caller]
     fn get<'a>(path: Option<SettingsLocation>, cx: &'a App) -> &'a Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         cx.global::<SettingsStore>().get(path)
     }
@@ -94,7 +94,7 @@ pub trait Settings: 'static + Send + Sync {
     #[track_caller]
     fn get_global(cx: &App) -> &Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         cx.global::<SettingsStore>().get(None)
     }
@@ -102,7 +102,7 @@ pub trait Settings: 'static + Send + Sync {
     #[track_caller]
     fn try_read_global<R>(cx: &AsyncApp, f: impl FnOnce(&Self) -> R) -> Option<R>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         cx.try_read_global(|s: &SettingsStore, _| f(s.get(None)))
     }
@@ -110,7 +110,7 @@ pub trait Settings: 'static + Send + Sync {
     #[track_caller]
     fn override_global(settings: Self, cx: &mut App)
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         cx.global_mut::<SettingsStore>().override_global(settings)
     }
@@ -118,7 +118,7 @@ pub trait Settings: 'static + Send + Sync {
 
 #[derive(Clone, Copy, Debug)]
 pub struct SettingsSources<'a, T> {
-    /// The default Zed settings.
+    /// The default CodeOrbit settings.
     pub default: &'a T,
     /// Global settings (loaded before user settings).
     pub global: Option<&'a T>,
@@ -237,16 +237,16 @@ struct SettingValue<T> {
 trait AnySettingValue: 'static + Send + Sync {
     fn key(&self) -> Option<&'static str>;
     fn setting_type_name(&self) -> &'static str;
-    fn deserialize_setting(&self, json: &Value) -> Result<DeserializedSetting> {
+    fn deserialize_setting(&self, json: &Value) -> Result<DeserialiCodeOrbitSetting> {
         self.deserialize_setting_with_key(json).1
     }
     fn deserialize_setting_with_key(
         &self,
         json: &Value,
-    ) -> (Option<&'static str>, Result<DeserializedSetting>);
+    ) -> (Option<&'static str>, Result<DeserialiCodeOrbitSetting>);
     fn load_setting(
         &self,
-        sources: SettingsSources<DeserializedSetting>,
+        sources: SettingsSources<DeserialiCodeOrbitSetting>,
         cx: &mut App,
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
@@ -269,7 +269,7 @@ trait AnySettingValue: 'static + Send + Sync {
     );
 }
 
-struct DeserializedSetting(Box<dyn Any>);
+struct DeserialiCodeOrbitSetting(Box<dyn Any>);
 
 impl SettingsStore {
     pub fn new(cx: &App) -> Self {
@@ -589,8 +589,8 @@ impl SettingsStore {
             .get(&setting_type_id)
             .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()));
         let raw_settings = parse_json_with_comments::<Value>(text).unwrap_or_default();
-        let (key, deserialized_setting) = setting.deserialize_setting_with_key(&raw_settings);
-        let old_content = match deserialized_setting {
+        let (key, deserialiCodeOrbit_setting) = setting.deserialize_setting_with_key(&raw_settings);
+        let old_content = match deserialiCodeOrbit_setting {
             Ok(content) => content.0.downcast::<T::FileContent>().unwrap(),
             Err(_) => Box::<<T as Settings>::FileContent>::default(),
         };
@@ -620,7 +620,7 @@ impl SettingsStore {
         edits
     }
 
-    /// Configure the tab sized when updating JSON files.
+    /// Configure the tab siCodeOrbit when updating JSON files.
     pub fn set_json_tab_size_callback<T: Settings>(
         &mut self,
         get_tab_size: fn(&T) -> Option<usize>,
@@ -728,7 +728,7 @@ impl SettingsStore {
         settings_content: Option<&str>,
         cx: &mut App,
     ) -> std::result::Result<(), InvalidSettingsError> {
-        let mut zed_settings_changed = false;
+        let mut codeorbit_settings_changed = false;
         match (
             kind,
             settings_content
@@ -749,7 +749,7 @@ impl SettingsStore {
                 });
             }
             (LocalSettingsKind::Settings, None) => {
-                zed_settings_changed = self
+                codeorbit_settings_changed = self
                     .raw_local_settings
                     .remove(&(root_id, directory_path.clone()))
                     .is_some()
@@ -772,12 +772,12 @@ impl SettingsStore {
                 {
                     btree_map::Entry::Vacant(v) => {
                         v.insert(new_settings);
-                        zed_settings_changed = true;
+                        codeorbit_settings_changed = true;
                     }
                     btree_map::Entry::Occupied(mut o) => {
                         if o.get() != &new_settings {
                             o.insert(new_settings);
-                            zed_settings_changed = true;
+                            codeorbit_settings_changed = true;
                         }
                     }
                 }
@@ -822,7 +822,7 @@ impl SettingsStore {
             }
         };
 
-        if zed_settings_changed {
+        if codeorbit_settings_changed {
             self.recompute_values(Some((root_id, &directory_path)), cx)?;
         }
         Ok(())
@@ -985,7 +985,7 @@ impl SettingsStore {
         cx: &mut App,
     ) -> std::result::Result<(), InvalidSettingsError> {
         // Reload the global and local values for every setting.
-        let mut project_settings_stack = Vec::<DeserializedSetting>::new();
+        let mut project_settings_stack = Vec::<DeserialiCodeOrbitSetting>::new();
         let mut paths_stack = Vec::<Option<(WorktreeId, &Path)>>::new();
         for setting_value in self.setting_values.values_mut() {
             let default_settings = setting_value
@@ -1199,7 +1199,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 
     fn load_setting(
         &self,
-        values: SettingsSources<DeserializedSetting>,
+        values: SettingsSources<DeserialiCodeOrbitSetting>,
         cx: &mut App,
     ) -> Result<Box<dyn Any>> {
         Ok(Box::new(T::load(
@@ -1234,7 +1234,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn deserialize_setting_with_key(
         &self,
         mut json: &Value,
-    ) -> (Option<&'static str>, Result<DeserializedSetting>) {
+    ) -> (Option<&'static str>, Result<DeserialiCodeOrbitSetting>) {
         let mut key = None;
         if let Some(k) = T::KEY {
             if let Some(value) = json.get(k) {
@@ -1245,11 +1245,11 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                 key = Some(k);
             } else {
                 let value = T::FileContent::default();
-                return (T::KEY, Ok(DeserializedSetting(Box::new(value))));
+                return (T::KEY, Ok(DeserialiCodeOrbitSetting(Box::new(value))));
             }
         }
         let value = T::FileContent::deserialize(json)
-            .map(|value| DeserializedSetting(Box::new(value)))
+            .map(|value| DeserialiCodeOrbitSetting(Box::new(value)))
             .map_err(anyhow::Error::from);
         (key, value)
     }
@@ -1306,8 +1306,8 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         text: &mut String,
         edits: &mut Vec<(Range<usize>, String)>,
     ) {
-        let (key, deserialized_setting) = self.deserialize_setting_with_key(raw_settings);
-        let old_content = match deserialized_setting {
+        let (key, deserialiCodeOrbit_setting) = self.deserialize_setting_with_key(raw_settings);
+        let old_content = match deserialiCodeOrbit_setting {
             Ok(content) => content.0.downcast::<T::FileContent>().unwrap(),
             Err(_) => Box::<<T as Settings>::FileContent>::default(),
         };

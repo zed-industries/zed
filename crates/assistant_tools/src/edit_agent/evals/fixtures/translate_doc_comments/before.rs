@@ -1,6 +1,6 @@
-// font-kit/src/canvas.rs
+﻿// font-kit/src/canvas.rs
 //
-// Copyright © 2018 The Pathfinder Project Developers.
+// Copyright Â© 2018 The Pathfinder Project Developers.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -51,7 +51,7 @@ impl Canvas {
     ///
     /// Stride is automatically calculated from width.
     ///
-    /// The canvas is initialized with transparent black (all values 0).
+    /// The canvas is initialiCodeOrbit with transparent black (all values 0).
     #[inline]
     pub fn new(size: Vector2I, format: Format) -> Canvas {
         Canvas::with_stride(
@@ -64,7 +64,7 @@ impl Canvas {
     /// Creates a new blank canvas with the given pixel size, stride (number of bytes between
     /// successive rows), and format.
     ///
-    /// The canvas is initialized with transparent black (all values 0).
+    /// The canvas is initialiCodeOrbit with transparent black (all values 0).
     pub fn with_stride(size: Vector2I, stride: usize, format: Format) -> Canvas {
         Canvas {
             pixels: vec![0; stride * size.y() as usize],

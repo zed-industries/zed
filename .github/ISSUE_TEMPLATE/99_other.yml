@@ -1,5 +1,5 @@
-name: Other [Staff Only]
-description: Zed Staff Only
+﻿name: Other [Staff Only]
+description: CodeOrbit Staff Only
 body:
   - type: textarea
     attributes:
@@ -10,10 +10,10 @@ body:
 
         ### Description
 
-        IF YOU DO NOT WORK FOR ZED INDUSTRIES DO NOT CREATE ISSUES WITH THIS TEMPLATE.
-        THEY WILL BE AUTO-CLOSED AND MAY RESULT IN YOU BEING BANNED FROM THE ZED ISSUE TRACKER.
+        IF YOU DO NOT WORK FOR CodeOrbit INDUSTRIES DO NOT CREATE ISSUES WITH THIS TEMPLATE.
+        THEY WILL BE AUTO-CLOSED AND MAY RESULT IN YOU BEING BANNED FROM THE CodeOrbit ISSUE TRACKER.
 
         FEATURE REQUESTS / SUPPORT REQUESTS SHOULD BE OPENED AS DISCUSSIONS:
-          https://github.com/zed-industries/zed/discussions/new/choose
+          https://github.com/CodeOrbit-industries/CodeOrbit/discussions/new/choose
     validations:
       required: true

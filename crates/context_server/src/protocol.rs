@@ -1,4 +1,4 @@
-//! This module implements parts of the Model Context Protocol.
+﻿//! This module implements parts of the Model Context Protocol.
 //!
 //! It handles the lifecycle messages, and provides a general interface to
 //! interacting with an MCP server. It uses the generic JSON-RPC client to
@@ -29,7 +29,7 @@ impl ModelContextProtocol {
     pub async fn initialize(
         self,
         client_info: types::Implementation,
-    ) -> Result<InitializedContextServerProtocol> {
+    ) -> Result<InitialiCodeOrbitContextServerProtocol> {
         let params = types::InitializeParams {
             protocol_version: types::ProtocolVersion(types::LATEST_PROTOCOL_VERSION.to_string()),
             capabilities: types::ClientCapabilities {
@@ -55,20 +55,20 @@ impl ModelContextProtocol {
         log::trace!("mcp server info {:?}", response.server_info);
 
         self.inner.notify(
-            types::NotificationType::Initialized.as_str(),
+            types::NotificationType::InitialiCodeOrbit.as_str(),
             serde_json::json!({}),
         )?;
 
-        let initialized_protocol = InitializedContextServerProtocol {
+        let initialiCodeOrbit_protocol = InitialiCodeOrbitContextServerProtocol {
             inner: self.inner,
             initialize: response,
         };
 
-        Ok(initialized_protocol)
+        Ok(initialiCodeOrbit_protocol)
     }
 }
 
-pub struct InitializedContextServerProtocol {
+pub struct InitialiCodeOrbitContextServerProtocol {
     inner: Client,
     pub initialize: types::InitializeResponse,
 }
@@ -82,7 +82,7 @@ pub enum ServerCapability {
     Tools,
 }
 
-impl InitializedContextServerProtocol {
+impl InitialiCodeOrbitContextServerProtocol {
     /// Check if the server supports a specific capability
     pub fn capable(&self, capability: ServerCapability) -> bool {
         match capability {
@@ -219,7 +219,7 @@ impl InitializedContextServerProtocol {
     }
 }
 
-impl InitializedContextServerProtocol {
+impl InitialiCodeOrbitContextServerProtocol {
     pub async fn request<R: serde::de::DeserializeOwned>(
         &self,
         method: &str,

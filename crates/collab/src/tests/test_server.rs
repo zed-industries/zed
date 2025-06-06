@@ -1,9 +1,9 @@
-use crate::stripe_client::FakeStripeClient;
+﻿use crate::stripe_client::FakeStripeClient;
 use crate::{
     AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
     executor::Executor,
-    rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, ZedVersion},
+    rpc::{CLEANUP_TIMEOUT, Principal, RECONNECT_TIMEOUT, Server, CodeOrbitVersion},
 };
 use anyhow::anyhow;
 use call::ActiveCall;
@@ -105,7 +105,7 @@ impl TestServer {
         let app_state = Self::build_app_state(&test_db, &livekit_server, executor.clone()).await;
         let epoch = app_state
             .db
-            .create_server(&app_state.config.zed_environment)
+            .create_server(&app_state.config.codeorbit_environment)
             .await
             .unwrap();
         let server = Server::new(epoch, app_state.clone());
@@ -154,7 +154,7 @@ impl TestServer {
         let epoch = self
             .app_state
             .db
-            .create_server(&self.app_state.config.zed_environment)
+            .create_server(&self.app_state.config.codeorbit_environment)
             .await
             .unwrap();
         self.server.reset(epoch);
@@ -253,7 +253,7 @@ impl TestServer {
                             server_conn,
                             client_name,
                             Principal::User(user),
-                            ZedVersion(SemanticVersion::new(1, 0, 0)),
+                            CodeOrbitVersion(SemanticVersion::new(1, 0, 0)),
                             None,
                             None,
                             Some(connection_id_tx),
@@ -543,7 +543,7 @@ impl TestServer {
                 llm_api_secret: None,
                 rust_log: None,
                 log_json: None,
-                zed_environment: "test".into(),
+                codeorbit_environment: "test".into(),
                 blob_store_url: None,
                 blob_store_region: None,
                 blob_store_access_key: None,
@@ -557,7 +557,7 @@ impl TestServer {
                 prediction_api_url: None,
                 prediction_api_key: None,
                 prediction_model: None,
-                zed_client_checksum_seed: None,
+                codeorbit_client_checksum_seed: None,
                 slack_panics_webhook: None,
                 auto_join_channel_id: None,
                 migrations_path: None,

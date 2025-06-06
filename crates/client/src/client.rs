@@ -1,10 +1,10 @@
-#[cfg(any(test, feature = "test-support"))]
+﻿#[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
 mod proxy;
 pub mod telemetry;
 pub mod user;
-pub mod zed_urls;
+pub mod codeorbit_urls;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_recursion::async_recursion;
@@ -55,27 +55,27 @@ pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
 
-static ZED_SERVER_URL: LazyLock<Option<String>> =
-    LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
-static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
+static codeorbit_SERVER_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("codeorbit_SERVER_URL").ok());
+static codeorbit_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("codeorbit_RPC_URL").ok());
 
 pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
-    std::env::var("ZED_IMPERSONATE")
+    std::env::var("codeorbit_IMPERSONATE")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) })
 });
 
 pub static ADMIN_API_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| {
-    std::env::var("ZED_ADMIN_API_TOKEN")
+    std::env::var("codeorbit_ADMIN_API_TOKEN")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) })
 });
 
-pub static ZED_APP_PATH: LazyLock<Option<PathBuf>> =
-    LazyLock::new(|| std::env::var("ZED_APP_PATH").ok().map(PathBuf::from));
+pub static codeorbit_APP_PATH: LazyLock<Option<PathBuf>> =
+    LazyLock::new(|| std::env::var("codeorbit_APP_PATH").ok().map(PathBuf::from));
 
-pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
-    LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
+pub static codeorbit_ALWAYS_ACTIVE: LazyLock<bool> =
+    LazyLock::new(|| std::env::var("codeorbit_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
@@ -100,7 +100,7 @@ impl Settings for ClientSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let mut result = sources.json_merge::<Self>()?;
-        if let Some(server_url) = &*ZED_SERVER_URL {
+        if let Some(server_url) = &*codeorbit_SERVER_URL {
             result.server_url.clone_from(server_url)
         }
         Ok(result)
@@ -236,8 +236,8 @@ pub struct Client {
 pub enum EstablishConnectionError {
     #[error("upgrade required")]
     UpgradeRequired,
-    #[error("unauthorized")]
-    Unauthorized,
+    #[error("unauthoriCodeOrbit")]
+    UnauthoriCodeOrbit,
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
@@ -252,7 +252,7 @@ impl From<WebsocketError> for EstablishConnectionError {
     fn from(error: WebsocketError) -> Self {
         if let WebsocketError::Http(response) = &error {
             match response.status() {
-                StatusCode::UNAUTHORIZED => return EstablishConnectionError::Unauthorized,
+                StatusCode::UNAUTHORICodeOrbit => return EstablishConnectionError::UnauthoriCodeOrbit,
                 StatusCode::UPGRADE_REQUIRED => return EstablishConnectionError::UpgradeRequired,
                 _ => {}
             }
@@ -496,14 +496,14 @@ pub struct TelemetrySettings {
     pub metrics: bool,
 }
 
-/// Control what info is collected by Zed.
+/// Control what info is collected by CodeOrbit.
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
     /// Default: true
     pub diagnostics: Option<bool>,
-    /// Send anonymized usage data like what languages you're using Zed with.
+    /// Send anonymiCodeOrbit usage data like what languages you're using CodeOrbit with.
     ///
     /// Default: true
     pub metrics: Option<bool>,
@@ -526,7 +526,7 @@ impl settings::Settings for TelemetrySettings {
             Some(matches!(s, "all" | "error" | "crash"))
         });
         // we could translate telemetry.telemetryLevel, but just because users didn't want
-        // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
+        // to send microsoft telemetry doesn't mean they don't want to send it to CodeOrbit. their
         // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
     }
 }
@@ -920,7 +920,7 @@ impl Client {
                             }
                         }
                     }
-                    Err(EstablishConnectionError::Unauthorized) => {
+                    Err(EstablishConnectionError::UnauthoriCodeOrbit) => {
                         self.state.write().credentials.take();
                         if read_from_provider {
                             self.credentials_provider.delete_credentials(cx).await.log_err();
@@ -928,7 +928,7 @@ impl Client {
                             self.authenticate_and_connect(false, cx).await
                         } else {
                             self.set_status(Status::ConnectionError, cx);
-                            ConnectionResult::Result(Err(EstablishConnectionError::Unauthorized).context("client auth and connect"))
+                            ConnectionResult::Result(Err(EstablishConnectionError::UnauthoriCodeOrbit).context("client auth and connect"))
                         }
                     }
                     Err(EstablishConnectionError::UpgradeRequired) => {
@@ -1068,7 +1068,7 @@ impl Client {
                 return Ok(url);
             }
 
-            if let Some(url) = &*ZED_RPC_URL {
+            if let Some(url) = &*codeorbit_RPC_URL {
                 return Url::parse(url).context("invalid rpc url");
             }
 
@@ -1168,19 +1168,19 @@ impl Client {
                 HeaderValue::from_str(&credentials.authorization_header())?,
             );
             request_headers.insert(
-                "x-zed-protocol-version",
+                "x-CodeOrbit-protocol-version",
                 HeaderValue::from_str(&rpc::PROTOCOL_VERSION.to_string())?,
             );
-            request_headers.insert("x-zed-app-version", HeaderValue::from_str(&app_version)?);
+            request_headers.insert("x-CodeOrbit-app-version", HeaderValue::from_str(&app_version)?);
             request_headers.insert(
-                "x-zed-release-channel",
+                "x-CodeOrbit-release-channel",
                 HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
             );
             if let Some(system_id) = system_id {
-                request_headers.insert("x-zed-system-id", HeaderValue::from_str(&system_id)?);
+                request_headers.insert("x-CodeOrbit-system-id", HeaderValue::from_str(&system_id)?);
             }
             if let Some(metrics_id) = metrics_id {
-                request_headers.insert("x-zed-metrics-id", HeaderValue::from_str(&metrics_id)?);
+                request_headers.insert("x-CodeOrbit-metrics-id", HeaderValue::from_str(&metrics_id)?);
             }
 
             let (stream, _) = async_tungstenite::tokio::client_async_tls_with_connector_and_config(
@@ -1219,7 +1219,7 @@ impl Client {
                 .clone()
                 .spawn(async move {
                     // Generate a pair of asymmetric encryption keys. The public key will be used by the
-                    // zed server to encrypt the user's access token, so that it can'be intercepted by
+                    // CodeOrbit server to encrypt the user's access token, so that it can'be intercepted by
                     // any other app running on the user's device.
                     let (public_key, private_key) =
                         rpc::auth::keypair().expect("failed to generate keypair for auth");
@@ -1236,13 +1236,13 @@ impl Client {
                             .await;
                     }
 
-                    // Start an HTTP server to receive the redirect from Zed's sign-in page.
+                    // Start an HTTP server to receive the redirect from CodeOrbit's sign-in page.
                     let server =
                         tiny_http::Server::http("127.0.0.1:0").expect("failed to find open port");
                     let port = server.server_addr().port();
 
-                    // Open the Zed sign-in page in the user's browser, with query parameters that indicate
-                    // that the user is signing in from a Zed app running on the same device.
+                    // Open the CodeOrbit sign-in page in the user's browser, with query parameters that indicate
+                    // that the user is signing in from a CodeOrbit app running on the same device.
                     let mut url = http.build_url(&format!(
                         "/native_app_signin?native_app_port={}&native_app_public_key={}",
                         port, public_key_string
@@ -1632,14 +1632,14 @@ impl ProtoClient for Client {
     }
 }
 
-/// prefix for the zed:// url scheme
-pub const ZED_URL_SCHEME: &str = "zed";
+/// prefix for the CodeOrbit:// url scheme
+pub const codeorbit_URL_SCHEME: &str = "CodeOrbit";
 
-/// Parses the given link into a Zed link.
+/// Parses the given link into a CodeOrbit link.
 ///
-/// Returns a [`Some`] containing the unprefixed link if the link is a Zed link.
+/// Returns a [`Some`] containing the unprefixed link if the link is a CodeOrbit link.
 /// Returns [`None`] otherwise.
-pub fn parse_zed_link<'a>(link: &'a str, cx: &App) -> Option<&'a str> {
+pub fn parse_CodeOrbit_link<'a>(link: &'a str, cx: &App) -> Option<&'a str> {
     let server_url = &ClientSettings::get_global(cx).server_url;
     if let Some(stripped) = link
         .strip_prefix(server_url)
@@ -1648,7 +1648,7 @@ pub fn parse_zed_link<'a>(link: &'a str, cx: &App) -> Option<&'a str> {
         return Some(stripped);
     }
     if let Some(stripped) = link
-        .strip_prefix(ZED_URL_SCHEME)
+        .strip_prefix(codeorbit_URL_SCHEME)
         .and_then(|result| result.strip_prefix("://"))
     {
         return Some(stripped);

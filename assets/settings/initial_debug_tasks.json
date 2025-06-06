@@ -1,34 +1,34 @@
-// Some example tasks for common languages.
+﻿// Some example tasks for common languages.
 //
 // For more documentation on how to configure debug tasks,
-// see: https://zed.dev/docs/debugger
+// see: https://CodeOrbit.dev/docs/debugger
 [
   {
     "label": "Debug active PHP file",
     "adapter": "PHP",
-    "program": "$ZED_FILE",
+    "program": "$codeorbit_FILE",
     "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT"
+    "cwd": "$codeorbit_WORKTREE_ROOT"
   },
   {
     "label": "Debug active Python file",
     "adapter": "Debugpy",
-    "program": "$ZED_FILE",
+    "program": "$codeorbit_FILE",
     "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT"
+    "cwd": "$codeorbit_WORKTREE_ROOT"
   },
   {
     "label": "Debug active JavaScript file",
     "adapter": "JavaScript",
-    "program": "$ZED_FILE",
+    "program": "$codeorbit_FILE",
     "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT"
+    "cwd": "$codeorbit_WORKTREE_ROOT"
   },
   {
     "label": "JavaScript debug terminal",
     "adapter": "JavaScript",
     "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT",
+    "cwd": "$codeorbit_WORKTREE_ROOT",
     "console": "integratedTerminal"
   }
 ]

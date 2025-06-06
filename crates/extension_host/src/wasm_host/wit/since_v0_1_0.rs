@@ -1,4 +1,4 @@
-use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
+﻿use crate::wasm_host::{WasmState, wit::ToWasmtimeResult};
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{Context as _, Result, bail};
@@ -30,15 +30,15 @@ wasmtime::component::bindgen!({
     with: {
          "worktree": ExtensionWorktree,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
-         "zed:extension/github": latest::zed::extension::github,
-         "zed:extension/nodejs": latest::zed::extension::nodejs,
-         "zed:extension/platform": latest::zed::extension::platform,
-         "zed:extension/slash-command": latest::zed::extension::slash_command,
+         "CodeOrbit:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
+         "CodeOrbit:extension/github": latest::CodeOrbit::extension::github,
+         "CodeOrbit:extension/nodejs": latest::CodeOrbit::extension::nodejs,
+         "CodeOrbit:extension/platform": latest::CodeOrbit::extension::platform,
+         "CodeOrbit:extension/slash-command": latest::CodeOrbit::extension::slash_command,
     },
 });
 
-pub use self::zed::extension::*;
+pub use self::CodeOrbit::extension::*;
 
 mod settings {
     include!(concat!(env!("OUT_DIR"), "/since_v0.1.0/settings.rs"));

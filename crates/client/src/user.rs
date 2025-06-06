@@ -1,4 +1,4 @@
-use super::{Client, Status, TypedEnvelope, proto};
+﻿use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet, hash_map::Entry};
@@ -224,7 +224,7 @@ impl UserStore {
                                 cx.update(|cx| {
                                     if let Some(info) = info {
                                         let staff =
-                                            info.staff && !*feature_flags::ZED_DISABLE_STAFF;
+                                            info.staff && !*feature_flags::codeorbit_DISABLE_STAFF;
                                         cx.update_flags(staff, info.flags);
                                         client.telemetry.set_authenticated_user_info(
                                             Some(info.metrics_id.clone()),
@@ -234,7 +234,7 @@ impl UserStore {
                                         this.update(cx, |this, cx| {
                                             let accepted_tos_at = {
                                                 #[cfg(debug_assertions)]
-                                                if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok()
+                                                if std::env::var("codeorbit_IGNORE_ACCEPTED_TOS").is_ok()
                                                 {
                                                     None
                                                 } else {

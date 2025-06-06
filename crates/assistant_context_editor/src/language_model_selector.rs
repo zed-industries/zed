@@ -1,7 +1,7 @@
-use std::{cmp::Reverse, sync::Arc};
+﻿use std::{cmp::Reverse, sync::Arc};
 
 use collections::{HashSet, IndexMap};
-use feature_flags::ZedProFeatureFlag;
+use feature_flags::CodeOrbitProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task,
@@ -25,7 +25,7 @@ action_with_deprecated_aliases!(
     ]
 );
 
-const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
+const TRY_CodeOrbit_PRO_URL: &str = "https://CodeOrbit.dev/pro";
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
@@ -177,7 +177,7 @@ impl LanguageModelPickerDelegate {
                     } else {
                         // Some providers have noisy failure states that we
                         // don't want to spam the logs with every time the
-                        // language model selector is initialized.
+                        // language model selector is initialiCodeOrbit.
                         //
                         // Ideally these should have more clear failure modes
                         // that we know are safe to ignore here, like what we do
@@ -390,7 +390,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select a model…".into()
+        "Select a modelâ€¦".into()
     }
 
     fn update_matches(
@@ -550,7 +550,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     ) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
 
-        let plan = proto::Plan::ZedPro;
+        let plan = proto::Plan::CodeOrbitPro;
 
         Some(
             h_flex()
@@ -560,26 +560,26 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
+                .when(cx.has_flag::<CodeOrbitProFeatureFlag>(), |this| {
                     this.child(match plan {
-                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
-                            .icon(IconName::ZedAssistant)
+                        Plan::CodeOrbitPro => Button::new("CodeOrbit-pro", "CodeOrbit Pro")
+                            .icon(IconName::CodeOrbitAssistant)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .icon_position(IconPosition::Start)
                             .on_click(|_, window, cx| {
                                 window
-                                    .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
+                                    .dispatch_action(Box::new(codeorbit_actions::OpenAccountSettings), cx)
                             }),
-                        Plan::Free | Plan::ZedProTrial => Button::new(
+                        Plan::Free | Plan::CodeOrbitProTrial => Button::new(
                             "try-pro",
-                            if plan == Plan::ZedProTrial {
+                            if plan == Plan::CodeOrbitProTrial {
                                 "Upgrade to Pro"
                             } else {
                                 "Try Pro"
                             },
                         )
-                        .on_click(|_, _, cx| cx.open_url(TRY_ZED_PRO_URL)),
+                        .on_click(|_, _, cx| cx.open_url(TRY_CodeOrbit_PRO_URL)),
                     })
                 })
                 .child(
@@ -590,7 +590,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon_position(IconPosition::Start)
                         .on_click(|_, window, cx| {
                             window.dispatch_action(
-                                zed_actions::agent::OpenConfiguration.boxed_clone(),
+                                codeorbit_actions::agent::OpenConfiguration.boxed_clone(),
                                 cx,
                             );
                         }),
@@ -723,10 +723,10 @@ mod tests {
     #[gpui::test]
     fn test_exact_match(cx: &mut TestAppContext) {
         let models = create_models(vec![
-            ("zed", "Claude 3.7 Sonnet"),
-            ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
+            ("CodeOrbit", "Claude 3.7 Sonnet"),
+            ("CodeOrbit", "Claude 3.7 Sonnet Thinking"),
+            ("CodeOrbit", "gpt-4.1"),
+            ("CodeOrbit", "gpt-4.1-nano"),
             ("openai", "gpt-3.5-turbo"),
             ("openai", "gpt-4.1"),
             ("openai", "gpt-4.1-nano"),
@@ -740,8 +740,8 @@ mod tests {
         assert_models_eq(
             results,
             vec![
-                "zed/gpt-4.1",
-                "zed/gpt-4.1-nano",
+                "CodeOrbit/gpt-4.1",
+                "CodeOrbit/gpt-4.1-nano",
                 "openai/gpt-4.1",
                 "openai/gpt-4.1-nano",
             ],
@@ -751,10 +751,10 @@ mod tests {
     #[gpui::test]
     fn test_fuzzy_match(cx: &mut TestAppContext) {
         let models = create_models(vec![
-            ("zed", "Claude 3.7 Sonnet"),
-            ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
+            ("CodeOrbit", "Claude 3.7 Sonnet"),
+            ("CodeOrbit", "Claude 3.7 Sonnet Thinking"),
+            ("CodeOrbit", "gpt-4.1"),
+            ("CodeOrbit", "gpt-4.1-nano"),
             ("openai", "gpt-3.5-turbo"),
             ("openai", "gpt-4.1"),
             ("openai", "gpt-4.1-nano"),
@@ -764,16 +764,16 @@ mod tests {
         let matcher = ModelMatcher::new(models, cx.background_executor.clone());
 
         // Results should preserve models order whenever possible.
-        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
-        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // In the case below, `CodeOrbit/gpt-4.1` and `openai/gpt-4.1` have identical
+        // similarity scores, but `CodeOrbit/gpt-4.1` was higher in the models list,
         // so it should appear first in the results.
         let results = matcher.fuzzy_search("41");
         assert_models_eq(
             results,
             vec![
-                "zed/gpt-4.1",
+                "CodeOrbit/gpt-4.1",
                 "openai/gpt-4.1",
-                "zed/gpt-4.1-nano",
+                "CodeOrbit/gpt-4.1-nano",
                 "openai/gpt-4.1-nano",
             ],
         );
@@ -784,15 +784,15 @@ mod tests {
 
         // Fuzzy search
         let results = matcher.fuzzy_search("z4n");
-        assert_models_eq(results, vec!["zed/gpt-4.1-nano"]);
+        assert_models_eq(results, vec!["CodeOrbit/gpt-4.1-nano"]);
     }
 
     #[gpui::test]
     fn test_exclude_recommended_models(_cx: &mut TestAppContext) {
-        let recommended_models = create_models(vec![("zed", "claude")]);
+        let recommended_models = create_models(vec![("CodeOrbit", "claude")]);
         let all_models = create_models(vec![
-            ("zed", "claude"), // Should be filtered out from "other"
-            ("zed", "gemini"),
+            ("CodeOrbit", "claude"), // Should be filtered out from "other"
+            ("CodeOrbit", "gemini"),
             ("copilot", "o3"),
         ]);
 
@@ -806,15 +806,15 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Recommended models should not appear in "other"
-        assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/o3"]);
+        assert_models_eq(actual_other_models, vec!["CodeOrbit/gemini", "copilot/o3"]);
     }
 
     #[gpui::test]
     fn test_dont_exclude_models_from_other_providers(_cx: &mut TestAppContext) {
-        let recommended_models = create_models(vec![("zed", "claude")]);
+        let recommended_models = create_models(vec![("CodeOrbit", "claude")]);
         let all_models = create_models(vec![
-            ("zed", "claude"), // Should be filtered out from "other"
-            ("zed", "gemini"),
+            ("CodeOrbit", "claude"), // Should be filtered out from "other"
+            ("CodeOrbit", "gemini"),
             ("copilot", "claude"), // Should not be filtered out from "other"
         ]);
 
@@ -828,6 +828,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         // Recommended models should not appear in "other"
-        assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/claude"]);
+        assert_models_eq(actual_other_models, vec!["CodeOrbit/gemini", "copilot/claude"]);
     }
 }

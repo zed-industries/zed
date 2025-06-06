@@ -1,4 +1,4 @@
-name: Bump collab-staging Tag
+﻿name: Bump collab-staging Tag
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   update-collab-staging-tag:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository

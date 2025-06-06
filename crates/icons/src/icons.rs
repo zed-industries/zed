@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
@@ -19,7 +19,7 @@ pub enum IconName {
     AiOllama,
     AiOpenAi,
     AiOpenRouter,
-    AiZed,
+    AiCodeOrbit,
     ArrowCircle,
     ArrowDown,
     ArrowDownFromLine,
@@ -258,16 +258,16 @@ pub enum IconName {
     WholeWord,
     X,
     XCircle,
-    ZedAssistant,
-    ZedAssistantFilled,
-    ZedBurnMode,
-    ZedBurnModeOn,
-    ZedPredict,
-    ZedPredictDisabled,
-    ZedPredictDown,
-    ZedPredictError,
-    ZedPredictUp,
-    ZedXCopilot,
+    CodeOrbitAssistant,
+    CodeOrbitAssistantFilled,
+    CodeOrbitBurnMode,
+    CodeOrbitBurnModeOn,
+    CodeOrbitPredict,
+    CodeOrbitPredictDisabled,
+    CodeOrbitPredictDown,
+    CodeOrbitPredictError,
+    CodeOrbitPredictUp,
+    CodeOrbitXCopilot,
 }
 
 impl IconName {

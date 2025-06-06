@@ -1,4 +1,4 @@
-use std::fmt::Write as _;
+﻿use std::fmt::Write as _;
 use std::io::Write;
 use std::ops::Range;
 use std::sync::Arc;
@@ -38,13 +38,13 @@ use thiserror::Error;
 use ui::Window;
 use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus};
+use codeorbit_llm_client::{CompletionIntent, CompletionRequestStatus};
 
 use crate::ThreadStore;
 use crate::context::{AgentContext, AgentContextHandle, ContextLoadResult, LoadedContext};
 use crate::thread_store::{
-    SerializedCrease, SerializedLanguageModel, SerializedMessage, SerializedMessageSegment,
-    SerializedThread, SerializedToolResult, SerializedToolUse, SharedProjectContext,
+    SerialiCodeOrbitCrease, SerialiCodeOrbitLanguageModel, SerialiCodeOrbitMessage, SerialiCodeOrbitMessageSegment,
+    SerialiCodeOrbitThread, SerialiCodeOrbitToolResult, SerialiCodeOrbitToolUse, SharedProjectContext,
 };
 use crate::tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState};
 
@@ -103,7 +103,7 @@ impl MessageId {
 pub struct MessageCrease {
     pub range: Range<usize>,
     pub metadata: CreaseMetadata,
-    /// None for a deserialized message, Some otherwise.
+    /// None for a deserialiCodeOrbit message, Some otherwise.
     pub context: Option<AgentContextHandle>,
 }
 
@@ -278,7 +278,7 @@ pub struct TotalTokenUsage {
 impl TotalTokenUsage {
     pub fn ratio(&self) -> TokenUsageRatio {
         #[cfg(debug_assertions)]
-        let warning_threshold: f32 = std::env::var("ZED_THREAD_WARNING_THRESHOLD")
+        let warning_threshold: f32 = std::env::var("codeorbit_THREAD_WARNING_THRESHOLD")
             .unwrap_or("0.8".to_string())
             .parse()
             .unwrap();
@@ -454,7 +454,7 @@ impl Thread {
 
     pub fn deserialize(
         id: ThreadId,
-        serialized: SerializedThread,
+        serialiCodeOrbit: SerialiCodeOrbitThread,
         project: Entity<Project>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
@@ -463,24 +463,24 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let next_message_id = MessageId(
-            serialized
+            serialiCodeOrbit
                 .messages
                 .last()
                 .map(|message| message.id.0 + 1)
                 .unwrap_or(0),
         );
-        let tool_use = ToolUseState::from_serialized_messages(
+        let tool_use = ToolUseState::from_serialiCodeOrbit_messages(
             tools.clone(),
-            &serialized.messages,
+            &serialiCodeOrbit.messages,
             project.clone(),
             window,
             cx,
         );
         let (detailed_summary_tx, detailed_summary_rx) =
-            postage::watch::channel_with(serialized.detailed_summary_state);
+            postage::watch::channel_with(serialiCodeOrbit.detailed_summary_state);
 
         let configured_model = LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            serialized
+            serialiCodeOrbit
                 .model
                 .and_then(|model| {
                     let model = SelectedModel {
@@ -492,20 +492,20 @@ impl Thread {
                 .or_else(|| registry.default_model())
         });
 
-        let completion_mode = serialized
+        let completion_mode = serialiCodeOrbit
             .completion_mode
             .unwrap_or_else(|| AgentSettings::get_global(cx).preferred_completion_mode);
 
         Self {
             id,
-            updated_at: serialized.updated_at,
-            summary: ThreadSummary::Ready(serialized.summary),
+            updated_at: serialiCodeOrbit.updated_at,
+            summary: ThreadSummary::Ready(serialiCodeOrbit.summary),
             pending_summary: Task::ready(None),
             detailed_summary_task: Task::ready(None),
             detailed_summary_tx,
             detailed_summary_rx,
             completion_mode,
-            messages: serialized
+            messages: serialiCodeOrbit
                 .messages
                 .into_iter()
                 .map(|message| Message {
@@ -515,11 +515,11 @@ impl Thread {
                         .segments
                         .into_iter()
                         .map(|segment| match segment {
-                            SerializedMessageSegment::Text { text } => MessageSegment::Text(text),
-                            SerializedMessageSegment::Thinking { text, signature } => {
+                            SerialiCodeOrbitMessageSegment::Text { text } => MessageSegment::Text(text),
+                            SerialiCodeOrbitMessageSegment::Thinking { text, signature } => {
                                 MessageSegment::Thinking { text, signature }
                             }
-                            SerializedMessageSegment::RedactedThinking { data } => {
+                            SerialiCodeOrbitMessageSegment::RedactedThinking { data } => {
                                 MessageSegment::RedactedThinking(data)
                             }
                         })
@@ -557,12 +557,12 @@ impl Thread {
             tools,
             tool_use,
             action_log: cx.new(|_| ActionLog::new(project)),
-            initial_project_snapshot: Task::ready(serialized.initial_project_snapshot).shared(),
-            request_token_usage: serialized.request_token_usage,
-            cumulative_token_usage: serialized.cumulative_token_usage,
+            initial_project_snapshot: Task::ready(serialiCodeOrbit.initial_project_snapshot).shared(),
+            request_token_usage: serialiCodeOrbit.request_token_usage,
+            cumulative_token_usage: serialiCodeOrbit.cumulative_token_usage,
             exceeded_window_error: None,
             last_usage: None,
-            tool_use_limit_reached: serialized.tool_use_limit_reached,
+            tool_use_limit_reached: serialiCodeOrbit.tool_use_limit_reached,
             feedback: None,
             message_feedback: HashMap::default(),
             last_auto_capture_at: None,
@@ -1100,17 +1100,17 @@ impl Thread {
     }
 
     /// Serializes this thread into a format for storage or telemetry.
-    pub fn serialize(&self, cx: &mut Context<Self>) -> Task<Result<SerializedThread>> {
+    pub fn serialize(&self, cx: &mut Context<Self>) -> Task<Result<SerialiCodeOrbitThread>> {
         let initial_project_snapshot = self.initial_project_snapshot.clone();
         cx.spawn(async move |this, cx| {
             let initial_project_snapshot = initial_project_snapshot.await;
-            this.read_with(cx, |this, cx| SerializedThread {
-                version: SerializedThread::VERSION.to_string(),
+            this.read_with(cx, |this, cx| SerialiCodeOrbitThread {
+                version: SerialiCodeOrbitThread::VERSION.to_string(),
                 summary: this.summary().or_default(),
                 updated_at: this.updated_at(),
                 messages: this
                     .messages()
-                    .map(|message| SerializedMessage {
+                    .map(|message| SerialiCodeOrbitMessage {
                         id: message.id,
                         role: message.role,
                         segments: message
@@ -1118,16 +1118,16 @@ impl Thread {
                             .iter()
                             .map(|segment| match segment {
                                 MessageSegment::Text(text) => {
-                                    SerializedMessageSegment::Text { text: text.clone() }
+                                    SerialiCodeOrbitMessageSegment::Text { text: text.clone() }
                                 }
                                 MessageSegment::Thinking { text, signature } => {
-                                    SerializedMessageSegment::Thinking {
+                                    SerialiCodeOrbitMessageSegment::Thinking {
                                         text: text.clone(),
                                         signature: signature.clone(),
                                     }
                                 }
                                 MessageSegment::RedactedThinking(data) => {
-                                    SerializedMessageSegment::RedactedThinking {
+                                    SerialiCodeOrbitMessageSegment::RedactedThinking {
                                         data: data.clone(),
                                     }
                                 }
@@ -1136,7 +1136,7 @@ impl Thread {
                         tool_uses: this
                             .tool_uses_for_message(message.id, cx)
                             .into_iter()
-                            .map(|tool_use| SerializedToolUse {
+                            .map(|tool_use| SerialiCodeOrbitToolUse {
                                 id: tool_use.id,
                                 name: tool_use.name,
                                 input: tool_use.input,
@@ -1145,7 +1145,7 @@ impl Thread {
                         tool_results: this
                             .tool_results_for_message(message.id)
                             .into_iter()
-                            .map(|tool_result| SerializedToolResult {
+                            .map(|tool_result| SerialiCodeOrbitToolResult {
                                 tool_use_id: tool_result.tool_use_id.clone(),
                                 is_error: tool_result.is_error,
                                 content: tool_result.content.clone(),
@@ -1156,7 +1156,7 @@ impl Thread {
                         creases: message
                             .creases
                             .iter()
-                            .map(|crease| SerializedCrease {
+                            .map(|crease| SerialiCodeOrbitCrease {
                                 start: crease.range.start,
                                 end: crease.range.end,
                                 icon_path: crease.metadata.icon_path.clone(),
@@ -1174,7 +1174,7 @@ impl Thread {
                 model: this
                     .configured_model
                     .as_ref()
-                    .map(|model| SerializedLanguageModel {
+                    .map(|model| SerialiCodeOrbitLanguageModel {
                         provider: model.provider.id().0.to_string(),
                         model: model.model.id().0.to_string(),
                     }),
@@ -2339,7 +2339,7 @@ impl Thread {
         }
 
         let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
-        let serialized_thread = self.serialize(cx);
+        let serialiCodeOrbit_thread = self.serialize(cx);
         let thread_id = self.id().clone();
         let client = self.project.read(cx).client();
 
@@ -2362,9 +2362,9 @@ impl Thread {
 
         cx.background_spawn(async move {
             let final_project_snapshot = final_project_snapshot.await;
-            let serialized_thread = serialized_thread.await?;
+            let serialiCodeOrbit_thread = serialiCodeOrbit_thread.await?;
             let thread_data =
-                serde_json::to_value(serialized_thread).unwrap_or_else(|_| serde_json::Value::Null);
+                serde_json::to_value(serialiCodeOrbit_thread).unwrap_or_else(|_| serde_json::Value::Null);
 
             let rating = match feedback {
                 ThreadFeedback::Positive => "positive",
@@ -2402,7 +2402,7 @@ impl Thread {
             self.report_message_feedback(message_id, feedback, cx)
         } else {
             let final_project_snapshot = Self::project_snapshot(self.project.clone(), cx);
-            let serialized_thread = self.serialize(cx);
+            let serialiCodeOrbit_thread = self.serialize(cx);
             let thread_id = self.id().clone();
             let client = self.project.read(cx).client();
             self.feedback = Some(feedback);
@@ -2410,8 +2410,8 @@ impl Thread {
 
             cx.background_spawn(async move {
                 let final_project_snapshot = final_project_snapshot.await;
-                let serialized_thread = serialized_thread.await?;
-                let thread_data = serde_json::to_value(serialized_thread)
+                let serialiCodeOrbit_thread = serialiCodeOrbit_thread.await?;
+                let thread_data = serde_json::to_value(serialiCodeOrbit_thread)
                     .unwrap_or_else(|_| serde_json::Value::Null);
 
                 let rating = match feedback {
@@ -2693,8 +2693,8 @@ impl Thread {
 
         cx.background_executor()
             .spawn(async move {
-                if let Ok(serialized_thread) = serialize_task.await {
-                    if let Ok(thread_data) = serde_json::to_value(serialized_thread) {
+                if let Ok(serialiCodeOrbit_thread) = serialize_task.await {
+                    if let Ok(thread_data) = serde_json::to_value(serialiCodeOrbit_thread) {
                         telemetry::event!(
                             "Agent Thread Auto-Captured",
                             thread_id = thread_id.to_string(),

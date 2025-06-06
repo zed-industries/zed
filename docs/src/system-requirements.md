@@ -1,12 +1,12 @@
-# System Requirements
+﻿# System Requirements
 
 ## Apple
 
 ### macOS
 
-Zed supports the follow macOS releases:
+CodeOrbit supports the follow macOS releases:
 
-| Version       | Codename | Apple Status   | Zed Status          |
+| Version       | Codename | Apple Status   | CodeOrbit Status          |
 | ------------- | -------- | -------------- | ------------------- |
 | macOS 15.x    | Sequoia  | Supported      | Supported           |
 | macOS 14.x    | Sonoma   | Supported      | Supported           |
@@ -16,11 +16,11 @@ Zed supports the follow macOS releases:
 | macOS 10.15.x | Catalina | EOL 2022-09-12 | Partially Supported |
 | macOS 10.14.x | Mojave   | EOL 2021-10-25 | Unsupported         |
 
-The macOS releases labelled "Partially Supported" (Big Sur and Catalina) do not support screen sharing via Zed Collaboration. These features use the [LiveKit SDK](https://livekit.io) which relies upon [ScreenCaptureKit.framework](https://developer.apple.com/documentation/screencapturekit/) only available on macOS 12 (Monterey) and newer.
+The macOS releases labelled "Partially Supported" (Big Sur and Catalina) do not support screen sharing via CodeOrbit Collaboration. These features use the [LiveKit SDK](https://livekit.io) which relies upon [ScreenCaptureKit.framework](https://developer.apple.com/documentation/screencapturekit/) only available on macOS 12 (Monterey) and newer.
 
 ### Mac Hardware
 
-Zed supports machines with Intel (x86_64) or Apple (aarch64) processors that meet the above macOS requirements:
+CodeOrbit supports machines with Intel (x86_64) or Apple (aarch64) processors that meet the above macOS requirements:
 
 - MacBook Pro (Early 2015 and newer)
 - MacBook Air (Early 2015 and newer)
@@ -33,9 +33,9 @@ Zed supports machines with Intel (x86_64) or Apple (aarch64) processors that mee
 
 ## Linux
 
-Zed supports 64bit Intel/AMD (x86_64) and 64Bit ARM (aarch64) processors.
+CodeOrbit supports 64bit Intel/AMD (x86_64) and 64Bit ARM (aarch64) processors.
 
-Zed requires a Vulkan 1.3 driver, and the following desktop portals:
+CodeOrbit requires a Vulkan 1.3 driver, and the following desktop portals:
 
 - `org.freedesktop.portal.FileChooser`
 - `org.freedesktop.portal.OpenURI`
@@ -47,4 +47,4 @@ Not yet available as an official download. Can be built [from source](./developm
 
 ## Web
 
-Not supported at this time. See our [Platform Support issue](https://github.com/zed-industries/zed/issues/5391).
+Not supported at this time. See our [Platform Support issue](https://github.com/CodeOrbit-industries/CodeOrbit/issues/5391).

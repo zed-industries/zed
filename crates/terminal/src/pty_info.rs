@@ -1,4 +1,4 @@
-use alacritty_terminal::tty::Pty;
+﻿use alacritty_terminal::tty::Pty;
 #[cfg(target_os = "windows")]
 use std::num::NonZeroU32;
 #[cfg(unix)]
@@ -79,7 +79,7 @@ pub struct ProcessInfo {
     pub argv: Vec<String>,
 }
 
-/// Fetches Zed-relevant Pseudo-Terminal (PTY) process information
+/// Fetches CodeOrbit-relevant Pseudo-Terminal (PTY) process information
 pub struct PtyProcessInfo {
     system: System,
     refresh_kind: ProcessRefreshKind,
@@ -138,7 +138,7 @@ impl PtyProcessInfo {
         Some(info)
     }
 
-    /// Updates the cached process info, returns whether the Zed-relevant info has changed
+    /// Updates the cached process info, returns whether the CodeOrbit-relevant info has changed
     pub fn has_changed(&mut self) -> bool {
         let current = self.load();
         let has_changed = match (self.current.as_ref(), current.as_ref()) {

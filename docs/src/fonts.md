@@ -1,19 +1,19 @@
-# Fonts
+﻿# Fonts
 
 <!--
-TBD: WIP. Zed Fonts documentation. This is currently not linked from SUMMARY.md are so unpublished.
+TBD: WIP. CodeOrbit Fonts documentation. This is currently not linked from SUMMARY.md are so unpublished.
 -->
 
-Zed ships two fonts: Zed Plex Mono and Zed Plex Sans. These are based on IBM Plex Mono and IBM Plex Sans, respectively.
+CodeOrbit ships two fonts: CodeOrbit Plex Mono and CodeOrbit Plex Sans. These are based on IBM Plex Mono and IBM Plex Sans, respectively.
 
 <!--
-TBD: Document how Zed Plex font files were created. Repo links, etc.
+TBD: Document how CodeOrbit Plex font files were created. Repo links, etc.
 -->
 
 ## Settings
 
 <!--
-TBD: Explain various font settings in Zed.
+TBD: Explain various font settings in CodeOrbit.
 -->
 
 - Buffer fonts
@@ -32,23 +32,23 @@ TBD: Explain various font settings in Zed.
   - `terminal.font-family`
   - `terminal.font-features`
 
-## Old Zed Fonts
+## Old CodeOrbit Fonts
 
-Previously, Zed shipped with `Zed Mono` and `Zed Sans`, customized versions of the [Iosevka](https://typeof.net/Iosevka/) typeface. You can find more about them in the [zed-fonts](https://github.com/zed-industries/zed-fonts/) repository.
+Previously, CodeOrbit shipped with `CodeOrbit Mono` and `CodeOrbit Sans`, customiCodeOrbit versions of the [Iosevka](https://typeof.net/Iosevka/) typeface. You can find more about them in the [CodeOrbit-fonts](https://github.com/CodeOrbit-industries/CodeOrbit-fonts/) repository.
 
-Here's how you can use the old Zed fonts instead of `Zed Plex Mono` and `Zed Plex Sans`:
+Here's how you can use the old CodeOrbit fonts instead of `CodeOrbit Plex Mono` and `CodeOrbit Plex Sans`:
 
-1. Download [zed-app-fonts-1.2.0.zip](https://github.com/zed-industries/zed-fonts/releases/download/1.2.0/zed-app-fonts-1.2.0.zip) from the [zed-fonts releases](https://github.com/zed-industries/zed-fonts/releases) page.
+1. Download [CodeOrbit-app-fonts-1.2.0.zip](https://github.com/CodeOrbit-industries/CodeOrbit-fonts/releases/download/1.2.0/CodeOrbit-app-fonts-1.2.0.zip) from the [CodeOrbit-fonts releases](https://github.com/CodeOrbit-industries/CodeOrbit-fonts/releases) page.
 2. Open macOS `Font Book.app`
 3. Unzip the file and drag the `ttf` files into the Font Book app.
-4. Update your settings `ui_font_family` and `buffer_font_family` to use `Zed Mono` or `Zed Sans` in your `settings.json` file.
+4. Update your settings `ui_font_family` and `buffer_font_family` to use `CodeOrbit Mono` or `CodeOrbit Sans` in your `settings.json` file.
 
 ```json
 {
-  "ui_font_family": "Zed Sans Extended",
-  "buffer_font_family": "Zed Mono Extend",
+  "ui_font_family": "CodeOrbit Sans Extended",
+  "buffer_font_family": "CodeOrbit Mono Extend",
   "terminal": {
-    "font-family": "Zed Mono Extended"
+    "font-family": "CodeOrbit Mono Extended"
   }
 }
 ```

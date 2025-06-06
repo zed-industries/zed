@@ -1,4 +1,4 @@
-pub mod client;
+﻿pub mod client;
 pub mod protocol;
 pub mod transport;
 pub mod types;
@@ -38,7 +38,7 @@ enum ContextServerTransport {
 
 pub struct ContextServer {
     id: ContextServerId,
-    client: RwLock<Option<Arc<crate::protocol::InitializedContextServerProtocol>>>,
+    client: RwLock<Option<Arc<crate::protocol::InitialiCodeOrbitContextServerProtocol>>>,
     configuration: ContextServerTransport,
 }
 
@@ -63,7 +63,7 @@ impl ContextServer {
         self.id.clone()
     }
 
-    pub fn client(&self) -> Option<Arc<crate::protocol::InitializedContextServerProtocol>> {
+    pub fn client(&self) -> Option<Arc<crate::protocol::InitialiCodeOrbitContextServerProtocol>> {
         self.client.read().clone()
     }
 
@@ -92,18 +92,18 @@ impl ContextServer {
         log::info!("starting context server {}", self.id);
         let protocol = crate::protocol::ModelContextProtocol::new(client);
         let client_info = types::Implementation {
-            name: "Zed".to_string(),
+            name: "CodeOrbit".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         };
-        let initialized_protocol = protocol.initialize(client_info).await?;
+        let initialiCodeOrbit_protocol = protocol.initialize(client_info).await?;
 
         log::debug!(
-            "context server {} initialized: {:?}",
+            "context server {} initialiCodeOrbit: {:?}",
             self.id,
-            initialized_protocol.initialize,
+            initialiCodeOrbit_protocol.initialize,
         );
 
-        *self.client.write() = Some(Arc::new(initialized_protocol));
+        *self.client.write() = Some(Arc::new(initialiCodeOrbit_protocol));
         Ok(())
     }
 

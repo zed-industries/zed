@@ -1,4 +1,4 @@
-import { Octokit } from "@octokit/rest";
+﻿import { Octokit } from "@octokit/rest";
 import { IncomingWebhook } from "@slack/webhook";
 
 /**
@@ -7,7 +7,7 @@ import { IncomingWebhook } from "@slack/webhook";
  * [Slack Docs](https://api.slack.com/reference/block-kit/blocks#section)
  */
 const SECTION_BLOCK_TEXT_LIMIT = 3000;
-const GITHUB_ISSUES_URL = "https://github.com/zed-industries/zed/issues";
+const GITHUB_ISSUES_URL = "https://github.com/CodeOrbit-industries/CodeOrbit/issues";
 
 async function main() {
   const octokit = new Octokit({
@@ -22,8 +22,8 @@ async function main() {
     process.env["SLACK_ISSUE_RESPONSE_WEBHOOK_URL"],
   );
 
-  const owner = "zed-industries";
-  const repo = "zed";
+  const owner = "CodeOrbit-industries";
+  const repo = "CodeOrbit";
   const teams = ["staff"];
   const githubHandleSet = new Set();
 
@@ -79,12 +79,12 @@ async function main() {
         day: "numeric",
       },
     );
-    const sanitizedTitle = issue.title
+    const sanitiCodeOrbitTitle = issue.title
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;");
 
-    return `${index + 1}. ${formattedDate}: <${issue.html_url}|${sanitizedTitle}>\n`;
+    return `${index + 1}. ${formattedDate}: <${issue.html_url}|${sanitiCodeOrbitTitle}>\n`;
   });
 
   const sections = [];

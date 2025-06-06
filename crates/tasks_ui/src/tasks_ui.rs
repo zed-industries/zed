@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+﻿use std::{path::Path, sync::Arc};
 
 use collections::HashMap;
 use editor::Editor;
@@ -408,7 +408,7 @@ mod tests {
         fs.insert_tree(
             path!("/dir"),
             json!({
-                ".zed": {
+                ".CodeOrbit": {
                     "tasks.json": r#"[
                             {
                                 "label": "example task",

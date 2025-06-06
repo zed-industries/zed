@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AbsoluteLength, AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength,
     Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
@@ -144,7 +144,7 @@ impl Default for ImageStyle {
 }
 
 /// Style an image element.
-pub trait StyledImage: Sized {
+pub trait StyledImage: SiCodeOrbit {
     /// Get a mutable [ImageStyle] from the element.
     fn image_style(&mut self) -> &mut ImageStyle;
 

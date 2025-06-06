@@ -1,4 +1,4 @@
-//! Agent registry for managing and coordinating different types of agents.
+﻿//! Agent registry for managing and coordinating different types of agents.
 
 use std::collections::HashMap;
 use async_trait::async_trait;
@@ -81,14 +81,14 @@ mod tests {
     
     struct TestAgent {
         id: String,
-        initialized: AtomicBool,
+        initialiCodeOrbit: AtomicBool,
     }
     
     impl TestAgent {
         fn new(id: &str) -> Self {
             Self {
                 id: id.to_string(),
-                initialized: AtomicBool::new(false),
+                initialiCodeOrbit: AtomicBool::new(false),
             }
         }
     }
@@ -100,7 +100,7 @@ mod tests {
         }
         
         async fn initialize(&mut self) -> Result<()> {
-            self.initialized.store(true, Ordering::SeqCst);
+            self.initialiCodeOrbit.store(true, Ordering::SeqCst);
             Ok(())
         }
         

@@ -1,4 +1,4 @@
-url = "https://github.com/zed-industries/zed"
+﻿url = "https://github.com/CodeOrbit-industries/CodeOrbit"
 revision = "main"
 require_lsp = false
 prompt = """

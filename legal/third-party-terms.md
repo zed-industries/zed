@@ -1,9 +1,9 @@
----
+﻿---
 title: 3rd Party Terms
 slug: third-party-terms
 ---
 
-In addition to the [Zed End User Terms](/terms) and [Zed Privacy Policy](/privacy-policy) usage of certain Zed features may also subject you to additional 3rd party terms and conditions. These terms and conditions may include, but are not limited to, the following:
+In addition to the [CodeOrbit End User Terms](/terms) and [CodeOrbit Privacy Policy](/privacy-policy) usage of certain CodeOrbit features may also subject you to additional 3rd party terms and conditions. These terms and conditions may include, but are not limited to, the following:
 
 ## Anthropic
 

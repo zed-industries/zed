@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "extension_cli"
 version = "0.1.0"
 edition.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [[bin]]
-name = "zed-extension"
+name = "CodeOrbit-extension"
 path = "src/main.rs"
 
 [dependencies]

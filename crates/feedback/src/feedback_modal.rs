@@ -1,9 +1,9 @@
-use gpui::{App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, Window};
+﻿use gpui::{App, Context, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, Window};
 use ui::{IconPosition, prelude::*};
 use workspace::{ModalView, Workspace};
-use zed_actions::feedback::GiveFeedback;
+use codeorbit_actions::feedback::GiveFeedback;
 
-use crate::{EmailZed, FileBugReport, OpenZedRepo, RequestFeature};
+use crate::{EmailCodeOrbit, FileBugReport, OpenCodeOrbitRepo, RequestFeature};
 
 pub struct FeedbackModal {
     focus_handle: FocusHandle,
@@ -39,8 +39,8 @@ impl FeedbackModal {
 
 impl Render for FeedbackModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let open_zed_repo =
-            cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(OpenZedRepo), cx));
+        let open_CodeOrbit_repo =
+            cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(OpenCodeOrbitRepo), cx));
 
         v_flex()
             .key_context("GiveFeedback")
@@ -66,7 +66,7 @@ impl Render for FeedbackModal {
                             })),
                     ),
             )
-            .child(Label::new("Thanks for using Zed! To share your experience with us, reach for the channel that's the most appropriate:"))
+            .child(Label::new("Thanks for using CodeOrbit! To share your experience with us, reach for the channel that's the most appropriate:"))
             .child(
                 Button::new("file-a-bug-report", "File a Bug Report")
                     .full_width()
@@ -97,17 +97,17 @@ impl Render for FeedbackModal {
                     .icon_color(Color::Muted)
                     .icon_position(IconPosition::Start)
                     .on_click(cx.listener(|_, _, window, cx| {
-                        window.dispatch_action(Box::new(EmailZed), cx);
+                        window.dispatch_action(Box::new(EmailCodeOrbit), cx);
                     })),
             )
             .child(
-                Button::new("zed_repository", "GitHub Repository")
+                Button::new("codeorbit_repository", "GitHub Repository")
                     .full_width()
                     .icon(IconName::Github)
                     .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
                     .icon_position(IconPosition::Start)
-                    .on_click(open_zed_repo),
+                    .on_click(open_CodeOrbit_repo),
             )
     }
 }

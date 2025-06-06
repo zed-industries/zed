@@ -1,4 +1,4 @@
-mod model;
+﻿mod model;
 mod rate_limiter;
 mod registry;
 mod request;
@@ -24,7 +24,7 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 use thiserror::Error;
 use util::serde::is_default;
-use zed_llm_client::{
+use codeorbit_llm_client::{
     CompletionRequestStatus, MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
     MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
 };
@@ -36,7 +36,7 @@ pub use crate::request::*;
 pub use crate::role::*;
 pub use crate::telemetry::*;
 
-pub const ZED_CLOUD_PROVIDER_ID: &str = "zed.dev";
+pub const codeorbit_CLOUD_PROVIDER_ID: &str = "CodeOrbit.dev";
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
     init_settings(cx);
@@ -366,7 +366,7 @@ pub trait LanguageModelProvider: 'static {
     fn id(&self) -> LanguageModelProviderId;
     fn name(&self) -> LanguageModelProviderName;
     fn icon(&self) -> IconName {
-        IconName::ZedAssistant
+        IconName::CodeOrbitAssistant
     }
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>>;

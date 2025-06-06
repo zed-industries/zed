@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AppState, CollaboratorId, FollowerState, Pane, Workspace, WorkspaceSettings,
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
@@ -23,7 +23,7 @@ const HORIZONTAL_MIN_SIZE: f32 = 80.;
 const VERTICAL_MIN_SIZE: f32 = 100.;
 
 /// One or many panes, arranged in a horizontal or vertical axis due to a split.
-/// Panes have all their tabs and capabilities preserved, and can be split again or resized.
+/// Panes have all their tabs and capabilities preserved, and can be split again or resiCodeOrbit.
 /// Single-pane group is a regular pane.
 #[derive(Clone)]
 pub struct PaneGroup {
@@ -293,11 +293,11 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
                         }
                     }
                     ParticipantLocation::UnsharedProject => Some(Label::new(format!(
-                        "{} is viewing an unshared Zed project",
+                        "{} is viewing an unshared CodeOrbit project",
                         leader.user.github_login
                     ))),
                     ParticipantLocation::External => Some(Label::new(format!(
-                        "{} is viewing a window outside of Zed",
+                        "{} is viewing a window outside of CodeOrbit",
                         leader.user.github_login
                     ))),
                 };

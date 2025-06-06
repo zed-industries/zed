@@ -1,6 +1,6 @@
-# TOML
+﻿# TOML
 
-TOML support is available through the [TOML extension](https://github.com/zed-industries/zed/tree/main/extensions/toml).
+TOML support is available through the [TOML extension](https://github.com/CodeOrbit-industries/CodeOrbit/tree/main/extensions/toml).
 
 - Tree-sitter: [tree-sitter/tree-sitter-toml](https://github.com/tree-sitter/tree-sitter-toml)
 - Language Server: [tamasfe/taplo](https://github.com/tamasfe/taplo)
@@ -19,4 +19,4 @@ include = ["Cargo.toml", "some_directory/**/*.toml"]
 # exclude = ["vendor/**/*.toml"]
 ```
 
-Note: The taplo language server will not automatically pickup changes to `.taplo.toml`. You must manually trigger {#action editor::RestartLanguageServer} or reload Zed for it to pickup changes.
+Note: The taplo language server will not automatically pickup changes to `.taplo.toml`. You must manually trigger {#action editor::RestartLanguageServer} or reload CodeOrbit for it to pickup changes.

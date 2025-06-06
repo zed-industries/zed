@@ -1,10 +1,10 @@
-#![allow(unused, dead_code)]
+﻿#![allow(unused, dead_code)]
 
 use gpui::Global;
 use language_model::RequestUsage;
 use std::ops::{Deref, DerefMut};
 use ui::prelude::*;
-use zed_llm_client::{Plan, UsageLimit};
+use codeorbit_llm_client::{Plan, UsageLimit};
 
 /// Debug only: Used for testing various account states
 ///
@@ -75,7 +75,7 @@ impl Default for DebugAccountState {
         Self {
             enabled: false,
             trial_expired: false,
-            plan: Plan::ZedFree,
+            plan: Plan::CodeOrbitFree,
             custom_prompt_usage: RequestUsage {
                 limit: UsageLimit::Unlimited,
                 amount: 0,

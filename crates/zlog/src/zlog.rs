@@ -1,4 +1,4 @@
-//! # logger
+﻿//! # logger
 pub use log as log_impl;
 
 mod env_config;
@@ -36,7 +36,7 @@ pub fn init_test() {
 }
 
 fn get_env_config() -> Option<String> {
-    std::env::var("ZED_LOG")
+    std::env::var("codeorbit_LOG")
         .or_else(|_| std::env::var("RUST_LOG"))
         .ok()
 }
@@ -375,19 +375,19 @@ mod tests {
     fn test_crate_name() {
         assert_eq!(crate_name!(), "zlog");
         assert_eq!(
-            private::extract_crate_name_from_module_path("my_speedy_⚡️_crate::some_module"),
-            "my_speedy_⚡️_crate"
+            private::extract_crate_name_from_module_path("my_speedy_âš¡ï¸_crate::some_module"),
+            "my_speedy_âš¡ï¸_crate"
         );
         assert_eq!(
-            private::extract_crate_name_from_module_path("my_speedy_crate_⚡️::some_module"),
-            "my_speedy_crate_⚡️"
+            private::extract_crate_name_from_module_path("my_speedy_crate_âš¡ï¸::some_module"),
+            "my_speedy_crate_âš¡ï¸"
         );
         assert_eq!(
-            private::extract_crate_name_from_module_path("my_speedy_crate_:⚡️:some_module"),
-            "my_speedy_crate_:⚡️:some_module"
+            private::extract_crate_name_from_module_path("my_speedy_crate_:âš¡ï¸:some_module"),
+            "my_speedy_crate_:âš¡ï¸:some_module"
         );
         assert_eq!(
-            private::extract_crate_name_from_module_path("my_speedy_crate_::⚡️some_module"),
+            private::extract_crate_name_from_module_path("my_speedy_crate_::âš¡ï¸some_module"),
             "my_speedy_crate_"
         );
     }

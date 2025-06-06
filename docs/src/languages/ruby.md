@@ -1,6 +1,6 @@
-# Ruby
+﻿# Ruby
 
-Ruby support is available through the [Ruby extension](https://github.com/zed-extensions/ruby).
+Ruby support is available through the [Ruby extension](https://github.com/CodeOrbit-extensions/ruby).
 
 - Tree-sitters:
   - [tree-sitter-ruby](https://github.com/tree-sitter/tree-sitter-ruby)
@@ -14,20 +14,20 @@ The Ruby extension also provides support for ERB files.
 
 ## Language Servers
 
-There are multiple language servers available for Ruby. Zed supports the two following:
+There are multiple language servers available for Ruby. CodeOrbit supports the two following:
 
 - [solargraph](https://github.com/castwide/solargraph)
 - [ruby-lsp](https://github.com/Shopify/ruby-lsp)
 
 They both have an overlapping feature set of autocomplete, diagnostics, code actions, etc. and it's up to you to decide which one you want to use. Note that you can't use both at the same time.
 
-In addition to these two language servers, Zed also supports [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
+In addition to these two language servers, CodeOrbit also supports [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by CodeOrbit as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
 
 When configuring a language server, it helps to open the LSP Logs window using the 'dev: Open Language Server Logs' command. You can then choose the corresponding language instance to see any logged information.
 
 ## Configuring a language server
 
-The [Ruby extension](https://github.com/zed-extensions/ruby) offers both `solargraph` and `ruby-lsp` language server support.
+The [Ruby extension](https://github.com/CodeOrbit-extensions/ruby) offers both `solargraph` and `ruby-lsp` language server support.
 
 ### Language Server Activation
 
@@ -101,7 +101,7 @@ Or, conversely, you can disable `ruby-lsp` and enable `solargraph` and `rubocop`
 
 ## Setting up `solargraph`
 
-Solargraph has formatting and diagnostics disabled by default. We can tell Zed to enable them by adding the following to your `settings.json`:
+Solargraph has formatting and diagnostics disabled by default. We can tell CodeOrbit to enable them by adding the following to your `settings.json`:
 
 ```json
 {
@@ -122,7 +122,7 @@ Solargraph reads its configuration from a file called `.solargraph.yml` in the r
 
 ## Setting up `ruby-lsp`
 
-Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell Zed to disable it by adding the following to your `settings.json`:
+Ruby LSP uses pull-based diagnostics which CodeOrbit doesn't support yet. We can tell CodeOrbit to disable it by adding the following to your `settings.json`:
 
 ```json
 {
@@ -144,7 +144,7 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
 }
 ```
 
-LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.zed/settings.json` inside your project repo:
+LSP `settings` and `initialization_options` can also be project-specific. For example to use [standardrb/standard](https://github.com/standardrb/standard) as a formatter and linter for a particular project, add this to a `.CodeOrbit/settings.json` inside your project repo:
 
 ```json
 {
@@ -161,7 +161,7 @@ LSP `settings` and `initialization_options` can also be project-specific. For ex
 
 ## Setting up `rubocop` LSP
 
-Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable it by adding the following to your `settings.json`:
+Rubocop has unsafe autocorrection disabled by default. We can tell CodeOrbit to enable it by adding the following to your `settings.json`:
 
 ```json
 {
@@ -234,15 +234,15 @@ end
 
 ## Running tests
 
-To run tests in your Ruby project, you can set up custom tasks in your local `.zed/tasks.json` configuration file. These tasks can be defined to work with different test frameworks like Minitest, RSpec, quickdraw, and tldr. Below are some examples of how to set up these tasks to run your tests from within your editor.
+To run tests in your Ruby project, you can set up custom tasks in your local `.CodeOrbit/tasks.json` configuration file. These tasks can be defined to work with different test frameworks like Minitest, RSpec, quickdraw, and tldr. Below are some examples of how to set up these tasks to run your tests from within your editor.
 
 ### Minitest with Rails
 
 ```json
 [
   {
-    "label": "test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
-    "command": "bin/rails test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
+    "label": "test $codeorbit_RELATIVE_FILE -n /$codeorbit_SYMBOL/",
+    "command": "bin/rails test $codeorbit_RELATIVE_FILE -n /$codeorbit_SYMBOL/",
     "tags": ["ruby-test"]
   }
 ]
@@ -252,14 +252,14 @@ Note: We can't use `args` here because of the way quotes are handled.
 
 ### Minitest
 
-Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_SYMBOL` instead:
+Plain minitest does not support running tests by line number, only by name, so we need to use `$codeorbit_SYMBOL` instead:
 
 ```json
 [
   {
-    "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
+    "label": "-Itest $codeorbit_RELATIVE_FILE -n /$codeorbit_SYMBOL/",
     "command": "bundle exec ruby",
-    "args": ["-Itest", "$ZED_RELATIVE_FILE", "-n /$ZED_SYMBOL/"],
+    "args": ["-Itest", "$codeorbit_RELATIVE_FILE", "-n /$codeorbit_SYMBOL/"],
     "tags": ["ruby-test"]
   }
 ]
@@ -270,9 +270,9 @@ Plain minitest does not support running tests by line number, only by name, so w
 ```json
 [
   {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
+    "label": "test $codeorbit_RELATIVE_FILE:$codeorbit_ROW",
     "command": "bundle exec rspec",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "args": ["\"$codeorbit_RELATIVE_FILE:$codeorbit_ROW\""],
     "tags": ["ruby-test"]
   }
 ]
@@ -283,9 +283,9 @@ Plain minitest does not support running tests by line number, only by name, so w
 ```json
 [
   {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
+    "label": "test $codeorbit_RELATIVE_FILE:$codeorbit_ROW",
     "command": "bundle exec qt",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "args": ["\"$codeorbit_RELATIVE_FILE:$codeorbit_ROW\""],
     "tags": ["ruby-test"]
   }
 ]
@@ -296,9 +296,9 @@ Plain minitest does not support running tests by line number, only by name, so w
 ```json
 [
   {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
+    "label": "test $codeorbit_RELATIVE_FILE:$codeorbit_ROW",
     "command": "bundle exec tldr",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "args": ["\"$codeorbit_RELATIVE_FILE:$codeorbit_ROW\""],
     "tags": ["ruby-test"]
   }
 ]

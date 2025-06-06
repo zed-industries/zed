@@ -1,4 +1,4 @@
-use ::proto::{FromProto, ToProto};
+﻿use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
 
 use extension::ExtensionHostProxy;
@@ -364,7 +364,7 @@ impl HeadlessProject {
         let fs = this.read_with(&mut cx, |this, _| this.fs.clone())?;
         let path = PathBuf::from_proto(shellexpand::tilde(&message.payload.path).to_string());
 
-        let canonicalized = match fs.canonicalize(&path).await {
+        let canonicaliCodeOrbit = match fs.canonicalize(&path).await {
             Ok(path) => path,
             Err(e) => {
                 let mut parent = path
@@ -387,7 +387,7 @@ impl HeadlessProject {
         let worktree = this
             .read_with(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Arc::from(canonicalized.as_path()),
+                    Arc::from(canonicaliCodeOrbit.as_path()),
                     message.payload.visible,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
@@ -400,7 +400,7 @@ impl HeadlessProject {
             let worktree = worktree.read(cx);
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonicalized_path: canonicalized.to_proto(),
+                canonicaliCodeOrbit_path: canonicaliCodeOrbit.to_proto(),
             }
         })?;
 

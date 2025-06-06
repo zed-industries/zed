@@ -1,4 +1,4 @@
-mod provider_tests;
+﻿mod provider_tests;
 
 use gpui::BackgroundExecutor;
 use parking_lot::Mutex;
@@ -23,7 +23,7 @@ impl TestLlmDb {
         let _guard = LOCK.lock();
         let mut rng = StdRng::from_entropy();
         let url = format!(
-            "postgres://postgres@localhost/zed-llm-test-{}",
+            "postgres://postgres@localhost/CodeOrbit-llm-test-{}",
             rng.r#gen::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()

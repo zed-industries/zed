@@ -1,4 +1,4 @@
-use ::fs::Fs;
+﻿use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -22,7 +22,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
+use task::{DebugScenario, TcpArgumentsTemplate, CodeOrbitDebugConfig};
 use util::archive::extract_zip;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -337,7 +337,7 @@ pub async fn download_adapter_from_github(
 pub trait DebugAdapter: 'static + Send + Sync {
     fn name(&self) -> DebugAdapterName;
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario>;
+    fn config_from_CodeOrbit_format(&self, codeorbit_scenario: CodeOrbitDebugConfig) -> Result<DebugScenario>;
 
     async fn get_binary(
         &self,
@@ -413,12 +413,12 @@ impl DebugAdapter for FakeAdapter {
         None
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
-        let config = serde_json::to_value(zed_scenario.request).unwrap();
+    fn config_from_CodeOrbit_format(&self, codeorbit_scenario: CodeOrbitDebugConfig) -> Result<DebugScenario> {
+        let config = serde_json::to_value(codeorbit_scenario.request).unwrap();
 
         Ok(DebugScenario {
-            adapter: zed_scenario.adapter,
-            label: zed_scenario.label,
+            adapter: codeorbit_scenario.adapter,
+            label: codeorbit_scenario.label,
             build: None,
             config,
             tcp_connection: None,

@@ -1,10 +1,10 @@
-use dap::DapRegistry;
+﻿use dap::DapRegistry;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use task::{DebugRequest, DebugScenario, LaunchRequest, TaskContext, VariableName, ZedDebugConfig};
+use task::{DebugRequest, DebugScenario, LaunchRequest, TaskContext, VariableName, CodeOrbitDebugConfig};
 use util::path;
 
 // use crate::new_process_modal::NewProcessMode;
@@ -46,7 +46,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     let home_dir = paths::home_dir();
 
     let test_cases: Vec<(&'static str, &'static str)> = vec![
-        // Absolute path - should not be relativized
+        // Absolute path - should not be relativiCodeOrbit
         (
             path!("/absolute/path/to/program"),
             path!("/absolute/path/to/program"),
@@ -66,10 +66,10 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                 .to_string()
                 .leak(),
         ),
-        // Path with $ZED_WORKTREE_ROOT - should be substituted without double appending
+        // Path with $codeorbit_WORKTREE_ROOT - should be substituted without double appending
         (
             format!(
-                "$ZED_WORKTREE_ROOT{0}src{0}program",
+                "$codeorbit_WORKTREE_ROOT{0}src{0}program",
                 std::path::MAIN_SEPARATOR
             )
             .leak(),
@@ -103,9 +103,9 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
                             input_path
                         );
 
-                        let expected_other_field = if input_path.contains("$ZED_WORKTREE_ROOT") {
+                        let expected_other_field = if input_path.contains("$codeorbit_WORKTREE_ROOT") {
                             input_path
-                                .replace("$ZED_WORKTREE_ROOT", &path!("/test/worktree/path"))
+                                .replace("$codeorbit_WORKTREE_ROOT", &path!("/test/worktree/path"))
                                 .to_owned()
                         } else {
                             input_path.to_string()
@@ -198,7 +198,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
 //     cx.executor().run_until_parked();
 
 //     let debug_json_content = fs
-//         .load(path!("/project/.zed/debug.json").as_ref())
+//         .load(path!("/project/.CodeOrbit/debug.json").as_ref())
 //         .await
 //         .expect("debug.json should exist");
 
@@ -227,7 +227,7 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
 //     cx.executor().run_until_parked();
 
 //     let debug_json_content = fs
-//         .load(path!("/project/.zed/debug.json").as_ref())
+//         .load(path!("/project/.CodeOrbit/debug.json").as_ref())
 //         .await
 //         .expect("debug.json should exist after second save");
 
@@ -278,7 +278,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
         registry.enumerate_adapters()
     });
 
-    let zed_config = ZedDebugConfig {
+    let codeorbit_config = CodeOrbitDebugConfig {
         label: "test_debug_session".into(),
         adapter: "test_adapter".into(),
         request: DebugRequest::Launch(LaunchRequest {
@@ -303,14 +303,14 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
             })
             .unwrap_or_else(|| panic!("Adapter {} should exist", adapter_name));
 
-        let mut adapter_specific_config = zed_config.clone();
+        let mut adapter_specific_config = codeorbit_config.clone();
         adapter_specific_config.adapter = adapter_name.to_string().into();
 
         let debug_scenario = adapter
-            .config_from_zed_format(adapter_specific_config)
+            .config_from_CodeOrbit_format(adapter_specific_config)
             .unwrap_or_else(|_| {
                 panic!(
-                    "Adapter {} should successfully convert from Zed format",
+                    "Adapter {} should successfully convert from CodeOrbit format",
                     adapter_name
                 )
             });

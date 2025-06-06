@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     adapters::DebugAdapterBinary,
     transport::{IoKind, LogKind, TransportDelegate},
 };
@@ -140,7 +140,7 @@ impl DebugAdapterClient {
     /// Send a request to an adapter and get a response back
     /// Note: This function will block until a response is sent back from the adapter
     pub async fn request<R: Request>(&self, arguments: R::Arguments) -> Result<R::Response> {
-        let serialized_arguments = serde_json::to_value(arguments)?;
+        let serialiCodeOrbit_arguments = serde_json::to_value(arguments)?;
 
         let (callback_tx, callback_rx) = oneshot::channel::<Result<Response>>();
 
@@ -149,7 +149,7 @@ impl DebugAdapterClient {
         let request = crate::messages::Request {
             seq: sequence_id,
             command: R::COMMAND.to_string(),
-            arguments: Some(serialized_arguments),
+            arguments: Some(serialiCodeOrbit_arguments),
         };
         self.transport_delegate
             .add_pending_request(sequence_id, callback_tx)
@@ -324,8 +324,8 @@ mod tests {
 
         let response = client
             .request::<Initialize>(InitializeRequestArguments {
-                client_id: Some("zed".to_owned()),
-                client_name: Some("Zed".to_owned()),
+                client_id: Some("CodeOrbit".to_owned()),
+                client_name: Some("CodeOrbit".to_owned()),
                 adapter_id: "fake-adapter".to_owned(),
                 locale: Some("en-US".to_owned()),
                 path_format: Some(InitializeRequestArgumentsPathFormat::Path),
@@ -383,7 +383,7 @@ mod tests {
                     called_event_handler.store(true, Ordering::SeqCst);
 
                     assert_eq!(
-                        Message::Event(Box::new(Events::Initialized(
+                        Message::Event(Box::new(Events::InitialiCodeOrbit(
                             Some(Capabilities::default())
                         ))),
                         event
@@ -398,7 +398,7 @@ mod tests {
         cx.run_until_parked();
 
         client
-            .fake_event(Events::Initialized(Some(Capabilities::default())))
+            .fake_event(Events::InitialiCodeOrbit(Some(Capabilities::default())))
             .await;
 
         cx.run_until_parked();

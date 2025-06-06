@@ -1,4 +1,4 @@
-mod ids;
+﻿mod ids;
 mod queries;
 mod seed;
 mod tables;
@@ -10,7 +10,7 @@ use collections::HashMap;
 pub use ids::*;
 pub use seed::*;
 pub use tables::*;
-use zed_llm_client::LanguageModelProvider;
+use codeorbit_llm_client::LanguageModelProvider;
 
 #[cfg(test)]
 pub use tests::TestLlmDb;

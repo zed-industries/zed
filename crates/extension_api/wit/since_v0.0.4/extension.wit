@@ -1,4 +1,4 @@
-package zed:extension;
+﻿package CodeOrbit:extension;
 
 world extension {
     use github.{github-release, github-release-options};
@@ -23,7 +23,7 @@ world extension {
     /// Gets the current operating system and architecture
     import current-platform: func() -> tuple<os, architecture>;
 
-    /// Get the path to the node binary used by Zed.
+    /// Get the path to the node binary used by CodeOrbit.
     import node-binary-path: func() -> result<string, string>;
 
     /// Gets the latest version of the given NPM package.

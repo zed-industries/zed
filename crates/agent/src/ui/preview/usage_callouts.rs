@@ -1,9 +1,9 @@
-use client::zed_urls;
+﻿use client::codeorbit_urls;
 use component::{empty_example, example_group_with_title, single_example};
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use language_model::RequestUsage;
 use ui::{Callout, Color, Icon, IconName, IconSize, prelude::*};
-use zed_llm_client::{Plan, UsageLimit};
+use codeorbit_llm_client::{Plan, UsageLimit};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct UsageCallout {
@@ -39,43 +39,43 @@ impl RenderOnce for UsageCallout {
 
         let (title, message, button_text, url) = if is_limit_reached {
             match self.plan {
-                Plan::ZedFree => (
+                Plan::CodeOrbitFree => (
                     "Out of free prompts",
                     "Upgrade to continue, wait for the next reset, or switch to API key."
                         .to_string(),
                     "Upgrade",
-                    zed_urls::account_url(cx),
+                    codeorbit_urls::account_url(cx),
                 ),
-                Plan::ZedProTrial => (
+                Plan::CodeOrbitProTrial => (
                     "Out of trial prompts",
-                    "Upgrade to Zed Pro to continue, or switch to API key.".to_string(),
+                    "Upgrade to CodeOrbit Pro to continue, or switch to API key.".to_string(),
                     "Upgrade",
-                    zed_urls::account_url(cx),
+                    codeorbit_urls::account_url(cx),
                 ),
-                Plan::ZedPro => (
+                Plan::CodeOrbitPro => (
                     "Out of included prompts",
                     "Enable usage-based billing to continue.".to_string(),
                     "Manage",
-                    zed_urls::account_url(cx),
+                    codeorbit_urls::account_url(cx),
                 ),
             }
         } else {
             match self.plan {
-                Plan::ZedFree => (
+                Plan::CodeOrbitFree => (
                     "Reaching free plan limit soon",
                     format!(
                         "{remaining} remaining - Upgrade to increase limit, or switch providers",
                     ),
                     "Upgrade",
-                    zed_urls::account_url(cx),
+                    codeorbit_urls::account_url(cx),
                 ),
-                Plan::ZedProTrial => (
+                Plan::CodeOrbitProTrial => (
                     "Reaching trial limit soon",
                     format!(
                         "{remaining} remaining - Upgrade to increase limit, or switch providers",
                     ),
                     "Upgrade",
-                    zed_urls::account_url(cx),
+                    codeorbit_urls::account_url(cx),
                 ),
                 _ => return div().into_any_element(),
             }
@@ -120,7 +120,7 @@ impl Component for UsageCallout {
                 single_example(
                     "Approaching limit (90%)",
                     UsageCallout::new(
-                        Plan::ZedFree,
+                        Plan::CodeOrbitFree,
                         RequestUsage {
                             limit: UsageLimit::Limited(50),
                             amount: 45, // 90% of limit
@@ -131,7 +131,7 @@ impl Component for UsageCallout {
                 single_example(
                     "Limit reached (100%)",
                     UsageCallout::new(
-                        Plan::ZedFree,
+                        Plan::CodeOrbitFree,
                         RequestUsage {
                             limit: UsageLimit::Limited(50),
                             amount: 50, // 100% of limit
@@ -143,12 +143,12 @@ impl Component for UsageCallout {
         );
 
         let trial_examples = example_group_with_title(
-            "Zed Pro Trial",
+            "CodeOrbit Pro Trial",
             vec![
                 single_example(
                     "Approaching limit (90%)",
                     UsageCallout::new(
-                        Plan::ZedProTrial,
+                        Plan::CodeOrbitProTrial,
                         RequestUsage {
                             limit: UsageLimit::Limited(150),
                             amount: 135, // 90% of limit
@@ -159,7 +159,7 @@ impl Component for UsageCallout {
                 single_example(
                     "Limit reached (100%)",
                     UsageCallout::new(
-                        Plan::ZedProTrial,
+                        Plan::CodeOrbitProTrial,
                         RequestUsage {
                             limit: UsageLimit::Limited(150),
                             amount: 150, // 100% of limit
@@ -171,12 +171,12 @@ impl Component for UsageCallout {
         );
 
         let pro_examples = example_group_with_title(
-            "Zed Pro",
+            "CodeOrbit Pro",
             vec![
                 single_example(
                     "Limit reached (100%)",
                     UsageCallout::new(
-                        Plan::ZedPro,
+                        Plan::CodeOrbitPro,
                         RequestUsage {
                             limit: UsageLimit::Limited(500),
                             amount: 500, // 100% of limit

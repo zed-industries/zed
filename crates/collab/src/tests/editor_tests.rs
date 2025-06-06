@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     rpc::RECONNECT_TIMEOUT,
     tests::{TestServer, rust_lang},
 };
@@ -242,32 +242,32 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
 
     // Test newline above
     editor_cx_a.set_selections_state(indoc! {"
-        Some textˇ
+        Some textË‡
     "});
     editor_cx_b.set_selections_state(indoc! {"
-        Some textˇ
+        Some textË‡
     "});
     editor_cx_a.update_editor(|editor, window, cx| {
         editor.newline_above(&editor::actions::NewlineAbove, window, cx)
     });
     executor.run_until_parked();
     editor_cx_a.assert_editor_state(indoc! {"
-        ˇ
+        Ë‡
         Some text
     "});
     editor_cx_b.assert_editor_state(indoc! {"
 
-        Some textˇ
+        Some textË‡
     "});
 
     // Test newline below
     editor_cx_a.set_selections_state(indoc! {"
 
-        Some textˇ
+        Some textË‡
     "});
     editor_cx_b.set_selections_state(indoc! {"
 
-        Some textˇ
+        Some textË‡
     "});
     editor_cx_a.update_editor(|editor, window, cx| {
         editor.newline_below(&editor::actions::NewlineBelow, window, cx)
@@ -276,11 +276,11 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     editor_cx_a.assert_editor_state(indoc! {"
 
         Some text
-        ˇ
+        Ë‡
     "});
     editor_cx_b.assert_editor_state(indoc! {"
 
-        Some textˇ
+        Some textË‡
 
     "});
 }
@@ -368,7 +368,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
-                    label: "first_method(…)".into(),
+                    label: "first_method(â€¦)".into(),
                     detail: Some("fn(&mut self, B) -> C".into()),
                     text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                         new_text: "first_method($1)".to_string(),
@@ -381,7 +381,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
                     ..Default::default()
                 },
                 lsp::CompletionItem {
-                    label: "second_method(…)".into(),
+                    label: "second_method(â€¦)".into(),
                     detail: Some("fn(&mut self, C) -> D<E>".into()),
                     text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                         new_text: "second_method()".to_string(),
@@ -422,9 +422,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // The resolved completion has an additional text edit.
     fake_language_server.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(
         |params, _| async move {
-            assert_eq!(params.label, "first_method(…)");
+            assert_eq!(params.label, "first_method(â€¦)");
             Ok(lsp::CompletionItem {
-                label: "first_method(…)".into(),
+                label: "first_method(â€¦)".into(),
                 detail: Some("fn(&mut self, B) -> C".into()),
                 text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                     new_text: "first_method($1)".to_string(),
@@ -485,7 +485,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
-                    label: "third_method(…)".into(),
+                    label: "third_method(â€¦)".into(),
                     detail: Some("fn(&mut self, B, C, D) -> E".into()),
                     text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                         // no snippet placehodlers
@@ -505,9 +505,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
     // The completion now gets a new `text_edit.new_text` when resolving the completion item
     let mut resolve_completion_response = fake_language_server
         .set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(|params, _| async move {
-            assert_eq!(params.label, "third_method(…)");
+            assert_eq!(params.label, "third_method(â€¦)");
             Ok(lsp::CompletionItem {
-                label: "third_method(…)".into(),
+                label: "third_method(â€¦)".into(),
                 detail: Some("fn(&mut self, B, C, D) -> E".into()),
                 text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                     // Now it's a snippet
@@ -2012,7 +2012,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         .into_iter()
         .map(|(sha, message)| (sha.parse().unwrap(), message.into()))
         .collect(),
-        remote_url: Some("git@github.com:zed-industries/zed.git".to_string()),
+        remote_url: Some("git@github.com:CodeOrbit-industries/CodeOrbit.git".to_string()),
     };
     client_a.fs().set_blame_for_repo(
         Path::new(path!("/my-repo/.git")),
@@ -2099,7 +2099,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
                 assert_eq!(details.message, format!("message for idx-{}", idx));
                 assert_eq!(
                     details.permalink.unwrap().to_string(),
-                    format!("https://github.com/zed-industries/zed/commit/{}", entry.sha)
+                    format!("https://github.com/CodeOrbit-industries/CodeOrbit/commit/{}", entry.sha)
                 );
             }
         });
@@ -2284,15 +2284,15 @@ async fn test_collaborating_with_editorconfig(
     };
 
     let initial_main = indoc! {"
-ˇmod other;
+Ë‡mod other;
 fn main() { let foo = other::foo(); }"};
     let initial_other = indoc! {"
-ˇpub fn foo() -> usize {
+Ë‡pub fn foo() -> usize {
     4
 }"};
 
     let first_tabbed_main = indoc! {"
-  ˇmod other;
+  Ë‡mod other;
 fn main() { let foo = other::foo(); }"};
     tab_undo_assert(
         &mut main_editor_cx_a,
@@ -2310,7 +2310,7 @@ fn main() { let foo = other::foo(); }"};
     );
 
     let first_tabbed_other = indoc! {"
-  ˇpub fn foo() -> usize {
+  Ë‡pub fn foo() -> usize {
     4
 }"};
     tab_undo_assert(
@@ -2340,7 +2340,7 @@ fn main() { let foo = other::foo(); }"};
     cx_b.run_until_parked();
 
     let second_tabbed_main = indoc! {"
-   ˇmod other;
+   Ë‡mod other;
 fn main() { let foo = other::foo(); }"};
     tab_undo_assert(
         &mut main_editor_cx_a,
@@ -2358,7 +2358,7 @@ fn main() { let foo = other::foo(); }"};
     );
 
     let second_tabbed_other = indoc! {"
-   ˇpub fn foo() -> usize {
+   Ë‡pub fn foo() -> usize {
     4
 }"};
     tab_undo_assert(
@@ -2410,7 +2410,7 @@ fn main() { let foo = other::foo(); }"};
     );
 
     let third_tabbed_other = indoc! {"
-      ˇpub fn foo() -> usize {
+      Ë‡pub fn foo() -> usize {
     4
 }"};
     tab_undo_assert(

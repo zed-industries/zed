@@ -1,4 +1,4 @@
-use std::pin::Pin;
+﻿use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -130,14 +130,14 @@ impl From<BedrockModelMode> for ModelMode {
 /// under in the keychain.
 const AMAZON_AWS_URL: &str = "https://amazonaws.com";
 
-// These environment variables all use a `ZED_` prefix because we don't want to overwrite the user's AWS credentials.
-const ZED_BEDROCK_ACCESS_KEY_ID_VAR: &str = "ZED_ACCESS_KEY_ID";
-const ZED_BEDROCK_SECRET_ACCESS_KEY_VAR: &str = "ZED_SECRET_ACCESS_KEY";
-const ZED_BEDROCK_SESSION_TOKEN_VAR: &str = "ZED_SESSION_TOKEN";
-const ZED_AWS_PROFILE_VAR: &str = "ZED_AWS_PROFILE";
-const ZED_BEDROCK_REGION_VAR: &str = "ZED_AWS_REGION";
-const ZED_AWS_CREDENTIALS_VAR: &str = "ZED_AWS_CREDENTIALS";
-const ZED_AWS_ENDPOINT_VAR: &str = "ZED_AWS_ENDPOINT";
+// These environment variables all use a `codeorbit_` prefix because we don't want to overwrite the user's AWS credentials.
+const codeorbit_BEDROCK_ACCESS_KEY_ID_VAR: &str = "codeorbit_ACCESS_KEY_ID";
+const codeorbit_BEDROCK_SECRET_ACCESS_KEY_VAR: &str = "codeorbit_SECRET_ACCESS_KEY";
+const codeorbit_BEDROCK_SESSION_TOKEN_VAR: &str = "codeorbit_SESSION_TOKEN";
+const codeorbit_AWS_PROFILE_VAR: &str = "codeorbit_AWS_PROFILE";
+const codeorbit_BEDROCK_REGION_VAR: &str = "codeorbit_AWS_REGION";
+const codeorbit_AWS_CREDENTIALS_VAR: &str = "codeorbit_AWS_CREDENTIALS";
+const codeorbit_AWS_ENDPOINT_VAR: &str = "codeorbit_AWS_ENDPOINT";
 
 pub struct State {
     credentials: Option<BedrockCredentials>,
@@ -203,7 +203,7 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |this, cx| {
             let (credentials, from_env) =
-                if let Ok(credentials) = std::env::var(ZED_AWS_CREDENTIALS_VAR) {
+                if let Ok(credentials) = std::env::var(codeorbit_AWS_CREDENTIALS_VAR) {
                     (credentials, true)
                 } else {
                     let (_, credentials) = credentials_provider
@@ -412,7 +412,7 @@ impl BedrockModel {
                                 creds.secret_access_key,
                                 creds.session_token,
                                 None,
-                                "zed-bedrock-provider",
+                                "CodeOrbit-bedrock-provider",
                             );
                             config_builder = config_builder.credentials_provider(aws_creds);
                         }
@@ -439,7 +439,7 @@ impl BedrockModel {
             })
             .context("initializing Bedrock client")?;
 
-        self.client.get().context("Bedrock client not initialized")
+        self.client.get().context("Bedrock client not initialiCodeOrbit")
     }
 
     fn stream_completion(
@@ -452,7 +452,7 @@ impl BedrockModel {
         let runtime_client = self
             .get_or_init_client(cx)
             .cloned()
-            .context("Bedrock client not initialized")?;
+            .context("Bedrock client not initialiCodeOrbit")?;
         let owned_handle = self.handler.clone();
 
         Ok(async move {
@@ -645,7 +645,7 @@ pub fn into_bedrock(
                                     LanguageModelToolResultContent::Image(_) => {
                                         BedrockToolResultContentBlock::Text(
                                             // TODO: Bedrock image support
-                                            "[Tool responded with an image, but Zed doesn't support these in Bedrock models yet]".to_string()
+                                            "[Tool responded with an image, but CodeOrbit doesn't support these in Bedrock models yet]".to_string()
                                         )
                                     }
                                 })
@@ -1228,7 +1228,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("Access Key ID is set in {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {ZED_BEDROCK_REGION_VAR} environment variables.")
+                            format!("Access Key ID is set in {codeorbit_BEDROCK_ACCESS_KEY_ID_VAR}, Secret Key is set in {codeorbit_BEDROCK_SECRET_ACCESS_KEY_VAR}, Region is set in {codeorbit_BEDROCK_REGION_VAR} environment variables.")
                         } else {
                             match bedrock_method {
                                 Some(BedrockAuthMethod::Automatic) => "You are using automatic credentials".into(),
@@ -1247,10 +1247,10 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set || bedrock_method.is_some())
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {ZED_BEDROCK_REGION_VAR} environment variables.")))
+                            this.tooltip(Tooltip::text(format!("To reset your credentials, unset the {codeorbit_BEDROCK_ACCESS_KEY_ID_VAR}, {codeorbit_BEDROCK_SECRET_ACCESS_KEY_VAR}, and {codeorbit_BEDROCK_REGION_VAR} environment variables.")))
                         })
                         .when(bedrock_method.is_some(), |this| {
-                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check Zed settings to understand how"))
+                            this.tooltip(Tooltip::text("You cannot reset credentials as they're being derived, check CodeOrbit settings to understand how"))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx))),
                 )
@@ -1260,7 +1260,7 @@ impl Render for ConfigurationView {
         v_flex()
             .size_full()
             .on_action(cx.listener(ConfigurationView::save_credentials))
-            .child(Label::new("To use Zed's assistant with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
+            .child(Label::new("To use CodeOrbit's assistant with Bedrock, you can set a custom authentication strategy through the settings.json, or use static credentials."))
             .child(Label::new("But, to access models on AWS, you need to:").mt_1())
             .child(
                 List::new()
@@ -1283,7 +1283,7 @@ impl Render for ConfigurationView {
             .child(self.render_common_fields(cx))
             .child(
                 Label::new(
-                    format!("You can also assign the {ZED_BEDROCK_ACCESS_KEY_ID_VAR}, {ZED_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {ZED_BEDROCK_REGION_VAR} environment variables and restart Zed."),
+                    format!("You can also assign the {codeorbit_BEDROCK_ACCESS_KEY_ID_VAR}, {codeorbit_BEDROCK_SECRET_ACCESS_KEY_VAR} AND {codeorbit_BEDROCK_REGION_VAR} environment variables and restart CodeOrbit."),
                 )
                     .size(LabelSize::Small)
                     .color(Color::Muted)
@@ -1291,7 +1291,7 @@ impl Render for ConfigurationView {
             )
             .child(
                 Label::new(
-                    format!("Optionally, if your environment uses AWS CLI profiles, you can set {ZED_AWS_PROFILE_VAR}; if it requires a custom endpoint, you can set {ZED_AWS_ENDPOINT_VAR}; and if it requires a Session Token, you can set {ZED_BEDROCK_SESSION_TOKEN_VAR}."),
+                    format!("Optionally, if your environment uses AWS CLI profiles, you can set {codeorbit_AWS_PROFILE_VAR}; if it requires a custom endpoint, you can set {codeorbit_AWS_ENDPOINT_VAR}; and if it requires a Session Token, you can set {codeorbit_BEDROCK_SESSION_TOKEN_VAR}."),
                 )
                     .size(LabelSize::Small)
                     .color(Color::Muted),

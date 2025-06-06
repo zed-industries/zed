@@ -1,4 +1,4 @@
-use crate::notification_window_options;
+﻿use crate::notification_window_options;
 use crate::notifications::collab_notification::CollabNotification;
 use call::{ActiveCall, room};
 use client::User;
@@ -137,7 +137,7 @@ impl Render for ProjectSharedNotification {
             )
             .child(Label::new(self.owner.github_login.clone()))
             .child(Label::new(format!(
-                "is sharing a project in Zed{}",
+                "is sharing a project in CodeOrbit{}",
                 if self.worktree_root_names.is_empty() {
                     ""
                 } else {

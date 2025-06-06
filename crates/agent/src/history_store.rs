@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, path::Path, sync::Arc};
+﻿use std::{collections::VecDeque, path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use assistant_context_editor::{AssistantContext, SavedContextMetadata};
@@ -14,7 +14,7 @@ use util::ResultExt as _;
 use crate::{
     Thread,
     thread::ThreadId,
-    thread_store::{SerializedThreadMetadata, ThreadStore},
+    thread_store::{SerialiCodeOrbitThreadMetadata, ThreadStore},
 };
 
 const MAX_RECENTLY_OPENED_ENTRIES: usize = 6;
@@ -23,7 +23,7 @@ const SAVE_RECENTLY_OPENED_ENTRIES_DEBOUNCE: Duration = Duration::from_millis(50
 
 #[derive(Clone, Debug)]
 pub enum HistoryEntry {
-    Thread(SerializedThreadMetadata),
+    Thread(SerialiCodeOrbitThreadMetadata),
     Context(SavedContextMetadata),
 }
 
@@ -78,7 +78,7 @@ impl RecentEntry {
 }
 
 #[derive(Serialize, Deserialize)]
-enum SerializedRecentEntry {
+enum SerialiCodeOrbitRecentEntry {
     Thread(String),
     Context(String),
 }
@@ -115,13 +115,13 @@ impl HistoryStore {
                         .background_spawn(async move { std::fs::read_to_string(path) })
                         .await
                         .ok()?;
-                    let entries = serde_json::from_str::<Vec<SerializedRecentEntry>>(&contents)
+                    let entries = serde_json::from_str::<Vec<SerialiCodeOrbitRecentEntry>>(&contents)
                         .context("deserializing persisted agent panel navigation history")
                         .log_err()?
                         .into_iter()
                         .take(MAX_RECENTLY_OPENED_ENTRIES)
-                        .map(|serialized| match serialized {
-                            SerializedRecentEntry::Thread(id) => thread_store
+                        .map(|serialiCodeOrbit| match serialiCodeOrbit {
+                            SerialiCodeOrbitRecentEntry::Thread(id) => thread_store
                                 .update_in(cx, |thread_store, window, cx| {
                                     let thread_id = ThreadId::from(id.as_str());
                                     thread_store
@@ -135,7 +135,7 @@ impl HistoryStore {
                                     }
                                     .boxed()
                                 }),
-                            SerializedRecentEntry::Context(id) => context_store
+                            SerialiCodeOrbitRecentEntry::Context(id) => context_store
                                 .update(cx, |context_store, cx| {
                                     context_store
                                         .open_local_context(Path::new(&id).into(), cx)
@@ -180,7 +180,7 @@ impl HistoryStore {
         let mut history_entries = Vec::new();
 
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_NO_THREAD_HISTORY").is_ok() {
+        if std::env::var("codeorbit_SIMULATE_NO_THREAD_HISTORY").is_ok() {
             return history_entries;
         }
 
@@ -207,14 +207,14 @@ impl HistoryStore {
     }
 
     fn save_recently_opened_entries(&mut self, cx: &mut Context<Self>) {
-        let serialized_entries = self
+        let serialiCodeOrbit_entries = self
             .recently_opened_entries
             .iter()
             .filter_map(|entry| match entry {
-                RecentEntry::Context(context) => Some(SerializedRecentEntry::Context(
+                RecentEntry::Context(context) => Some(SerialiCodeOrbitRecentEntry::Context(
                     context.read(cx).path()?.to_str()?.to_owned(),
                 )),
-                RecentEntry::Thread(id, _) => Some(SerializedRecentEntry::Thread(id.to_string())),
+                RecentEntry::Thread(id, _) => Some(SerialiCodeOrbitRecentEntry::Thread(id.to_string())),
             })
             .collect::<Vec<_>>();
 
@@ -224,7 +224,7 @@ impl HistoryStore {
                 .await;
             cx.background_spawn(async move {
                 let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
-                let content = serde_json::to_string(&serialized_entries)?;
+                let content = serde_json::to_string(&serialiCodeOrbit_entries)?;
                 std::fs::write(path, content)?;
                 anyhow::Ok(())
             })
@@ -258,7 +258,7 @@ impl HistoryStore {
 
     pub fn recently_opened_entries(&self, _cx: &mut Context<Self>) -> VecDeque<RecentEntry> {
         #[cfg(debug_assertions)]
-        if std::env::var("ZED_SIMULATE_NO_THREAD_HISTORY").is_ok() {
+        if std::env::var("codeorbit_SIMULATE_NO_THREAD_HISTORY").is_ok() {
             return VecDeque::new();
         }
 

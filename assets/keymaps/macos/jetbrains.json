@@ -1,4 +1,4 @@
-[
+﻿[
   {
     "bindings": {
       "cmd-{": "pane::ActivatePreviousItem",
@@ -15,8 +15,8 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl->": ["zed::IncreaseBufferFontSize", { "persist": true }],
-      "ctrl-<": ["zed::DecreaseBufferFontSize", { "persist": true }],
+      "ctrl->": ["CodeOrbit::IncreaseBufferFontSize", { "persist": true }],
+      "ctrl-<": ["CodeOrbit::DecreaseBufferFontSize", { "persist": true }],
       "ctrl-shift-j": "editor::JoinLines",
       "cmd-d": "editor::DuplicateSelection",
       "cmd-backspace": "editor::DeleteLine",

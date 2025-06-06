@@ -1,4 +1,4 @@
-use super::ips_file::IpsFile;
+﻿use super::ips_file::IpsFile;
 use crate::api::CloudflareIpCountryHeader;
 use crate::{AppState, Error, Result, api::slack};
 use anyhow::anyhow;
@@ -20,7 +20,7 @@ use telemetry_events::{Event, EventRequestBody, Panic};
 use util::ResultExt;
 use uuid::Uuid;
 
-const CRASH_REPORTS_BUCKET: &str = "zed-crash-reports";
+const CRASH_REPORTS_BUCKET: &str = "CodeOrbit-crash-reports";
 
 pub fn router() -> Router {
     Router::new()
@@ -30,17 +30,17 @@ pub fn router() -> Router {
         .route("/telemetry/hangs", post(post_hang))
 }
 
-pub struct ZedChecksumHeader(Vec<u8>);
+pub struct CodeOrbitChecksumHeader(Vec<u8>);
 
-impl Header for ZedChecksumHeader {
+impl Header for CodeOrbitChecksumHeader {
     fn name() -> &'static HeaderName {
-        static ZED_CHECKSUM_HEADER: OnceLock<HeaderName> = OnceLock::new();
-        ZED_CHECKSUM_HEADER.get_or_init(|| HeaderName::from_static("x-zed-checksum"))
+        static codeorbit_CHECKSUM_HEADER: OnceLock<HeaderName> = OnceLock::new();
+        codeorbit_CHECKSUM_HEADER.get_or_init(|| HeaderName::from_static("x-CodeOrbit-checksum"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let checksum = values
@@ -69,7 +69,7 @@ pub async fn post_crash(
     let bundle_id = &report.header.bundle_id;
     let app_version = &report.app_version();
 
-    if bundle_id == "dev.zed.Zed-Dev" {
+    if bundle_id == "dev.CodeOrbit.CodeOrbit-Dev" {
         log::error!("Crash uploads from {} are ignored.", bundle_id);
         return Ok(());
     }
@@ -109,12 +109,12 @@ pub async fn post_crash(
     }
 
     let recent_panic_on: Option<i64> = headers
-        .get("x-zed-panicked-on")
+        .get("x-CodeOrbit-panicked-on")
         .and_then(|h| h.to_str().ok())
         .and_then(|s| s.parse().ok());
 
     let installation_id = headers
-        .get("x-zed-installation-id")
+        .get("x-CodeOrbit-installation-id")
         .and_then(|h| h.to_str().ok())
         .map(|s| s.to_string())
         .unwrap_or_default();
@@ -130,7 +130,7 @@ pub async fn post_crash(
             }
         };
         if crashed_at.is_some_and(|t| (t.timestamp_millis() - recent_panic_on).abs() <= 30000) {
-            recent_panic = headers.get("x-zed-panic").and_then(|h| h.to_str().ok());
+            recent_panic = headers.get("x-CodeOrbit-panic").and_then(|h| h.to_str().ok());
         }
     }
 
@@ -195,7 +195,7 @@ pub async fn post_crash(
                         });
 
                         slack::Text::markdown(format!(
-                            "*Incident:*\n<https://{}.{}/{}.ips|{}…>",
+                            "*Incident:*\n<https://{}.{}/{}.ips|{}â€¦>",
                             CRASH_REPORTS_BUCKET,
                             hostname,
                             report.header.incident_id,
@@ -232,7 +232,7 @@ pub async fn post_crash(
 
 pub async fn post_hang(
     Extension(app): Extension<Arc<AppState>>,
-    TypedHeader(ZedChecksumHeader(checksum)): TypedHeader<ZedChecksumHeader>,
+    TypedHeader(CodeOrbitChecksumHeader(checksum)): TypedHeader<CodeOrbitChecksumHeader>,
     body: Bytes,
 ) -> Result<()> {
     let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
@@ -291,7 +291,7 @@ pub async fn post_hang(
 
 pub async fn post_panic(
     Extension(app): Extension<Arc<AppState>>,
-    TypedHeader(ZedChecksumHeader(checksum)): TypedHeader<ZedChecksumHeader>,
+    TypedHeader(CodeOrbitChecksumHeader(checksum)): TypedHeader<CodeOrbitChecksumHeader>,
     body: Bytes,
 ) -> Result<()> {
     let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
@@ -427,7 +427,7 @@ pub async fn post_panic(
                         });
 
                         slack::Text::markdown(format!(
-                            "*{} {}:*\n<https://{}.{}/{}.json|{}…>",
+                            "*{} {}:*\n<https://{}.{}/{}.json|{}â€¦>",
                             panic.os_name,
                             panic.os_version.unwrap_or_default(),
                             CRASH_REPORTS_BUCKET,
@@ -486,7 +486,7 @@ fn report_to_slack(panic: &Panic) -> bool {
 
 pub async fn post_events(
     Extension(app): Extension<Arc<AppState>>,
-    TypedHeader(ZedChecksumHeader(checksum)): TypedHeader<ZedChecksumHeader>,
+    TypedHeader(CodeOrbitChecksumHeader(checksum)): TypedHeader<CodeOrbitChecksumHeader>,
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     body: Bytes,
 ) -> Result<()> {
@@ -544,7 +544,7 @@ pub async fn post_events(
 }
 
 pub fn calculate_json_checksum(app: Arc<AppState>, json: &impl AsRef<[u8]>) -> Option<Vec<u8>> {
-    let checksum_seed = app.config.zed_client_checksum_seed.as_ref()?;
+    let checksum_seed = app.config.codeorbit_client_checksum_seed.as_ref()?;
 
     let mut summer = Sha256::new();
     summer.update(checksum_seed);
@@ -746,7 +746,7 @@ fn for_snowflake(
         }
 
         // NOTE: most amplitude user properties are read out of our event_properties
-        // dictionary. See https://app.amplitude.com/data/zed/Zed/sources/detail/production/falcon%3A159998
+        // dictionary. See https://app.amplitude.com/data/CodeOrbit/CodeOrbit/sources/detail/production/falcon%3A159998
         // for how that is configured.
         let user_properties = body.is_staff.map(|is_staff| {
             serde_json::json!({

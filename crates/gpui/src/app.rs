@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     any::{TypeId, type_name},
     cell::{BorrowMutError, Ref, RefCell, RefMut},
     marker::PhantomData,
@@ -752,7 +752,7 @@ impl App {
         self.platform.open_url(url);
     }
 
-    /// Registers the given URL scheme (e.g. `zed` for `zed://` urls) to be
+    /// Registers the given URL scheme (e.g. `CodeOrbit` for `CodeOrbit://` urls) to be
     /// opened by the current app.
     ///
     /// On some platforms (e.g. macOS) you may be able to register URL schemes

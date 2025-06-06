@@ -1,4 +1,4 @@
-use crate::{BufferSnapshot, Point, ToPoint};
+﻿use crate::{BufferSnapshot, Point, ToPoint};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{BackgroundExecutor, HighlightStyle};
 use std::ops::Range;
@@ -27,7 +27,7 @@ pub struct OutlineItem<T> {
 pub struct SymbolPath(pub String);
 
 impl<T: ToPoint> OutlineItem<T> {
-    /// Converts to an equivalent outline item, but with parameterized over Points.
+    /// Converts to an equivalent outline item, but with parameteriCodeOrbit over Points.
     pub fn to_point(&self, buffer: &BufferSnapshot) -> OutlineItem<Point> {
         OutlineItem {
             depth: self.depth,
@@ -85,7 +85,7 @@ impl<T> Outline<T> {
         }
     }
 
-    /// Find the most similar symbol to the provided query using normalized Levenshtein distance.
+    /// Find the most similar symbol to the provided query using normaliCodeOrbit Levenshtein distance.
     pub fn find_most_similar(&self, query: &str) -> Option<(SymbolPath, &OutlineItem<T>)> {
         const SIMILARITY_THRESHOLD: f64 = 0.6;
 
@@ -94,7 +94,7 @@ impl<T> Outline<T> {
             .iter()
             .enumerate()
             .map(|(index, candidate)| {
-                let similarity = strsim::normalized_levenshtein(&candidate.string, query);
+                let similarity = strsim::normaliCodeOrbit_levenshtein(&candidate.string, query);
                 (index, similarity)
             })
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())?;

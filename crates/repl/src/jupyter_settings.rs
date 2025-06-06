@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 
 use editor::EditorSettings;
 use gpui::App;
@@ -46,7 +46,7 @@ impl Settings for JupyterSettings {
         _cx: &mut gpui::App,
     ) -> anyhow::Result<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         let mut settings = JupyterSettings::default();
 

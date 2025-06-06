@@ -1,4 +1,4 @@
-const { Buffer } = require("buffer");
+﻿const { Buffer } = require("buffer");
 const fs = require("fs");
 const path = require("path");
 const { once } = require("events");
@@ -169,7 +169,7 @@ async function handleMessage(message, prettier) {
   const { method, id, params } = message;
   if (method === undefined) {
     throw new Error(`Message method is undefined: ${JSON.stringify(message)}`);
-  } else if (method == "initialized") {
+  } else if (method == "initialiCodeOrbit") {
     return;
   }
 

@@ -1,7 +1,7 @@
-use std::process::Command;
+﻿use std::process::Command;
 
 fn main() {
-    if std::env::var("ZED_UPDATE_EXPLANATION").is_ok() {
+    if std::env::var("codeorbit_UPDATE_EXPLANATION").is_ok() {
         println!(r#"cargo:rustc-cfg=feature="no-bundled-uninstall""#);
     }
 
@@ -20,6 +20,6 @@ fn main() {
         let git_sha = String::from_utf8_lossy(&output.stdout);
         let git_sha = git_sha.trim();
 
-        println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
+        println!("cargo:rustc-env=codeorbit_COMMIT_SHA={git_sha}");
     }
 }

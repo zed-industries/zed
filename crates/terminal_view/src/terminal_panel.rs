@@ -1,9 +1,9 @@
-use std::{cmp, ops::ControlFlow, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
+﻿use std::{cmp, ops::ControlFlow, path::PathBuf, process::ExitStatus, sync::Arc, time::Duration};
 
 use crate::{
     TerminalView, default_working_directory,
     persistence::{
-        SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
+        Serialicodeorbit-editems, SerialiCodeOrbitTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
     },
 };
 use breadcrumbs::Breadcrumbs;
@@ -42,7 +42,7 @@ use workspace::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use zed_actions::assistant::InlineAssist;
+use codeorbit_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
@@ -140,7 +140,7 @@ impl TerminalPanel {
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger_with_tooltip(
                                 IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
-                                Tooltip::text("New…"),
+                                Tooltip::text("Newâ€¦"),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -157,7 +157,7 @@ impl TerminalPanel {
                                         // context menu will be gone the moment we spawn the modal.
                                         .action(
                                             "Spawn task",
-                                            zed_actions::Spawn::modal().boxed_clone(),
+                                            codeorbit_actions::Spawn::modal().boxed_clone(),
                                         )
                                 });
 
@@ -240,30 +240,30 @@ impl TerminalPanel {
             .flatten()
         {
             Some((database_id, serialization_key)) => {
-                if let Some(serialized_panel) = cx
+                if let Some(serialiCodeOrbit_panel) = cx
                     .background_spawn(async move { KEY_VALUE_STORE.read_kvp(&serialization_key) })
                     .await
                     .log_err()
                     .flatten()
-                    .map(|panel| serde_json::from_str::<SerializedTerminalPanel>(&panel))
+                    .map(|panel| serde_json::from_str::<SerialiCodeOrbitTerminalPanel>(&panel))
                     .transpose()
                     .log_err()
                     .flatten()
                 {
-                    if let Ok(serialized) = workspace
+                    if let Ok(serialiCodeOrbit) = workspace
                         .update_in(&mut cx, |workspace, window, cx| {
                             deserialize_terminal_panel(
                                 workspace.weak_handle(),
                                 workspace.project().clone(),
                                 database_id,
-                                serialized_panel,
+                                serialiCodeOrbit_panel,
                                 window,
                                 cx,
                             )
                         })?
                         .await
                     {
-                        terminal_panel = Some(serialized);
+                        terminal_panel = Some(serialiCodeOrbit);
                     }
                 }
             }
@@ -768,7 +768,7 @@ impl TerminalPanel {
             let terminal_panel = terminal_panel.upgrade()?;
             let items = terminal_panel
                 .update(cx, |terminal_panel, cx| {
-                    SerializedItems::WithSplits(serialize_pane_group(
+                    Serialicodeorbit-editems::WithSplits(serialize_pane_group(
                         &terminal_panel.center,
                         &terminal_panel.active_pane,
                         cx,
@@ -780,7 +780,7 @@ impl TerminalPanel {
                     KEY_VALUE_STORE
                         .write_kvp(
                             serialization_key,
-                            serde_json::to_string(&SerializedTerminalPanel {
+                            serde_json::to_string(&SerialiCodeOrbitTerminalPanel {
                                 items,
                                 active_item_id: None,
                                 height,
@@ -1492,7 +1492,7 @@ struct InlineAssistTabBarButton {
 impl Render for InlineAssistTabBarButton {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
-        IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
+        IconButton::new("terminal_inline_assistant", IconName::CodeOrbitAssistant)
             .icon_size(IconSize::Small)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(InlineAssist::default().boxed_clone(), cx);

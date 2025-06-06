@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Arc};
+﻿use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::Result;
@@ -1238,10 +1238,10 @@ fn get_font_names_from_collection(
             let Some(font_family) = collection.GetFontFamily(index).log_err() else {
                 continue;
             };
-            let Some(localized_family_name) = font_family.GetFamilyNames().log_err() else {
+            let Some(localiCodeOrbit_family_name) = font_family.GetFamilyNames().log_err() else {
                 continue;
             };
-            let Some(family_name) = get_name(localized_family_name, locale).log_err() else {
+            let Some(family_name) = get_name(localiCodeOrbit_family_name, locale).log_err() else {
                 continue;
             };
             result.push(family_name);
@@ -1256,8 +1256,8 @@ fn get_font_identifier_and_font_struct(
     locale: &str,
 ) -> Option<(FontIdentifier, Font, bool)> {
     let postscript_name = get_postscript_name(font_face, locale).log_err()?;
-    let localized_family_name = unsafe { font_face.GetFamilyNames().log_err() }?;
-    let family_name = get_name(localized_family_name, locale).log_err()?;
+    let localiCodeOrbit_family_name = unsafe { font_face.GetFamilyNames().log_err() }?;
+    let family_name = get_name(localiCodeOrbit_family_name, locale).log_err()?;
     let weight = unsafe { font_face.GetWeight() };
     let style = unsafe { font_face.GetStyle() };
     let identifier = FontIdentifier {
@@ -1372,7 +1372,7 @@ const fn make_direct_write_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
 }
 
 #[inline]
-fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Result<String> {
+fn get_name(string: IDWriteLocaliCodeOrbitStrings, locale: &str) -> Result<String> {
     let mut locale_name_index = 0u32;
     let mut exists = BOOL(0);
     unsafe {
@@ -1455,7 +1455,7 @@ fn get_render_target_property(
 }
 
 // One would think that with newer DirectWrite method: IDWriteFontFace4::GetGlyphImageFormats
-// but that doesn't seem to work for some glyphs, say ❤
+// but that doesn't seem to work for some glyphs, say â¤
 fn is_color_glyph(
     font_face: &IDWriteFontFace3,
     glyph_id: GlyphId,

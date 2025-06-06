@@ -1,4 +1,4 @@
-//! A scrollable list of elements with uniform height, optimized for large lists.
+﻿//! A scrollable list of elements with uniform height, optimiCodeOrbit for large lists.
 //! Rather than use the full taffy layout system, uniform_list simply measures
 //! the first element and then lays out all remaining elements in a line based on that
 //! measurement. This is much faster than the full layout system, but only works for

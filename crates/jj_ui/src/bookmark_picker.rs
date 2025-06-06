@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use fuzzy::{StringMatchCandidate, match_strings};
 use gpui::{
@@ -17,7 +17,7 @@ pub fn register(workspace: &mut Workspace) {
 
 fn open(
     workspace: &mut Workspace,
-    _: &zed_actions::jj::BookmarkList,
+    _: &codeorbit_actions::jj::BookmarkList,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -96,7 +96,7 @@ impl PickerDelegate for BookmarkPickerDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select Bookmark…".into()
+        "Select Bookmarkâ€¦".into()
     }
 
     fn match_count(&self) -> usize {

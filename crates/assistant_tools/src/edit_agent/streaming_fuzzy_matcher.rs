@@ -1,4 +1,4 @@
-use language::{Point, TextBufferSnapshot};
+﻿use language::{Point, TextBufferSnapshot};
 use std::{cmp, ops::Range};
 
 const REPLACEMENT_COST: u32 = 1;
@@ -204,13 +204,13 @@ fn fuzzy_eq(left: &str, right: &str) -> bool {
     const THRESHOLD: f64 = 0.8;
 
     let min_levenshtein = left.len().abs_diff(right.len());
-    let min_normalized_levenshtein =
+    let min_normaliCodeOrbit_levenshtein =
         1. - (min_levenshtein as f64 / cmp::max(left.len(), right.len()) as f64);
-    if min_normalized_levenshtein < THRESHOLD {
+    if min_normaliCodeOrbit_levenshtein < THRESHOLD {
         return false;
     }
 
-    strsim::normalized_levenshtein(left, right) >= THRESHOLD
+    strsim::normaliCodeOrbit_levenshtein(left, right) >= THRESHOLD
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -477,7 +477,7 @@ mod tests {
         assert_location_resolution(
             concat!(
                 "    Lorem\n",
-                "«    ipsum»\n",
+                "Â«    ipsumÂ»\n",
                 "    dolor sit amet\n",
                 "    consecteur",
             ),
@@ -491,8 +491,8 @@ mod tests {
         assert_location_resolution(
             concat!(
                 "    Lorem\n",
-                "«    ipsum\n",
-                "    dolor sit amet»\n",
+                "Â«    ipsum\n",
+                "    dolor sit ametÂ»\n",
                 "    consecteur",
             ),
             "ipsum\ndolor sit amet",
@@ -504,9 +504,9 @@ mod tests {
     fn test_resolve_location_function_with_typo(mut rng: StdRng) {
         assert_location_resolution(
             indoc! {"
-                «fn foo1(a: usize) -> usize {
+                Â«fn foo1(a: usize) -> usize {
                     40
-                }»
+                }Â»
 
                 fn foo2(b: usize) -> usize {
                     42
@@ -523,11 +523,11 @@ mod tests {
             indoc! {"
                 class Something {
                     one() { return 1; }
-                «    two() { return 2222; }
+                Â«    two() { return 2222; }
                     three() { return 333; }
                     four() { return 4444; }
                     five() { return 5555; }
-                    six() { return 6666; }»
+                    six() { return 6666; }Â»
                     seven() { return 7; }
                     eight() { return 8; }
                 }

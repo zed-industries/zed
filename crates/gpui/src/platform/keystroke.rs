@@ -1,4 +1,4 @@
-use schemars::JsonSchema;
+﻿use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     error::Error,
@@ -17,11 +17,11 @@ pub struct Keystroke {
 
     /// key_char is the character that could have been typed when
     /// this binding was pressed.
-    /// e.g. for s this is "s", for option-s "ß", and cmd-s None
+    /// e.g. for s this is "s", for option-s "ÃŸ", and cmd-s None
     pub key_char: Option<String>,
 }
 
-/// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
+/// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that CodeOrbit can use
 /// markdown to display it.
 #[derive(Debug)]
 pub struct InvalidKeystrokeError {
@@ -49,7 +49,7 @@ pub const KEYSTROKE_PARSE_EXPECTED_MESSAGE: &str = "Expected a sequence of modif
 impl Keystroke {
     /// When matching a key we cannot know whether the user intended to type
     /// the key_char or the key itself. On some non-US keyboards keys we use in our
-    /// bindings are behind option (for example `$` is typed `alt-ç` on a Czech keyboard),
+    /// bindings are behind option (for example `$` is typed `alt-Ã§` on a Czech keyboard),
     /// and on some keyboards the IME handler converts a sequence of keys into a
     /// specific character (for example `"` is typed as `" space` on a brazilian keyboard).
     ///
@@ -328,51 +328,51 @@ impl std::fmt::Display for Keystroke {
         }
         if self.modifiers.alt {
             #[cfg(target_os = "macos")]
-            f.write_char('⌥')?;
+            f.write_char('âŒ¥')?;
 
             #[cfg(not(target_os = "macos"))]
             write!(f, "alt-")?;
         }
         if self.modifiers.platform {
             #[cfg(target_os = "macos")]
-            f.write_char('⌘')?;
+            f.write_char('âŒ˜')?;
 
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            f.write_char('❖')?;
+            f.write_char('â–')?;
 
             #[cfg(target_os = "windows")]
-            f.write_char('⊞')?;
+            f.write_char('âŠž')?;
         }
         if self.modifiers.shift {
             #[cfg(target_os = "macos")]
-            f.write_char('⇧')?;
+            f.write_char('â‡§')?;
 
             #[cfg(not(target_os = "macos"))]
             write!(f, "shift-")?;
         }
         let key = match self.key.as_str() {
             #[cfg(target_os = "macos")]
-            "backspace" => '⌫',
+            "backspace" => 'âŒ«',
             #[cfg(target_os = "macos")]
-            "up" => '↑',
+            "up" => 'â†‘',
             #[cfg(target_os = "macos")]
-            "down" => '↓',
+            "down" => 'â†“',
             #[cfg(target_os = "macos")]
-            "left" => '←',
+            "left" => 'â†',
             #[cfg(target_os = "macos")]
-            "right" => '→',
+            "right" => 'â†’',
             #[cfg(target_os = "macos")]
-            "tab" => '⇥',
+            "tab" => 'â‡¥',
             #[cfg(target_os = "macos")]
-            "escape" => '⎋',
+            "escape" => 'âŽ‹',
             #[cfg(target_os = "macos")]
-            "shift" => '⇧',
+            "shift" => 'â‡§',
             #[cfg(target_os = "macos")]
-            "control" => '⌃',
+            "control" => 'âŒƒ',
             #[cfg(target_os = "macos")]
-            "alt" => '⌥',
+            "alt" => 'âŒ¥',
             #[cfg(target_os = "macos")]
-            "platform" => '⌘',
+            "platform" => 'âŒ˜',
 
             key if key.len() == 1 => key.chars().next().unwrap().to_ascii_uppercase(),
             key => return f.write_str(key),

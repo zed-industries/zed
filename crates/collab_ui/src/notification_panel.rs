@@ -1,4 +1,4 @@
-use crate::{NotificationPanelSettings, chat_panel::ChatPanel};
+﻿use crate::{NotificationPanelSettings, chat_panel::ChatPanel};
 use anyhow::Result;
 use channel::ChannelStore;
 use client::{ChannelId, Client, Notification, User, UserStore};
@@ -55,7 +55,7 @@ pub struct NotificationPanel {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SerializedNotificationPanel {
+struct SerialiCodeOrbitNotificationPanel {
     width: Option<Pixels>,
 }
 
@@ -184,22 +184,22 @@ impl NotificationPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
-            let serialized_panel = if let Some(panel) = cx
+            let serialiCodeOrbit_panel = if let Some(panel) = cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(NOTIFICATION_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedNotificationPanel>(&panel)?)
+                Some(serde_json::from_str::<SerialiCodeOrbitNotificationPanel>(&panel)?)
             } else {
                 None
             };
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let panel = Self::new(workspace, window, cx);
-                if let Some(serialized_panel) = serialized_panel {
+                if let Some(serialiCodeOrbit_panel) = serialiCodeOrbit_panel {
                     panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width.map(|w| w.round());
+                        panel.width = serialiCodeOrbit_panel.width.map(|w| w.round());
                         cx.notify();
                     });
                 }
@@ -215,7 +215,7 @@ impl NotificationPanel {
                 KEY_VALUE_STORE
                     .write_kvp(
                         NOTIFICATION_PANEL_KEY.into(),
-                        serde_json::to_string(&SerializedNotificationPanel { width })?,
+                        serde_json::to_string(&SerialiCodeOrbitNotificationPanel { width })?,
                     )
                     .await?;
                 anyhow::Ok(())
@@ -249,14 +249,14 @@ impl NotificationPanel {
             self.did_render_notification(notification_id, &notification, window, cx);
         }
 
-        let relative_timestamp = time_format::format_localized_timestamp(
+        let relative_timestamp = time_format::format_localiCodeOrbit_timestamp(
             timestamp,
             now,
             self.local_timezone,
             time_format::TimestampFormat::Relative,
         );
 
-        let absolute_timestamp = time_format::format_localized_timestamp(
+        let absolute_timestamp = time_format::format_localiCodeOrbit_timestamp(
             timestamp,
             now,
             self.local_timezone,

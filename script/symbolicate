@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 set -eu
 if [[ $# -eq 0 ]] || [[ "$1" == "--help" ]]; then
@@ -21,10 +21,10 @@ if [[ "$input_file" == *.json ]]; then
 
     mkdir -p target/dsyms/$channel
 
-    dsym="$channel/zed-$version-$target_triple.dbg"
+    dsym="$channel/CodeOrbit-$version-$target_triple.dbg"
     if [[ ! -f target/dsyms/$dsym ]]; then
         echo "Downloading $dsym..."
-        curl -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/$dsym.gz"
+        curl -o target/dsyms/$dsym.gz "https://CodeOrbit-debug-symbols.nyc3.digitaloceanspaces.com/$dsym.gz"
         gunzip  target/dsyms/$dsym.gz
     fi
 
@@ -62,8 +62,8 @@ else # ips file
     dsym="$uuid.dwarf"
     if [[ ! -f target/dsyms/$dsym ]]; then
         echo "Downloading $dsym..."
-        curl -f -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/by-uuid/${uuid}.dwarf.gz" ||
-            curl -f -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/$channel/Zed-$version-$arch.dwarf.gz"
+        curl -f -o target/dsyms/$dsym.gz "https://CodeOrbit-debug-symbols.nyc3.digitaloceanspaces.com/by-uuid/${uuid}.dwarf.gz" ||
+            curl -f -o target/dsyms/$dsym.gz "https://CodeOrbit-debug-symbols.nyc3.digitaloceanspaces.com/$channel/CodeOrbit-$version-$arch.dwarf.gz"
         gunzip  target/dsyms/$dsym.gz
     fi
 

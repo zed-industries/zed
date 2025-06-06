@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use client::proto::{
     self, DapChecksum, DapChecksumAlgorithm, DapEvaluateContext, DapModule, DapScope,
     DapScopePresentationHint, DapSource, DapSourcePresentationHint, DapStackFrame, DapVariable,
@@ -298,7 +298,7 @@ impl ProtoConversion for dap_types::Module {
             id: Some(proto::DapModuleId { id: Some(id) }),
             name: self.name.clone(),
             path: self.path.clone(),
-            is_optimized: self.is_optimized,
+            is_optimiCodeOrbit: self.is_optimiCodeOrbit,
             is_user_code: self.is_user_code,
             version: self.version.clone(),
             symbol_status: self.symbol_status.clone(),
@@ -323,7 +323,7 @@ impl ProtoConversion for dap_types::Module {
             id,
             name: payload.name,
             path: payload.path,
-            is_optimized: payload.is_optimized,
+            is_optimiCodeOrbit: payload.is_optimiCodeOrbit,
             is_user_code: payload.is_user_code,
             version: payload.version,
             symbol_status: payload.symbol_status,

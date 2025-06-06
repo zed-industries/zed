@@ -1,4 +1,4 @@
-use crate::markdown_elements::*;
+﻿use crate::markdown_elements::*;
 use async_recursion::async_recursion;
 use collections::FxHashMap;
 use gpui::FontWeight;
@@ -778,44 +778,44 @@ mod tests {
 
     #[gpui::test]
     async fn test_newlines_dont_new_paragraphs() {
-        let parsed = parse("Some text **that is bolded**\n and *italicized*").await;
+        let parsed = parse("Some text **that is bolded**\n and *italiciCodeOrbit*").await;
 
         assert_eq!(
             parsed.children,
-            vec![p("Some text that is bolded and italicized", 0..46)]
+            vec![p("Some text that is bolded and italiciCodeOrbit", 0..46)]
         );
     }
 
     #[gpui::test]
     async fn test_heading_with_paragraph() {
-        let parsed = parse("# Zed\nThe editor").await;
+        let parsed = parse("# CodeOrbit\nThe editor").await;
 
         assert_eq!(
             parsed.children,
-            vec![h1(text("Zed", 2..5), 0..6), p("The editor", 6..16),]
+            vec![h1(text("CodeOrbit", 2..5), 0..6), p("The editor", 6..16),]
         );
     }
 
     #[gpui::test]
     async fn test_double_newlines_do_new_paragraphs() {
-        let parsed = parse("Some text **that is bolded**\n\n and *italicized*").await;
+        let parsed = parse("Some text **that is bolded**\n\n and *italiciCodeOrbit*").await;
 
         assert_eq!(
             parsed.children,
             vec![
                 p("Some text that is bolded", 0..29),
-                p("and italicized", 31..47),
+                p("and italiciCodeOrbit", 31..47),
             ]
         );
     }
 
     #[gpui::test]
     async fn test_bold_italic_text() {
-        let parsed = parse("Some text **that is bolded** and *italicized*").await;
+        let parsed = parse("Some text **that is bolded** and *italiciCodeOrbit*").await;
 
         assert_eq!(
             parsed.children,
-            vec![p("Some text that is bolded and italicized", 0..45)]
+            vec![p("Some text that is bolded and italiciCodeOrbit", 0..45)]
         );
     }
 
@@ -890,11 +890,11 @@ mod tests {
 
     #[gpui::test]
     async fn test_raw_links_detection() {
-        let parsed = parse("Checkout this https://zed.dev link").await;
+        let parsed = parse("Checkout this https://CodeOrbit.dev link").await;
 
         assert_eq!(
             parsed.children,
-            vec![p("Checkout this https://zed.dev link", 0..34)]
+            vec![p("Checkout this https://CodeOrbit.dev link", 0..34)]
         );
     }
 
@@ -912,7 +912,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_image_links_detection() {
-        let parsed = parse("![test](https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png)").await;
+        let parsed = parse("![test](https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-CodeOrbit-open-source-code-editor-rust-2.png)").await;
 
         let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
             text
@@ -924,7 +924,7 @@ mod tests {
             MarkdownParagraphChunk::Image(Image {
                 source_range: 0..111,
                 link: Link::Web {
-                    url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png".to_string(),
+                    url: "https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-CodeOrbit-open-source-code-editor-rust-2.png".to_string(),
                 },
                 alt_text: Some("test".into()),
             },)

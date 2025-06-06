@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use async_trait::async_trait;
 use collections::FxHashMap;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
@@ -143,7 +143,7 @@ impl DapLocator for GoLocator {
                 Ok(DebugRequest::Launch(task::LaunchRequest {
                     program,
                     cwd: Some(PathBuf::from(&cwd)),
-                    args: vec!["-test.v".into(), "-test.run=${ZED_SYMBOL}".into()],
+                    args: vec!["-test.v".into(), "-test.run=${codeorbit_SYMBOL}".into()],
                     env,
                 }))
             }
@@ -179,7 +179,7 @@ mod tests {
             command: "go".into(),
             args: vec!["run".into(), "main.go".into()],
             env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
+            cwd: Some("${codeorbit_WORKTREE_ROOT}".into()),
             use_new_terminal: false,
             allow_concurrent_runs: false,
             reveal: RevealStrategy::Always,
@@ -227,7 +227,7 @@ mod tests {
             command: "go".into(),
             args: vec!["build".into(), ".".into()],
             env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
+            cwd: Some("${codeorbit_WORKTREE_ROOT}".into()),
             use_new_terminal: false,
             allow_concurrent_runs: false,
             reveal: RevealStrategy::Always,
@@ -253,7 +253,7 @@ mod tests {
             command: "cargo".into(),
             args: vec!["build".into()],
             env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
+            cwd: Some("${codeorbit_WORKTREE_ROOT}".into()),
             use_new_terminal: false,
             allow_concurrent_runs: false,
             reveal: RevealStrategy::Always,
@@ -285,7 +285,7 @@ mod tests {
             command: "go".into(),
             args: vec!["test".into(), ".".into()],
             env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
+            cwd: Some("${codeorbit_WORKTREE_ROOT}".into()),
             use_new_terminal: false,
             allow_concurrent_runs: false,
             reveal: RevealStrategy::Always,
@@ -341,7 +341,7 @@ mod tests {
             command: "go".into(),
             args: vec!["test".into(), ".".into()],
             env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
+            cwd: Some("${codeorbit_WORKTREE_ROOT}".into()),
             use_new_terminal: false,
             allow_concurrent_runs: false,
             reveal: RevealStrategy::Always,
@@ -379,7 +379,7 @@ mod tests {
             command: "go".into(),
             args: vec!["clean".into()],
             env: Default::default(),
-            cwd: Some("${ZED_WORKTREE_ROOT}".into()),
+            cwd: Some("${codeorbit_WORKTREE_ROOT}".into()),
             use_new_terminal: false,
             allow_concurrent_runs: false,
             reveal: RevealStrategy::Always,

@@ -1,4 +1,4 @@
-mod binding;
+﻿mod binding;
 mod context;
 
 pub use binding::*;
@@ -350,7 +350,7 @@ mod tests {
     }
 
     #[test]
-    /// Tests for https://github.com/zed-industries/zed/issues/30259
+    /// Tests for https://github.com/CodeOrbit-industries/CodeOrbit/issues/30259
     fn test_multiple_keystroke_binding_disabled() {
         let bindings = [
             KeyBinding::new("space w w", ActionAlpha {}, Some("workspace")),

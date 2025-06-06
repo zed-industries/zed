@@ -1,4 +1,4 @@
-use editor::{Anchor, Editor, ExcerptId, scroll::Autoscroll};
+﻿use editor::{Anchor, Editor, ExcerptId, scroll::Autoscroll};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
@@ -416,7 +416,7 @@ impl Item for SyntaxTreeView {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Some(cx.new(|cx| {
             let mut clone = Self::new(self.workspace_handle.clone(), None, window, cx);

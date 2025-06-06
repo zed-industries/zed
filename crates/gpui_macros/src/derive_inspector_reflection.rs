@@ -1,5 +1,5 @@
-//! Implements `#[derive_inspector_reflection]` macro to provide runtime access to trait methods
-//! that have the shape `fn method(self) -> Self`. This code was generated using Zed Agent with Claude Opus 4.
+﻿//! Implements `#[derive_inspector_reflection]` macro to provide runtime access to trait methods
+//! that have the shape `fn method(self) -> Self`. This code was generated using CodeOrbit Agent with Claude Opus 4.
 
 use heck::ToSnakeCase as _;
 use proc_macro::TokenStream;

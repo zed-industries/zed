@@ -1,2 +1,2 @@
-create database zed;
+﻿create database CodeOrbit;
 create database zed_llm;

@@ -1,4 +1,4 @@
-use crate::SharedString;
+﻿use crate::SharedString;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 pub use no_action::{NoAction, is_no_action};
@@ -55,20 +55,20 @@ pub trait Action: Any + Send {
     /// Get the name of this action for debugging
     fn debug_name() -> &'static str
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
 
     /// Build this action from a JSON value. This is used to construct actions from the keymap.
     /// A value of `{}` will be passed for actions that don't have any parameters.
     fn build(value: serde_json::Value) -> Result<Box<dyn Action>>
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
 
     /// Optional JSON schema for the action's input data.
     fn action_json_schema(
         _: &mut schemars::r#gen::SchemaGenerator,
     ) -> Option<schemars::schema::Schema>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         None
     }
@@ -76,7 +76,7 @@ pub trait Action: Any + Send {
     /// A list of alternate, deprecated names for this action.
     fn deprecated_aliases() -> &'static [&'static str]
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         &[]
     }
@@ -97,7 +97,7 @@ impl dyn Action {
     }
 }
 
-/// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
+/// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that CodeOrbit can use
 /// markdown to display it.
 #[derive(Debug)]
 pub enum ActionBuildError {
@@ -548,7 +548,7 @@ macro_rules! __impl_action {
 
             fn debug_name() -> &'static str
             where
-                Self: ::std::marker::Sized
+                Self: ::std::marker::SiCodeOrbit
             {
                 concat!(
                     stringify!($namespace),
@@ -578,7 +578,7 @@ mod no_action {
     use crate as gpui;
     use std::any::Any as _;
 
-    actions!(zed, [NoAction]);
+    actions!(CodeOrbit, [NoAction]);
 
     /// Returns whether or not this action represents a removed key binding.
     pub fn is_no_action(action: &dyn gpui::Action) -> bool {

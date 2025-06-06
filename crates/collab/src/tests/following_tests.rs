@@ -1,4 +1,4 @@
-#![allow(clippy::reversed_empty_ranges)]
+﻿#![allow(clippy::reversed_empty_ranges)]
 use crate::tests::TestServer;
 use call::{ActiveCall, ParticipantLocation};
 use client::ChannelId;
@@ -470,7 +470,7 @@ async fn test_basic_following(
                 .expect("active item isn't a shared screen")
         });
 
-        // Client B activates Zed again, which causes the previous editor to become focused again.
+        // Client B activates CodeOrbit again, which causes the previous editor to become focused again.
         active_call_b
             .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
             .await

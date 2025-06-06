@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
     GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
     ShapedGlyph, ShapedRun, SharedString, Size, point, size,
@@ -214,7 +214,7 @@ impl CosmicTextSystemState {
     ) -> Result<SmallVec<[FontId; 4]>> {
         // TODO: Determine the proper system UI font.
         let name = if name == ".SystemUIFont" {
-            "Zed Plex Sans"
+            "CodeOrbit Plex Sans"
         } else {
             name
         };

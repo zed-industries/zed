@@ -1,4 +1,4 @@
-use std::cell::{Ref, RefCell};
+﻿use std::cell::{Ref, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -103,7 +103,7 @@ pub struct ThreadStore {
     prompt_builder: Arc<PromptBuilder>,
     prompt_store: Option<Entity<PromptStore>>,
     context_server_tool_ids: HashMap<ContextServerId, Vec<ToolId>>,
-    threads: Vec<SerializedThreadMetadata>,
+    threads: Vec<SerialiCodeOrbitThreadMetadata>,
     project_context: SharedProjectContext,
     reload_system_prompt_tx: mpsc::Sender<()>,
     _reload_system_prompt_task: Task<()>,
@@ -400,11 +400,11 @@ impl ThreadStore {
         self.threads.len()
     }
 
-    pub fn unordered_threads(&self) -> impl Iterator<Item = &SerializedThreadMetadata> {
+    pub fn unordered_threads(&self) -> impl Iterator<Item = &SerialiCodeOrbitThreadMetadata> {
         self.threads.iter()
     }
 
-    pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {
+    pub fn reverse_chronological_threads(&self) -> Vec<SerialiCodeOrbitThreadMetadata> {
         let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
         threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         threads
@@ -422,15 +422,15 @@ impl ThreadStore {
         })
     }
 
-    pub fn create_thread_from_serialized(
+    pub fn create_thread_from_serialiCodeOrbit(
         &mut self,
-        serialized: SerializedThread,
+        serialiCodeOrbit: SerialiCodeOrbitThread,
         cx: &mut Context<Self>,
     ) -> Entity<Thread> {
         cx.new(|cx| {
             Thread::deserialize(
                 ThreadId::new(),
-                serialized,
+                serialiCodeOrbit,
                 self.project.clone(),
                 self.tools.clone(),
                 self.prompt_builder.clone(),
@@ -477,14 +477,14 @@ impl ThreadStore {
     }
 
     pub fn save_thread(&self, thread: &Entity<Thread>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let (metadata, serialized_thread) =
+        let (metadata, serialiCodeOrbit_thread) =
             thread.update(cx, |thread, cx| (thread.id().clone(), thread.serialize(cx)));
 
         let database_future = ThreadsDatabase::global_future(cx);
         cx.spawn(async move |this, cx| {
-            let serialized_thread = serialized_thread.await?;
+            let serialiCodeOrbit_thread = serialiCodeOrbit_thread.await?;
             let database = database_future.await.map_err(|err| anyhow!(err))?;
-            database.save_thread(metadata, serialized_thread).await?;
+            database.save_thread(metadata, serialiCodeOrbit_thread).await?;
 
             this.update(cx, |this, cx| this.reload(cx))?.await
         })
@@ -686,18 +686,18 @@ impl ThreadStore {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SerializedThreadMetadata {
+pub struct SerialiCodeOrbitThreadMetadata {
     pub id: ThreadId,
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SerializedThread {
+pub struct SerialiCodeOrbitThread {
     pub version: String,
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
-    pub messages: Vec<SerializedMessage>,
+    pub messages: Vec<SerialiCodeOrbitMessage>,
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
     #[serde(default)]
@@ -709,7 +709,7 @@ pub struct SerializedThread {
     #[serde(default)]
     pub exceeded_window_error: Option<ExceededWindowError>,
     #[serde(default)]
-    pub model: Option<SerializedLanguageModel>,
+    pub model: Option<SerialiCodeOrbitLanguageModel>,
     #[serde(default)]
     pub completion_mode: Option<CompletionMode>,
     #[serde(default)]
@@ -717,52 +717,52 @@ pub struct SerializedThread {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SerializedLanguageModel {
+pub struct SerialiCodeOrbitLanguageModel {
     pub provider: String,
     pub model: String,
 }
 
-impl SerializedThread {
+impl SerialiCodeOrbitThread {
     pub const VERSION: &'static str = "0.2.0";
 
     pub fn from_json(json: &[u8]) -> Result<Self> {
         let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
         match saved_thread_json.get("version") {
             Some(serde_json::Value::String(version)) => match version.as_str() {
-                SerializedThreadV0_1_0::VERSION => {
+                SerialiCodeOrbitThreadV0_1_0::VERSION => {
                     let saved_thread =
-                        serde_json::from_value::<SerializedThreadV0_1_0>(saved_thread_json)?;
+                        serde_json::from_value::<SerialiCodeOrbitThreadV0_1_0>(saved_thread_json)?;
                     Ok(saved_thread.upgrade())
                 }
-                SerializedThread::VERSION => Ok(serde_json::from_value::<SerializedThread>(
+                SerialiCodeOrbitThread::VERSION => Ok(serde_json::from_value::<SerialiCodeOrbitThread>(
                     saved_thread_json,
                 )?),
-                _ => anyhow::bail!("unrecognized serialized thread version: {version:?}"),
+                _ => anyhow::bail!("unrecogniCodeOrbit serialiCodeOrbit thread version: {version:?}"),
             },
             None => {
                 let saved_thread =
-                    serde_json::from_value::<LegacySerializedThread>(saved_thread_json)?;
+                    serde_json::from_value::<LegacySerialiCodeOrbitThread>(saved_thread_json)?;
                 Ok(saved_thread.upgrade())
             }
-            version => anyhow::bail!("unrecognized serialized thread version: {version:?}"),
+            version => anyhow::bail!("unrecogniCodeOrbit serialiCodeOrbit thread version: {version:?}"),
         }
     }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct SerializedThreadV0_1_0(
-    // The structure did not change, so we are reusing the latest SerializedThread.
-    // When making the next version, make sure this points to SerializedThreadV0_2_0
-    SerializedThread,
+pub struct SerialiCodeOrbitThreadV0_1_0(
+    // The structure did not change, so we are reusing the latest SerialiCodeOrbitThread.
+    // When making the next version, make sure this points to SerialiCodeOrbitThreadV0_2_0
+    SerialiCodeOrbitThread,
 );
 
-impl SerializedThreadV0_1_0 {
+impl SerialiCodeOrbitThreadV0_1_0 {
     pub const VERSION: &'static str = "0.1.0";
 
-    pub fn upgrade(self) -> SerializedThread {
-        debug_assert_eq!(SerializedThread::VERSION, "0.2.0");
+    pub fn upgrade(self) -> SerialiCodeOrbitThread {
+        debug_assert_eq!(SerialiCodeOrbitThread::VERSION, "0.2.0");
 
-        let mut messages: Vec<SerializedMessage> = Vec::with_capacity(self.0.messages.len());
+        let mut messages: Vec<SerialiCodeOrbitMessage> = Vec::with_capacity(self.0.messages.len());
 
         for message in self.0.messages {
             if message.role == Role::User && !message.tool_results.is_empty() {
@@ -777,31 +777,31 @@ impl SerializedThreadV0_1_0 {
             messages.push(message);
         }
 
-        SerializedThread { messages, ..self.0 }
+        SerialiCodeOrbitThread { messages, ..self.0 }
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SerializedMessage {
+pub struct SerialiCodeOrbitMessage {
     pub id: MessageId,
     pub role: Role,
     #[serde(default)]
-    pub segments: Vec<SerializedMessageSegment>,
+    pub segments: Vec<SerialiCodeOrbitMessageSegment>,
     #[serde(default)]
-    pub tool_uses: Vec<SerializedToolUse>,
+    pub tool_uses: Vec<SerialiCodeOrbitToolUse>,
     #[serde(default)]
-    pub tool_results: Vec<SerializedToolResult>,
+    pub tool_results: Vec<SerialiCodeOrbitToolResult>,
     #[serde(default)]
     pub context: String,
     #[serde(default)]
-    pub creases: Vec<SerializedCrease>,
+    pub creases: Vec<SerialiCodeOrbitCrease>,
     #[serde(default)]
     pub is_hidden: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum SerializedMessageSegment {
+pub enum SerialiCodeOrbitMessageSegment {
     #[serde(rename = "text")]
     Text {
         text: String,
@@ -818,14 +818,14 @@ pub enum SerializedMessageSegment {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SerializedToolUse {
+pub struct SerialiCodeOrbitToolUse {
     pub id: LanguageModelToolUseId,
     pub name: SharedString,
     pub input: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SerializedToolResult {
+pub struct SerialiCodeOrbitToolResult {
     pub tool_use_id: LanguageModelToolUseId,
     pub is_error: bool,
     pub content: LanguageModelToolResultContent,
@@ -833,18 +833,18 @@ pub struct SerializedToolResult {
 }
 
 #[derive(Serialize, Deserialize)]
-struct LegacySerializedThread {
+struct LegacySerialiCodeOrbitThread {
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
-    pub messages: Vec<LegacySerializedMessage>,
+    pub messages: Vec<LegacySerialiCodeOrbitMessage>,
     #[serde(default)]
     pub initial_project_snapshot: Option<Arc<ProjectSnapshot>>,
 }
 
-impl LegacySerializedThread {
-    pub fn upgrade(self) -> SerializedThread {
-        SerializedThread {
-            version: SerializedThread::VERSION.to_string(),
+impl LegacySerialiCodeOrbitThread {
+    pub fn upgrade(self) -> SerialiCodeOrbitThread {
+        SerialiCodeOrbitThread {
+            version: SerialiCodeOrbitThread::VERSION.to_string(),
             summary: self.summary,
             updated_at: self.updated_at,
             messages: self.messages.into_iter().map(|msg| msg.upgrade()).collect(),
@@ -861,22 +861,22 @@ impl LegacySerializedThread {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct LegacySerializedMessage {
+struct LegacySerialiCodeOrbitMessage {
     pub id: MessageId,
     pub role: Role,
     pub text: String,
     #[serde(default)]
-    pub tool_uses: Vec<SerializedToolUse>,
+    pub tool_uses: Vec<SerialiCodeOrbitToolUse>,
     #[serde(default)]
-    pub tool_results: Vec<SerializedToolResult>,
+    pub tool_results: Vec<SerialiCodeOrbitToolResult>,
 }
 
-impl LegacySerializedMessage {
-    fn upgrade(self) -> SerializedMessage {
-        SerializedMessage {
+impl LegacySerialiCodeOrbitMessage {
+    fn upgrade(self) -> SerialiCodeOrbitMessage {
+        SerialiCodeOrbitMessage {
             id: self.id,
             role: self.role,
-            segments: vec![SerializedMessageSegment::Text { text: self.text }],
+            segments: vec![SerialiCodeOrbitMessageSegment::Text { text: self.text }],
             tool_uses: self.tool_uses,
             tool_results: self.tool_results,
             context: String::new(),
@@ -887,7 +887,7 @@ impl LegacySerializedMessage {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct SerializedCrease {
+pub struct SerialiCodeOrbitCrease {
     pub start: usize,
     pub end: usize,
     pub icon_path: SharedString,
@@ -998,10 +998,10 @@ impl ThreadsDatabase {
         _executor: BackgroundExecutor,
     ) -> Result<()> {
         use heed::types::SerdeBincode;
-        struct SerializedThreadHeed(SerializedThread);
+        struct SerialiCodeOrbitThreadHeed(SerialiCodeOrbitThread);
 
-        impl heed::BytesEncode<'_> for SerializedThreadHeed {
-            type EItem = SerializedThreadHeed;
+        impl heed::BytesEncode<'_> for SerialiCodeOrbitThreadHeed {
+            type EItem = SerialiCodeOrbitThreadHeed;
 
             fn bytes_encode(
                 item: &Self::EItem,
@@ -1012,12 +1012,12 @@ impl ThreadsDatabase {
             }
         }
 
-        impl<'a> heed::BytesDecode<'a> for SerializedThreadHeed {
-            type DItem = SerializedThreadHeed;
+        impl<'a> heed::BytesDecode<'a> for SerialiCodeOrbitThreadHeed {
+            type DItem = SerialiCodeOrbitThreadHeed;
 
             fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
-                SerializedThread::from_json(bytes)
-                    .map(SerializedThreadHeed)
+                SerialiCodeOrbitThread::from_json(bytes)
+                    .map(SerialiCodeOrbitThreadHeed)
                     .map_err(Into::into)
             }
         }
@@ -1032,7 +1032,7 @@ impl ThreadsDatabase {
         };
 
         let txn = env.write_txn()?;
-        let threads: heed::Database<SerdeBincode<ThreadId>, SerializedThreadHeed> = env
+        let threads: heed::Database<SerdeBincode<ThreadId>, SerialiCodeOrbitThreadHeed> = env
             .open_database(&txn, Some("threads"))?
             .ok_or_else(|| anyhow!("threads database not found"))?;
 
@@ -1047,7 +1047,7 @@ impl ThreadsDatabase {
     fn save_thread_sync(
         connection: &Arc<Mutex<Connection>>,
         id: ThreadId,
-        thread: SerializedThread,
+        thread: SerialiCodeOrbitThread,
     ) -> Result<()> {
         let json_data = serde_json::to_string(&thread)?;
         let summary = thread.summary.to_string();
@@ -1068,7 +1068,7 @@ impl ThreadsDatabase {
         Ok(())
     }
 
-    pub fn list_threads(&self) -> Task<Result<Vec<SerializedThreadMetadata>>> {
+    pub fn list_threads(&self) -> Task<Result<Vec<SerialiCodeOrbitThreadMetadata>>> {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
@@ -1082,7 +1082,7 @@ impl ThreadsDatabase {
             let mut threads = Vec::new();
 
             for (id, summary, updated_at) in rows {
-                threads.push(SerializedThreadMetadata {
+                threads.push(SerialiCodeOrbitThreadMetadata {
                     id,
                     summary: summary.into(),
                     updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
@@ -1093,7 +1093,7 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn try_find_thread(&self, id: ThreadId) -> Task<Result<Option<SerializedThread>>> {
+    pub fn try_find_thread(&self, id: ThreadId) -> Task<Result<Option<SerialiCodeOrbitThread>>> {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
@@ -1112,7 +1112,7 @@ impl ThreadsDatabase {
                     DataType::Json => String::from_utf8(data)?,
                 };
 
-                let thread = SerializedThread::from_json(json_data.as_bytes())?;
+                let thread = SerialiCodeOrbitThread::from_json(json_data.as_bytes())?;
                 Ok(Some(thread))
             } else {
                 Ok(None)
@@ -1120,7 +1120,7 @@ impl ThreadsDatabase {
         })
     }
 
-    pub fn save_thread(&self, id: ThreadId, thread: SerializedThread) -> Task<Result<()>> {
+    pub fn save_thread(&self, id: ThreadId, thread: SerialiCodeOrbitThread) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor

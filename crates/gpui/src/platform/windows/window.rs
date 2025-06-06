@@ -1,4 +1,4 @@
-#![deny(unsafe_op_in_unsafe_fn)]
+﻿#![deny(unsafe_op_in_unsafe_fn)]
 
 use std::{
     cell::RefCell,
@@ -38,7 +38,7 @@ pub struct WindowsWindowState {
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
-    pub restore_from_minimized: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    pub restore_from_minimiCodeOrbit: Option<Box<dyn FnMut(RequestFrameOptions)>>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
@@ -97,7 +97,7 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
-        let restore_from_minimized = None;
+        let restore_from_minimiCodeOrbit = None;
         let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
@@ -116,7 +116,7 @@ impl WindowsWindowState {
             fullscreen_restore_bounds,
             border_offset,
             scale_factor,
-            restore_from_minimized,
+            restore_from_minimiCodeOrbit,
             min_size,
             callbacks,
             input_handler,
@@ -140,7 +140,7 @@ impl WindowsWindowState {
         self.fullscreen.is_some()
     }
 
-    pub(crate) fn is_maximized(&self) -> bool {
+    pub(crate) fn is_maximiCodeOrbit(&self) -> bool {
         !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
     }
 
@@ -151,7 +151,7 @@ impl WindowsWindowState {
         }
     }
 
-    // Calculate the bounds used for saving and whether the window is maximized.
+    // Calculate the bounds used for saving and whether the window is maximiCodeOrbit.
     fn calculate_window_bounds(&self) -> (Bounds<Pixels>, bool) {
         let placement = unsafe {
             let mut placement = WINDOWPLACEMENT {
@@ -167,17 +167,17 @@ impl WindowsWindowState {
                 self.border_offset,
                 self.scale_factor,
             ),
-            placement.showCmd == SW_SHOWMAXIMIZED.0 as u32,
+            placement.showCmd == SW_SHOWMAXIMICodeOrbit.0 as u32,
         )
     }
 
     fn window_bounds(&self) -> WindowBounds {
-        let (bounds, maximized) = self.calculate_window_bounds();
+        let (bounds, maximiCodeOrbit) = self.calculate_window_bounds();
 
         if self.is_fullscreen() {
             WindowBounds::Fullscreen(self.fullscreen_restore_bounds)
-        } else if maximized {
-            WindowBounds::Maximized(bounds)
+        } else if maximiCodeOrbit {
+            WindowBounds::MaximiCodeOrbit(bounds)
         } else {
             WindowBounds::Windowed(bounds)
         }
@@ -198,7 +198,7 @@ impl WindowsWindowState {
     }
 
     fn title_bar_top_offset(&self) -> Pixels {
-        if self.is_maximized() {
+        if self.is_maximiCodeOrbit() {
             self.title_bar_padding() * 2
         } else {
             px(0.)
@@ -321,7 +321,7 @@ impl WindowsWindowStatePtr {
             return Ok(());
         };
         match open_status.state {
-            WindowOpenState::Maximized => unsafe {
+            WindowOpenState::MaximiCodeOrbit => unsafe {
                 SetWindowPlacement(self.hwnd, &open_status.placement)?;
                 ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
             },
@@ -521,8 +521,8 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().bounds()
     }
 
-    fn is_maximized(&self) -> bool {
-        self.0.state.borrow().is_maximized()
+    fn is_maximiCodeOrbit(&self) -> bool {
+        self.0.state.borrow().is_maximiCodeOrbit()
     }
 
     fn window_bounds(&self) -> WindowBounds {
@@ -747,7 +747,7 @@ impl PlatformWindow for WindowsWindow {
             if IsWindowVisible(self.0.hwnd).as_bool() {
                 ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
             } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
-                status.state = WindowOpenState::Maximized;
+                status.state = WindowOpenState::MaximiCodeOrbit;
             }
         }
     }
@@ -1064,13 +1064,13 @@ struct WindowOpenStatus {
 }
 
 enum WindowOpenState {
-    Maximized,
+    MaximiCodeOrbit,
     Fullscreen,
     Windowed,
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
-    const CLASS_NAME: PCWSTR = w!("Zed::Window");
+    const CLASS_NAME: PCWSTR = w!("CodeOrbit::Window");
 
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -1146,7 +1146,7 @@ fn get_module_handle() -> HMODULE {
         let mut h_module = std::mem::zeroed();
         GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            windows::core::w!("ZedModule"),
+            windows::core::w!("CodeOrbitModule"),
             &mut h_module,
         )
         .expect("Unable to get module handle"); // this should never fail

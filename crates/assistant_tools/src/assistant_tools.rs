@@ -1,4 +1,4 @@
-mod copy_path_tool;
+﻿mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
@@ -82,11 +82,11 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
 }
 
 fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut App) {
-    let using_zed_provider = registry
+    let using_CodeOrbit_provider = registry
         .read(cx)
         .default_model()
-        .map_or(false, |default| default.is_provided_by_zed());
-    if using_zed_provider {
+        .map_or(false, |default| default.is_provided_by_CodeOrbit());
+    if using_CodeOrbit_provider {
         ToolRegistry::global(cx).register_tool(WebSearchTool);
     } else {
         ToolRegistry::global(cx).unregister_tool(WebSearchTool);

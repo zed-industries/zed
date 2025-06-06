@@ -1,4 +1,4 @@
-mod ignore;
+﻿mod ignore;
 mod worktree_settings;
 #[cfg(test)]
 mod worktree_tests;
@@ -66,7 +66,7 @@ use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, Tre
 use text::{LineEnding, Rope};
 use util::{
     ResultExt,
-    paths::{PathMatcher, SanitizedPath, home_dir},
+    paths::{PathMatcher, SanitiCodeOrbitPath, home_dir},
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -76,11 +76,11 @@ pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
 /// Stores git repositories data and the diagnostics for the file(s).
 ///
-/// Has an absolute path, and may be set to be visible in Zed UI or not.
+/// Has an absolute path, and may be set to be visible in CodeOrbit UI or not.
 /// May correspond to a directory or a single file.
 /// Possible examples:
-/// * a drag and dropped file — may be added as an invisible, "ephemeral" entry to the current worktree
-/// * a directory opened in Zed — may be added as a visible entry to the current worktree
+/// * a drag and dropped file â€” may be added as an invisible, "ephemeral" entry to the current worktree
+/// * a directory opened in CodeOrbit â€” may be added as a visible entry to the current worktree
 ///
 /// Uses [`Entry`] to track the state of each file/directory, can look up absolute paths for entries.
 pub enum Worktree {
@@ -158,7 +158,7 @@ pub struct RemoteWorktree {
 #[derive(Clone)]
 pub struct Snapshot {
     id: WorktreeId,
-    abs_path: SanitizedPath,
+    abs_path: SanitiCodeOrbitPath,
     root_name: String,
     root_char_bag: CharBag,
     entries_by_path: SumTree<Entry>,
@@ -179,7 +179,7 @@ pub struct Snapshot {
 }
 
 /// This path corresponds to the 'content path' of a repository in relation
-/// to Zed's project root.
+/// to CodeOrbit's project root.
 /// In the majority of the cases, this is the folder that contains the .git folder.
 /// But if a sub-folder of a git repository is opened, this corresponds to the
 /// project root and the .git folder is located in a parent directory.
@@ -463,7 +463,7 @@ enum ScanState {
         scanning: bool,
     },
     RootUpdated {
-        new_path: Option<SanitizedPath>,
+        new_path: Option<SanitiCodeOrbitPath>,
     },
 }
 
@@ -1819,7 +1819,7 @@ impl LocalWorktree {
                         // Otherwise, the FS watcher would do it on the `RootUpdated` event,
                         // but with a noticeable delay, so we handle it proactively.
                         local.update_abs_path_and_refresh(
-                            Some(SanitizedPath::from(abs_path.clone())),
+                            Some(SanitiCodeOrbitPath::from(abs_path.clone())),
                             cx,
                         );
                         Task::ready(Ok(this.root_entry().cloned()))
@@ -2096,7 +2096,7 @@ impl LocalWorktree {
 
     fn update_abs_path_and_refresh(
         &mut self,
-        new_path: Option<SanitizedPath>,
+        new_path: Option<SanitiCodeOrbitPath>,
         cx: &Context<Worktree>,
     ) {
         if let Some(new_path) = new_path {
@@ -2470,7 +2470,7 @@ impl Snapshot {
         Some(removed_entry.path)
     }
 
-    fn update_abs_path(&mut self, abs_path: SanitizedPath, root_name: String) {
+    fn update_abs_path(&mut self, abs_path: SanitiCodeOrbitPath, root_name: String) {
         self.abs_path = abs_path;
         if root_name != self.root_name {
             self.root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
@@ -2489,7 +2489,7 @@ impl Snapshot {
             update.removed_entries.len()
         );
         self.update_abs_path(
-            SanitizedPath::from(PathBuf::from_proto(update.abs_path)),
+            SanitiCodeOrbitPath::from(PathBuf::from_proto(update.abs_path)),
             update.root_name,
         );
 
@@ -3946,7 +3946,7 @@ impl BackgroundScanner {
 
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => SanitizedPath::from(path),
+            Ok(path) => SanitiCodeOrbitPath::from(path),
             Err(err) => {
                 log::error!("failed to canonicalize root path {root_path:?}: {err}");
                 return true;
@@ -3988,7 +3988,7 @@ impl BackgroundScanner {
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => SanitizedPath::from(path),
+            Ok(path) => SanitiCodeOrbitPath::from(path),
             Err(err) => {
                 let new_path = self
                     .state
@@ -3997,7 +3997,7 @@ impl BackgroundScanner {
                     .root_file_handle
                     .clone()
                     .and_then(|handle| handle.current_path(&self.fs).log_err())
-                    .map(SanitizedPath::from)
+                    .map(SanitiCodeOrbitPath::from)
                     .filter(|new_path| *new_path != root_path);
 
                 if let Some(new_path) = new_path.as_ref() {
@@ -4007,7 +4007,7 @@ impl BackgroundScanner {
                         new_path.as_path().display()
                     )
                 } else {
-                    log::warn!("root path could not be canonicalized: {}", err);
+                    log::warn!("root path could not be canonicaliCodeOrbit: {}", err);
                 }
                 self.status_updates_tx
                     .unbounded_send(ScanState::RootUpdated { new_path })
@@ -4016,8 +4016,8 @@ impl BackgroundScanner {
             }
         };
 
-        // Certain directories may have FS changes, but do not lead to git data changes that Zed cares about.
-        // Ignore these, to avoid Zed unnecessarily rescanning git metadata.
+        // Certain directories may have FS changes, but do not lead to git data changes that CodeOrbit cares about.
+        // Ignore these, to avoid CodeOrbit unnecessarily rescanning git metadata.
         let skipped_files_in_dot_git = HashSet::from_iter([*COMMIT_MESSAGE, *INDEX_LOCK]);
         let skipped_dirs_in_dot_git = [*FSMONITOR_DAEMON, *LFS_DIR];
 
@@ -4026,7 +4026,7 @@ impl BackgroundScanner {
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         abs_paths.retain(|abs_path| {
-            let abs_path = SanitizedPath::from(abs_path);
+            let abs_path = SanitiCodeOrbitPath::from(abs_path);
 
             let snapshot = &self.state.lock().snapshot;
             {
@@ -4184,7 +4184,7 @@ impl BackgroundScanner {
                         loop {
                             select_biased! {
                                 // Process any path refresh requests before moving on to process
-                                // the scan queue, so that user operations are prioritized.
+                                // the scan queue, so that user operations are prioritiCodeOrbit.
                                 request = self.next_scan_request().fuse() => {
                                     let Ok(request) = request else { break };
                                     if !self.process_scan_request(request, true).await {
@@ -4457,8 +4457,8 @@ impl BackgroundScanner {
     /// All list arguments should be sorted before calling this function
     async fn reload_entries_for_paths(
         &self,
-        root_abs_path: SanitizedPath,
-        root_canonical_path: SanitizedPath,
+        root_abs_path: SanitiCodeOrbitPath,
+        root_canonical_path: SanitiCodeOrbitPath,
         relative_paths: &[Arc<Path>],
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
@@ -4486,7 +4486,7 @@ impl BackgroundScanner {
                             }
                         }
 
-                        anyhow::Ok(Some((metadata, SanitizedPath::from(canonical_path))))
+                        anyhow::Ok(Some((metadata, SanitiCodeOrbitPath::from(canonical_path))))
                     } else {
                         Ok(None)
                     }
@@ -4850,7 +4850,7 @@ impl BackgroundScanner {
 
 async fn discover_ancestor_git_repo(
     fs: Arc<dyn Fs>,
-    root_abs_path: &SanitizedPath,
+    root_abs_path: &SanitiCodeOrbitPath,
 ) -> (
     HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
     Option<(PathBuf, WorkDirectory)>,
@@ -4879,7 +4879,7 @@ async fn discover_ancestor_git_repo(
             .is_ok_and(|metadata| metadata.is_some())
         {
             if index != 0 {
-                // We canonicalize, since the FS events use the canonicalized path.
+                // We canonicalize, since the FS events use the canonicaliCodeOrbit path.
                 if let Some(ancestor_dot_git) = fs.canonicalize(&ancestor_dot_git).await.log_err() {
                     let location_in_repo = root_abs_path
                         .as_path()
@@ -4956,7 +4956,7 @@ fn build_diff(
                                 if old_entry.id != new_entry.id {
                                     changes.push((old_entry.path.clone(), old_entry.id, Removed));
                                 }
-                                // If the worktree was not fully initialized when this event was generated,
+                                // If the worktree was not fully initialiCodeOrbit when this event was generated,
                                 // we can't know whether this entry was added during the scan or whether
                                 // it was merely updated.
                                 changes.push((

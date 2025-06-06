@@ -1,4 +1,4 @@
-pub mod editor_lsp_test_context;
+﻿pub mod editor_lsp_test_context;
 pub mod editor_test_context;
 
 use std::{rc::Rc, sync::LazyLock};
@@ -53,7 +53,7 @@ pub fn marked_display_snapshot(
     let (unmarked_text, markers) = marked_text_offsets(text);
 
     let font = Font {
-        family: "Zed Plex Mono".into(),
+        family: "CodeOrbit Plex Mono".into(),
         features: FontFeatures::default(),
         fallbacks: None,
         weight: FontWeight::default(),
@@ -192,18 +192,18 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                 // 2: "related info 1 for diagnostic 0"
                 if let Some(height) = custom_block.height {
                     if height == 0 {
-                        lines[row.0 as usize - 1].push_str(" § ");
+                        lines[row.0 as usize - 1].push_str(" Â§ ");
                         lines[row.0 as usize - 1].push_str(&content);
                     } else {
                         let block_lines = content.lines().collect::<Vec<_>>();
                         assert_eq!(block_lines.len(), height as usize);
-                        lines[row.0 as usize].push_str("§ ");
+                        lines[row.0 as usize].push_str("Â§ ");
                         lines[row.0 as usize].push_str(block_lines[0].trim_end());
                         for i in 1..height as usize {
                             if row.0 as usize + i >= lines.len() {
                                 lines.push("".to_string());
                             };
-                            lines[row.0 as usize + i].push_str("§ ");
+                            lines[row.0 as usize + i].push_str("Â§ ");
                             lines[row.0 as usize + i].push_str(block_lines[i].trim_end());
                         }
                     }
@@ -215,7 +215,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
             } => {
                 lines[row.0 as usize].push_str(&cx.update(|_, cx| {
                     format!(
-                        "§ {}",
+                        "Â§ {}",
                         first_excerpt
                             .buffer
                             .file()
@@ -225,7 +225,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                     )
                 }));
                 for row in row.0 + 1..row.0 + height {
-                    lines[row as usize].push_str("§ -----");
+                    lines[row as usize].push_str("Â§ -----");
                 }
             }
             Block::ExcerptBoundary {
@@ -236,7 +236,7 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                 if starts_new_buffer {
                     lines[row.0 as usize].push_str(&cx.update(|_, cx| {
                         format!(
-                            "§ {}",
+                            "Â§ {}",
                             excerpt
                                 .buffer
                                 .file()
@@ -246,10 +246,10 @@ pub fn editor_content_with_blocks(editor: &Entity<Editor>, cx: &mut VisualTestCo
                         )
                     }));
                 } else {
-                    lines[row.0 as usize].push_str("§ -----")
+                    lines[row.0 as usize].push_str("Â§ -----")
                 }
                 for row in row.0 + 1..row.0 + height {
-                    lines[row as usize].push_str("§ -----");
+                    lines[row as usize].push_str("Â§ -----");
                 }
             }
         }

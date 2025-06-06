@@ -1,4 +1,4 @@
-use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
+﻿use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
@@ -285,7 +285,7 @@ impl RateCompletionModal {
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_edit_predictions(Some(false), window, cx);
-                editor.set_placeholder_text("Add your feedback…", cx);
+                editor.set_placeholder_text("Add your feedbackâ€¦", cx);
                 if focus {
                     cx.focus_self(window);
                 }
@@ -572,7 +572,7 @@ impl Render for RateCompletionModal {
                             .border_b_1()
                             .border_color(border_color)
                             .child(
-                                Icon::new(IconName::ZedPredict)
+                                Icon::new(IconName::CodeOrbitPredict)
                                     .size(IconSize::Small)
                             )
                             .child(

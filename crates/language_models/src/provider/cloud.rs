@@ -1,6 +1,6 @@
-use anthropic::{AnthropicModelMode, parse_prompt_too_long};
+﻿use anthropic::{AnthropicModelMode, parse_prompt_too_long};
 use anyhow::{Context as _, Result, anyhow};
-use client::{Client, UserStore, zed_urls};
+use client::{Client, UserStore, codeorbit_urls};
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
 };
@@ -15,7 +15,7 @@ use language_model::{
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelProviderTosView, LanguageModelRequest, LanguageModelToolChoice,
     LanguageModelToolSchemaFormat, ModelRequestLimitReachedError, RateLimiter, RequestUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    codeorbit_CLOUD_PROVIDER_ID,
 };
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelProvider, LlmApiToken, PaymentRequiredError,
@@ -35,22 +35,22 @@ use std::time::Duration;
 use thiserror::Error;
 use ui::{TintColor, prelude::*};
 use util::{ResultExt as _, maybe};
-use zed_llm_client::{
+use codeorbit_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
     CompletionRequestStatus, CountTokensBody, CountTokensResponse, EXPIRED_LLM_TOKEN_HEADER_NAME,
     ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
     SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
-    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    TOOL_USE_LIMIT_REACHED_HEADER_NAME, codeorbit_VERSION_HEADER_NAME,
 };
 
 use crate::provider::anthropic::{AnthropicEventMapper, count_anthropic_tokens, into_anthropic};
 use crate::provider::google::{GoogleEventMapper, into_google};
 use crate::provider::open_ai::{OpenAiEventMapper, count_open_ai_tokens, into_open_ai};
 
-pub const PROVIDER_NAME: &str = "Zed";
+pub const PROVIDER_NAME: &str = "CodeOrbit";
 
 #[derive(Default, Clone, Debug, PartialEq)]
-pub struct ZedDotDevSettings {
+pub struct CodeOrbitDotDevSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
@@ -121,10 +121,10 @@ pub struct State {
     user_store: Entity<UserStore>,
     status: client::Status,
     accept_terms: Option<Task<Result<()>>>,
-    models: Vec<Arc<zed_llm_client::LanguageModel>>,
-    default_model: Option<Arc<zed_llm_client::LanguageModel>>,
-    default_fast_model: Option<Arc<zed_llm_client::LanguageModel>>,
-    recommended_models: Vec<Arc<zed_llm_client::LanguageModel>>,
+    models: Vec<Arc<codeorbit_llm_client::LanguageModel>>,
+    default_model: Option<Arc<codeorbit_llm_client::LanguageModel>>,
+    default_fast_model: Option<Arc<codeorbit_llm_client::LanguageModel>>,
+    recommended_models: Vec<Arc<codeorbit_llm_client::LanguageModel>>,
     _fetch_models_task: Task<()>,
     _settings_subscription: Subscription,
     _llm_token_subscription: Subscription,
@@ -176,8 +176,8 @@ impl State {
                                 // Right now we represent thinking variants of models as separate models on the client,
                                 // so we need to insert variants for any model that supports thinking.
                                 if model.supports_thinking {
-                                    models.push(Arc::new(zed_llm_client::LanguageModel {
-                                        id: zed_llm_client::LanguageModelId(
+                                    models.push(Arc::new(codeorbit_llm_client::LanguageModel {
+                                        id: codeorbit_llm_client::LanguageModelId(
                                             format!("{}-thinking", model.id).into(),
                                         ),
                                         display_name: format!("{} Thinking", model.display_name),
@@ -208,7 +208,7 @@ impl State {
                     anyhow::Ok(())
                 })
                 .await
-                .context("failed to fetch Zed models")
+                .context("failed to fetch CodeOrbit models")
                 .log_err();
             }),
             _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
@@ -273,7 +273,7 @@ impl State {
 
         let request = http_client::Request::builder()
             .method(Method::GET)
-            .uri(http_client.build_zed_llm_url("/models", &[])?.as_ref())
+            .uri(http_client.build_CodeOrbit_llm_url("/models", &[])?.as_ref())
             .header("Authorization", format!("Bearer {token}"))
             .body(AsyncBody::empty())?;
         let mut response = http_client
@@ -328,7 +328,7 @@ impl CloudLanguageModelProvider {
 
     fn create_language_model(
         &self,
-        model: Arc<zed_llm_client::LanguageModel>,
+        model: Arc<codeorbit_llm_client::LanguageModel>,
         llm_api_token: LlmApiToken,
     ) -> Arc<dyn LanguageModel> {
         Arc::new(CloudLanguageModel {
@@ -351,7 +351,7 @@ impl LanguageModelProviderState for CloudLanguageModelProvider {
 
 impl LanguageModelProvider for CloudLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(ZED_CLOUD_PROVIDER_ID.into())
+        LanguageModelProviderId(codeorbit_CLOUD_PROVIDER_ID.into())
     }
 
     fn name(&self) -> LanguageModelProviderName {
@@ -359,7 +359,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::AiZed
+        IconName::AiCodeOrbit
     }
 
     fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -448,7 +448,7 @@ fn render_accept_terms(
         .icon_color(Color::Muted)
         .icon_size(IconSize::XSmall)
         .when(thread_empty_state, |this| this.label_size(LabelSize::Small))
-        .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
+        .on_click(move |_, _window, cx| cx.open_url("https://CodeOrbit.dev/terms-of-service"));
 
     let button_container = h_flex().child(
         Button::new("accept_terms", "I accept the Terms of Service")
@@ -482,7 +482,7 @@ fn render_accept_terms(
             .child(
                 h_flex()
                     .child(
-                        Label::new("To start using Zed AI, please read and accept the")
+                        Label::new("To start using CodeOrbit AI, please read and accept the")
                             .size(LabelSize::Small),
                     )
                     .child(terms_button),
@@ -497,7 +497,7 @@ fn render_accept_terms(
                     .flex_wrap()
                     .when(thread_fresh_start, |this| this.justify_center())
                     .child(Label::new(
-                        "To start using Zed AI, please read and accept the",
+                        "To start using CodeOrbit AI, please read and accept the",
                     ))
                     .child(terms_button),
             )
@@ -522,7 +522,7 @@ fn render_accept_terms(
 
 pub struct CloudLanguageModel {
     id: LanguageModelId,
-    model: Arc<zed_llm_client::LanguageModel>,
+    model: Arc<codeorbit_llm_client::LanguageModel>,
     llm_api_token: LlmApiToken,
     client: Arc<Client>,
     request_limiter: RateLimiter,
@@ -553,9 +553,9 @@ impl CloudLanguageModel {
         loop {
             let request_builder = http_client::Request::builder()
                 .method(Method::POST)
-                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref());
+                .uri(http_client.build_CodeOrbit_llm_url("/completions", &[])?.as_ref());
             let request_builder = if let Some(app_version) = app_version {
-                request_builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                request_builder.header(codeorbit_VERSION_HEADER_NAME, app_version.to_string())
             } else {
                 request_builder
             };
@@ -612,12 +612,12 @@ impl CloudLanguageModel {
                         .headers()
                         .get(CURRENT_PLAN_HEADER_NAME)
                         .and_then(|plan| plan.to_str().ok())
-                        .and_then(|plan| zed_llm_client::Plan::from_str(plan).ok())
+                        .and_then(|plan| codeorbit_llm_client::Plan::from_str(plan).ok())
                     {
                         let plan = match plan {
-                            zed_llm_client::Plan::ZedFree => Plan::Free,
-                            zed_llm_client::Plan::ZedPro => Plan::ZedPro,
-                            zed_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
+                            codeorbit_llm_client::Plan::CodeOrbitFree => Plan::Free,
+                            codeorbit_llm_client::Plan::CodeOrbitPro => Plan::CodeOrbitPro,
+                            codeorbit_llm_client::Plan::CodeOrbitProTrial => Plan::CodeOrbitProTrial,
                         };
                         return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                     }
@@ -672,7 +672,7 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(ZED_CLOUD_PROVIDER_ID.into())
+        LanguageModelProviderId(codeorbit_CLOUD_PROVIDER_ID.into())
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
@@ -700,16 +700,16 @@ impl LanguageModel for CloudLanguageModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("zed.dev/{}", self.model.id)
+        format!("CodeOrbit.dev/{}", self.model.id)
     }
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model.provider {
-            zed_llm_client::LanguageModelProvider::Anthropic
-            | zed_llm_client::LanguageModelProvider::OpenAi => {
+            codeorbit_llm_client::LanguageModelProvider::Anthropic
+            | codeorbit_llm_client::LanguageModelProvider::OpenAi => {
                 LanguageModelToolSchemaFormat::JsonSchema
             }
-            zed_llm_client::LanguageModelProvider::Google => {
+            codeorbit_llm_client::LanguageModelProvider::Google => {
                 LanguageModelToolSchemaFormat::JsonSchemaSubset
             }
         }
@@ -721,15 +721,15 @@ impl LanguageModel for CloudLanguageModel {
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         match &self.model.provider {
-            zed_llm_client::LanguageModelProvider::Anthropic => {
+            codeorbit_llm_client::LanguageModelProvider::Anthropic => {
                 Some(LanguageModelCacheConfiguration {
                     min_total_token: 2_048,
                     should_speculate: true,
                     max_cache_anchors: 4,
                 })
             }
-            zed_llm_client::LanguageModelProvider::OpenAi
-            | zed_llm_client::LanguageModelProvider::Google => None,
+            codeorbit_llm_client::LanguageModelProvider::OpenAi
+            | codeorbit_llm_client::LanguageModelProvider::Google => None,
         }
     }
 
@@ -739,15 +739,15 @@ impl LanguageModel for CloudLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
         match self.model.provider {
-            zed_llm_client::LanguageModelProvider::Anthropic => count_anthropic_tokens(request, cx),
-            zed_llm_client::LanguageModelProvider::OpenAi => {
+            codeorbit_llm_client::LanguageModelProvider::Anthropic => count_anthropic_tokens(request, cx),
+            codeorbit_llm_client::LanguageModelProvider::OpenAi => {
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,
                     Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
                 };
                 count_open_ai_tokens(request, model, cx)
             }
-            zed_llm_client::LanguageModelProvider::Google => {
+            codeorbit_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
                 let llm_api_token = self.llm_api_token.clone();
                 let model_id = self.model.id.to_string();
@@ -758,7 +758,7 @@ impl LanguageModel for CloudLanguageModel {
                     let token = llm_api_token.acquire(&client).await?;
 
                     let request_body = CountTokensBody {
-                        provider: zed_llm_client::LanguageModelProvider::Google,
+                        provider: codeorbit_llm_client::LanguageModelProvider::Google,
                         model: model_id,
                         provider_request: serde_json::to_value(&google_ai::CountTokensRequest {
                             generate_content_request,
@@ -768,7 +768,7 @@ impl LanguageModel for CloudLanguageModel {
                         .method(Method::POST)
                         .uri(
                             http_client
-                                .build_zed_llm_url("/count_tokens", &[])?
+                                .build_CodeOrbit_llm_url("/count_tokens", &[])?
                                 .as_ref(),
                         )
                         .header("Content-Type", "application/json")
@@ -815,7 +815,7 @@ impl LanguageModel for CloudLanguageModel {
         let mode = request.mode;
         let app_version = cx.update(|cx| AppVersion::global(cx)).ok();
         match self.model.provider {
-            zed_llm_client::LanguageModelProvider::Anthropic => {
+            codeorbit_llm_client::LanguageModelProvider::Anthropic => {
                 let request = into_anthropic(
                     request,
                     self.model.id.to_string(),
@@ -846,7 +846,7 @@ impl LanguageModel for CloudLanguageModel {
                             prompt_id,
                             intent,
                             mode,
-                            provider: zed_llm_client::LanguageModelProvider::Anthropic,
+                            provider: codeorbit_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
                         },
@@ -880,7 +880,7 @@ impl LanguageModel for CloudLanguageModel {
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
-            zed_llm_client::LanguageModelProvider::OpenAi => {
+            codeorbit_llm_client::LanguageModelProvider::OpenAi => {
                 let client = self.client.clone();
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,
@@ -903,7 +903,7 @@ impl LanguageModel for CloudLanguageModel {
                             prompt_id,
                             intent,
                             mode,
-                            provider: zed_llm_client::LanguageModelProvider::OpenAi,
+                            provider: codeorbit_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
                             provider_request: serde_json::to_value(&request)?,
                         },
@@ -922,7 +922,7 @@ impl LanguageModel for CloudLanguageModel {
                 });
                 async move { Ok(future.await?.boxed()) }.boxed()
             }
-            zed_llm_client::LanguageModelProvider::Google => {
+            codeorbit_llm_client::LanguageModelProvider::Google => {
                 let client = self.client.clone();
                 let request =
                     into_google(request, self.model.id.to_string(), GoogleModelMode::Default);
@@ -942,7 +942,7 @@ impl LanguageModel for CloudLanguageModel {
                             prompt_id,
                             intent,
                             mode,
-                            provider: zed_llm_client::LanguageModelProvider::Google,
+                            provider: codeorbit_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),
                             provider_request: serde_json::to_value(&request)?,
                         },
@@ -1060,7 +1060,7 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const ZED_PRICING_URL: &str = "https://zed.dev/pricing";
+        const codeorbit_PRICING_URL: &str = "https://CodeOrbit.dev/pricing";
 
         let is_connected = !self.state.read(cx).is_signed_out();
         let user_store = self.state.read(cx).user_store.read(cx);
@@ -1069,22 +1069,22 @@ impl Render for ConfigurationView {
         let eligible_for_trial = user_store.trial_started_at().is_none();
         let has_accepted_terms = self.state.read(cx).has_accepted_terms_of_service(cx);
 
-        let is_pro = plan == Some(proto::Plan::ZedPro);
+        let is_pro = plan == Some(proto::Plan::CodeOrbitPro);
         let subscription_text = match (plan, subscription_period) {
-            (Some(proto::Plan::ZedPro), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Zed Pro subscription."
+            (Some(proto::Plan::CodeOrbitPro), Some(_)) => {
+                "You have access to CodeOrbit's hosted LLMs through your CodeOrbit Pro subscription."
             }
-            (Some(proto::Plan::ZedProTrial), Some(_)) => {
-                "You have access to Zed's hosted LLMs through your Zed Pro trial."
+            (Some(proto::Plan::CodeOrbitProTrial), Some(_)) => {
+                "You have access to CodeOrbit's hosted LLMs through your CodeOrbit Pro trial."
             }
             (Some(proto::Plan::Free), Some(_)) => {
-                "You have basic access to Zed's hosted LLMs through your Zed Free subscription."
+                "You have basic access to CodeOrbit's hosted LLMs through your CodeOrbit Free subscription."
             }
             _ => {
                 if eligible_for_trial {
-                    "Subscribe for access to Zed's hosted LLMs. Start with a 14 day free trial."
+                    "Subscribe for access to CodeOrbit's hosted LLMs. Start with a 14 day free trial."
                 } else {
-                    "Subscribe for access to Zed's hosted LLMs."
+                    "Subscribe for access to CodeOrbit's hosted LLMs."
                 }
             }
         };
@@ -1092,7 +1092,7 @@ impl Render for ConfigurationView {
             h_flex().child(
                 Button::new("manage_settings", "Manage Subscription")
                     .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx)))),
+                    .on_click(cx.listener(|_, _, _, cx| cx.open_url(&codeorbit_urls::account_url(cx)))),
             )
         } else {
             h_flex()
@@ -1100,14 +1100,14 @@ impl Render for ConfigurationView {
                 .child(
                     Button::new("learn_more", "Learn more")
                         .style(ButtonStyle::Subtle)
-                        .on_click(cx.listener(|_, _, _, cx| cx.open_url(ZED_PRICING_URL))),
+                        .on_click(cx.listener(|_, _, _, cx| cx.open_url(codeorbit_PRICING_URL))),
                 )
                 .child(
                     Button::new("upgrade", "Upgrade")
                         .style(ButtonStyle::Subtle)
                         .color(Color::Accent)
                         .on_click(
-                            cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                            cx.listener(|_, _, _, cx| cx.open_url(&codeorbit_urls::account_url(cx))),
                         ),
                 )
         };
@@ -1128,7 +1128,7 @@ impl Render for ConfigurationView {
         } else {
             v_flex()
                 .gap_2()
-                .child(Label::new("Use Zed AI to access hosted language models."))
+                .child(Label::new("Use CodeOrbit AI to access hosted language models."))
                 .child(
                     Button::new("sign_in", "Sign In")
                         .icon_color(Color::Muted)

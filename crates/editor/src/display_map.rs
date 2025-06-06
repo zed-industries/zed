@@ -1,4 +1,4 @@
-//! This module defines where the text should be displayed in an [`Editor`][Editor].
+﻿//! This module defines where the text should be displayed in an [`Editor`][Editor].
 //!
 //! Not literally though - rendering, layout and all that jazz is a responsibility of [`EditorElement`][EditorElement].
 //! Instead, [`DisplayMap`] decides where Inlays/Inlay hints are displayed, when
@@ -1329,7 +1329,7 @@ impl DisplaySnapshot {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn text_highlight_ranges<Tag: ?Sized + 'static>(
+    pub fn text_highlight_ranges<Tag: ?SiCodeOrbit + 'static>(
         &self,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         let type_id = TypeId::of::<Tag>();
@@ -1338,7 +1338,7 @@ impl DisplaySnapshot {
 
     #[allow(unused)]
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn inlay_highlights<Tag: ?Sized + 'static>(
+    pub(crate) fn inlay_highlights<Tag: ?SiCodeOrbit + 'static>(
         &self,
     ) -> Option<&TreeMap<InlayId, (HighlightStyle, InlayHighlight)>> {
         let type_id = TypeId::of::<Tag>();
@@ -2114,7 +2114,7 @@ pub mod tests {
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some(Hsla::blue())),
-                ("⋯".to_string(), None),
+                ("â‹¯".to_string(), None),
                 ("  fn ".to_string(), Some(Hsla::red())),
                 ("inner".to_string(), Some(Hsla::blue())),
                 ("() {}\n}".to_string(), Some(Hsla::red())),
@@ -2546,7 +2546,7 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(DisplayRow(1)..DisplayRow(4), &map, &theme, cx)),
             [
                 ("out".to_string(), Some(Hsla::blue())),
-                ("⋯\n".to_string(), None),
+                ("â‹¯\n".to_string(), None),
                 ("  ".to_string(), Some(Hsla::red())),
                 ("\n".to_string(), None),
                 ("fn ".to_string(), Some(Hsla::red())),
@@ -2584,7 +2584,7 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        let (text, highlighted_ranges) = marked_text_ranges(r#"constˇ «a»: B = "c «d»""#, false);
+        let (text, highlighted_ranges) = marked_text_ranges(r#"constË‡ Â«aÂ»: B = "c Â«dÂ»""#, false);
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -2668,28 +2668,28 @@ pub mod tests {
         }
 
         use Bias::{Left, Right};
-        assert("ˇˇα", false, Left, cx);
-        assert("ˇˇα", true, Left, cx);
-        assert("ˇˇα", false, Right, cx);
-        assert("ˇαˇ", true, Right, cx);
-        assert("ˇˇ✋", false, Left, cx);
-        assert("ˇˇ✋", true, Left, cx);
-        assert("ˇˇ✋", false, Right, cx);
-        assert("ˇ✋ˇ", true, Right, cx);
-        assert("ˇˇ🍐", false, Left, cx);
-        assert("ˇˇ🍐", true, Left, cx);
-        assert("ˇˇ🍐", false, Right, cx);
-        assert("ˇ🍐ˇ", true, Right, cx);
-        assert("ˇˇ\t", false, Left, cx);
-        assert("ˇˇ\t", true, Left, cx);
-        assert("ˇˇ\t", false, Right, cx);
-        assert("ˇ\tˇ", true, Right, cx);
-        assert(" ˇˇ\t", false, Left, cx);
-        assert(" ˇˇ\t", true, Left, cx);
-        assert(" ˇˇ\t", false, Right, cx);
-        assert(" ˇ\tˇ", true, Right, cx);
-        assert("   ˇˇ\t", false, Left, cx);
-        assert("   ˇˇ\t", false, Right, cx);
+        assert("Ë‡Ë‡Î±", false, Left, cx);
+        assert("Ë‡Ë‡Î±", true, Left, cx);
+        assert("Ë‡Ë‡Î±", false, Right, cx);
+        assert("Ë‡Î±Ë‡", true, Right, cx);
+        assert("Ë‡Ë‡âœ‹", false, Left, cx);
+        assert("Ë‡Ë‡âœ‹", true, Left, cx);
+        assert("Ë‡Ë‡âœ‹", false, Right, cx);
+        assert("Ë‡âœ‹Ë‡", true, Right, cx);
+        assert("Ë‡Ë‡ðŸ", false, Left, cx);
+        assert("Ë‡Ë‡ðŸ", true, Left, cx);
+        assert("Ë‡Ë‡ðŸ", false, Right, cx);
+        assert("Ë‡ðŸË‡", true, Right, cx);
+        assert("Ë‡Ë‡\t", false, Left, cx);
+        assert("Ë‡Ë‡\t", true, Left, cx);
+        assert("Ë‡Ë‡\t", false, Right, cx);
+        assert("Ë‡\tË‡", true, Right, cx);
+        assert(" Ë‡Ë‡\t", false, Left, cx);
+        assert(" Ë‡Ë‡\t", true, Left, cx);
+        assert(" Ë‡Ë‡\t", false, Right, cx);
+        assert(" Ë‡\tË‡", true, Right, cx);
+        assert("   Ë‡Ë‡\t", false, Left, cx);
+        assert("   Ë‡Ë‡\t", false, Right, cx);
     }
 
     #[gpui::test]
@@ -2705,10 +2705,10 @@ pub mod tests {
             );
         }
 
-        assert("ˇˇ", cx);
-        assert("ˇaˇ", cx);
-        assert("aˇbˇ", cx);
-        assert("aˇαˇ", cx);
+        assert("Ë‡Ë‡", cx);
+        assert("Ë‡aË‡", cx);
+        assert("aË‡bË‡", cx);
+        assert("aË‡Î±Ë‡", cx);
     }
 
     #[gpui::test]
@@ -2752,7 +2752,7 @@ pub mod tests {
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::App) {
         init_test(cx, |_| {});
 
-        let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
+        let text = "âœ…\t\tÎ±\nÎ²\t\nðŸ€Î²\t\tÎ³";
         let buffer = MultiBuffer::build_simple(text, cx);
         let font_size = px(14.0);
 
@@ -2770,59 +2770,59 @@ pub mod tests {
             )
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
-        assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
+        assert_eq!(map.text(), "âœ…       Î±\nÎ²   \nðŸ€Î²      Î³");
         assert_eq!(
             map.text_chunks(DisplayRow(0)).collect::<String>(),
-            "✅       α\nβ   \n🏀β      γ"
+            "âœ…       Î±\nÎ²   \nðŸ€Î²      Î³"
         );
         assert_eq!(
             map.text_chunks(DisplayRow(1)).collect::<String>(),
-            "β   \n🏀β      γ"
+            "Î²   \nðŸ€Î²      Î³"
         );
         assert_eq!(
             map.text_chunks(DisplayRow(2)).collect::<String>(),
-            "🏀β      γ"
+            "ðŸ€Î²      Î³"
         );
 
-        let point = MultiBufferPoint::new(0, "✅\t\t".len() as u32);
-        let display_point = DisplayPoint::new(DisplayRow(0), "✅       ".len() as u32);
+        let point = MultiBufferPoint::new(0, "âœ…\t\t".len() as u32);
+        let display_point = DisplayPoint::new(DisplayRow(0), "âœ…       ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point);
 
-        let point = MultiBufferPoint::new(1, "β\t".len() as u32);
-        let display_point = DisplayPoint::new(DisplayRow(1), "β   ".len() as u32);
+        let point = MultiBufferPoint::new(1, "Î²\t".len() as u32);
+        let display_point = DisplayPoint::new(DisplayRow(1), "Î²   ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point,);
 
-        let point = MultiBufferPoint::new(2, "🏀β\t\t".len() as u32);
-        let display_point = DisplayPoint::new(DisplayRow(2), "🏀β      ".len() as u32);
+        let point = MultiBufferPoint::new(2, "ðŸ€Î²\t\t".len() as u32);
+        let display_point = DisplayPoint::new(DisplayRow(2), "ðŸ€Î²      ".len() as u32);
         assert_eq!(point.to_display_point(&map), display_point);
         assert_eq!(display_point.to_point(&map), point,);
 
         // Display points inside of expanded tabs
         assert_eq!(
-            DisplayPoint::new(DisplayRow(0), "✅      ".len() as u32).to_point(&map),
-            MultiBufferPoint::new(0, "✅\t".len() as u32),
+            DisplayPoint::new(DisplayRow(0), "âœ…      ".len() as u32).to_point(&map),
+            MultiBufferPoint::new(0, "âœ…\t".len() as u32),
         );
         assert_eq!(
-            DisplayPoint::new(DisplayRow(0), "✅ ".len() as u32).to_point(&map),
-            MultiBufferPoint::new(0, "✅".len() as u32),
+            DisplayPoint::new(DisplayRow(0), "âœ… ".len() as u32).to_point(&map),
+            MultiBufferPoint::new(0, "âœ…".len() as u32),
         );
 
         // Clipping display points inside of multi-byte characters
         assert_eq!(
             map.clip_point(
-                DisplayPoint::new(DisplayRow(0), "✅".len() as u32 - 1),
+                DisplayPoint::new(DisplayRow(0), "âœ…".len() as u32 - 1),
                 Left
             ),
             DisplayPoint::new(DisplayRow(0), 0)
         );
         assert_eq!(
             map.clip_point(
-                DisplayPoint::new(DisplayRow(0), "✅".len() as u32 - 1),
+                DisplayPoint::new(DisplayRow(0), "âœ…".len() as u32 - 1),
                 Bias::Right
             ),
-            DisplayPoint::new(DisplayRow(0), "✅".len() as u32)
+            DisplayPoint::new(DisplayRow(0), "âœ…".len() as u32)
         );
     }
 

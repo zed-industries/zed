@@ -1,4 +1,4 @@
-use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
+﻿use crate::{FontId, FontRun, Pixels, PlatformTextSystem, SharedString, TextRun, px};
 use collections::HashMap;
 use std::{iter, sync::Arc};
 
@@ -64,7 +64,7 @@ impl LineWrapper {
                                 last_candidate_width = width;
                             }
                         } else {
-                            // CJK may not be space separated, e.g.: `Hello world你好世界`
+                            // CJK may not be space separated, e.g.: `Hello worldä½ å¥½ä¸–ç•Œ`
                             if c != ' ' && first_non_whitespace_ix.is_some() {
                                 last_candidate_ix = ix;
                                 last_candidate_width = width;
@@ -182,10 +182,10 @@ impl LineWrapper {
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',') ||
-        // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
+        // Characters that used in URL, e.g. `https://github.com/CodeOrbit-industries/CodeOrbit?a=1&b=2` for better wrapping a long URL.
         matches!(c,  '/' | ':' | '?' | '&' | '=') ||
-        // `⋯` character is special used in Zed, to keep this at the end of the line.
-        matches!(c, '⋯')
+        // `â‹¯` character is special used in CodeOrbit, to keep this at the end of the line.
+        matches!(c, 'â‹¯')
     }
 
     #[inline(always)]
@@ -327,7 +327,7 @@ mod tests {
     fn build_wrapper() -> LineWrapper {
         let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         let cx = TestAppContext::build(dispatcher, None);
-        let id = cx.text_system().font_id(&font("Zed Plex Mono")).unwrap();
+        let id = cx.text_system().font_id(&font("CodeOrbit Plex Mono")).unwrap();
         LineWrapper::new(id, px(16.), cx.text_system().platform_text_system.clone())
     }
 
@@ -517,8 +517,8 @@ mod tests {
         perform_test(
             &mut wrapper,
             "aa bbb cccc ddddd eeee ffff gggg",
-            "aa bbb cccc ddddd eee…",
-            "…",
+            "aa bbb cccc ddddd eeeâ€¦",
+            "â€¦",
         );
         perform_test(
             &mut wrapper,
@@ -542,7 +542,7 @@ mod tests {
         ) {
             let mut dummy_runs = generate_test_runs(run_lens);
             assert_eq!(
-                wrapper.truncate_line(text.into(), line_width, "…", &mut dummy_runs),
+                wrapper.truncate_line(text.into(), line_width, "â€¦", &mut dummy_runs),
                 result
             );
             for (run, result_len) in dummy_runs.iter().zip(result_run_len) {
@@ -553,20 +553,20 @@ mod tests {
         // Text: abcdefghijkl
         // Runs: Run0 { len: 12, ... }
         //
-        // Truncate res: abcd… (truncate_at = 4)
-        // Run res: Run0 { string: abcd…, len: 7, ... }
-        perform_test(&mut wrapper, "abcdefghijkl", "abcd…", &[12], &[7], px(50.));
+        // Truncate res: abcdâ€¦ (truncate_at = 4)
+        // Run res: Run0 { string: abcdâ€¦, len: 7, ... }
+        perform_test(&mut wrapper, "abcdefghijkl", "abcdâ€¦", &[12], &[7], px(50.));
         // Case 1: Drop some runs
         // Text: abcdefghijkl
         // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
         //
-        // Truncate res: abcdef… (truncate_at = 6)
-        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+        // Truncate res: abcdefâ€¦ (truncate_at = 6)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efâ€¦, len:
         // 5, ... }
         perform_test(
             &mut wrapper,
             "abcdefghijkl",
-            "abcdef…",
+            "abcdefâ€¦",
             &[4, 4, 4],
             &[4, 5],
             px(70.),
@@ -575,13 +575,13 @@ mod tests {
         // Text: abcdefghijkl
         // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
         //
-        // Truncate res: abcdefgh… (truncate_at = 8)
+        // Truncate res: abcdefghâ€¦ (truncate_at = 8)
         // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
-        // 4, ... }, Run2 { string: …, len: 3, ... }
+        // 4, ... }, Run2 { string: â€¦, len: 3, ... }
         perform_test(
             &mut wrapper,
             "abcdefghijkl",
-            "abcdefgh…",
+            "abcdefghâ€¦",
             &[4, 4, 4],
             &[4, 4, 3],
             px(90.),
@@ -592,7 +592,7 @@ mod tests {
     fn test_update_run_after_truncation() {
         fn perform_test(result: &str, run_lens: &[usize], result_run_lens: &[usize]) {
             let mut dummy_runs = generate_test_runs(run_lens);
-            update_runs_after_truncation(result, "…", &mut dummy_runs);
+            update_runs_after_truncation(result, "â€¦", &mut dummy_runs);
             for (run, result_len) in dummy_runs.iter().zip(result_run_lens) {
                 assert_eq!(run.len, *result_len);
             }
@@ -601,25 +601,25 @@ mod tests {
         // Text: abcdefghijkl
         // Runs: Run0 { len: 12, ... }
         //
-        // Truncate res: abcd… (truncate_at = 4)
-        // Run res: Run0 { string: abcd…, len: 7, ... }
-        perform_test("abcd…", &[12], &[7]);
+        // Truncate res: abcdâ€¦ (truncate_at = 4)
+        // Run res: Run0 { string: abcdâ€¦, len: 7, ... }
+        perform_test("abcdâ€¦", &[12], &[7]);
         // Case 1: Drop some runs
         // Text: abcdefghijkl
         // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
         //
-        // Truncate res: abcdef… (truncate_at = 6)
-        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: ef…, len:
+        // Truncate res: abcdefâ€¦ (truncate_at = 6)
+        // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efâ€¦, len:
         // 5, ... }
-        perform_test("abcdef…", &[4, 4, 4], &[4, 5]);
+        perform_test("abcdefâ€¦", &[4, 4, 4], &[4, 5]);
         // Case 2: Truncate at start of some run
         // Text: abcdefghijkl
         // Runs: Run0 { len: 4, ... }, Run1 { len: 4, ... }, Run2 { len: 4, ... }
         //
-        // Truncate res: abcdefgh… (truncate_at = 8)
+        // Truncate res: abcdefghâ€¦ (truncate_at = 8)
         // Runs res: Run0 { string: abcd, len: 4, ... }, Run1 { string: efgh, len:
-        // 4, ... }, Run2 { string: …, len: 3, ... }
-        perform_test("abcdefgh…", &[4, 4, 4], &[4, 4, 3]);
+        // 4, ... }, Run2 { string: â€¦, len: 3, ... }
+        perform_test("abcdefghâ€¦", &[4, 4, 4], &[4, 4, 3]);
     }
 
     #[test]
@@ -648,30 +648,30 @@ mod tests {
         assert_word("@mention");
         assert_word("#hashtag");
         assert_word("$variable");
-        assert_word("more⋯");
+        assert_word("moreâ‹¯");
 
         // Space
         assert_not_word("foo bar");
 
         // URL case
-        assert_word("https://github.com/zed-industries/zed/");
+        assert_word("https://github.com/CodeOrbit-industries/CodeOrbit/");
         assert_word("github.com");
         assert_word("a=1&b=2");
 
         // Latin-1 Supplement
-        assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");
+        assert_word("Ã€ÃÃ‚ÃƒÃ„Ã…Ã†Ã‡ÃˆÃ‰ÃŠÃ‹ÃŒÃÃŽÃ");
         // Latin Extended-A
-        assert_word("ĀāĂăĄąĆćĈĉĊċČčĎď");
+        assert_word("Ä€ÄÄ‚ÄƒÄ„Ä…Ä†Ä‡ÄˆÄ‰ÄŠÄ‹ÄŒÄÄŽÄ");
         // Latin Extended-B
-        assert_word("ƀƁƂƃƄƅƆƇƈƉƊƋƌƍƎƏ");
+        assert_word("Æ€ÆÆ‚ÆƒÆ„Æ…Æ†Æ‡ÆˆÆ‰ÆŠÆ‹ÆŒÆÆŽÆ");
         // Cyrillic
-        assert_word("АБВГДЕЖЗИЙКЛМНОП");
+        assert_word("ÐÐ‘Ð’Ð“Ð”Ð•Ð–Ð—Ð˜Ð™ÐšÐ›ÐœÐÐžÐŸ");
 
         // non-word characters
-        assert_not_word("你好");
-        assert_not_word("안녕하세요");
-        assert_not_word("こんにちは");
-        assert_not_word("😀😁😂");
+        assert_not_word("ä½ å¥½");
+        assert_not_word("ì•ˆë…•í•˜ì„¸ìš”");
+        assert_not_word("ã“ã‚“ã«ã¡ã¯");
+        assert_not_word("ðŸ˜€ðŸ˜ðŸ˜‚");
         assert_not_word("()[]{}<>");
     }
 

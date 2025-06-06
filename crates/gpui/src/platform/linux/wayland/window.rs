@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     cell::{Ref, RefCell, RefMut},
     ffi::c_void,
     ptr::NonNull,
@@ -72,7 +72,7 @@ impl rwh::HasDisplayHandle for RawWindow {
 struct InProgressConfigure {
     size: Option<Size<Pixels>>,
     fullscreen: bool,
-    maximized: bool,
+    maximiCodeOrbit: bool,
     tiling: Tiling,
 }
 
@@ -96,7 +96,7 @@ pub struct WaylandWindowState {
     decorations: WindowDecorations,
     background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
-    maximized: bool,
+    maximiCodeOrbit: bool,
     tiling: Tiling,
     window_bounds: Bounds<Pixels>,
     client: WaylandClientStatePtr,
@@ -169,7 +169,7 @@ impl WaylandWindowState {
             decorations: WindowDecorations::Client,
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
-            maximized: false,
+            maximiCodeOrbit: false,
             tiling: Tiling::default(),
             window_bounds: options.bounds,
             in_progress_configure: None,
@@ -359,12 +359,12 @@ impl WaylandWindowStatePtr {
                     let mut state = self.state.borrow_mut();
 
                     if let Some(mut configure) = state.in_progress_configure.take() {
-                        let got_unmaximized = state.maximized && !configure.maximized;
+                        let got_unmaximiCodeOrbit = state.maximiCodeOrbit && !configure.maximiCodeOrbit;
                         state.fullscreen = configure.fullscreen;
-                        state.maximized = configure.maximized;
+                        state.maximiCodeOrbit = configure.maximiCodeOrbit;
                         state.tiling = configure.tiling;
-                        if !configure.fullscreen && !configure.maximized {
-                            configure.size = if got_unmaximized {
+                        if !configure.fullscreen && !configure.maximiCodeOrbit {
+                            configure.size = if got_unmaximiCodeOrbit {
                                 Some(state.window_bounds.size)
                             } else {
                                 compute_outer_size(state.inset, configure.size, state.tiling)
@@ -468,12 +468,12 @@ impl WaylandWindowStatePtr {
 
                 let mut tiling = Tiling::default();
                 let mut fullscreen = false;
-                let mut maximized = false;
+                let mut maximiCodeOrbit = false;
 
                 for state in states {
                     match state {
-                        xdg_toplevel::State::Maximized => {
-                            maximized = true;
+                        xdg_toplevel::State::MaximiCodeOrbit => {
+                            maximiCodeOrbit = true;
                         }
                         xdg_toplevel::State::Fullscreen => {
                             fullscreen = true;
@@ -496,7 +496,7 @@ impl WaylandWindowStatePtr {
                     }
                 }
 
-                if fullscreen || maximized {
+                if fullscreen || maximiCodeOrbit {
                     tiling = Tiling::tiled();
                 }
 
@@ -504,7 +504,7 @@ impl WaylandWindowStatePtr {
                 state.in_progress_configure = Some(InProgressConfigure {
                     size,
                     fullscreen,
-                    maximized,
+                    maximiCodeOrbit,
                     tiling,
                 });
 
@@ -777,16 +777,16 @@ impl PlatformWindow for WaylandWindow {
         self.borrow().bounds
     }
 
-    fn is_maximized(&self) -> bool {
-        self.borrow().maximized
+    fn is_maximiCodeOrbit(&self) -> bool {
+        self.borrow().maximiCodeOrbit
     }
 
     fn window_bounds(&self) -> WindowBounds {
         let state = self.borrow();
         if state.fullscreen {
             WindowBounds::Fullscreen(state.window_bounds)
-        } else if state.maximized {
-            WindowBounds::Maximized(state.window_bounds)
+        } else if state.maximiCodeOrbit {
+            WindowBounds::MaximiCodeOrbit(state.window_bounds)
         } else {
             drop(state);
             WindowBounds::Windowed(self.bounds())
@@ -797,8 +797,8 @@ impl PlatformWindow for WaylandWindow {
         let state = self.borrow();
         if state.fullscreen {
             WindowBounds::Fullscreen(state.window_bounds)
-        } else if state.maximized {
-            WindowBounds::Maximized(state.window_bounds)
+        } else if state.maximiCodeOrbit {
+            WindowBounds::MaximiCodeOrbit(state.window_bounds)
         } else {
             let inset = state.inset.unwrap_or(px(0.));
             drop(state);
@@ -921,15 +921,15 @@ impl PlatformWindow for WaylandWindow {
     }
 
     fn minimize(&self) {
-        self.borrow().toplevel.set_minimized();
+        self.borrow().toplevel.set_minimiCodeOrbit();
     }
 
     fn zoom(&self) {
         let state = self.borrow();
-        if !state.maximized {
-            state.toplevel.set_maximized();
+        if !state.maximiCodeOrbit {
+            state.toplevel.set_maximiCodeOrbit();
         } else {
-            state.toplevel.unset_maximized();
+            state.toplevel.unset_maximiCodeOrbit();
         }
     }
 

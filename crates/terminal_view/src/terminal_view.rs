@@ -1,4 +1,4 @@
-mod persistence;
+﻿mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
 pub mod terminal_scrollbar;
@@ -51,7 +51,7 @@ use anyhow::Context as _;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
-use zed_actions::assistant::InlineAssist;
+use codeorbit_actions::assistant::InlineAssist;
 
 use std::{
     cmp,
@@ -118,7 +118,7 @@ pub struct TerminalView {
     blink_state: bool,
     mode: TerminalMode,
     blinking_terminal_enabled: bool,
-    cwd_serialized: bool,
+    cwd_serialiCodeOrbit: bool,
     blinking_paused: bool,
     blink_epoch: usize,
     hover: Option<HoverTarget>,
@@ -232,7 +232,7 @@ impl TerminalView {
             scroll_handle,
             show_scrollbar: !Self::should_autohide_scrollbar(cx),
             hide_scrollbar_task: None,
-            cwd_serialized: false,
+            cwd_serialiCodeOrbit: false,
             marked_text: None,
             marked_range_utf16: None,
             _subscriptions: vec![
@@ -927,8 +927,8 @@ impl TerminalView {
     }
 }
 
-fn terminal_rerun_override(task: &TaskId) -> zed_actions::Rerun {
-    zed_actions::Rerun {
+fn terminal_rerun_override(task: &TaskId) -> codeorbit_actions::Rerun {
+    codeorbit_actions::Rerun {
         task_id: Some(task.0.clone()),
         allow_concurrent_runs: Some(true),
         use_new_terminal: Some(false),
@@ -951,7 +951,7 @@ fn subscribe_for_terminal_events(
             let current_cwd = terminal.read(cx).working_directory();
             if current_cwd != previous_cwd {
                 previous_cwd = current_cwd;
-                terminal_view.cwd_serialized = false;
+                terminal_view.cwd_serialiCodeOrbit = false;
             }
 
             match event {
@@ -1690,7 +1690,7 @@ impl Item for TerminalView {
 }
 
 impl SerializableItem for TerminalView {
-    fn serialized_item_kind() -> &'static str {
+    fn serialiCodeOrbit_item_kind() -> &'static str {
         "Terminal"
     }
 
@@ -1717,7 +1717,7 @@ impl SerializableItem for TerminalView {
         }
 
         if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
-            self.cwd_serialized = true;
+            self.cwd_serialiCodeOrbit = true;
             Some(cx.background_spawn(async move {
                 TERMINAL_DB
                     .save_working_directory(item_id, workspace_id, cwd)
@@ -1729,7 +1729,7 @@ impl SerializableItem for TerminalView {
     }
 
     fn should_serialize(&self, _: &Self::Event) -> bool {
-        !self.cwd_serialized
+        !self.cwd_serialiCodeOrbit
     }
 
     fn deserialize(

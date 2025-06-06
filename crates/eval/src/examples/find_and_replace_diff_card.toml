@@ -1,4 +1,4 @@
-url = "https://github.com/zed-industries/zed.git"
+﻿url = "https://github.com/CodeOrbit-industries/CodeOrbit.git"
 revision = "38fcadf9481d018543c65f36ac3bafeba190179b"
 language_extension = "rs"
 
@@ -34,7 +34,7 @@ This is because we gave the model a filename and it needs to turn that into a re
 """
 
 read_file_from_path_search = """
-After obtaining the correct path of "zed/crates/assistant_tools/src/find_replace_file_tool.rs", it should read the contents of that path.
+After obtaining the correct path of "CodeOrbit/crates/assistant_tools/src/find_replace_file_tool.rs", it should read the contents of that path.
 """
 
 symbol_search = """

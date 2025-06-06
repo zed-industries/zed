@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, Utc};
@@ -113,7 +113,7 @@ impl UserBackfiller {
                 "authorization",
                 format!("Bearer {}", self.github_access_token),
             )
-            .header("user-agent", "zed")
+            .header("user-agent", "CodeOrbit")
             .send()
             .await
             .with_context(|| format!("failed to fetch '{url}'"))?;

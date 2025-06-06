@@ -1,4 +1,4 @@
-use proc_macro::TokenStream;
+﻿use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
@@ -316,7 +316,7 @@ pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
         /// Sets cursor style when hovering over an element to `s-resize`.
         /// [Docs](https://tailwindcss.com/docs/cursor)
         #visibility fn cursor_s_resize(mut self) -> Self {
-            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeDown);
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResiCodeOrbitown);
             self
         }
 
@@ -375,7 +375,7 @@ pub fn border_style_methods(input: TokenStream) -> TokenStream {
         #visibility fn border_color<C>(mut self, border_color: C) -> Self
         where
             C: Into<gpui::Hsla>,
-            Self: Sized,
+            Self: SiCodeOrbit,
         {
             self.style().border_color = Some(border_color.into());
             self

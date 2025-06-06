@@ -1,4 +1,4 @@
-use std::str::FromStr;
+﻿use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result, bail};
@@ -183,14 +183,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
         let parsed_remote = Codeberg
-            .parse_remote_url("git@codeberg.org:zed-industries/zed.git")
+            .parse_remote_url("git@codeberg.org:CodeOrbit-industries/CodeOrbit.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             }
         );
     }
@@ -198,14 +198,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_https_url() {
         let parsed_remote = Codeberg
-            .parse_remote_url("https://codeberg.org/zed-industries/zed.git")
+            .parse_remote_url("https://codeberg.org/CodeOrbit-industries/CodeOrbit.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             }
         );
     }
@@ -214,8 +214,8 @@ mod tests {
     fn test_build_codeberg_permalink() {
         let permalink = Codeberg.build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
@@ -224,7 +224,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs";
+        let expected_url = "https://codeberg.org/CodeOrbit-industries/CodeOrbit/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -232,8 +232,8 @@ mod tests {
     fn test_build_codeberg_permalink_with_single_line_selection() {
         let permalink = Codeberg.build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
@@ -242,7 +242,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L7";
+        let expected_url = "https://codeberg.org/CodeOrbit-industries/CodeOrbit/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -250,8 +250,8 @@ mod tests {
     fn test_build_codeberg_permalink_with_multi_line_selection() {
         let permalink = Codeberg.build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
@@ -260,7 +260,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";
+        let expected_url = "https://codeberg.org/CodeOrbit-industries/CodeOrbit/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

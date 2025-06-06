@@ -1,15 +1,15 @@
-#!/usr/bin/env sh
+﻿#!/usr/bin/env sh
 set -eu
 
-# Downloads the latest tarball from https://zed.dev/releases and unpacks it
+# Downloads the latest tarball from https://CodeOrbit.dev/releases and unpacks it
 # into ~/.local/. If you'd prefer to do this manually, instructions are at
-# https://zed.dev/docs/linux.
+# https://CodeOrbit.dev/docs/linux.
 
 main() {
     platform="$(uname -s)"
     arch="$(uname -m)"
     channel="${ZED_CHANNEL:-stable}"
-    temp="$(mktemp -d "/tmp/zed-XXXXXX")"
+    temp="$(mktemp -d "/tmp/CodeOrbit-XXXXXX")"
 
     if [ "$platform" = "Darwin" ]; then
         platform="macos"
@@ -48,10 +48,10 @@ main() {
 
     "$platform" "$@"
 
-    if [ "$(command -v zed)" = "$HOME/.local/bin/zed" ]; then
-        echo "Zed has been installed. Run with 'zed'"
+    if [ "$(command -v CodeOrbit)" = "$HOME/.local/bin/CodeOrbit" ]; then
+        echo "CodeOrbit has been installed. Run with 'CodeOrbit'"
     else
-        echo "To run Zed from your terminal, you must add ~/.local/bin to your PATH"
+        echo "To run CodeOrbit from your terminal, you must add ~/.local/bin to your PATH"
         echo "Run:"
 
         case "$SHELL" in
@@ -68,16 +68,16 @@ main() {
                 ;;
         esac
 
-        echo "To run Zed now, '~/.local/bin/zed'"
+        echo "To run CodeOrbit now, '~/.local/bin/CodeOrbit'"
     fi
 }
 
 linux() {
     if [ -n "${ZED_BUNDLE_PATH:-}" ]; then
-        cp "$ZED_BUNDLE_PATH" "$temp/zed-linux-$arch.tar.gz"
+        cp "$ZED_BUNDLE_PATH" "$temp/CodeOrbit-linux-$arch.tar.gz"
     else
-        echo "Downloading Zed"
-        curl "https://zed.dev/api/releases/$channel/latest/zed-linux-$arch.tar.gz" > "$temp/zed-linux-$arch.tar.gz"
+        echo "Downloading CodeOrbit"
+        curl "https://CodeOrbit.dev/api/releases/$channel/latest/CodeOrbit-linux-$arch.tar.gz" > "$temp/CodeOrbit-linux-$arch.tar.gz"
     fi
 
     suffix=""
@@ -88,50 +88,50 @@ linux() {
     appid=""
     case "$channel" in
       stable)
-        appid="dev.zed.Zed"
+        appid="dev.CodeOrbit.CodeOrbit"
         ;;
       nightly)
-        appid="dev.zed.Zed-Nightly"
+        appid="dev.CodeOrbit.CodeOrbit-Nightly"
         ;;
       preview)
-        appid="dev.zed.Zed-Preview"
+        appid="dev.CodeOrbit.CodeOrbit-Preview"
         ;;
       dev)
-        appid="dev.zed.Zed-Dev"
+        appid="dev.CodeOrbit.CodeOrbit-Dev"
         ;;
       *)
         echo "Unknown release channel: ${channel}. Using stable app ID."
-        appid="dev.zed.Zed"
+        appid="dev.CodeOrbit.CodeOrbit"
         ;;
     esac
 
     # Unpack
-    rm -rf "$HOME/.local/zed$suffix.app"
-    mkdir -p "$HOME/.local/zed$suffix.app"
-    tar -xzf "$temp/zed-linux-$arch.tar.gz" -C "$HOME/.local/"
+    rm -rf "$HOME/.local/CodeOrbit$suffix.app"
+    mkdir -p "$HOME/.local/CodeOrbit$suffix.app"
+    tar -xzf "$temp/CodeOrbit-linux-$arch.tar.gz" -C "$HOME/.local/"
 
     # Setup ~/.local directories
     mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 
     # Link the binary
-    if [ -f "$HOME/.local/zed$suffix.app/bin/zed" ]; then
-        ln -sf "$HOME/.local/zed$suffix.app/bin/zed" "$HOME/.local/bin/zed"
+    if [ -f "$HOME/.local/CodeOrbit$suffix.app/bin/CodeOrbit" ]; then
+        ln -sf "$HOME/.local/CodeOrbit$suffix.app/bin/CodeOrbit" "$HOME/.local/bin/CodeOrbit"
     else
         # support for versions before 0.139.x.
-        ln -sf "$HOME/.local/zed$suffix.app/bin/cli" "$HOME/.local/bin/zed"
+        ln -sf "$HOME/.local/CodeOrbit$suffix.app/bin/cli" "$HOME/.local/bin/CodeOrbit"
     fi
 
     # Copy .desktop file
     desktop_file_path="$HOME/.local/share/applications/${appid}.desktop"
-    cp "$HOME/.local/zed$suffix.app/share/applications/zed$suffix.desktop" "${desktop_file_path}"
-    sed -i "s|Icon=zed|Icon=$HOME/.local/zed$suffix.app/share/icons/hicolor/512x512/apps/zed.png|g" "${desktop_file_path}"
-    sed -i "s|Exec=zed|Exec=$HOME/.local/zed$suffix.app/bin/zed|g" "${desktop_file_path}"
+    cp "$HOME/.local/CodeOrbit$suffix.app/share/applications/CodeOrbit$suffix.desktop" "${desktop_file_path}"
+    sed -i "s|Icon=CodeOrbit|Icon=$HOME/.local/CodeOrbit$suffix.app/share/icons/hicolor/512x512/apps/CodeOrbit.png|g" "${desktop_file_path}"
+    sed -i "s|Exec=CodeOrbit|Exec=$HOME/.local/CodeOrbit$suffix.app/bin/CodeOrbit|g" "${desktop_file_path}"
 }
 
 macos() {
-    echo "Downloading Zed"
-    curl "https://zed.dev/api/releases/$channel/latest/Zed-$arch.dmg" > "$temp/Zed-$arch.dmg"
-    hdiutil attach -quiet "$temp/Zed-$arch.dmg" -mountpoint "$temp/mount"
+    echo "Downloading CodeOrbit"
+    curl "https://CodeOrbit.dev/api/releases/$channel/latest/CodeOrbit-$arch.dmg" > "$temp/CodeOrbit-$arch.dmg"
+    hdiutil attach -quiet "$temp/CodeOrbit-$arch.dmg" -mountpoint "$temp/mount"
     app="$(cd "$temp/mount/"; echo *.app)"
     echo "Installing $app"
     if [ -d "/Applications/$app" ]; then
@@ -143,7 +143,7 @@ macos() {
 
     mkdir -p "$HOME/.local/bin"
     # Link the binary
-    ln -sf "/Applications/$app/Contents/MacOS/cli" "$HOME/.local/bin/zed"
+    ln -sf "/Applications/$app/Contents/MacOS/cli" "$HOME/.local/bin/CodeOrbit"
 }
 
 main "$@"

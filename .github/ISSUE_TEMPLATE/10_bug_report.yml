@@ -1,6 +1,6 @@
-name: Bug Report (Other)
+﻿name: Bug Report (Other)
 description: |
-  Something else is broken in Zed (exclude crashing).
+  Something else is broken in CodeOrbit (exclude crashing).
 type: "Bug"
 body:
   - type: textarea
@@ -12,7 +12,7 @@ body:
         SUMMARY_SENTENCE_HERE
 
         ### Description
-        <!--  Describe with sufficient detail to reproduce from a clean Zed install.
+        <!--  Describe with sufficient detail to reproduce from a clean CodeOrbit install.
           - Any code must be sufficient to reproduce (include context!)
           - Code must as text, not just as a screenshot.
           - Issues with insufficient detail may be summarily closed.
@@ -29,7 +29,7 @@ body:
 
         <!-- Before Submitting, did you:
           1. Include settings.json, keymap.json, .editorconfig if relevant?
-          2. Check your Zed.log for relevant errors? (please include!)
+          2. Check your CodeOrbit.log for relevant errors? (please include!)
           3. Click Preview to ensure everything looks right?
           4. Hide videos, large images and logs in ``` inside collapsible blocks:
 
@@ -47,10 +47,10 @@ body:
   - type: textarea
     id: environment
     attributes:
-      label: Zed Version and System Specs
+      label: CodeOrbit Version and System Specs
       description: |
-        Open Zed, from the command palette select "zed: copy system specs into clipboard"
+        Open CodeOrbit, from the command palette select "CodeOrbit: copy system specs into clipboard"
       placeholder: |
-        Output of "zed: copy system specs into clipboard"
+        Output of "CodeOrbit: copy system specs into clipboard"
     validations:
       required: true

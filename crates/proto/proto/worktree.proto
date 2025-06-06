@@ -1,5 +1,5 @@
-syntax = "proto3";
-package zed.messages;
+﻿syntax = "proto3";
+package CodeOrbit.messages;
 
 message Timestamp {
     uint64 seconds = 1;

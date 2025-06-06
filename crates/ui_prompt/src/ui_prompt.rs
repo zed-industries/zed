@@ -1,4 +1,4 @@
-use gpui::{
+﻿use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement, IntoElement, ParentElement, PromptButton, PromptHandle, PromptLevel,
     PromptResponse, Refineable, Render, RenderablePromptHandle, SharedString, Styled,
@@ -25,13 +25,13 @@ fn process_settings(cx: &mut App) {
     if settings.use_system_prompts && cfg!(not(any(target_os = "linux", target_os = "freebsd"))) {
         cx.reset_prompt_builder();
     } else {
-        cx.set_prompt_builder(zed_prompt_renderer);
+        cx.set_prompt_builder(codeorbit_prompt_renderer);
     }
 }
 
 /// Use this function in conjunction with [App::set_prompt_builder] to force
 /// GPUI to use the internal prompt system.
-fn zed_prompt_renderer(
+fn codeorbit_prompt_renderer(
     level: PromptLevel,
     message: &str,
     detail: Option<&str>,
@@ -41,7 +41,7 @@ fn zed_prompt_renderer(
     cx: &mut App,
 ) -> RenderablePromptHandle {
     let renderer = cx.new({
-        |cx| ZedPromptRenderer {
+        |cx| CodeOrbitPromptRenderer {
             _level: level,
             message: message.to_string(),
             actions: actions.iter().map(|a| a.label().to_string()).collect(),
@@ -56,7 +56,7 @@ fn zed_prompt_renderer(
     handle.with_view(renderer, window, cx)
 }
 
-pub struct ZedPromptRenderer {
+pub struct CodeOrbitPromptRenderer {
     _level: PromptLevel,
     message: String,
     actions: Vec<String>,
@@ -65,7 +65,7 @@ pub struct ZedPromptRenderer {
     detail: Option<Entity<Markdown>>,
 }
 
-impl ZedPromptRenderer {
+impl CodeOrbitPromptRenderer {
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
         cx.emit(PromptResponse(self.active_action_id));
     }
@@ -111,7 +111,7 @@ impl ZedPromptRenderer {
     }
 }
 
-impl Render for ZedPromptRenderer {
+impl Render for CodeOrbitPromptRenderer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let font_family = settings.ui_font.family.clone();
@@ -194,9 +194,9 @@ impl Render for ZedPromptRenderer {
     }
 }
 
-impl EventEmitter<PromptResponse> for ZedPromptRenderer {}
+impl EventEmitter<PromptResponse> for CodeOrbitPromptRenderer {}
 
-impl Focusable for ZedPromptRenderer {
+impl Focusable for CodeOrbitPromptRenderer {
     fn focus_handle(&self, _: &crate::App) -> FocusHandle {
         self.focus.clone()
     }

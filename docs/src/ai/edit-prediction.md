@@ -1,20 +1,20 @@
-# Edit Prediction
+﻿# Edit Prediction
 
-Edit Prediction is Zed's native mechanism for predicting the code you want to write through AI.
-Each keystroke sends a new request to our [open source, open dataset Zeta model](https://huggingface.co/zed-industries/zeta) and it returns with individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
+Edit Prediction is CodeOrbit's native mechanism for predicting the code you want to write through AI.
+Each keystroke sends a new request to our [open source, open dataset Zeta model](https://huggingface.co/CodeOrbit-industries/zeta) and it returns with individual or multi-line suggestions that can be quickly accepted by pressing `tab`.
 
 ## Configuring Zeta
 
-Zed's Edit Prediction was initially introduced via a banner on the title bar.
-Clicking on it would take you to a modal with a button ("Enable Edit Prediction") that sets `zed` as your `edit_prediction_provider`.
+CodeOrbit's Edit Prediction was initially introduced via a banner on the title bar.
+Clicking on it would take you to a modal with a button ("Enable Edit Prediction") that sets `CodeOrbit` as your `edit_prediction_provider`.
 
-![Onboarding banner and modal](https://zed.dev/img/edit-prediction/docs.webp)
+![Onboarding banner and modal](https://CodeOrbit.dev/img/edit-prediction/docs.webp)
 
-But, if you haven't come across the banner, Zed's Edit Prediction is the default edit prediction provider and you should see it right away in your status bar.
+But, if you haven't come across the banner, CodeOrbit's Edit Prediction is the default edit prediction provider and you should see it right away in your status bar.
 
 ### Switching Modes {#switching-modes}
 
-Zed's Edit Prediction comes with two different display modes:
+CodeOrbit's Edit Prediction comes with two different display modes:
 
 1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
@@ -29,11 +29,11 @@ Toggle between them via the `mode` key:
 
 Or directly via the UI through the status bar menu:
 
-![Edit Prediction status bar menu, with the modes toggle.](https://zed.dev/img/edit-prediction/status-bar-menu.webp)
+![Edit Prediction status bar menu, with the modes toggle.](https://CodeOrbit.dev/img/edit-prediction/status-bar-menu.webp)
 
 ### Conflict With Other `tab` Actions {#edit-predictions-conflict}
 
-By default, when `tab` would normally perform a different action, Zed requires a modifier key to accept predictions:
+By default, when `tab` would normally perform a different action, CodeOrbit requires a modifier key to accept predictions:
 
 1. When the language server completions menu is visible.
 2. When your cursor isn't at the right indentation level.
@@ -60,7 +60,7 @@ By default, `tab` is used to accept edit predictions. You can use another keybin
 }
 ```
 
-When there's a [conflict with the `tab` key](#edit-predictions-conflict), Zed uses a different context to accept keybindings (`edit_prediction_conflict`). If you want to use a different one, you can insert this in your keymap:
+When there's a [conflict with the `tab` key](#edit-predictions-conflict), CodeOrbit uses a different context to accept keybindings (`edit_prediction_conflict`). If you want to use a different one, you can insert this in your keymap:
 
 ```json
 {
@@ -73,7 +73,7 @@ When there's a [conflict with the `tab` key](#edit-predictions-conflict), Zed us
 
 If your keybinding contains a modifier (`ctrl` in the example above), it will also be used to preview the edit prediction and temporarily hide the language server completion menu.
 
-You can also bind this action to keybind without a modifier. In that case, Zed will use the default modifier (`alt`) to preview the edit prediction.
+You can also bind this action to keybind without a modifier. In that case, CodeOrbit will use the default modifier (`alt`) to preview the edit prediction.
 
 ```json
 {
@@ -166,7 +166,7 @@ While `tab` and `alt-tab` are supported on Linux, `alt-l` is displayed instead. 
 
 ### Missing keybind {#edit-predictions-missing-keybinding}
 
-Zed requires at least one keybinding for the {#action editor::AcceptEditPrediction} action in both the `Editor && edit_prediction` and `Editor && edit_prediction_conflict` contexts ([learn more above](#edit-predictions-keybinding)).
+CodeOrbit requires at least one keybinding for the {#action editor::AcceptEditPrediction} action in both the `Editor && edit_prediction` and `Editor && edit_prediction_conflict` contexts ([learn more above](#edit-predictions-keybinding)).
 
 If you have previously bound the default keybindings to different actions in the global context, you will not be able to preview or accept edit predictions. For example:
 
@@ -202,7 +202,7 @@ If you would like to use the default keybinding, you can free it up by either mo
 
 There are different levels in which you can disable edit predictions to be displayed, including not having it turned on at all.
 
-Alternatively, if you have Zed set as your provider, consider [using Subtle Mode](#switching-modes).
+Alternatively, if you have CodeOrbit set as your provider, consider [using Subtle Mode](#switching-modes).
 
 ### On Buffers
 
@@ -214,7 +214,7 @@ To not have predictions appear automatically as you type, set this within `setti
 }
 ```
 
-This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in (valid only if you have Zed as your provider).
+This hides every indication that there is a prediction available, regardless of [the display mode](#switching-modes) you're in (valid only if you have CodeOrbit as your provider).
 Still, you can trigger edit predictions manually by executing {#action editor::ShowEditPrediction} or hitting {#kb editor::ShowEditPrediction}.
 
 ### For Specific Languages
@@ -238,7 +238,7 @@ To disable edit predictions for specific directories or files, set this within `
 ```json
 {
   "edit_predictions": {
-    "disabled_globs": ["~/.config/zed/settings.json"]
+    "disabled_globs": ["~/.config/CodeOrbit/settings.json"]
   }
 }
 ```
@@ -288,4 +288,4 @@ You should be able to sign-in to Supermaven by clicking on the Supermaven icon i
 
 ## See also
 
-You may also use the [Agent Panel](./agent-panel.md) or the [Inline Assistant](./inline-assistant.md) to interact with language models, see the [AI documentation](./overview.md) for more information on the other AI features in Zed.
+You may also use the [Agent Panel](./agent-panel.md) or the [Inline Assistant](./inline-assistant.md) to interact with language models, see the [AI documentation](./overview.md) for more information on the other AI features in CodeOrbit.

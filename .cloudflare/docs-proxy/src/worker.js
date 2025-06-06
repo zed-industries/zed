@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   async fetch(request, _env, _ctx) {
     const url = new URL(request.url);
     url.hostname = "docs-anw.pages.dev";
@@ -6,7 +6,7 @@ export default {
     let res = await fetch(url, request);
 
     if (res.status === 404) {
-      res = await fetch("https://zed.dev/404");
+      res = await fetch("https://CodeOrbit.dev/404");
     }
 
     return res;

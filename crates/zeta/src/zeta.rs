@@ -1,4 +1,4 @@
-mod completion_diff_element;
+﻿mod completion_diff_element;
 mod init;
 mod input_excerpt;
 mod license_detection;
@@ -53,9 +53,9 @@ use uuid::Uuid;
 use workspace::Workspace;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId};
 use worktree::Worktree;
-use zed_llm_client::{
+use codeorbit_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
+    PredictEditsBody, PredictEditsResponse, codeorbit_VERSION_HEADER_NAME,
 };
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -63,7 +63,7 @@ const START_OF_FILE_MARKER: &'static str = "<|start_of_file|>";
 const EDITABLE_REGION_START_MARKER: &'static str = "<|editable_region_start|>";
 const EDITABLE_REGION_END_MARKER: &'static str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
-const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
+const codeorbit_PREDICT_DATA_COLLECTION_CHOICE: &str = "codeorbit_predict_data_collection_choice";
 
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
@@ -191,7 +191,7 @@ pub struct Zeta {
     last_usage: Option<EditPredictionUsage>,
     /// Whether the terms of service have been accepted.
     tos_accepted: bool,
-    /// Whether an update to a newer version of Zed is required to continue using Zeta.
+    /// Whether an update to a newer version of CodeOrbit is required to continue using Zeta.
     update_required: bool,
     user_store: Entity<UserStore>,
     _user_store_subscription: Subscription,
@@ -244,10 +244,10 @@ impl Zeta {
                     amount: amount as i32,
                     limit: match limit {
                         proto::usage_limit::Variant::Limited(limited) => {
-                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                            codeorbit_llm_client::UsageLimit::Limited(limited.limit as i32)
                         }
                         proto::usage_limit::Variant::Unlimited(_) => {
-                            zed_llm_client::UsageLimit::Unlimited
+                            codeorbit_llm_client::UsageLimit::Unlimited
                         }
                     },
                 })
@@ -498,7 +498,7 @@ impl Zeta {
             let (response, usage) = match response {
                 Ok(response) => response,
                 Err(err) => {
-                    if err.is::<ZedUpdateRequiredError>() {
+                    if err.is::<CodeOrbitUpdateRequiredError>() {
                         cx.update(|cx| {
                             zeta.update(cx, |zeta, _cx| {
                                 zeta.update_required = true;
@@ -507,14 +507,14 @@ impl Zeta {
                             if let Some(workspace) = workspace {
                                 workspace.update(cx, |workspace, cx| {
                                     workspace.show_notification(
-                                        NotificationId::unique::<ZedUpdateRequiredError>(),
+                                        NotificationId::unique::<CodeOrbitUpdateRequiredError>(),
                                         cx,
                                         |cx| {
                                             cx.new(|cx| {
                                                 ErrorMessagePrompt::new(err.to_string(), cx)
                                                     .with_link_button(
-                                                        "Update Zed",
-                                                        "https://zed.dev/releases",
+                                                        "Update CodeOrbit",
+                                                        "https://CodeOrbit.dev/releases",
                                                     )
                                             })
                                         },
@@ -766,19 +766,19 @@ and then another
             loop {
                 let request_builder = http_client::Request::builder().method(Method::POST);
                 let request_builder =
-                    if let Ok(predict_edits_url) = std::env::var("ZED_PREDICT_EDITS_URL") {
+                    if let Ok(predict_edits_url) = std::env::var("codeorbit_PREDICT_EDITS_URL") {
                         request_builder.uri(predict_edits_url)
                     } else {
                         request_builder.uri(
                             http_client
-                                .build_zed_llm_url("/predict_edits/v2", &[])?
+                                .build_CodeOrbit_llm_url("/predict_edits/v2", &[])?
                                 .as_ref(),
                         )
                     };
                 let request = request_builder
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", token))
-                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                    .header(codeorbit_VERSION_HEADER_NAME, app_version.to_string())
                     .body(serde_json::to_string(&body)?.into())?;
 
                 let mut response = http_client.send(request).await?;
@@ -790,7 +790,7 @@ and then another
                 {
                     anyhow::ensure!(
                         app_version >= minimum_required_version,
-                        ZedUpdateRequiredError {
+                        CodeOrbitUpdateRequiredError {
                             minimum_version: minimum_required_version
                         }
                     );
@@ -836,19 +836,19 @@ and then another
             let mut response = llm_token_retry(&llm_token, &client, |token| {
                 let request_builder = http_client::Request::builder().method(Method::POST);
                 let request_builder =
-                    if let Ok(accept_prediction_url) = std::env::var("ZED_ACCEPT_PREDICTION_URL") {
+                    if let Ok(accept_prediction_url) = std::env::var("codeorbit_ACCEPT_PREDICTION_URL") {
                         request_builder.uri(accept_prediction_url)
                     } else {
                         request_builder.uri(
                             http_client
-                                .build_zed_llm_url("/predict_edits/accept", &[])?
+                                .build_CodeOrbit_llm_url("/predict_edits/accept", &[])?
                                 .as_ref(),
                         )
                     };
                 Ok(request_builder
                     .header("Content-Type", "application/json")
                     .header("Authorization", format!("Bearer {}", token))
-                    .header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                    .header(codeorbit_VERSION_HEADER_NAME, app_version.to_string())
                     .body(
                         serde_json::to_string(&AcceptEditPredictionBody {
                             request_id: request_id.0,
@@ -864,7 +864,7 @@ and then another
                 .and_then(|version| SemanticVersion::from_str(version.to_str().ok()?).ok())
             {
                 if app_version < minimum_required_version {
-                    return Err(anyhow!(ZedUpdateRequiredError {
+                    return Err(anyhow!(CodeOrbitUpdateRequiredError {
                         minimum_version: minimum_required_version
                     }));
                 }
@@ -1115,7 +1115,7 @@ and then another
 
     fn load_data_collection_choices() -> DataCollectionChoice {
         let choice = KEY_VALUE_STORE
-            .read_kvp(ZED_PREDICT_DATA_COLLECTION_CHOICE)
+            .read_kvp(codeorbit_PREDICT_DATA_COLLECTION_CHOICE)
             .log_err()
             .flatten();
 
@@ -1123,7 +1123,7 @@ and then another
             Some("true") => DataCollectionChoice::Enabled,
             Some("false") => DataCollectionChoice::Disabled,
             Some(_) => {
-                log::error!("unknown value in '{ZED_PREDICT_DATA_COLLECTION_CHOICE}'");
+                log::error!("unknown value in '{codeorbit_PREDICT_DATA_COLLECTION_CHOICE}'");
                 DataCollectionChoice::NotAnswered
             }
             None => DataCollectionChoice::NotAnswered,
@@ -1140,9 +1140,9 @@ struct PerformPredictEditsParams {
 
 #[derive(Error, Debug)]
 #[error(
-    "You must update to Zed version {minimum_version} or higher to continue using edit predictions."
+    "You must update to CodeOrbit version {minimum_version} or higher to continue using edit predictions."
 )]
-pub struct ZedUpdateRequiredError {
+pub struct CodeOrbitUpdateRequiredError {
     minimum_version: SemanticVersion,
 }
 
@@ -1441,7 +1441,7 @@ impl ProviderDataCollection {
 
             db::write_and_log(cx, move || {
                 KEY_VALUE_STORE.write_kvp(
-                    ZED_PREDICT_DATA_COLLECTION_CHOICE.into(),
+                    codeorbit_PREDICT_DATA_COLLECTION_CHOICE.into(),
                     new_choice.is_enabled().to_string(),
                 )
             });
@@ -1504,11 +1504,11 @@ impl ZetaInlineCompletionProvider {
 
 impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
-        "zed-predict"
+        "CodeOrbit-predict"
     }
 
     fn display_name() -> &'static str {
-        "Zed's Edit Predictions"
+        "CodeOrbit's Edit Predictions"
     }
 
     fn show_completions_in_menu() -> bool {

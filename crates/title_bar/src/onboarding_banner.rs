@@ -1,8 +1,8 @@
-use gpui::{Action, Entity, Global, Render, SharedString};
+﻿use gpui::{Action, Entity, Global, Render, SharedString};
 use ui::{ButtonLike, Tooltip, prelude::*};
 use util::ResultExt;
 
-/// Prompts the user to try newly released Zed's features
+/// Prompts the user to try newly released CodeOrbit's features
 pub struct OnboardingBanner {
     dismissed: bool,
     source: String,
@@ -60,7 +60,7 @@ impl OnboardingBanner {
 
 fn dismissed_at_key(source: &str) -> String {
     if source == "Git Onboarding" {
-        "zed_git_banner_dismissed_at".to_string()
+        "codeorbit_git_banner_dismissed_at".to_string()
     } else {
         format!(
             "{}_banner_dismissed_at",

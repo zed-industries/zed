@@ -1,4 +1,4 @@
-use fuzzy::{StringMatch, StringMatchCandidate};
+﻿use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
     Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px, uniform_list,
@@ -1113,7 +1113,7 @@ impl CompletionsMenu {
         // Our goal here is to intelligently sort completion suggestions. We want to
         // balance the raw fuzzy match score with hints from the language server
 
-        // In a fuzzy bracket, matches with a score of 1.0 are prioritized.
+        // In a fuzzy bracket, matches with a score of 1.0 are prioritiCodeOrbit.
         // The remaining matches are partitioned into two groups at 3/5 of the max_score.
         let max_score = matches
             .iter()

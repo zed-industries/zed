@@ -1,4 +1,4 @@
-name: Release Actions
+﻿name: Release Actions
 
 on:
   release:
@@ -6,16 +6,16 @@ on:
 
 jobs:
   discord_release:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on: ubuntu-latest
     steps:
       - name: Get release URL
         id: get-release-url
         run: |
           if [ "${{ github.event.release.prerelease }}" == "true" ]; then
-              URL="https://zed.dev/releases/preview/latest"
+              URL="https://CodeOrbit.dev/releases/preview/latest"
           else
-              URL="https://zed.dev/releases/stable/latest"
+              URL="https://CodeOrbit.dev/releases/stable/latest"
           fi
 
           echo "URL=$URL" >> $GITHUB_OUTPUT
@@ -24,7 +24,7 @@ jobs:
         id: get-content
         with:
           stringToTruncate: |
-            📣 Zed [${{ github.event.release.tag_name }}](<${{ steps.get-release-url.outputs.URL }}>) was just released!
+            ðŸ“£ CodeOrbit [${{ github.event.release.tag_name }}](<${{ steps.get-release-url.outputs.URL }}>) was just released!
 
             ${{ github.event.release.body }}
           maxLength: 2000
@@ -36,7 +36,7 @@ jobs:
           content: ${{ steps.get-content.outputs.string }}
 
   send_release_notes_email:
-    if: github.repository_owner == 'zed-industries' && !github.event.release.prerelease
+    if: github.repository_owner == 'CodeOrbit-industries' && !github.event.release.prerelease
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -64,7 +64,7 @@ jobs:
           EOF
           jq -n --arg tag "$TAG" --rawfile body release_body.txt '{version: $tag, markdown_body: $body}' \
             > release_data.json
-          curl -X POST "https://zed.dev/api/send_release_notes_email" \
+          curl -X POST "https://CodeOrbit.dev/api/send_release_notes_email" \
             -H "Authorization: Bearer ${{ secrets.RELEASE_NOTES_API_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d @release_data.json

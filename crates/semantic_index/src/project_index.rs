@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     embedding::{EmbeddingProvider, TextToEmbed},
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},
@@ -443,7 +443,7 @@ impl ProjectIndex {
                                 match summary_db.get(&txn, &db_file.digest) {
                                     Ok(opt_summary) => {
                                         // Currently, we only use summaries we already have. If the file hasn't been
-                                        // summarized yet, then we skip it and don't include it in the inferred context.
+                                        // summariCodeOrbit yet, then we skip it and don't include it in the inferred context.
                                         // If we want to do just-in-time summarization, this would be the place to do it!
                                         if let Some(summary) = opt_summary {
                                             summaries_tx

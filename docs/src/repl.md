@@ -1,8 +1,8 @@
-# REPL
+﻿# REPL
 
 ## Getting started
 
-Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
+Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for CodeOrbit allows you to run code interactively in your editor similarly to a notebook with your own text files.
 
 <figure style="width: 100%; margin: 0; overflow: hidden; border-top-left-radius: 2px; border-top-right-radius: 2px;">
     <video loop controls playsinline>
@@ -15,7 +15,7 @@ Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects
             type='video/mp4; codecs="avc1.4D401E, mp4a.40.2"'
         />
         <source
-          src="https://zed.dev/img/post/repl/typescript-deno-kernel-markdown.png"
+          src="https://CodeOrbit.dev/img/post/repl/typescript-deno-kernel-markdown.png"
           type="image/png"
         />
     </video>
@@ -23,7 +23,7 @@ Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects
 
 ## Installation
 
-Zed supports running code in multiple languages. To get started, you need to install a kernel for the language you want to use.
+CodeOrbit supports running code in multiple languages. To get started, you need to install a kernel for the language you want to use.
 
 **Currently supported languages:**
 
@@ -46,7 +46,7 @@ Outputs can be cleared with the `repl: clear outputs` command, or from the REPL 
 
 ### Cell mode
 
-Zed supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
+CodeOrbit supports [notebooks as scripts](https://jupytext.readthedocs.io/en/latest/formats-scripts.html) using the `# %%` cell separator in Python and `// %%` in TypeScript. This allows you to write code in a single file and run it as if it were a notebook, cell by cell.
 
 The `repl: run` command will run each block of code between the `# %%` markers as a separate cell.
 
@@ -108,7 +108,7 @@ ark --install
 ### R (Xeus Kernel) {#r-xeus}
 
 - Install [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
-- Install the R Extension for Zed (search for `R` in Zed Extensions)
+- Install the R Extension for CodeOrbit (search for `R` in CodeOrbit Extensions)
 
 <!--
 TBD: Improve R REPL (Ark Kernel) instructions
@@ -129,7 +129,7 @@ TBD: Improve R REPL (Ark Kernel) instructions
 ### Julia
 
 - Download and install Julia from the [official website](https://julialang.org/downloads/).
-- Install the Julia Extension for Zed (search for `Julia` in Zed Extensions)
+- Install the Julia Extension for CodeOrbit (search for `Julia` in CodeOrbit Extensions)
 
 <!--
 TBD: Improve Julia REPL instructions
@@ -146,7 +146,7 @@ TBD: Improve Julia REPL instructions
 
 ## Changing which kernel is used per language {#changing-kernels}
 
-Zed automatically detects the available kernels on your system. If you need to configure a different default kernel for a
+CodeOrbit automatically detects the available kernels on your system. If you need to configure a different default kernel for a
 language, you can assign a kernel for any supported language in your `settings.json`.
 
 ```json
@@ -180,4 +180,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
+> Note: CodeOrbit makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.

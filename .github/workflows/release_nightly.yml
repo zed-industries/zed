@@ -1,4 +1,4 @@
-name: Release Nightly
+﻿name: Release Nightly
 
 on:
   schedule:
@@ -17,7 +17,7 @@ jobs:
   style:
     timeout-minutes: 60
     name: Check formatting and Clippy lints
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on:
       - self-hosted
       - macOS
@@ -37,7 +37,7 @@ jobs:
   tests:
     timeout-minutes: 60
     name: Run tests
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on:
       - self-hosted
       - macOS
@@ -54,7 +54,7 @@ jobs:
   bundle-mac:
     timeout-minutes: 60
     name: Create a macOS bundle
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on:
       - self-hosted
       - bundle
@@ -84,18 +84,18 @@ jobs:
           set -eu
           version=$(git rev-parse --short HEAD)
           echo "Publishing version: ${version} on release channel nightly"
-          echo "nightly" > crates/zed/RELEASE_CHANNEL
+          echo "nightly" > crates/CodeOrbit/RELEASE_CHANNEL
 
       - name: Create macOS app bundle
         run: script/bundle-mac
 
-      - name: Upload Zed Nightly
+      - name: Upload CodeOrbit Nightly
         run: script/upload-nightly macos
 
   bundle-linux-x86:
     timeout-minutes: 60
     name: Create a Linux *.tar.gz bundle for x86
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2004
     needs: tests
@@ -123,18 +123,18 @@ jobs:
           set -euo pipefail
           version=$(git rev-parse --short HEAD)
           echo "Publishing version: ${version} on release channel nightly"
-          echo "nightly" > crates/zed/RELEASE_CHANNEL
+          echo "nightly" > crates/CodeOrbit/RELEASE_CHANNEL
 
       - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
-      - name: Upload Zed Nightly
+      - name: Upload CodeOrbit Nightly
         run: script/upload-nightly linux-targz
 
   bundle-linux-arm:
     timeout-minutes: 60
     name: Create a Linux *.tar.gz bundle for ARM
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204-arm
     needs: tests
@@ -159,20 +159,20 @@ jobs:
           set -euo pipefail
           version=$(git rev-parse --short HEAD)
           echo "Publishing version: ${version} on release channel nightly"
-          echo "nightly" > crates/zed/RELEASE_CHANNEL
+          echo "nightly" > crates/CodeOrbit/RELEASE_CHANNEL
 
       - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
-      - name: Upload Zed Nightly
+      - name: Upload CodeOrbit Nightly
         run: script/upload-nightly linux-targz
 
   freebsd:
     timeout-minutes: 60
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on: github-8vcpu-ubuntu-2404
     needs: tests
-    name: Build Zed on FreeBSD
+    name: Build CodeOrbit on FreeBSD
     # env:
     #   MYTOKEN : ${{ secrets.MYTOKEN }}
     #   MYTOKEN2: "value2"
@@ -196,21 +196,21 @@ jobs:
             sysctl hw.ncpu
             sysctl hw.physmem
             sysctl hw.usermem
-            git config --global --add safe.directory /home/runner/work/zed/zed
+            git config --global --add safe.directory /home/runner/work/CodeOrbit/CodeOrbit
             rustup-init --profile minimal --default-toolchain none -y
             . "$HOME/.cargo/env"
             ./script/bundle-freebsd
             mkdir -p out/
-            mv "target/zed-remote-server-freebsd-x86_64.gz" out/
+            mv "target/CodeOrbit-remote-server-freebsd-x86_64.gz" out/
             rm -rf target/
             cargo clean
 
-      - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
+      - name: Upload Artifact to Workflow - CodeOrbit-remote-server (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
-          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-freebsd.gz
-          path: out/zed-remote-server-freebsd-x86_64.gz
+          name: CodeOrbit-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-freebsd.gz
+          path: out/CodeOrbit-remote-server-freebsd-x86_64.gz
 
       - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -219,7 +219,7 @@ jobs:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: |
-            out/zed-remote-server-freebsd-x86_64.gz
+            out/CodeOrbit-remote-server-freebsd-x86_64.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -230,7 +230,7 @@ jobs:
 
   update-nightly-tag:
     name: Update nightly tag
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on: ubuntu-latest
     needs:
       - bundle-mac

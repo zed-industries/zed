@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use crate::{
     ReadFileToolInput,
     edit_file_tool::{EditFileMode, EditFileToolInput},
@@ -532,7 +532,7 @@ fn eval_from_pixels_constructor() {
 
                             ## Matches in font-kit/src/loaders/core_text.rs
 
-                            ### mod test › L926-936
+                            ### mod test â€º L926-936
                             ```
                             mod test {
                                 use super::Font;
@@ -549,7 +549,7 @@ fn eval_from_pixels_constructor() {
 
                             55 lines remaining in ancestor node. Read the file to see all.
 
-                            ### mod test › L947-951
+                            ### mod test â€º L947-951
                             ```
                                 }
 
@@ -558,7 +558,7 @@ fn eval_from_pixels_constructor() {
                                     // Exact matches
                             ```
 
-                            ### mod test › L959-963
+                            ### mod test â€º L959-963
                             ```
                                 }
 
@@ -569,7 +569,7 @@ fn eval_from_pixels_constructor() {
 
                             ## Matches in font-kit/src/loaders/freetype.rs
 
-                            ### mod test › L1238-1248
+                            ### mod test â€º L1238-1248
                             ```
                             mod test {
                                 use crate::loaders::freetype::Font;
@@ -588,7 +588,7 @@ fn eval_from_pixels_constructor() {
 
                             ## Matches in font-kit/src/sources/core_text.rs
 
-                            ### mod test › L265-275
+                            ### mod test â€º L265-275
                             ```
                             mod test {
                                 use crate::properties::{Stretch, Weight};
@@ -605,7 +605,7 @@ fn eval_from_pixels_constructor() {
 
                             27 lines remaining in ancestor node. Read the file to see all.
 
-                            ### mod test › L278-282
+                            ### mod test â€º L278-282
                             ```
                                 }
 
@@ -1458,12 +1458,12 @@ impl EditAgentTest {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let agent_model = SelectedModel::from_str(
-            &std::env::var("ZED_AGENT_MODEL")
+            &std::env::var("codeorbit_AGENT_MODEL")
                 .unwrap_or("anthropic/claude-3-7-sonnet-latest".into()),
         )
         .unwrap();
         let judge_model = SelectedModel::from_str(
-            &std::env::var("ZED_JUDGE_MODEL")
+            &std::env::var("codeorbit_JUDGE_MODEL")
                 .unwrap_or("anthropic/claude-3-7-sonnet-latest".into()),
         )
         .unwrap();

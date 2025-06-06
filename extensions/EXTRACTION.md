@@ -1,6 +1,6 @@
-# Extracting an extension to dedicated repo
+﻿# Extracting an extension to dedicated repo
 
-These are some notes of how to extract an extension from the main zed repository and generate a new repository which preserves the history as best as possible. In the this example we will be extracting the `ruby` extension, substitute as appropriate.
+These are some notes of how to extract an extension from the main CodeOrbit repository and generate a new repository which preserves the history as best as possible. In the this example we will be extracting the `ruby` extension, substitute as appropriate.
 
 ## Pre-requisites
 
@@ -18,13 +18,13 @@ We are going to use a `$LANGNAME` variable for all these steps. Make sure it is 
 > If you get `zsh: command not found: #` errors, run:
 > `setopt interactive_comments && echo "setopt interactive_comments" >> ~/.zshrc`
 
-1. Create a clean clone the zed repository, delete tags and delete branches.
+1. Create a clean clone the CodeOrbit repository, delete tags and delete branches.
 
 ```sh
 LANGNAME=your_language_name_here
 
 rm -rf $LANGNAME
-git clone --single-branch --no-tags git@github.com:zed-industries/zed.git $LANGNAME
+git clone --single-branch --no-tags git@github.com:CodeOrbit-industries/CodeOrbit.git $LANGNAME
 cd $LANGNAME
 ```
 
@@ -41,8 +41,8 @@ mkdir -p ~/projects
 echo "${LANGNAME}: ==>
 extension: ==>
 chore: ==>
-zed_extension_api: ==>
-"'regex:(?<![\[a-zA-Z0-9])(#[0-9]{3,5})==>zed-industries/zed\1' \
+codeorbit_extension_api: ==>
+"'regex:(?<![\[a-zA-Z0-9])(#[0-9]{3,5})==>CodeOrbit-industries/CodeOrbit\1' \
   > ~/projects/${LANGNAME}.txt
 
 # This removes the LICENSE symlink
@@ -89,10 +89,10 @@ Usually the initial extraction didn't mention a version number so you can just d
 
 5. Push to the new repo
 
-Create a new empty repo on github under the [zed-extensions](https://github.com/organizations/zed-extensions/repositories/new) organization.
+Create a new empty repo on github under the [CodeOrbit-extensions](https://github.com/organizations/CodeOrbit-extensions/repositories/new) organization.
 
 ```
-git remote add origin git@github.com:zed-extensions/$LANGNAME
+git remote add origin git@github.com:CodeOrbit-extensions/$LANGNAME
 git push origin main --tags
 git branch --set-upstream-to=origin/main main
 ```
@@ -112,7 +112,7 @@ OLD_VERSION=$(grep '^version = ' extension.toml | cut -d'"' -f2)
 NEW_VERSION=$(echo "$OLD_VERSION" | awk -F. '{$NF = $NF + 1;} 1' OFS=.)
 echo $OLD_VERSION $NEW_VERSION
 perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" extension.toml
-perl -i -pe "s#https://github.com/zed-industries/zed#https://github.com/zed-extensions/${LANGNAME}#g" extension.toml
+perl -i -pe "s#https://github.com/CodeOrbit-industries/CodeOrbit#https://github.com/CodeOrbit-extensions/${LANGNAME}#g" extension.toml
 
 # if there's rust code, update this too.
 test -f Cargo.toml && perl -i -pe "s/$OLD_VERSION/$NEW_VERSION/" Cargo.toml
@@ -139,7 +139,7 @@ git tag v${NEW_VERSION}
 git push origin v${NEW_VERSION}
 ```
 
-7. In zed repository, remove the old extension and push a PR.
+7. In CodeOrbit repository, remove the old extension and push a PR.
 
 ```sh
 rm -rf extensions/$LANGNAME
@@ -148,7 +148,7 @@ cargo check
 git checkout -b remove_$LANGNAME
 git add extensions/$LANGNAME
 git add Cargo.toml Cargo.lock extensions/$LANGNAME
-git commit -m "Migrate to $LANGNAME extension to zed-extensions/$LANGNAME"
+git commit -m "Migrate to $LANGNAME extension to CodeOrbit-extensions/$LANGNAME"
 git push
 gh pr create --web
 ```
@@ -164,12 +164,12 @@ git submodule update
 git status
 
 git checkout -b ${LANGNAME}_v${NEW_VERSION}
-git submodule add https://github.com/zed-extensions/${LANGNAME}.git extensions/${LANGNAME}
+git submodule add https://github.com/CodeOrbit-extensions/${LANGNAME}.git extensions/${LANGNAME}
 pnpm sort-extensions
 
 # edit extensions.toml:
 # - bump version
-# - change `submodule` from `extensions/zed` to new path
+# - change `submodule` from `extensions/CodeOrbit` to new path
 # - remove `path` line all together
 
 git add extensions.toml .gitmodules extensions/${LANGNAME}
@@ -178,4 +178,4 @@ git commit -m "Bump ${LANGNAME} to v${NEW_VERSION}"
 git push
 ```
 
-Create PR and reference the Zed PR with removal from tree.
+Create PR and reference the CodeOrbit PR with removal from tree.

@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     debugger_panel::DebugPanel,
     persistence::DebuggerPaneItem,
     tests::{active_debug_session_panel, init_test, init_test_workspace, start_debug_session},
@@ -53,7 +53,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
             symbol_file_path: None,
             symbol_status: None,
             version: None,
-            is_optimized: None,
+            is_optimiCodeOrbit: None,
             is_user_code: None,
         },
         dap::Module {
@@ -65,7 +65,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
             symbol_file_path: None,
             symbol_status: None,
             version: None,
-            is_optimized: None,
+            is_optimiCodeOrbit: None,
             is_user_code: None,
         },
     ];
@@ -145,7 +145,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         symbol_file_path: None,
         symbol_status: None,
         version: None,
-        is_optimized: None,
+        is_optimiCodeOrbit: None,
         is_user_code: None,
     };
 
@@ -175,7 +175,7 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         symbol_file_path: None,
         symbol_status: None,
         version: None,
-        is_optimized: None,
+        is_optimiCodeOrbit: None,
         is_user_code: None,
     };
 

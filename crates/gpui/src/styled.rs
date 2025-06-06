@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
     JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement, TextAlign,
@@ -10,7 +10,7 @@ pub use gpui_macros::{
     visibility_style_methods,
 };
 
-const ELLIPSIS: SharedString = SharedString::new_static("…");
+const ELLIPSIS: SharedString = SharedString::new_static("â€¦");
 
 /// A trait for elements that can be styled.
 /// Use this to opt-in to a utility CSS-like styling API.
@@ -18,7 +18,7 @@ const ELLIPSIS: SharedString = SharedString::new_static("…");
     any(feature = "inspector", debug_assertions),
     gpui_macros::derive_inspector_reflection
 )]
-pub trait Styled: Sized {
+pub trait Styled: SiCodeOrbit {
     /// Returns a reference to the style memory of this element.
     fn style(&mut self) -> &mut StyleRefinement;
 
@@ -64,7 +64,7 @@ pub trait Styled: Sized {
         self
     }
 
-    /// Sets the truncate overflowing text with an ellipsis (…) if needed.
+    /// Sets the truncate overflowing text with an ellipsis (â€¦) if needed.
     /// [Docs](https://tailwindcss.com/docs/text-overflow#ellipsis)
     fn text_ellipsis(mut self) -> Self {
         self.text_style()
@@ -104,7 +104,7 @@ pub trait Styled: Sized {
         self.text_align(TextAlign::Right)
     }
 
-    /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
+    /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (â€¦) if needed.
     /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
     fn truncate(mut self) -> Self {
         self.overflow_hidden().whitespace_nowrap().text_ellipsis()
@@ -358,7 +358,7 @@ pub trait Styled: Sized {
     fn bg<F>(mut self, fill: F) -> Self
     where
         F: Into<Fill>,
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.style().background = Some(fill.into());
         self

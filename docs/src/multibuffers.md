@@ -1,6 +1,6 @@
-# Multibuffers
+﻿# Multibuffers
 
-One of the superpowers Zed gives you is the ability to edit multiple files simultaneously. When combined with multiple cursors, this makes wide-ranging refactors significantly faster.
+One of the superpowers CodeOrbit gives you is the ability to edit multiple files simultaneously. When combined with multiple cursors, this makes wide-ranging refactors significantly faster.
 
 ## Editing in a multibuffer
 
@@ -21,7 +21,7 @@ When you want to edit all matches you can select them by running the `editor: Se
 
 ## Navigating to the Source File
 
-While you can easily edit files in a multibuffer, navigating directly to the source file is often beneficial. You can accomplish this by clicking on any of the divider lines between excerpts or by placing your cursor in an excerpt and executing the `editor: open excerpts` command. It’s key to note that if multiple cursors are being used, the command will open the source file positioned under each cursor within the multibuffer.
+While you can easily edit files in a multibuffer, navigating directly to the source file is often beneficial. You can accomplish this by clicking on any of the divider lines between excerpts or by placing your cursor in an excerpt and executing the `editor: open excerpts` command. Itâ€™s key to note that if multiple cursors are being used, the command will open the source file positioned under each cursor within the multibuffer.
 
 Additionally, if you prefer to use the mouse and would like to double-click on an excerpt to open it, you can enable this functionality with the setting: `"double_click_in_multibuffer": "open"`.
 

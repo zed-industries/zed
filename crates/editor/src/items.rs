@@ -1,8 +1,8 @@
-use crate::{
+﻿use crate::{
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
     MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
     editor_settings::SeedQuerySetting,
-    persistence::{DB, SerializedEditor},
+    persistence::{DB, SerialiCodeOrbitEditor},
     scroll::ScrollAnchor,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -753,7 +753,7 @@ impl Item for Editor {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Editor>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Some(cx.new(|cx| self.clone(window, cx)))
     }
@@ -1031,7 +1031,7 @@ impl Item for Editor {
 }
 
 impl SerializableItem for Editor {
-    fn serialized_item_kind() -> &'static str {
+    fn serialiCodeOrbit_item_kind() -> &'static str {
         "Editor"
     }
 
@@ -1052,19 +1052,19 @@ impl SerializableItem for Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let serialized_editor = match DB
-            .get_serialized_editor(item_id, workspace_id)
+        let serialiCodeOrbit_editor = match DB
+            .get_serialiCodeOrbit_editor(item_id, workspace_id)
             .context("Failed to query editor state")
         {
-            Ok(Some(serialized_editor)) => {
+            Ok(Some(serialiCodeOrbit_editor)) => {
                 if ProjectSettings::get_global(cx)
                     .session
                     .restore_unsaved_buffers
                 {
-                    serialized_editor
+                    serialiCodeOrbit_editor
                 } else {
-                    SerializedEditor {
-                        abs_path: serialized_editor.abs_path,
+                    SerialiCodeOrbitEditor {
+                        abs_path: serialiCodeOrbit_editor.abs_path,
                         contents: None,
                         language: None,
                         mtime: None,
@@ -1079,8 +1079,8 @@ impl SerializableItem for Editor {
             }
         };
 
-        match serialized_editor {
-            SerializedEditor {
+        match serialiCodeOrbit_editor {
+            SerialiCodeOrbitEditor {
                 abs_path: None,
                 contents: Some(contents),
                 language,
@@ -1129,7 +1129,7 @@ impl SerializableItem for Editor {
                     })
                 }
             }),
-            SerializedEditor {
+            SerialiCodeOrbitEditor {
                 abs_path: Some(abs_path),
                 contents,
                 mtime,
@@ -1206,7 +1206,7 @@ impl SerializableItem for Editor {
                     }
                 }
             }
-            SerializedEditor {
+            SerialiCodeOrbitEditor {
                 abs_path: None,
                 contents: None,
                 ..
@@ -1230,7 +1230,7 @@ impl SerializableItem for Editor {
         let project = self.project.clone()?;
         if project.read(cx).visible_worktrees(cx).next().is_none() {
             // If we don't have a worktree, we don't serialize, because
-            // projects without worktrees aren't deserialized.
+            // projects without worktrees aren't deserialiCodeOrbit.
             serialize_dirty_buffers = false;
         }
 
@@ -1270,16 +1270,16 @@ impl SerializableItem for Editor {
                     (None, None)
                 };
 
-                let editor = SerializedEditor {
+                let editor = SerialiCodeOrbitEditor {
                     abs_path,
                     contents,
                     language,
                     mtime,
                 };
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
-                DB.save_serialized_editor(item_id, workspace_id, editor)
+                DB.save_serialiCodeOrbit_editor(item_id, workspace_id, editor)
                     .await
-                    .context("failed to save serialized editor")
+                    .context("failed to save serialiCodeOrbit editor")
             })
             .await
             .context("failed to save contents of buffer")?;
@@ -1972,21 +1972,21 @@ mod tests {
                 .unwrap()
                 .mtime;
 
-            let serialized_editor = SerializedEditor {
+            let serialiCodeOrbit_editor = SerialiCodeOrbitEditor {
                 abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor.clone())
+            DB.save_serialiCodeOrbit_editor(item_id, workspace_id, serialiCodeOrbit_editor.clone())
                 .await
                 .unwrap();
 
-            let deserialized =
+            let deserialiCodeOrbit =
                 deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
 
-            deserialized.update(cx, |editor, cx| {
+            deserialiCodeOrbit.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "fn main() {}");
                 assert!(editor.is_dirty(cx));
                 assert!(!editor.has_conflict(cx));
@@ -2004,21 +2004,21 @@ mod tests {
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
             let item_id = 5678 as ItemId;
-            let serialized_editor = SerializedEditor {
+            let serialiCodeOrbit_editor = SerialiCodeOrbitEditor {
                 abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: None,
                 language: None,
                 mtime: None,
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            DB.save_serialiCodeOrbit_editor(item_id, workspace_id, serialiCodeOrbit_editor)
                 .await
                 .unwrap();
 
-            let deserialized =
+            let deserialiCodeOrbit =
                 deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
 
-            deserialized.update(cx, |editor, cx| {
+            deserialiCodeOrbit.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), ""); // The file should be empty as per our initial setup
                 assert!(!editor.is_dirty(cx));
                 assert!(!editor.has_conflict(cx));
@@ -2040,21 +2040,21 @@ mod tests {
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
             let item_id = 9012 as ItemId;
-            let serialized_editor = SerializedEditor {
+            let serialiCodeOrbit_editor = SerialiCodeOrbitEditor {
                 abs_path: None,
                 contents: Some("hello".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: None,
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            DB.save_serialiCodeOrbit_editor(item_id, workspace_id, serialiCodeOrbit_editor)
                 .await
                 .unwrap();
 
-            let deserialized =
+            let deserialiCodeOrbit =
                 deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
 
-            deserialized.update(cx, |editor, cx| {
+            deserialiCodeOrbit.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "hello");
                 assert!(editor.is_dirty(cx)); // The editor should be dirty for an untitled buffer
 
@@ -2077,21 +2077,21 @@ mod tests {
 
             let item_id = 9345 as ItemId;
             let old_mtime = MTime::from_seconds_and_nanos(0, 50);
-            let serialized_editor = SerializedEditor {
+            let serialiCodeOrbit_editor = SerialiCodeOrbitEditor {
                 abs_path: Some(PathBuf::from(path!("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),
             };
 
-            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+            DB.save_serialiCodeOrbit_editor(item_id, workspace_id, serialiCodeOrbit_editor)
                 .await
                 .unwrap();
 
-            let deserialized =
+            let deserialiCodeOrbit =
                 deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
 
-            deserialized.update(cx, |editor, cx| {
+            deserialiCodeOrbit.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "fn main() {}");
                 assert!(editor.has_conflict(cx)); // The editor should have a conflict
             });

@@ -1,4 +1,4 @@
-use std::cmp;
+﻿use std::cmp;
 use std::mem;
 use std::ops::Range;
 use std::rc::Rc;
@@ -41,7 +41,7 @@ use ui::prelude::*;
 use util::RangeExt;
 use util::ResultExt;
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
-use zed_actions::agent::OpenConfiguration;
+use codeorbit_actions::agent::OpenConfiguration;
 
 use crate::AgentPanel;
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
@@ -215,7 +215,7 @@ impl InlineAssistant {
 
     pub fn inline_assist(
         workspace: &mut Workspace,
-        action: &zed_actions::assistant::InlineAssist,
+        action: &codeorbit_actions::assistant::InlineAssist,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -771,7 +771,7 @@ impl InlineAssistant {
             PromptEditorEvent::DismissRequested => {
                 self.dismiss_assist(assist_id, window, cx);
             }
-            PromptEditorEvent::Resized { .. } => {
+            PromptEditorEvent::ResiCodeOrbit { .. } => {
                 // This only matters for the terminal inline assistant
             }
         }

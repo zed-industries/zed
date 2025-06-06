@@ -1,4 +1,4 @@
-use proc_macro::TokenStream;
+﻿use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     LitInt, Token, parse::Parse, parse::ParseStream, parse_macro_input, punctuated::Punctuated,
@@ -32,7 +32,7 @@ impl Parse for DynamicSpacingValue {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         if input.peek(syn::token::Paren) {
             let content;
-            syn::parenthesized!(content in input);
+            syn::parenthesiCodeOrbit!(content in input);
             let a: LitInt = content.parse()?;
             content.parse::<Token![,]>()?;
             let b: LitInt = content.parse()?;

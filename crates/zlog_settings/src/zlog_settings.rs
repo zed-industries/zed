@@ -1,4 +1,4 @@
-//! # zlog_settings
+﻿//! # zlog_settings
 use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
@@ -28,7 +28,7 @@ impl Settings for ZlogSettings {
 
     fn load(sources: settings::SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         sources.json_merge()
     }

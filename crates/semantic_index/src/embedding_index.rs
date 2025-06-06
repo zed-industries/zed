@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     chunking::{self, Chunk},
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
@@ -286,7 +286,7 @@ impl EmbeddingIndex {
                 pin!(chunked_files.chunks_timeout(512, Duration::from_secs(2)));
             while let Some(chunked_files) = chunked_file_batches.next().await {
                 // View the batch of files as a vec of chunks
-                // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
+                // Flatten out to a vec of chunks that we can subdivide into batch siCodeOrbit pieces
                 // Once those are done, reassemble them back into the files in which they belong
                 // If any embeddings fail for a file, the entire file is discarded
 

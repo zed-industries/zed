@@ -1,4 +1,4 @@
-use component::{Component, ComponentScope, single_example};
+﻿use component::{Component, ComponentScope, single_example};
 use gpui::{
     AnyElement, App, ClickEvent, IntoElement, ParentElement, RenderOnce, SharedString, Styled,
     Window,
@@ -14,11 +14,11 @@ use ui::{
 /// # Example
 /// ```
 /// let upsell = Upsell::new(
-///     "Upgrade to Zed Pro",
+///     "Upgrade to CodeOrbit Pro",
 ///     "Get access to advanced AI features and more",
 ///     "Upgrade Now",
 ///     Box::new(|_, _window, cx| {
-///         cx.open_url("https://zed.dev/pricing");
+///         cx.open_url("https://CodeOrbit.dev/pricing");
 ///     }),
 ///     Box::new(|_, _window, cx| {
 ///         // Handle dismiss
@@ -137,8 +137,8 @@ impl Component for Upsell {
             single_example(
                 "Default",
                 Upsell::new(
-                    "Upgrade to Zed Pro",
-                    "Get unlimited access to AI features and more with Zed Pro. Unlock advanced AI capabilities and other premium features.",
+                    "Upgrade to CodeOrbit Pro",
+                    "Get unlimited access to AI features and more with CodeOrbit Pro. Unlock advanced AI capabilities and other premium features.",
                     "Upgrade Now",
                     Box::new(|_, _, _| {}),
                     Box::new(|_, _, _| {}),
@@ -148,7 +148,7 @@ impl Component for Upsell {
             single_example(
                 "Short Message",
                 Upsell::new(
-                    "Try Zed Pro for free",
+                    "Try CodeOrbit Pro for free",
                     "Start your 7-day trial today.",
                     "Start Trial",
                     Box::new(|_, _, _| {}),

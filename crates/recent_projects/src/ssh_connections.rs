@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+﻿use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context as _, Result};
@@ -85,8 +85,8 @@ pub struct SshConnection {
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
-    // By default Zed will download the binary to the host directly.
-    // If this is set to true, Zed will download the binary to your local machine,
+    // By default CodeOrbit will download the binary to the host directly.
+    // If this is set to true, CodeOrbit will download the binary to your local machine,
     // and then upload it over the SSH connection. Useful if your SSH server has
     // limited outbound internet access.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -277,7 +277,7 @@ impl Render for SshPrompt {
                             div()
                                 .text_ellipsis()
                                 .overflow_x_hidden()
-                                .child(format!("{}…", status_message)),
+                                .child(format!("{}â€¦", status_message)),
                         ),
                 )
             })

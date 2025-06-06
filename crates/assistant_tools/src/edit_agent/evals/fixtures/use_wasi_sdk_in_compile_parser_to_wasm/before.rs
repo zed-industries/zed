@@ -1,4 +1,4 @@
-#![doc = include_str!("../README.md")]
+﻿#![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 #[cfg(any(feature = "tree-sitter-highlight", feature = "tree-sitter-tags"))]
@@ -259,7 +259,7 @@ impl Default for Bindings {
 }
 
 // Replace `~` or `$HOME` with home path string.
-// (While paths like "~/.tree-sitter/config.json" can be deserialized,
+// (While paths like "~/.tree-sitter/config.json" can be deserialiCodeOrbit,
 // they're not valid path for I/O modules.)
 fn deserialize_parser_directories<'de, D>(deserializer: D) -> Result<Vec<PathBuf>, D::Error>
 where
@@ -269,11 +269,11 @@ where
     let Ok(home) = etcetera::home_dir() else {
         return Ok(paths);
     };
-    let standardized = paths
+    let standardiCodeOrbit = paths
         .into_iter()
         .map(|path| standardize_path(path, &home))
         .collect();
-    Ok(standardized)
+    Ok(standardiCodeOrbit)
 }
 
 fn standardize_path(path: PathBuf, home: &Path) -> PathBuf {

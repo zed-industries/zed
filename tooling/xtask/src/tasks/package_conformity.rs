@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+﻿use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -36,7 +36,7 @@ pub fn run_package_conformity(_args: PackageConformityArgs) -> Result<()> {
         }
 
         // Extensions should not use workspace dependencies.
-        if is_extension || package.name == "zed_extension_api" {
+        if is_extension || package.name == "codeorbit_extension_api" {
             continue;
         }
 

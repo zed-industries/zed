@@ -1,4 +1,4 @@
-package zed:extension;
+﻿package CodeOrbit:extension;
 
 world extension {
     import context-server;
@@ -60,7 +60,7 @@ world extension {
     /// Updates the installation status for the given language server.
     import set-language-server-installation-status: func(language-server-name: string, status: language-server-installation-status);
 
-    /// A Zed worktree.
+    /// A CodeOrbit worktree.
     resource worktree {
         /// Returns the ID of the worktree.
         id: func() -> u64;
@@ -74,7 +74,7 @@ world extension {
         shell-env: func() -> env-vars;
     }
 
-    /// A Zed project.
+    /// A CodeOrbit project.
     resource project {
         /// Returns the IDs of all of the worktrees in this project.
         worktree-ids: func() -> list<u64>;

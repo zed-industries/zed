@@ -1,4 +1,4 @@
-mod action_log;
+﻿mod action_log;
 pub mod outline;
 mod tool_registry;
 mod tool_schema;
@@ -125,7 +125,7 @@ pub struct ToolResult {
     pub card: Option<AnyToolCard>,
 }
 
-pub trait ToolCard: 'static + Sized {
+pub trait ToolCard: 'static + SiCodeOrbit {
     fn render(
         &mut self,
         status: &ToolUseStatus,
@@ -192,7 +192,7 @@ impl From<Task<Result<ToolResultOutput>>> for ToolResult {
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
 pub enum ToolSource {
-    /// A native tool built-in to Zed.
+    /// A native tool built-in to CodeOrbit.
     Native,
     /// A tool provided by a context server.
     ContextServer { id: SharedString },

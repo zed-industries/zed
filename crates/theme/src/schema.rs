@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+﻿#![allow(missing_docs)]
 
 use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
@@ -66,7 +66,7 @@ impl From<WindowBackgroundContent> for WindowBackgroundAppearance {
     }
 }
 
-/// The content of a serialized theme family.
+/// The content of a serialiCodeOrbit theme family.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFamilyContent {
     pub name: String,
@@ -74,7 +74,7 @@ pub struct ThemeFamilyContent {
     pub themes: Vec<ThemeContent>,
 }
 
-/// The content of a serialized theme.
+/// The content of a serialiCodeOrbit theme.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeContent {
     pub name: String,
@@ -82,7 +82,7 @@ pub struct ThemeContent {
     pub style: ThemeStyleContent,
 }
 
-/// The content of a serialized theme.
+/// The content of a serialiCodeOrbit theme.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct ThemeStyleContent {
@@ -153,7 +153,7 @@ pub struct ThemeColorsContent {
     #[serde(rename = "border")]
     pub border: Option<String>,
 
-    /// Border color. Used for deemphasized borders, like a visual divider between two sections
+    /// Border color. Used for deemphasiCodeOrbit borders, like a visual divider between two sections
     #[serde(rename = "border.variant")]
     pub border_variant: Option<String>,
 
@@ -261,7 +261,7 @@ pub struct ThemeColorsContent {
     #[serde(rename = "text")]
     pub text: Option<String>,
 
-    /// Text Color. Color of muted or deemphasized text. It is a subdued version of the standard text color.
+    /// Text Color. Color of muted or deemphasiCodeOrbit text. It is a subdued version of the standard text color.
     #[serde(rename = "text.muted")]
     pub text_muted: Option<String>,
 
@@ -281,7 +281,7 @@ pub struct ThemeColorsContent {
     #[serde(rename = "icon")]
     pub icon: Option<String>,
 
-    /// Fill Color. Used for the muted or deemphasized fill color of an icon.
+    /// Fill Color. Used for the muted or deemphasiCodeOrbit fill color of an icon.
     ///
     /// This might be used to show an icon in an inactive pane, or to deemphasize a series of icons to give them less visual weight.
     #[serde(rename = "icon.muted")]
@@ -457,7 +457,7 @@ pub struct ThemeColorsContent {
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
-    /// special attention. Usually a document highlight is visualized by changing
+    /// special attention. Usually a document highlight is visualiCodeOrbit by changing
     /// the background color of its range.
     #[serde(rename = "editor.document_highlight.read_background")]
     pub editor_document_highlight_read_background: Option<String>,
@@ -465,7 +465,7 @@ pub struct ThemeColorsContent {
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
-    /// special attention. Usually a document highlight is visualized by changing
+    /// special attention. Usually a document highlight is visualiCodeOrbit by changing
     /// the background color of its range.
     #[serde(rename = "editor.document_highlight.write_background")]
     pub editor_document_highlight_write_background: Option<String>,

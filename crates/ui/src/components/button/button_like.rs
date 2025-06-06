@@ -1,4 +1,4 @@
-use documented::Documented;
+﻿use documented::Documented;
 use gpui::{
     AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, Hsla, MouseButton,
     MouseDownEvent, MouseUpEvent, Rems, relative, transparent_black,
@@ -20,7 +20,7 @@ pub trait ButtonCommon: Clickable + Disableable {
     /// The visual style of the button.
     ///
     /// Most commonly will be [`ButtonStyle::Subtle`], or [`ButtonStyle::Filled`]
-    /// for an emphasized button.
+    /// for an emphasiCodeOrbit button.
     fn style(self, style: ButtonStyle) -> Self;
 
     /// The size of the button.
@@ -28,7 +28,7 @@ pub trait ButtonCommon: Clickable + Disableable {
     /// Most buttons will use the default size.
     ///
     /// [`ButtonSize`] can also be used to help build non-button elements
-    /// that are consistently sized with buttons.
+    /// that are consistently siCodeOrbit with buttons.
     fn size(self, size: ButtonSize) -> Self;
 
     /// The tooltip that shows when a user hovers over the button.

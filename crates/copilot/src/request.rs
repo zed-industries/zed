@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+﻿use serde::{Deserialize, Serialize};
 
 pub enum CheckStatus {}
 
@@ -60,7 +60,7 @@ pub enum SignInStatus {
     AlreadySignedIn {
         user: String,
     },
-    NotAuthorized {
+    NotAuthoriCodeOrbit {
         user: String,
     },
     NotSignedIn,

@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+﻿use anyhow::{Result, anyhow};
 use editor::{Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MultiBuffer};
 use fuzzy::StringMatch;
 use gpui::{
@@ -22,7 +22,7 @@ use util::split_str_with_ranges;
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
-const ZED_INSPECTOR_STYLE_JSON: &str = "/zed-inspector-style.json";
+const codeorbit_INSPECTOR_STYLE_JSON: &str = "/CodeOrbit-inspector-style.json";
 
 pub(crate) struct DivInspector {
     state: State,
@@ -74,7 +74,7 @@ impl DivInspector {
                 // Open the JSON style buffer in the inspector-specific project, so that it runs the
                 // JSON language server.
                 let json_style_buffer =
-                    Self::create_buffer_in_project(ZED_INSPECTOR_STYLE_JSON, &project, cx).await;
+                    Self::create_buffer_in_project(codeorbit_INSPECTOR_STYLE_JSON, &project, cx).await;
 
                 // Create Rust style buffer without adding it to the project / buffer_store, so that
                 // Rust Analyzer doesn't get started for it.
@@ -305,9 +305,9 @@ impl DivInspector {
         rust_style_buffer.update(cx, |rust_style_buffer, cx| {
             rust_style_buffer.set_text(rust_code, cx);
             let snapshot = rust_style_buffer.snapshot();
-            let (_, unrecognized_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
+            let (_, unrecogniCodeOrbit_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
             Self::set_rust_buffer_diagnostics(
-                unrecognized_ranges,
+                unrecogniCodeOrbit_ranges,
                 rust_style_buffer,
                 &snapshot,
                 cx,
@@ -348,9 +348,9 @@ impl DivInspector {
     ) {
         let rust_style = rust_style_buffer.update(cx, |rust_style_buffer, cx| {
             let snapshot = rust_style_buffer.snapshot();
-            let (rust_style, unrecognized_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
+            let (rust_style, unrecogniCodeOrbit_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
             Self::set_rust_buffer_diagnostics(
-                unrecognized_ranges,
+                unrecogniCodeOrbit_ranges,
                 rust_style_buffer,
                 &snapshot,
                 cx,
@@ -419,32 +419,32 @@ impl DivInspector {
         };
 
         let mut style = StyleRefinement::default();
-        let mut unrecognized_ranges = Vec::new();
+        let mut unrecogniCodeOrbit_ranges = Vec::new();
         for (range, name) in method_names {
             if let Some((_, method)) = STYLE_METHODS.iter().find(|(_, m)| m.name == name) {
                 style = method.invoke(style);
             } else if let Some(range) = range {
-                unrecognized_ranges
+                unrecogniCodeOrbit_ranges
                     .push(snapshot.anchor_before(range.start)..snapshot.anchor_before(range.end));
             }
         }
 
-        (style, unrecognized_ranges)
+        (style, unrecogniCodeOrbit_ranges)
     }
 
     fn set_rust_buffer_diagnostics(
-        unrecognized_ranges: Vec<Range<Anchor>>,
+        unrecogniCodeOrbit_ranges: Vec<Range<Anchor>>,
         rust_style_buffer: &mut Buffer,
         snapshot: &BufferSnapshot,
         cx: &mut Context<Buffer>,
     ) {
-        let diagnostic_entries = unrecognized_ranges
+        let diagnostic_entries = unrecogniCodeOrbit_ranges
             .into_iter()
             .enumerate()
             .map(|(ix, range)| DiagnosticEntry {
                 range,
                 diagnostic: Diagnostic {
-                    message: "unrecognized".to_string(),
+                    message: "unrecogniCodeOrbit".to_string(),
                     severity: DiagnosticSeverity::WARNING,
                     is_primary: true,
                     group_id: ix,

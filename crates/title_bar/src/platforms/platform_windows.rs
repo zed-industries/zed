@@ -1,4 +1,4 @@
-use gpui::{Rgba, WindowAppearance, prelude::*};
+﻿use gpui::{Rgba, WindowAppearance, prelude::*};
 
 use ui::prelude::*;
 
@@ -72,7 +72,7 @@ impl RenderOnce for WindowsWindowControls {
             ))
             .child(WindowsCaptionButton::new(
                 "maximize-or-restore",
-                if window.is_maximized() {
+                if window.is_maximiCodeOrbit() {
                     WindowsCaptionButtonIcon::Restore
                 } else {
                     WindowsCaptionButtonIcon::Maximize

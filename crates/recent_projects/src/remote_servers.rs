@@ -1,4 +1,4 @@
-use std::any::Any;
+﻿use std::any::Any;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -277,7 +277,7 @@ enum RemoteEntry {
 }
 
 impl RemoteEntry {
-    fn is_from_zed(&self) -> bool {
+    fn is_from_CodeOrbit(&self) -> bool {
         matches!(self, Self::Project { .. })
     }
 
@@ -855,7 +855,7 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let create_new_window = self.create_new_window;
-        let is_from_zed = server.is_from_zed();
+        let is_from_CodeOrbit = server.is_from_CodeOrbit();
         let element_id_base = SharedString::from(format!("remote-project-{server_ix}"));
         let container_element_id_base =
             SharedString::from(format!("remote-project-container-{element_id_base}"));
@@ -941,7 +941,7 @@ impl RemoteServerProjects {
                         let secondary_confirm = e.down.modifiers.platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
-                    .when(is_from_zed, |server_list_item| {
+                    .when(is_from_CodeOrbit, |server_list_item| {
                         server_list_item.end_hover_slot::<AnyElement>(Some(
                             div()
                                 .mr_2()
@@ -1079,14 +1079,14 @@ impl RemoteServerProjects {
                                         .size(LabelSize::Small),
                                     )
                                     .child(
-                                        Button::new("learn-more", "Learn more…")
+                                        Button::new("learn-more", "Learn moreâ€¦")
                                             .label_size(LabelSize::Small)
                                             .size(ButtonSize::None)
                                             .color(Color::Accent)
                                             .style(ButtonStyle::Transparent)
                                             .on_click(|_, _, cx| {
                                                 cx.open_url(
-                                                    "https://zed.dev/docs/remote-development",
+                                                    "https://CodeOrbit.dev/docs/remote-development",
                                                 );
                                             }),
                                     ),

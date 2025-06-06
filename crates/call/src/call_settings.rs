@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ pub struct CallSettings {
     pub share_on_join: bool,
 }
 
-/// Configuration of voice calls in Zed.
+/// Configuration of voice calls in CodeOrbit.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 #[schemars(deny_unknown_fields)]
 pub struct CallSettingsContent {

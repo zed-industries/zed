@@ -1,4 +1,4 @@
-use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
+﻿use auto_update::{AutoUpdateStatus, AutoUpdater, DismissErrorMessage, VersionCheckType};
 use editor::Editor;
 use extension_host::ExtensionStore;
 use futures::StreamExt;
@@ -491,7 +491,7 @@ impl ActivityIndicator {
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: "Checking for Zed updates…".to_string(),
+                    message: "Checking for CodeOrbit updatesâ€¦".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
@@ -503,7 +503,7 @@ impl ActivityIndicator {
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: "Downloading Zed update…".to_string(),
+                    message: "Downloading CodeOrbit updateâ€¦".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
@@ -515,7 +515,7 @@ impl ActivityIndicator {
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: "Installing Zed update…".to_string(),
+                    message: "Installing CodeOrbit updateâ€¦".to_string(),
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
@@ -526,7 +526,7 @@ impl ActivityIndicator {
                     version,
                 } => Some(Content {
                     icon: None,
-                    message: "Click to restart and update Zed".to_string(),
+                    message: "Click to restart and update CodeOrbit".to_string(),
                     on_click: Some(Arc::new({
                         let reload = workspace::Reload {
                             binary_path: Some(binary_path.clone()),
@@ -561,7 +561,7 @@ impl ActivityIndicator {
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: format!("Updating {extension_id} extension…"),
+                    message: format!("Updating {extension_id} extensionâ€¦"),
                     on_click: Some(Arc::new(|this, window, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, window, cx)
                     })),
@@ -576,7 +576,7 @@ impl ActivityIndicator {
     fn version_tooltip_message(version: &VersionCheckType) -> String {
         format!("Version: {}", {
             match version {
-                auto_update::VersionCheckType::Sha(sha) => format!("{}…", sha.short()),
+                auto_update::VersionCheckType::Sha(sha) => format!("{}â€¦", sha.short()),
                 auto_update::VersionCheckType::Semantic(semantic_version) => {
                     semantic_version.to_string()
                 }
@@ -735,6 +735,6 @@ mod tests {
             AppCommitSha::new("14d9a4189f058d8736339b06ff2340101eaea5af".to_string()),
         ));
 
-        assert_eq!(message, "Version: 14d9a41…");
+        assert_eq!(message, "Version: 14d9a41â€¦");
     }
 }

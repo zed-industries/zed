@@ -1,4 +1,4 @@
-use std::path::Path;
+﻿use std::path::Path;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -25,7 +25,7 @@ impl DapLocator for PythonLocator {
         if adapter.as_ref() != "Debugpy" {
             return None;
         }
-        let valid_program = build_config.command.starts_with("$ZED_")
+        let valid_program = build_config.command.starts_with("$codeorbit_")
             || Path::new(&build_config.command)
                 .file_name()
                 .map_or(false, |name| {
@@ -36,9 +36,9 @@ impl DapLocator for PythonLocator {
             return None;
         }
         let command = if build_config.command
-            == VariableName::Custom("PYTHON_ACTIVE_ZED_TOOLCHAIN".into()).template_value()
+            == VariableName::Custom("PYTHON_ACTIVE_CodeOrbit_TOOLCHAIN".into()).template_value()
         {
-            VariableName::Custom("PYTHON_ACTIVE_ZED_TOOLCHAIN_RAW".into()).template_value()
+            VariableName::Custom("PYTHON_ACTIVE_CodeOrbit_TOOLCHAIN_RAW".into()).template_value()
         } else {
             build_config.command.clone()
         };
@@ -62,7 +62,7 @@ impl DapLocator for PythonLocator {
                 build_config
                     .args
                     .iter()
-                    .position(|arg| *arg == "\"$ZED_FILE\"")
+                    .position(|arg| *arg == "\"$codeorbit_FILE\"")
             })
             .flatten();
         let args = if let Some(position) = program_position {

@@ -1,4 +1,4 @@
-use collections::HashMap;
+﻿use collections::HashMap;
 use fs::MTime;
 use std::{path::Path, sync::Arc};
 
@@ -7,7 +7,7 @@ const MAX_BYTES_BEFORE_RESUMMARIZE: u64 = 1_000_000; // 1 MB
 
 #[derive(Default, Debug)]
 pub struct SummaryBacklog {
-    /// Key: path to a file that needs summarization, but that we haven't summarized yet. Value: that file's size on disk, in bytes, and its mtime.
+    /// Key: path to a file that needs summarization, but that we haven't summariCodeOrbit yet. Value: that file's size on disk, in bytes, and its mtime.
     files: HashMap<Arc<Path>, (u64, Option<MTime>)>,
     /// Cache of the sum of all values in `files`, so we don't have to traverse the whole map to check if we're over the byte limit.
     total_bytes: u64,

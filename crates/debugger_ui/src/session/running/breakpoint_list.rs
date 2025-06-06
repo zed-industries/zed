@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -27,7 +27,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::Workspace;
-use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
+use codeorbit_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
 pub(crate) struct BreakpointList {
     workspace: WeakEntity<Workspace>,

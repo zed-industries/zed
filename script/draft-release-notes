@@ -1,4 +1,4 @@
-#!/usr/bin/env node --redirect-warnings=/dev/null
+﻿#!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
 
@@ -32,7 +32,7 @@ async function main() {
     execFileSync("rm", ["-rf", "target/shallow_clone"]);
     execFileSync("git", [
       "clone",
-      "https://github.com/zed-industries/zed",
+      "https://github.com/CodeOrbit-industries/CodeOrbit",
       "target/shallow_clone",
       "--filter=tree:0",
       "--no-checkout",
@@ -67,11 +67,11 @@ async function main() {
   let skipped = [];
 
   for (const commit of newCommits) {
-    let link = "https://github.com/zed-industries/zed/pull/" + commit.pr;
+    let link = "https://github.com/CodeOrbit-industries/CodeOrbit/pull/" + commit.pr;
     let notes = commit.releaseNotes;
     if (commit.pr == "") {
-      link = "https://github.com/zed-industries/zed/commits/" + commit.hash;
-    } else if (!notes.includes("zed-industries/zed/issues")) {
+      link = "https://github.com/CodeOrbit-industries/CodeOrbit/commits/" + commit.hash;
+    } else if (!notes.includes("CodeOrbit-industries/CodeOrbit/issues")) {
       notes = notes + " ([#" + commit.pr + "](" + link + "))";
     }
 

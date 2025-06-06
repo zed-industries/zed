@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 
 use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, WeakEntity};
 use project::project_settings::ProjectSettings;
@@ -106,7 +106,7 @@ impl DisconnectedOverlay {
             return;
         };
 
-        let Some(ssh_project) = workspace.read(cx).serialized_ssh_project() else {
+        let Some(ssh_project) = workspace.read(cx).serialiCodeOrbit_ssh_project() else {
             return;
         };
 

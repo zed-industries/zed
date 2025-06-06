@@ -1,39 +1,39 @@
-# Vim Mode
+﻿# Vim Mode
 
-Zed includes a Vim emulation layer known as "vim mode". On this page, you will learn how to turn Zed's vim mode on or off, what tools and commands Zed provides to help you navigate and edit your code, and generally how to make the most of vim mode in Zed.
+CodeOrbit includes a Vim emulation layer known as "vim mode". On this page, you will learn how to turn CodeOrbit's vim mode on or off, what tools and commands CodeOrbit provides to help you navigate and edit your code, and generally how to make the most of vim mode in CodeOrbit.
 
 You'll learn how to:
 
-- Understand the core differences between Zed's vim mode and traditional Vim
+- Understand the core differences between CodeOrbit's vim mode and traditional Vim
 - Enable or disable vim mode
-- Make the most of Zed-specific features within vim mode
+- Make the most of CodeOrbit-specific features within vim mode
 - Customize vim mode key bindings
 - Configure vim mode settings
 
-Whether you're new to vim mode or an experienced Vim user looking to optimize your Zed experience, this guide will help you harness the full power of modal editing in Zed.
+Whether you're new to vim mode or an experienced Vim user looking to optimize your CodeOrbit experience, this guide will help you harness the full power of modal editing in CodeOrbit.
 
-## Zed's vim mode design
+## CodeOrbit's vim mode design
 
-Vim mode tries to offer a familiar experience to Vim users: it replicates the behavior of motions and commands precisely when it makes sense and uses Zed-specific functionality to provide an editing experience that "just works" without requiring configuration on your part.
+Vim mode tries to offer a familiar experience to Vim users: it replicates the behavior of motions and commands precisely when it makes sense and uses CodeOrbit-specific functionality to provide an editing experience that "just works" without requiring configuration on your part.
 
 This includes support for semantic navigation, multiple cursors, or other features usually provided by plugins like surrounding text.
 
-So, Zed's vim mode does not replicate Vim one-to-one, but it meshes Vim's modal design with Zed's modern features to provide a more fluid experience. It's also configurable, so you can add your own key bindings or override the defaults.
+So, CodeOrbit's vim mode does not replicate Vim one-to-one, but it meshes Vim's modal design with CodeOrbit's modern features to provide a more fluid experience. It's also configurable, so you can add your own key bindings or override the defaults.
 
 ### Core differences
 
-There are four types of features in vim mode that use Zed's core functionality, leading to some differences in behavior:
+There are four types of features in vim mode that use CodeOrbit's core functionality, leading to some differences in behavior:
 
-1. **Motions**: vim mode uses Zed's semantic parsing to tune the behavior of motions per language. For example, in Rust, jumping to matching bracket with `%` works with the pipe character `|`. In JavaScript, `w` considers `$` to be a word character.
-2. **Visual block selections**: vim mode uses Zed's multiple cursor to emulate visual block selections, making block selections a lot more flexible. For example, anything you insert after a block selection updates on every line in real-time, and you can add or remove cursors anytime.
-3. **Macros**: vim mode uses Zed's recording system for vim macros. So, you can capture and replay more complex actions, like autocompletion.
-4. **Search and replace**: vim mode uses Zed's search system, so, the syntax for regular expressions is slightly different compared to Vim. [Head to the Regex differences section](#regex-differences) for details.
+1. **Motions**: vim mode uses CodeOrbit's semantic parsing to tune the behavior of motions per language. For example, in Rust, jumping to matching bracket with `%` works with the pipe character `|`. In JavaScript, `w` considers `$` to be a word character.
+2. **Visual block selections**: vim mode uses CodeOrbit's multiple cursor to emulate visual block selections, making block selections a lot more flexible. For example, anything you insert after a block selection updates on every line in real-time, and you can add or remove cursors anytime.
+3. **Macros**: vim mode uses CodeOrbit's recording system for vim macros. So, you can capture and replay more complex actions, like autocompletion.
+4. **Search and replace**: vim mode uses CodeOrbit's search system, so, the syntax for regular expressions is slightly different compared to Vim. [Head to the Regex differences section](#regex-differences) for details.
 
-> **Note:** The foundations of Zed's vim mode should already cover many use cases, and we're always looking to improve it. If you find missing features that you rely on in your workflow, please [file an issue on GitHub](https://github.com/zed-industries/zed/issues).
+> **Note:** The foundations of CodeOrbit's vim mode should already cover many use cases, and we're always looking to improve it. If you find missing features that you rely on in your workflow, please [file an issue on GitHub](https://github.com/CodeOrbit-industries/CodeOrbit/issues).
 
 ## Enabling and disabling vim mode
 
-When you first open Zed, you'll see a checkbox on the welcome screen that allows you to enable vim mode.
+When you first open CodeOrbit, you'll see a checkbox on the welcome screen that allows you to enable vim mode.
 
 If you missed this, you can toggle vim mode on or off anytime by opening the command palette and using the workspace command `toggle vim mode`.
 
@@ -45,11 +45,11 @@ If you missed this, you can toggle vim mode on or off anytime by opening the com
 > }
 > ```
 
-## Zed-specific features
+## CodeOrbit-specific features
 
-Zed is built on a modern foundation that (among other things) uses tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
+CodeOrbit is built on a modern foundation that (among other things) uses tree-sitter and language servers to understand the content of the file you're editing and supports multiple cursors out of the box.
 
-Vim mode has several "core Zed" key bindings that will help you make the most of Zed's specific feature set.
+Vim mode has several "core CodeOrbit" key bindings that will help you make the most of CodeOrbit's specific feature set.
 
 ### Language server
 
@@ -84,7 +84,7 @@ The following commands use the language server to help you navigate and refactor
 
 ### Treesitter
 
-Treesitter is a powerful tool that Zed uses to understand the structure of your code. Zed provides motions that change the current cursor position, and text objects that can be used as the target of actions.
+Treesitter is a powerful tool that CodeOrbit uses to understand the structure of your code. CodeOrbit provides motions that change the current cursor position, and text objects that can be used as the target of actions.
 
 | Command                         | Default Shortcut            |
 | ------------------------------- | --------------------------- |
@@ -122,7 +122,7 @@ per language.
 
 ### Multi cursor
 
-These commands help you manage multiple cursors in Zed.
+These commands help you manage multiple cursors in CodeOrbit.
 
 | Command                                                      | Default Shortcut |
 | ------------------------------------------------------------ | ---------------- |
@@ -146,7 +146,7 @@ These commands open new panes or jump to specific panes.
 
 ### In insert mode
 
-The following commands help you bring up Zed's completion menu, request a suggestion from GitHub Copilot, or open the inline AI assistant without leaving insert mode.
+The following commands help you bring up CodeOrbit's completion menu, request a suggestion from GitHub Copilot, or open the inline AI assistant without leaving insert mode.
 
 | Command                                                                      | Default Shortcut |
 | ---------------------------------------------------------------------------- | ---------------- |
@@ -158,7 +158,7 @@ The following commands help you bring up Zed's completion menu, request a sugges
 
 ### Supported plugins
 
-Zed's vim mode includes some features that are usually provided by very popular plugins in the Vim ecosystem:
+CodeOrbit's vim mode includes some features that are usually provided by very popular plugins in the Vim ecosystem:
 
 - You can surround text objects with `ys` (yank surround), change surrounding with `cs`, and delete surrounding with `ds`.
 - You can comment and uncomment selections with `gc` in visual mode and `gcc` in normal mode.
@@ -167,12 +167,12 @@ Zed's vim mode includes some features that are usually provided by very popular 
 - You can use `gR` to do [ReplaceWithRegister](https://github.com/vim-scripts/ReplaceWithRegister).
 - You can use `cx` for [vim-exchange](https://github.com/tommcdo/vim-exchange) functionality. Note that it does not have a default binding in visual mode, but you can add one to your keymap (refer to the [optional key bindings](#optional-key-bindings) section).
 - You can navigate to indent depths relative to your cursor with the [indent wise](https://github.com/jeetsukumaran/vim-indentwise) plugin `[-`, `]-`, `[+`, `]+`, `[=`, `]=`.
-- You can select quoted text with AnyQuotes and bracketed text with AnyBrackets text objects. Zed also provides MiniQuotes and MiniBrackets which offer alternative selection behavior based on the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin. See the [Quote and Bracket text objects](#quote-and-bracket-text-objects) section below for details.
+- You can select quoted text with AnyQuotes and bracketed text with AnyBrackets text objects. CodeOrbit also provides MiniQuotes and MiniBrackets which offer alternative selection behavior based on the [mini.ai](https://github.com/echasnovski/mini.nvim/blob/main/readmes/mini-ai.md) Neovim plugin. See the [Quote and Bracket text objects](#quote-and-bracket-text-objects) section below for details.
 - You can configure AnyQuotes, AnyBrackets, MiniQuotes, and MiniBrackets text objects for selecting quoted and bracketed text using different selection strategies. See the [Any Bracket Functionality](#any-bracket-functionality) section below for details.
 
 ### Any Bracket Functionality
 
-Zed offers two different strategies for selecting text surrounded by any quote, or any bracket. These text objects are **not enabled by default** and must be configured in your keymap to be used.
+CodeOrbit offers two different strategies for selecting text surrounded by any quote, or any bracket. These text objects are **not enabled by default** and must be configured in your keymap to be used.
 
 #### Included Characters
 
@@ -243,11 +243,11 @@ With this configuration, you can use commands like:
 
 ## Command palette
 
-Vim mode allows you to open Zed's command palette with `:`. You can then type to access any usual Zed command. Additionally, vim mode adds aliases for popular Vim commands to ensure your muscle memory transfers to Zed. For example, you can write `:w` or `:write` to save the file.
+Vim mode allows you to open CodeOrbit's command palette with `:`. You can then type to access any usual CodeOrbit command. Additionally, vim mode adds aliases for popular Vim commands to ensure your muscle memory transfers to CodeOrbit. For example, you can write `:w` or `:write` to save the file.
 
 Below, you'll find tables listing the commands you can use in the command palette. We put optional characters in square brackets to indicate that you can omit them.
 
-> **Note**: We don't emulate the full power of Vim's command line yet. In particular, commands currently do not support arguments. Please [file issues on GitHub](https://github.com/zed-industries/zed) as you find things that are missing from the command palette.
+> **Note**: We don't emulate the full power of Vim's command line yet. In particular, commands currently do not support arguments. Please [file issues on GitHub](https://github.com/CodeOrbit-industries/CodeOrbit) as you find things that are missing from the command palette.
 
 ### File and window management
 
@@ -263,7 +263,7 @@ This table shows commands for managing windows, tabs, and panes. As commands don
 | `:qa[ll][!]`   | Close all buffers                                    |
 | `:[e]x[it][!]` | Close the buffer                                     |
 | `:up[date]`    | Save the current file                                |
-| `:cq`          | Quit completely (close all running instances of Zed) |
+| `:cq`          | Quit completely (close all running instances of CodeOrbit) |
 | `:vs[plit]`    | Split the pane vertically                            |
 | `:sp[lit]`     | Split the pane horizontally                          |
 | `:new`         | Create a new file in a horizontal split              |
@@ -279,7 +279,7 @@ This table shows commands for managing windows, tabs, and panes. As commands don
 
 ### Ex commands
 
-These ex commands open Zed's various panels and windows.
+These ex commands open CodeOrbit's various panels and windows.
 
 | Command                      | Default Shortcut |
 | ---------------------------- | ---------------- |
@@ -325,7 +325,7 @@ These commands jump to specific positions in the file.
 
 ### Replacement
 
-This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and Zed uses a slightly different syntax than vim. You can learn more about Zed's syntax below, [in the regex differences section](#regex-differences). Zed will replace only the first occurrence of the search pattern in the current line. To replace all matches append the `g` flag.
+This command replaces text. It emulates the substitute command in vim. The substitute command uses regular expressions, and CodeOrbit uses a slightly different syntax than vim. You can learn more about CodeOrbit's syntax below, [in the regex differences section](#regex-differences). CodeOrbit will replace only the first occurrence of the search pattern in the current line. To replace all matches append the `g` flag.
 
 | Command                 | Description                       |
 | ----------------------- | --------------------------------- |
@@ -354,18 +354,18 @@ These commands modify editor options locally for the current buffer.
 
 ### Command mnemonics
 
-As any Zed command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
+As any CodeOrbit command is available, you may find that it's helpful to remember mnemonics that run the correct command. For example:
 
 - `:diffs` for "toggle all hunk diffs"
 - `:cpp` for "copy path to file"
 - `:crp` for "copy relative path"
 - `:reveal` for "reveal in finder"
-- `:zlog` for "open zed log"
+- `:zlog` for "open CodeOrbit log"
 - `:clank` for "cancel language server work"
 
 ## Customizing key bindings
 
-In this section, we'll learn how to customize the key bindings of Zed's vim mode. You'll learn:
+In this section, we'll learn how to customize the key bindings of CodeOrbit's vim mode. You'll learn:
 
 - How to select the correct context for your new key bindings.
 - Useful contexts for vim mode key bindings.
@@ -373,7 +373,7 @@ In this section, we'll learn how to customize the key bindings of Zed's vim mode
 
 ### Selecting the correct context
 
-Zed's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in Zed. Here's an example of a key binding that saves when you're editing a file:
+CodeOrbit's key bindings are evaluated only when the `"context"` property matches your location in the editor. For example, if you add key bindings to the `"Editor"` context, they will only work when you're editing a file. If you add key bindings to the `"Workspace"` context, they will work everywhere in CodeOrbit. Here's an example of a key binding that saves when you're editing a file:
 
 ```json
 {
@@ -387,7 +387,7 @@ Zed's key bindings are evaluated only when the `"context"` property matches your
 Contexts are nested, so when you're editing a file, the context is the `"Editor"` context, which is inside the `"Pane"` context, which is inside the `"Workspace"` context. That's why any key bindings you add to the `"Workspace"` context will work when you're editing a file. Here's an example:
 
 ```json
-// This key binding will work when you're editing a file. It comes built into Zed by default as the workspace: save command.
+// This key binding will work when you're editing a file. It comes built into CodeOrbit by default as the workspace: save command.
 {
   "context": "Workspace",
   "bindings": {
@@ -494,7 +494,7 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 }
 ```
 
-In non-modal text editors, cursor navigation typically wraps when moving past line ends. Zed, however, handles this behavior exactly like Vim by default: the cursor stops at line boundaries. If you prefer your cursor to wrap between lines, override these keybindings:
+In non-modal text editors, cursor navigation typically wraps when moving past line ends. CodeOrbit, however, handles this behavior exactly like Vim by default: the cursor stops at line boundaries. If you prefer your cursor to wrap between lines, override these keybindings:
 
 ```json
 // In VimScript, this would look like this:
@@ -573,7 +573,7 @@ Here's an example of adding a digraph for the zombie emoji. This allows you to t
 {
   "vim": {
     "custom_digraphs": {
-      "fz": "🧟‍♀️"
+      "fz": "ðŸ§Ÿâ€â™€ï¸"
     }
   }
 }
@@ -591,15 +591,15 @@ Here's an example of these settings changed:
     "toggle_relative_line_numbers": true,
     "highlight_on_yank_duration": 50,
     "custom_digraphs": {
-      "fz": "🧟‍♀️"
+      "fz": "ðŸ§Ÿâ€â™€ï¸"
     }
   }
 }
 ```
 
-## Useful core Zed settings for vim mode
+## Useful core CodeOrbit settings for vim mode
 
-Here are a few general Zed settings that can help you fine-tune your Vim experience:
+Here are a few general CodeOrbit settings that can help you fine-tune your Vim experience:
 
 | Property                | Description                                                                                                                                                   | Default Value        |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
@@ -641,13 +641,13 @@ The `command_aliases` property is a single object that maps keys or key sequence
 
 ## Regex differences
 
-Zed uses a different regular expression engine from Vim. This means that you will have to use a different syntax in some cases. Here are the most common differences:
+CodeOrbit uses a different regular expression engine from Vim. This means that you will have to use a different syntax in some cases. Here are the most common differences:
 
-- **Capture groups**: Vim uses `\(` and `\)` to represent capture groups, in Zed these are `(` and `)`. On the flip side, in Vim, `(` and `)` represent literal parentheses, but in Zed these must be escaped to `\(` and `\)`.
-- **Matches**: When replacing, Vim uses the backslash character followed by a number to represent a matched capture group. For example, `\1`. Zed uses the dollar sign instead. So, when in Vim you use `\0` to represent the entire match, in Zed the syntax is `$0` instead. Same for numbered capture groups: `\1` in Vim is `$1` in Zed.
-- **Global option**: By default, in Vim, regex searches only match the first occurrence on a line, and you append `/g` at the end of your query to find all matches. In Zed, regex searches are global by default.
-- **Case sensitivity**: Vim uses `/i` to indicate a case-insensitive search. In Zed you can either write `(?i)` at the start of the pattern or toggle case-sensitivity with the shortcut {#kb search::ToggleCaseSensitive}.
+- **Capture groups**: Vim uses `\(` and `\)` to represent capture groups, in CodeOrbit these are `(` and `)`. On the flip side, in Vim, `(` and `)` represent literal parentheses, but in CodeOrbit these must be escaped to `\(` and `\)`.
+- **Matches**: When replacing, Vim uses the backslash character followed by a number to represent a matched capture group. For example, `\1`. CodeOrbit uses the dollar sign instead. So, when in Vim you use `\0` to represent the entire match, in CodeOrbit the syntax is `$0` instead. Same for numbered capture groups: `\1` in Vim is `$1` in CodeOrbit.
+- **Global option**: By default, in Vim, regex searches only match the first occurrence on a line, and you append `/g` at the end of your query to find all matches. In CodeOrbit, regex searches are global by default.
+- **Case sensitivity**: Vim uses `/i` to indicate a case-insensitive search. In CodeOrbit you can either write `(?i)` at the start of the pattern or toggle case-sensitivity with the shortcut {#kb search::ToggleCaseSensitive}.
 
-> **Note**: To help with the transition, the command palette will fix parentheses and replace groups for you when you write a Vim-style substitute command, `:%s//`. So, Zed will convert `%s:/\(a\)(b)/\1/` into a search for "(a)\(b\)" and a replacement of "$1".
+> **Note**: To help with the transition, the command palette will fix parentheses and replace groups for you when you write a Vim-style substitute command, `:%s//`. So, CodeOrbit will convert `%s:/\(a\)(b)/\1/` into a search for "(a)\(b\)" and a replacement of "$1".
 
-For the full syntax supported by Zed's regex engine [see the regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).
+For the full syntax supported by CodeOrbit's regex engine [see the regex crate documentation](https://docs.rs/regex/latest/regex/#syntax).

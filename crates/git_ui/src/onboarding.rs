@@ -1,4 +1,4 @@
-use gpui::{
+﻿use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     svg,
 };
@@ -42,7 +42,7 @@ impl GitOnboardingModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("https://zed.dev/blog/git");
+        cx.open_url("https://CodeOrbit.dev/blog/git");
         cx.notify();
 
         git_onboarding_event!("Blog Link Clicked");
@@ -131,7 +131,7 @@ impl Render for GitOnboardingModal {
             .full_width()
             .on_click(cx.listener(Self::view_blog));
 
-        let copy = "First-class support for staging, committing, pulling, pushing, viewing diffs, and more. All without leaving Zed.";
+        let copy = "First-class support for staging, committing, pulling, pushing, viewing diffs, and more. All without leaving CodeOrbit.";
 
         base.child(Label::new(copy).color(Color::Muted)).child(
             v_flex()

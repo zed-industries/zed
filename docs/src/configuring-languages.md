@@ -1,13 +1,13 @@
-# Configuring supported languages
+﻿# Configuring supported languages
 
-Zed offers powerful customization options for each programming language it supports. This guide will walk you through the various ways you can tailor your coding experience to your preferences and project requirements.
+CodeOrbit offers powerful customization options for each programming language it supports. This guide will walk you through the various ways you can tailor your coding experience to your preferences and project requirements.
 
-Zed's language support is built on two main technologies:
+CodeOrbit's language support is built on two main technologies:
 
 1. Tree-sitter: This handles syntax highlighting and structure-based features like the outline panel.
 2. Language Server Protocol (LSP): This provides semantic features such as code completion and diagnostics.
 
-These components work together to provide Zed's language capabilities.
+These components work together to provide CodeOrbit's language capabilities.
 
 In this guide, we'll cover:
 
@@ -18,13 +18,13 @@ In this guide, we'll cover:
 - Customizing syntax highlighting and themes
 - Advanced language features
 
-By the end of this guide, you should know how to configure and customize supported languages in Zed.
+By the end of this guide, you should know how to configure and customize supported languages in CodeOrbit.
 
-For a comprehensive list of languages supported by Zed and their specific configurations, see our [Supported Languages](./languages.md) page. To go further, you could explore developing your own extensions to add support for additional languages or enhance existing functionality. For more information on creating language extensions, see our [Language Extensions](./extensions/languages.md) guide.
+For a comprehensive list of languages supported by CodeOrbit and their specific configurations, see our [Supported Languages](./languages.md) page. To go further, you could explore developing your own extensions to add support for additional languages or enhance existing functionality. For more information on creating language extensions, see our [Language Extensions](./extensions/languages.md) guide.
 
 ## Language-specific Settings
 
-Zed allows you to override global settings for individual languages. These custom configurations are defined in your `settings.json` file under the `languages` key.
+CodeOrbit allows you to override global settings for individual languages. These custom configurations are defined in your `settings.json` file under the `languages` key.
 
 Here's an example of language-specific settings:
 
@@ -49,23 +49,23 @@ Here's an example of language-specific settings:
 
 You can customize a wide range of settings for each language, including:
 
-- [`tab_size`](./configuring-zed.md#tab-size): The number of spaces for each indentation level
-- [`formatter`](./configuring-zed.md#formatter): The tool used for code formatting
-- [`format_on_save`](./configuring-zed.md#format-on-save): Whether to automatically format code when saving
-- [`enable_language_server`](./configuring-zed.md#enable-language-server): Toggle language server support
-- [`hard_tabs`](./configuring-zed.md#hard-tabs): Use tabs instead of spaces for indentation
-- [`preferred_line_length`](./configuring-zed.md#preferred-line-length): The recommended maximum line length
-- [`soft_wrap`](./configuring-zed.md#soft-wrap): How to wrap long lines of code
-- [`show_completions_on_input`](./configuring-zed.md#show-completions-on-input): Whether or not to show completions as you type
-- [`show_completion_documentation`](./configuring-zed.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
+- [`tab_size`](./configuring-CodeOrbit.md#tab-size): The number of spaces for each indentation level
+- [`formatter`](./configuring-CodeOrbit.md#formatter): The tool used for code formatting
+- [`format_on_save`](./configuring-CodeOrbit.md#format-on-save): Whether to automatically format code when saving
+- [`enable_language_server`](./configuring-CodeOrbit.md#enable-language-server): Toggle language server support
+- [`hard_tabs`](./configuring-CodeOrbit.md#hard-tabs): Use tabs instead of spaces for indentation
+- [`preferred_line_length`](./configuring-CodeOrbit.md#preferred-line-length): The recommended maximum line length
+- [`soft_wrap`](./configuring-CodeOrbit.md#soft-wrap): How to wrap long lines of code
+- [`show_completions_on_input`](./configuring-CodeOrbit.md#show-completions-on-input): Whether or not to show completions as you type
+- [`show_completion_documentation`](./configuring-CodeOrbit.md#show-completion-documentation): Whether to display inline and alongside documentation for items in the completions menu
 
 These settings allow you to maintain specific coding styles across different languages and projects.
 
 ## File Associations
 
-Zed automatically detects file types based on their extensions, but you can customize these associations to fit your workflow.
+CodeOrbit automatically detects file types based on their extensions, but you can customize these associations to fit your workflow.
 
-To set up custom file associations, use the [`file_types`](./configuring-zed.md#file-types) setting in your `settings.json`:
+To set up custom file associations, use the [`file_types`](./configuring-CodeOrbit.md#file-types) setting in your `settings.json`:
 
 ```json
 "file_types": {
@@ -75,7 +75,7 @@ To set up custom file associations, use the [`file_types`](./configuring-zed.md#
 }
 ```
 
-This configuration tells Zed to:
+This configuration tells CodeOrbit to:
 
 - Treat `.c` files as C++ instead of C
 - Recognize files named "MyLockFile" as TOML
@@ -85,11 +85,11 @@ You can use glob patterns for more flexible matching, allowing you to handle com
 
 ## Working with Language Servers
 
-Language servers are a crucial part of Zed's intelligent coding features, providing capabilities like auto-completion, go-to-definition, and real-time error checking.
+Language servers are a crucial part of CodeOrbit's intelligent coding features, providing capabilities like auto-completion, go-to-definition, and real-time error checking.
 
 ### What are Language Servers?
 
-Language servers implement the Language Server Protocol (LSP), which standardizes communication between the editor and language-specific tools. This allows Zed to support advanced features for multiple programming languages without implementing each feature separately.
+Language servers implement the Language Server Protocol (LSP), which standardizes communication between the editor and language-specific tools. This allows CodeOrbit to support advanced features for multiple programming languages without implementing each feature separately.
 
 Some key features provided by language servers include:
 
@@ -102,20 +102,20 @@ Some key features provided by language servers include:
 
 ### Managing Language Servers
 
-Zed simplifies language server management for users:
+CodeOrbit simplifies language server management for users:
 
-1. Automatic Download: When you open a file with a matching file type, Zed automatically downloads the appropriate language server. Zed may prompt you to install an extension for known file types.
+1. Automatic Download: When you open a file with a matching file type, CodeOrbit automatically downloads the appropriate language server. CodeOrbit may prompt you to install an extension for known file types.
 
 2. Storage Location:
 
-   - macOS: `~/Library/Application Support/Zed/languages`
+   - macOS: `~/Library/Application Support/CodeOrbit/languages`
    - Linux: `$XDG_DATA_HOME/languages`, `$FLATPAK_XDG_DATA_HOME/languages`, or `$HOME/.local/share`
 
-3. Automatic Updates: Zed keeps your language servers up-to-date, ensuring you always have the latest features and improvements.
+3. Automatic Updates: CodeOrbit keeps your language servers up-to-date, ensuring you always have the latest features and improvements.
 
 ### Choosing Language Servers
 
-Some languages in Zed offer multiple language server options. You might have multiple extensions installed that bundle language servers targeting the same language, potentially leading to overlapping capabilities. To ensure you get the functionality you prefer, Zed allows you to prioritize which language servers are used and in what order.
+Some languages in CodeOrbit offer multiple language server options. You might have multiple extensions installed that bundle language servers targeting the same language, potentially leading to overlapping capabilities. To ensure you get the functionality you prefer, CodeOrbit allows you to prioritize which language servers are used and in what order.
 
 You can specify your preference using the `language_servers` setting:
 
@@ -155,14 +155,14 @@ This example configures the Rust Analyzer to use Clippy for additional linting w
 
 #### Nested objects
 
-When configuring language server options in Zed, it's important to use nested objects rather than dot-delimited strings. This is particularly relevant when working with more complex configurations. Let's look at a real-world example using the TypeScript language server:
+When configuring language server options in CodeOrbit, it's important to use nested objects rather than dot-delimited strings. This is particularly relevant when working with more complex configurations. Let's look at a real-world example using the TypeScript language server:
 
 Suppose you want to configure the following settings for TypeScript:
 
 - Enable strict null checks
 - Set the target ECMAScript version to ES2020
 
-Here's how you would structure these settings in Zed's `settings.json`:
+Here's how you would structure these settings in CodeOrbit's `settings.json`:
 
 ```json
 "lsp": {
@@ -219,7 +219,7 @@ Most of the servers would rely on this way of configuring only.
 }
 ```
 
-Apart of the LSP-related server configuration options, certain servers in Zed allow configuring the way binary is launched by Zed.
+Apart of the LSP-related server configuration options, certain servers in CodeOrbit allow configuring the way binary is launched by CodeOrbit.
 
 Languages mention in the documentation, whether they support it or not and their defaults for the configuration values:
 
@@ -251,15 +251,15 @@ You can toggle language server support globally or per-language:
   }
 ```
 
-This disables the language server for Markdown files, which can be useful for performance in large documentation projects. You can configure this globally in your `~/.zed/settings.json` or inside a `.zed/settings.json` in your project directory.
+This disables the language server for Markdown files, which can be useful for performance in large documentation projects. You can configure this globally in your `~/.CodeOrbit/settings.json` or inside a `.CodeOrbit/settings.json` in your project directory.
 
 ## Formatting and Linting
 
-Zed provides support for code formatting and linting to maintain consistent code style and catch potential issues early.
+CodeOrbit provides support for code formatting and linting to maintain consistent code style and catch potential issues early.
 
 ### Configuring Formatters
 
-Zed supports both built-in and external formatters. See [`formatter`](./configuring-zed.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
+CodeOrbit supports both built-in and external formatters. See [`formatter`](./configuring-CodeOrbit.md#formatter) docs for more. You can configure formatters globally or per-language in your `settings.json`:
 
 ```json
 "languages": {
@@ -293,7 +293,7 @@ To disable formatting for a specific language:
 
 ### Setting Up Linters
 
-Linting in Zed is typically handled by language servers. Many language servers allow you to configure linting rules:
+Linting in CodeOrbit is typically handled by language servers. Many language servers allow you to configure linting rules:
 
 ```json
 "lsp": {
@@ -323,7 +323,7 @@ To run linter fixes automatically on save:
 
 ### Integrating Formatting and Linting
 
-Zed allows you to run both formatting and linting on save. Here's an example that uses Prettier for formatting and ESLint for linting JavaScript files:
+CodeOrbit allows you to run both formatting and linting on save. Here's an example that uses Prettier for formatting and ESLint for linting JavaScript files:
 
 ```json
 "languages": {
@@ -346,17 +346,17 @@ Zed allows you to run both formatting and linting on save. Here's an example tha
 
 If you encounter issues with formatting or linting:
 
-1. Check Zed's log file for error messages (Use the command palette: `zed: open log`)
+1. Check CodeOrbit's log file for error messages (Use the command palette: `CodeOrbit: open log`)
 2. Ensure external tools (formatters, linters) are correctly installed and in your PATH
-3. Verify configurations in both Zed settings and language-specific config files (e.g., `.eslintrc`, `.prettierrc`)
+3. Verify configurations in both CodeOrbit settings and language-specific config files (e.g., `.eslintrc`, `.prettierrc`)
 
 ## Syntax Highlighting and Themes
 
-Zed offers customization options for syntax highlighting and themes, allowing you to tailor the visual appearance of your code.
+CodeOrbit offers customization options for syntax highlighting and themes, allowing you to tailor the visual appearance of your code.
 
 ### Customizing Syntax Highlighting
 
-Zed uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting.
+CodeOrbit uses Tree-sitter grammars for syntax highlighting. Override the default highlighting using the `experimental.theme_overrides` setting.
 
 This example makes comments italic and changes the color of strings:
 
@@ -388,11 +388,11 @@ Change your theme:
 }
 ```
 
-Create custom themes by creating a JSON file in `~/.config/zed/themes/`. Zed will automatically detect and make available any themes in this directory.
+Create custom themes by creating a JSON file in `~/.config/CodeOrbit/themes/`. CodeOrbit will automatically detect and make available any themes in this directory.
 
 ### Using Theme Extensions
 
-Zed supports theme extensions. Browse and install theme extensions from the Extensions panel ({#kb zed::Extensions}).
+CodeOrbit supports theme extensions. Browse and install theme extensions from the Extensions panel ({#kb CodeOrbit::Extensions}).
 
 To create your own theme extension, refer to the [Developing Theme Extensions](./extensions/themes.md) guide.
 
@@ -435,7 +435,7 @@ To rename a symbol across your project:
 
 These features depend on the capabilities of the language server for each language.
 
-When renaming a symbol that spans multiple files, Zed will open a preview in a multibuffer. This allows you to review all the changes across your project before applying them. To confirm the rename, simply save the multibuffer. If you decide not to proceed with the rename, you can undo the changes or close the multibuffer without saving.
+When renaming a symbol that spans multiple files, CodeOrbit will open a preview in a multibuffer. This allows you to review all the changes across your project before applying them. To confirm the rename, simply save the multibuffer. If you decide not to proceed with the rename, you can undo the changes or close the multibuffer without saving.
 
 ### Hover Information
 
@@ -447,7 +447,7 @@ The `workspace: Open Symbol` command allows you to search for symbols (functions
 
 ### Code Completion
 
-Zed provides intelligent code completion suggestions as you type. You can manually trigger completion with the `editor: Show Completions` command. Use <kbd>tab|tab</kbd> or <kbd>enter|enter</kbd> to accept suggestions.
+CodeOrbit provides intelligent code completion suggestions as you type. You can manually trigger completion with the `editor: Show Completions` command. Use <kbd>tab|tab</kbd> or <kbd>enter|enter</kbd> to accept suggestions.
 
 ### Diagnostics
 

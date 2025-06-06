@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+﻿use std::{sync::Arc, time::Duration};
 
 use crate::schema::json_schema_for;
 use crate::ui::ToolCallCardHeader;
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use ui::{IconName, Tooltip, prelude::*};
 use web_search::WebSearchRegistry;
 use workspace::Workspace;
-use zed_llm_client::{WebSearchResponse, WebSearchResult};
+use codeorbit_llm_client::{WebSearchResponse, WebSearchResult};
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct WebSearchToolInput {

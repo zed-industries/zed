@@ -1,4 +1,4 @@
-pub mod copilot_chat;
+﻿pub mod copilot_chat;
 mod copilot_completion_provider;
 pub mod request;
 mod sign_in;
@@ -85,7 +85,7 @@ pub fn init(
                 filter.hide_action_types(&copilot_auth_action_types);
                 filter.hide_action_types(&copilot_no_auth_action_types);
             }
-            Status::Authorized => {
+            Status::AuthoriCodeOrbit => {
                 filter.hide_action_types(&copilot_no_auth_action_types);
                 filter.show_action_types(
                     copilot_action_types
@@ -134,7 +134,7 @@ impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
         anyhow::ensure!(
-            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            matches!(server.sign_in_status, SignInStatus::AuthoriCodeOrbit { .. }),
             "must sign in before using copilot"
         );
         Ok(server)
@@ -160,8 +160,8 @@ struct RunningCopilotServer {
 
 #[derive(Clone, Debug)]
 enum SignInStatus {
-    Authorized,
-    Unauthorized,
+    AuthoriCodeOrbit,
+    UnauthoriCodeOrbit,
     SigningIn {
         prompt: Option<request::PromptUserDeviceFlow>,
         task: Shared<Task<Result<(), Arc<anyhow::Error>>>>,
@@ -184,13 +184,13 @@ pub enum Status {
     SigningIn {
         prompt: Option<request::PromptUserDeviceFlow>,
     },
-    Unauthorized,
-    Authorized,
+    UnauthoriCodeOrbit,
+    AuthoriCodeOrbit,
 }
 
 impl Status {
-    pub fn is_authorized(&self) -> bool {
-        matches!(self, Status::Authorized)
+    pub fn is_authoriCodeOrbit(&self) -> bool {
+        matches!(self, Status::AuthoriCodeOrbit)
     }
 
     pub fn is_disabled(&self) -> bool {
@@ -422,7 +422,7 @@ impl Copilot {
         env.insert(http_or_https_proxy.to_string(), proxy_url);
 
         if let Some(true) = no_verify {
-            env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
+            env.insert("NODE_TLS_REJECT_UNAUTHORICodeOrbit".to_string(), "0".to_string());
         };
 
         Some(env)
@@ -452,7 +452,7 @@ impl Copilot {
             node_runtime,
             server: CopilotServer::Running(RunningCopilotServer {
                 lsp: Arc::new(server),
-                sign_in_status: SignInStatus::Authorized,
+                sign_in_status: SignInStatus::AuthoriCodeOrbit,
                 registered_buffers: Default::default(),
             }),
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
@@ -508,11 +508,11 @@ impl Copilot {
 
             let editor_info = request::SetEditorInfoParams {
                 editor_info: request::EditorInfo {
-                    name: "zed".into(),
+                    name: "CodeOrbit".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
                 },
                 editor_plugin_info: request::EditorPluginInfo {
-                    name: "zed-copilot".into(),
+                    name: "CodeOrbit-copilot".into(),
                     version: "0.0.1".into(),
                 },
             };
@@ -570,12 +570,12 @@ impl Copilot {
     pub(crate) fn sign_in(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         if let CopilotServer::Running(server) = &mut self.server {
             let task = match &server.sign_in_status {
-                SignInStatus::Authorized { .. } => Task::ready(Ok(())).shared(),
+                SignInStatus::AuthoriCodeOrbit { .. } => Task::ready(Ok(())).shared(),
                 SignInStatus::SigningIn { task, .. } => {
                     cx.notify();
                     task.clone()
                 }
-                SignInStatus::SignedOut { .. } | SignInStatus::Unauthorized { .. } => {
+                SignInStatus::SignedOut { .. } | SignInStatus::UnauthoriCodeOrbit { .. } => {
                     let lsp = server.lsp.clone();
                     let task = cx
                         .spawn(async move |this, cx| {
@@ -721,7 +721,7 @@ impl Copilot {
             ..
         }) = &mut self.server
         {
-            if !matches!(status, SignInStatus::Authorized { .. }) {
+            if !matches!(status, SignInStatus::AuthoriCodeOrbit { .. }) {
                 return;
             }
 
@@ -1001,8 +1001,8 @@ impl Copilot {
             CopilotServer::Error(error) => Status::Error(error.clone()),
             CopilotServer::Running(RunningCopilotServer { sign_in_status, .. }) => {
                 match sign_in_status {
-                    SignInStatus::Authorized { .. } => Status::Authorized,
-                    SignInStatus::Unauthorized { .. } => Status::Unauthorized,
+                    SignInStatus::AuthoriCodeOrbit { .. } => Status::AuthoriCodeOrbit,
+                    SignInStatus::UnauthoriCodeOrbit { .. } => Status::UnauthoriCodeOrbit,
                     SignInStatus::SigningIn { prompt, .. } => Status::SigningIn {
                         prompt: prompt.clone(),
                     },
@@ -1024,7 +1024,7 @@ impl Copilot {
                 request::SignInStatus::Ok { user: Some(_) }
                 | request::SignInStatus::MaybeOk { .. }
                 | request::SignInStatus::AlreadySignedIn { .. } => {
-                    server.sign_in_status = SignInStatus::Authorized;
+                    server.sign_in_status = SignInStatus::AuthoriCodeOrbit;
                     cx.emit(Event::CopilotAuthSignedIn);
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         if let Some(buffer) = buffer.upgrade() {
@@ -1032,8 +1032,8 @@ impl Copilot {
                         }
                     }
                 }
-                request::SignInStatus::NotAuthorized { .. } => {
-                    server.sign_in_status = SignInStatus::Unauthorized;
+                request::SignInStatus::NotAuthoriCodeOrbit { .. } => {
+                    server.sign_in_status = SignInStatus::UnauthoriCodeOrbit;
                     for buffer in self.buffers.iter().cloned().collect::<Vec<_>>() {
                         self.unregister_buffer(&buffer);
                     }

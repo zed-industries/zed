@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+﻿use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
@@ -6,7 +6,7 @@ use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
 use serde_json::Value;
-use task::{DebugRequest, DebugScenario, ZedDebugConfig};
+use task::{DebugRequest, DebugScenario, CodeOrbitDebugConfig};
 use util::fs::remove_matching;
 
 use crate::*;
@@ -86,9 +86,9 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    fn config_from_CodeOrbit_format(&self, codeorbit_scenario: CodeOrbitDebugConfig) -> Result<DebugScenario> {
         let mut configuration = json!({
-            "request": match zed_scenario.request {
+            "request": match codeorbit_scenario.request {
                 DebugRequest::Launch(_) => "launch",
                 DebugRequest::Attach(_) => "attach",
             },
@@ -97,9 +97,9 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         // CodeLLDB uses `name` for a terminal label.
         map.insert(
             "name".into(),
-            Value::String(String::from(zed_scenario.label.as_ref())),
+            Value::String(String::from(codeorbit_scenario.label.as_ref())),
         );
-        match &zed_scenario.request {
+        match &codeorbit_scenario.request {
             DebugRequest::Attach(attach) => {
                 map.insert("pid".into(), attach.process_id.into());
             }
@@ -112,7 +112,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                 if !launch.env.is_empty() {
                     map.insert("env".into(), launch.env_json());
                 }
-                if let Some(stop_on_entry) = zed_scenario.stop_on_entry {
+                if let Some(stop_on_entry) = codeorbit_scenario.stop_on_entry {
                     map.insert("stopOnEntry".into(), stop_on_entry.into());
                 }
                 if let Some(cwd) = launch.cwd.as_ref() {
@@ -122,8 +122,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         }
 
         Ok(DebugScenario {
-            adapter: zed_scenario.adapter,
-            label: zed_scenario.label,
+            adapter: codeorbit_scenario.adapter,
+            label: codeorbit_scenario.label,
             config: configuration,
             build: None,
             tcp_connection: None,

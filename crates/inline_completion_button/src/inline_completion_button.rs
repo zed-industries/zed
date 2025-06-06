@@ -1,5 +1,5 @@
-use anyhow::Result;
-use client::{UserStore, zed_urls};
+﻿use anyhow::Result;
+use client::{UserStore, codeorbit_urls};
 use copilot::{Copilot, Status};
 use editor::{
     Editor,
@@ -33,8 +33,8 @@ use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
-use zed_actions::OpenBrowser;
-use zed_llm_client::UsageLimit;
+use codeorbit_actions::OpenBrowser;
+use codeorbit_llm_client::UsageLimit;
 use zeta::RateCompletions;
 
 actions!(edit_prediction, [ToggleMenu]);
@@ -80,7 +80,7 @@ impl Render for InlineCompletionButton {
 
                 let icon = match status {
                     Status::Error(_) => IconName::CopilotError,
-                    Status::Authorized => {
+                    Status::AuthoriCodeOrbit => {
                         if enabled {
                             IconName::Copilot
                         } else {
@@ -124,7 +124,7 @@ impl Render for InlineCompletionButton {
                     PopoverMenu::new("copilot")
                         .menu(move |window, cx| {
                             Some(match status {
-                                Status::Authorized => this.update(cx, |this, cx| {
+                                Status::AuthoriCodeOrbit => this.update(cx, |this, cx| {
                                     this.build_copilot_context_menu(window, cx)
                                 }),
                                 _ => this.update(cx, |this, cx| {
@@ -224,13 +224,13 @@ impl Render for InlineCompletionButton {
                 );
             }
 
-            EditPredictionProvider::Zed => {
+            EditPredictionProvider::CodeOrbit => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
                 let zeta_icon = if enabled {
-                    IconName::ZedPredict
+                    IconName::CodeOrbitPredict
                 } else {
-                    IconName::ZedPredictDisabled
+                    IconName::CodeOrbitPredictDisabled
                 };
 
                 let current_user_terms_accepted =
@@ -251,7 +251,7 @@ impl Render for InlineCompletionButton {
                     };
 
                     return div().child(
-                        IconButton::new("zed-predict-pending-button", zeta_icon)
+                        IconButton::new("CodeOrbit-predict-pending-button", zeta_icon)
                             .shape(IconButtonShape::Square)
                             .indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
@@ -270,7 +270,7 @@ impl Render for InlineCompletionButton {
                                     source = "Edit Prediction Status Button"
                                 );
                                 window.dispatch_action(
-                                    zed_actions::OpenZedPredictOnboarding.boxed_clone(),
+                                    codeorbit_actions::OpenCodeOrbitPredictOnboarding.boxed_clone(),
                                     cx,
                                 );
                             })),
@@ -289,7 +289,7 @@ impl Render for InlineCompletionButton {
 
                 let show_editor_predictions = self.editor_show_predictions;
 
-                let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
+                let icon_button = IconButton::new("CodeOrbit-predict-pending-button", zeta_icon)
                     .shape(IconButtonShape::Square)
                     .when(
                         enabled && (!show_editor_predictions || over_limit),
@@ -480,7 +480,7 @@ impl InlineCompletionButton {
         let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
         let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
 
-        if matches!(provider, EditPredictionProvider::Zed) {
+        if matches!(provider, EditPredictionProvider::CodeOrbit) {
             menu = menu
                 .separator()
                 .header("Display Modes")
@@ -563,7 +563,7 @@ impl InlineCompletionButton {
                                 .child(
                                     Label::new(indoc!{
                                         "Help us improve our open dataset model by sharing data from open source repositories. \
-                                        Zed must detect a license file in your repo for this setting to take effect."
+                                        CodeOrbit must detect a license file in your repo for this setting to take effect."
                                     })
                                 )
                                 .child(
@@ -614,7 +614,7 @@ impl InlineCompletionButton {
                 .icon_color(Color::Muted)
                 .documentation_aside(DocumentationSide::Left, |_| {
                     Label::new(indoc!{"
-                        Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
+                        Open your settings to add sensitive paths for which CodeOrbit will never predict edits."}).into_any_element()
                 })
                 .handler(move |window, cx| {
                     if let Some(workspace) = window.root().flatten() {
@@ -635,7 +635,7 @@ impl InlineCompletionButton {
             menu = menu.item(
                 ContextMenuEntry::new("This file is excluded.")
                     .disabled(true)
-                    .icon(IconName::ZedPredictDisabled)
+                    .icon(IconName::CodeOrbitPredictDisabled)
                     .icon_size(IconSize::Small),
             );
         }
@@ -725,18 +725,18 @@ impl InlineCompletionButton {
                                         UsageLimit::Limited(limit) => {
                                             format!("{} / {limit}", usage.amount)
                                         }
-                                        UsageLimit::Unlimited => format!("{} / ∞", usage.amount),
+                                        UsageLimit::Unlimited => format!("{} / âˆž", usage.amount),
                                     })
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                                 )
                                 .into_any_element()
                         },
-                        move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                        move |_, cx| cx.open_url(&codeorbit_urls::account_url(cx)),
                     )
                     .when(usage.over_limit(), |menu| -> ContextMenu {
                         menu.entry("Subscribe to increase your limit", None, |_window, cx| {
-                            cx.open_url(&zed_urls::account_url(cx))
+                            cx.open_url(&codeorbit_urls::account_url(cx))
                         })
                     })
                     .separator();
@@ -758,12 +758,12 @@ impl InlineCompletionButton {
                                 )
                                 .into_any_element()
                         },
-                        |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
+                        |_window, cx| cx.open_url(&codeorbit_urls::account_url(cx)),
                     )
                     .entry(
-                        "You need to upgrade to Zed Pro or contact us.",
+                        "You need to upgrade to CodeOrbit Pro or contact us.",
                         None,
-                        |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
+                        |_window, cx| cx.open_url(&codeorbit_urls::account_url(cx)),
                     )
                     .separator();
             } else if self.user_store.read(cx).has_overdue_invoices() {
@@ -785,14 +785,14 @@ impl InlineCompletionButton {
                                 .into_any_element()
                         },
                         |_window, cx| {
-                            cx.open_url(&zed_urls::account_url(cx))
+                            cx.open_url(&codeorbit_urls::account_url(cx))
                         },
                     )
                     .entry(
-                        "Check your payment status or contact us at billing-support@zed.dev to continue using this feature.",
+                        "Check your payment status or contact us at billing-support@CodeOrbit.dev to continue using this feature.",
                         None,
                         |_window, cx| {
-                            cx.open_url(&zed_urls::account_url(cx))
+                            cx.open_url(&codeorbit_urls::account_url(cx))
                         },
                     )
                     .separator();

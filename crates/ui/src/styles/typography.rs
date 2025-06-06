@@ -1,4 +1,4 @@
-use crate::prelude::*;
+﻿use crate::prelude::*;
 use gpui::{
     AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, Window,
     div, rems,
@@ -9,7 +9,7 @@ use theme::{ActiveTheme, ThemeSettings};
 use crate::{Color, rems_from_px};
 
 /// Extends [`gpui::Styled`] with typography-related styling methods.
-pub trait StyledTypography: Styled + Sized {
+pub trait StyledTypography: Styled + SiCodeOrbit {
     /// Sets the font family to the buffer font.
     fn font_buffer(self, cx: &App) -> Self {
         let settings = ThemeSettings::get_global(cx);
@@ -37,7 +37,7 @@ pub trait StyledTypography: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use `text_ui` for regular-sized text.
+    /// Use `text_ui` for regular-siCodeOrbit text.
     fn text_ui_lg(self, cx: &App) -> Self {
         self.text_size(TextSize::Large.rems(cx))
     }
@@ -59,7 +59,7 @@ pub trait StyledTypography: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use `text_ui` for regular-sized text.
+    /// Use `text_ui` for regular-siCodeOrbit text.
     fn text_ui_sm(self, cx: &App) -> Self {
         self.text_size(TextSize::Small.rems(cx))
     }
@@ -70,7 +70,7 @@ pub trait StyledTypography: Styled + Sized {
     ///
     /// Note: The absolute size of this text will change based on a user's `ui_scale` setting.
     ///
-    /// Use `text_ui` for regular-sized text.
+    /// Use `text_ui` for regular-siCodeOrbit text.
     fn text_ui_xs(self, cx: &App) -> Self {
         self.text_size(TextSize::XSmall.rems(cx))
     }

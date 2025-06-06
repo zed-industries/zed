@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     rpc::{CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
     tests::{
         RoomParticipants, TestClient, TestServer, channel_id, following_tests::join_channel,
@@ -3468,11 +3468,11 @@ async fn test_local_settings(
         .insert_tree(
             "/dir",
             json!({
-                ".zed": {
+                ".CodeOrbit": {
                     "settings.json": r#"{ "tab_size": 2 }"#
                 },
                 "a": {
-                    ".zed": {
+                    ".CodeOrbit": {
                         "settings.json": r#"{ "tab_size": 8 }"#
                     },
                     "a.txt": "a-contents",
@@ -3512,7 +3512,7 @@ async fn test_local_settings(
     // As client A, update a settings file. As Client B, see the changed settings.
     client_a
         .fs()
-        .insert_file("/dir/.zed/settings.json", r#"{}"#.into())
+        .insert_file("/dir/.CodeOrbit/settings.json", r#"{}"#.into())
         .await;
     executor.run_until_parked();
     cx_b.read(|cx| {
@@ -3531,17 +3531,17 @@ async fn test_local_settings(
     // As client A, create and remove some settings files. As client B, see the changed settings.
     client_a
         .fs()
-        .remove_file("/dir/.zed/settings.json".as_ref(), Default::default())
+        .remove_file("/dir/.CodeOrbit/settings.json".as_ref(), Default::default())
         .await
         .unwrap();
     client_a
         .fs()
-        .create_dir("/dir/b/.zed".as_ref())
+        .create_dir("/dir/b/.CodeOrbit".as_ref())
         .await
         .unwrap();
     client_a
         .fs()
-        .insert_file("/dir/b/.zed/settings.json", r#"{"tab_size": 4}"#.into())
+        .insert_file("/dir/b/.CodeOrbit/settings.json", r#"{"tab_size": 4}"#.into())
         .await;
     executor.run_until_parked();
     cx_b.read(|cx| {
@@ -3564,11 +3564,11 @@ async fn test_local_settings(
     // As client A, change and remove settings files while client B is disconnected.
     client_a
         .fs()
-        .insert_file("/dir/a/.zed/settings.json", r#"{"hard_tabs":true}"#.into())
+        .insert_file("/dir/a/.CodeOrbit/settings.json", r#"{"hard_tabs":true}"#.into())
         .await;
     client_a
         .fs()
-        .remove_file("/dir/b/.zed/settings.json".as_ref(), Default::default())
+        .remove_file("/dir/b/.CodeOrbit/settings.json".as_ref(), Default::default())
         .await
         .unwrap();
     executor.run_until_parked();
@@ -5352,7 +5352,7 @@ async fn test_lsp_hover(
         let new_server_name = new_server.server.name();
         assert!(
             !servers_with_hover_requests.contains_key(&new_server_name),
-            "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
+            "Unexpected: initialiCodeOrbit server with the same name twice. Name: `{new_server_name}`"
         );
         match new_server_name.as_ref() {
             "CrabLang-ls" => {

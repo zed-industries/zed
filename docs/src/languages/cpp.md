@@ -1,13 +1,13 @@
-# C++
+﻿# C++
 
-C++ support is available natively in Zed.
+C++ support is available natively in CodeOrbit.
 
 - Tree-sitter: [tree-sitter/tree-sitter-cpp](https://github.com/tree-sitter/tree-sitter-cpp)
 - Language Server: [clangd/clangd](https://github.com/clangd/clangd)
 
 ## Binary
 
-You can configure which `clangd` binary Zed should use.
+You can configure which `clangd` binary CodeOrbit should use.
 
 To use a binary in a custom location, add the following to your `settings.json`:
 
@@ -24,7 +24,7 @@ To use a binary in a custom location, add the following to your `settings.json`:
 }
 ```
 
-If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true`:
+If you want to disable CodeOrbit looking for a `clangd` binary, you can set `ignore_system_version` to `true`:
 
 ```json
 {
@@ -57,7 +57,7 @@ You can pass any number of arguments to clangd. To see a full set of available o
 
 ## Formatting
 
-By default Zed will use the `clangd` language server for formatting C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+By default CodeOrbit will use the `clangd` language server for formatting C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
 
 ```yaml
 ---
@@ -73,7 +73,7 @@ PointerAlignment: Left
 
 See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
 
-You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
+You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your CodeOrbit settings:
 
 ```json
   "languages": {

@@ -1,4 +1,4 @@
-//! Documentation agents for the CodeOrbit extension.
+﻿//! Documentation agents for the CodeOrbit extension.
 //! 
 //! This module contains agents that handle documentation-related tasks such as
 //! generating, formatting, and retrieving documentation.
@@ -8,7 +8,7 @@ use crate::core::Result;
 /// Initializes all documentation agents.
 pub async fn initialize() -> Result<()> {
     // Initialize documentation agents here
-    log::info!("Documentation agents initialized");
+    log::info!("Documentation agents initialiCodeOrbit");
     Ok(())
 }
 

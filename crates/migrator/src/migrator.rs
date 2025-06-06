@@ -1,4 +1,4 @@
-//! ## When to create a migration and why?
+﻿//! ## When to create a migration and why?
 //! A migration is necessary when keymap actions or settings are renamed or transformed (e.g., from an array to a string, a string to an array, a boolean to an enum, etc.).
 //!
 //! This ensures that users with outdated settings are automatically updated to use the corresponding new settings internally.
@@ -492,7 +492,7 @@ mod tests {
             r#"
                 {
                     "features": {
-                        "inline_completion_provider": "zed"
+                        "inline_completion_provider": "CodeOrbit"
                     },
                 }
             "#,
@@ -500,7 +500,7 @@ mod tests {
                 r#"
                 {
                     "features": {
-                        "edit_prediction_provider": "zed"
+                        "edit_prediction_provider": "CodeOrbit"
                     },
                 }
             "#,
@@ -767,7 +767,7 @@ mod tests {
                 "agent": {
                     "name": "assistant-1",
                 "model": "gpt-4", // weird formatting
-                    "utf8": "привіт"
+                    "utf8": "Ð¿Ñ€Ð¸Ð²Ñ–Ñ‚"
                 },
                 "something": "else",
                 "agent": {
@@ -781,7 +781,7 @@ mod tests {
                 /* Duplicated key auto-commented: "agent": {
                     "name": "assistant-1",
                 "model": "gpt-4", // weird formatting
-                    "utf8": "привіт"
+                    "utf8": "Ð¿Ñ€Ð¸Ð²Ñ–Ñ‚"
                 }, */
                 "something": "else",
                 "agent": {

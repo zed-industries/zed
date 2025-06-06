@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import requests
 import sys
@@ -54,7 +54,7 @@ def convert_body(body: str) -> str:
     return formatted
 
 def get_release_info(tag: str):
-    url = f"https://api.github.com/repos/zed-industries/zed/releases/tags/{tag}"
+    url = f"https://api.github.com/repos/CodeOrbit-industries/CodeOrbit/releases/tags/{tag}"
     response = requests.get(url)
     if response.status_code == 200:
         return response.json()
@@ -82,10 +82,10 @@ if __name__ == "__main__":
     release_info_str += f"    <description>\n"
     release_info_str += textwrap.indent(body, " " * 8)
     release_info_str += f"    </description>\n"
-    release_info_str += f"    <url>https://github.com/zed-industries/zed/releases/tag/{tag}</url>\n"
+    release_info_str += f"    <url>https://github.com/CodeOrbit-industries/CodeOrbit/releases/tag/{tag}</url>\n"
     release_info_str += "</release>\n"
 
-    channel_releases_file = f"../../crates/zed/resources/flatpak/release-info/{channel}"
+    channel_releases_file = f"../../crates/CodeOrbit/resources/flatpak/release-info/{channel}"
     with open(channel_releases_file) as f:
         old_release_info = f.read()
     with open(channel_releases_file, "w") as f:

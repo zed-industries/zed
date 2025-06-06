@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "inline_completion_button"
 version = "0.1.0"
 edition.workspace = true
@@ -31,8 +31,8 @@ telemetry.workspace = true
 ui.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
-zed_actions.workspace = true
-zed_llm_client.workspace = true
+codeorbit_actions.workspace = true
+codeorbit_llm_client.workspace = true
 zeta.workspace = true
 
 [dev-dependencies]

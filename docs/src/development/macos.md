@@ -1,8 +1,8 @@
-# Building Zed for macOS
+﻿# Building CodeOrbit for macOS
 
 ## Repository
 
-Clone down the [Zed repository](https://github.com/zed-industries/zed).
+Clone down the [CodeOrbit repository](https://github.com/CodeOrbit-industries/CodeOrbit).
 
 ## Dependencies
 
@@ -31,9 +31,9 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
   brew install cmake
   ```
 
-## Building Zed from Source
+## Building CodeOrbit from Source
 
-Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
+Once you have the dependencies installed, you can build CodeOrbit using [Cargo](https://doc.rust-lang.org/cargo/).
 
 For a debug build:
 
@@ -55,7 +55,7 @@ cargo test --workspace
 
 ## Backend Dependencies
 
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
+If you are developing collaborative features of CodeOrbit, you'll need to install the dependencies of CodeOrbit's `collab` server:
 
 - Install [Postgres](https://postgresapp.com)
 - Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
@@ -64,7 +64,7 @@ If you are developing collaborative features of Zed, you'll need to install the 
   brew install livekit foreman
   ```
 
-- Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
+- Follow the steps in the [collab README](https://github.com/CodeOrbit-industries/CodeOrbit/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
 
 Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
 
@@ -77,7 +77,7 @@ docker compose up -d
 ### Error compiling metal shaders
 
 ```sh
-error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/zed)`**
+error: failed to run custom build command for gpui v0.1.0 (/Users/path/to/CodeOrbit)`**
 
 xcrun: error: unable to find utility "metal", not a developer tool or in PATH
 ```
@@ -136,7 +136,7 @@ This error seems to be caused by OS resource constraints. Installing and running
 
 ## Tips & Tricks
 
-If you are building Zed a lot, you may find that macOS continually verifies new
+If you are building CodeOrbit a lot, you may find that macOS continually verifies new
 builds which can add a few seconds to your iteration cycles.
 
 To fix this, you can:

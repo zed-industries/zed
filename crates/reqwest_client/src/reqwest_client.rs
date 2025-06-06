@@ -1,4 +1,4 @@
-use std::error::Error;
+﻿use std::error::Error;
 use std::sync::{LazyLock, OnceLock};
 use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration};
 
@@ -158,7 +158,7 @@ impl futures::Stream for StreamReader {
 }
 
 /// Implementation from <https://docs.rs/tokio-util/0.7.12/src/tokio_util/util/poll_buf.rs.html>
-/// Specialized for this use case
+/// SpecialiCodeOrbit for this use case
 pub fn poll_read_buf(
     io: &mut Pin<Box<dyn futures::AsyncRead + Send + Sync>>,
     cx: &mut std::task::Context<'_>,
@@ -186,7 +186,7 @@ pub fn poll_read_buf(
         buf.filled().len()
     };
 
-    // Safety: This is guaranteed to be the number of initialized (and read)
+    // Safety: This is guaranteed to be the number of initialiCodeOrbit (and read)
     // bytes due to the invariants provided by `ReadBuf::filled`.
     unsafe {
         buf.advance_mut(n);

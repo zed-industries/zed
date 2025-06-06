@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AssistantContext, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
     SavedContextMetadata,
 };
@@ -773,7 +773,7 @@ impl ContextStore {
                 }
 
                 static ASSISTANT_CONTEXT_REGEX: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r" - \d+.zed.json$").unwrap());
+                    LazyLock::new(|| Regex::new(r" - \d+.CodeOrbit.json$").unwrap());
 
                 let metadata = fs.metadata(&path).await?;
                 if let Some((file_name, metadata)) = path

@@ -1,4 +1,4 @@
-use adapters::latest_github_release;
+﻿use adapters::latest_github_release;
 use anyhow::Context as _;
 use anyhow::bail;
 use dap::StartDebuggingRequestArguments;
@@ -286,8 +286,8 @@ impl DebugAdapter for PhpDebugAdapter {
         Ok(StartDebuggingRequestArgumentsRequest::Launch)
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
-        let obj = match &zed_scenario.request {
+    fn config_from_CodeOrbit_format(&self, codeorbit_scenario: CodeOrbitDebugConfig) -> Result<DebugScenario> {
+        let obj = match &codeorbit_scenario.request {
             dap::DebugRequest::Attach(_) => {
                 bail!("Php adapter doesn't support attaching")
             }
@@ -296,13 +296,13 @@ impl DebugAdapter for PhpDebugAdapter {
                 "cwd": launch_config.cwd,
                 "args": launch_config.args,
                 "env": launch_config.env_json(),
-                "stopOnEntry": zed_scenario.stop_on_entry.unwrap_or_default(),
+                "stopOnEntry": codeorbit_scenario.stop_on_entry.unwrap_or_default(),
             }),
         };
 
         Ok(DebugScenario {
-            adapter: zed_scenario.adapter,
-            label: zed_scenario.label,
+            adapter: codeorbit_scenario.adapter,
+            label: codeorbit_scenario.label,
             build: None,
             config: obj,
             tcp_connection: None,

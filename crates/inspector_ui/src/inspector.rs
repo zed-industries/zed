@@ -1,4 +1,4 @@
-use anyhow::{Context as _, anyhow};
+﻿use anyhow::{Context as _, anyhow};
 use gpui::{App, DivInspectorState, Inspector, InspectorElementId, IntoElement, Window};
 use std::{cell::OnceCell, path::Path, sync::Arc};
 use ui::{Label, Tooltip, prelude::*};
@@ -8,7 +8,7 @@ use workspace::AppState;
 use crate::div_inspector::DivInspector;
 
 pub fn init(app_state: Arc<AppState>, cx: &mut App) {
-    cx.on_action(|_: &zed_actions::dev::ToggleInspector, cx| {
+    cx.on_action(|_: &codeorbit_actions::dev::ToggleInspector, cx| {
         let Some(active_window) = cx
             .active_window()
             .context("no active window to toggle inspector")
@@ -104,7 +104,7 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
     // For unknown reasons, for some elements the path is absolute.
     let source_location_string = source_location.to_string();
     let source_location_string = source_location_string
-        .strip_prefix(env!("ZED_REPO_DIR"))
+        .strip_prefix(env!("codeorbit_REPO_DIR"))
         .and_then(|s| s.strip_prefix("/"))
         .map(|s| s.to_string())
         .unwrap_or(source_location_string);
@@ -127,9 +127,9 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
                 .bg(cx.theme().colors().editor_foreground.opacity(0.025))
                 .underline()
                 .child(source_location_string)
-                .tooltip(Tooltip::text("Click to open by running zed cli"))
+                .tooltip(Tooltip::text("Click to open by running CodeOrbit cli"))
                 .on_click(move |_, _window, cx| {
-                    cx.background_spawn(open_zed_source_location(source_location))
+                    cx.background_spawn(open_CodeOrbit_source_location(source_location))
                         .detach_and_log_err(cx);
                 }),
         )
@@ -145,10 +145,10 @@ fn render_inspector_id(inspector_id: &InspectorElementId, cx: &App) -> Div {
         )
 }
 
-async fn open_zed_source_location(
+async fn open_CodeOrbit_source_location(
     location: &'static std::panic::Location<'static>,
 ) -> anyhow::Result<()> {
-    let mut path = Path::new(env!("ZED_REPO_DIR")).to_path_buf();
+    let mut path = Path::new(env!("codeorbit_REPO_DIR")).to_path_buf();
     path.push(Path::new(location.file()));
     let path_arg = format!(
         "{}:{}:{}",
@@ -157,15 +157,15 @@ async fn open_zed_source_location(
         location.column()
     );
 
-    let output = new_smol_command("zed")
+    let output = new_smol_command("CodeOrbit")
         .arg(&path_arg)
         .output()
         .await
-        .with_context(|| format!("running zed to open {path_arg} failed"))?;
+        .with_context(|| format!("running CodeOrbit to open {path_arg} failed"))?;
 
     if !output.status.success() {
         Err(anyhow!(
-            "running zed to open {path_arg} failed with stderr: {}",
+            "running CodeOrbit to open {path_arg} failed with stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         ))
     } else {

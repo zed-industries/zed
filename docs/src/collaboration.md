@@ -1,4 +1,4 @@
-# Collaboration
+﻿# Collaboration
 
 Only collaborate with people that you trust. Since sharing a project gives them access to your local file system, you should not share projects with people you do not trust; they could potentially do some nasty things.
 
@@ -10,33 +10,33 @@ Before you can collaborate, you'll need to add a collaborator to your contacts. 
 
 1. Open the contacts menu by clicking on the `Show contacts menu` button in the upper right-hand corner of the window or by running `collab: toggle contacts menu` (`cmd-shift-c`).
 2. Click the add button to the right of the search box.
-3. Search for the contact you want to add using their GitHub handle. Note: the person you are trying to add as a contact must be an existing Zed user.
+3. Search for the contact you want to add using their GitHub handle. Note: the person you are trying to add as a contact must be an existing CodeOrbit user.
 
 ### Inviting a collaborator
 
-You can add an existing Zed user as a contact from the contacts menu, deployed from the `Show contacts menu` button in the upper right-hand corner of the window or by `collab: toggle contacts menu` (`cmd-shift-c`) and then clicking the `Search for new contact` button to the right of the search box.
+You can add an existing CodeOrbit user as a contact from the contacts menu, deployed from the `Show contacts menu` button in the upper right-hand corner of the window or by `collab: toggle contacts menu` (`cmd-shift-c`) and then clicking the `Search for new contact` button to the right of the search box.
 
-![Inviting a collaborator to the current project](https://zed.dev/img/collaboration/add-a-collaborator.png)
+![Inviting a collaborator to the current project](https://CodeOrbit.dev/img/collaboration/add-a-collaborator.png)
 
 When you invite a collaborator to a project not in a call they will receive a notification to join, and a new call is created.
 
-![Receiving an invite to join a call](https://zed.dev/img/collaboration/receiving-an-invite.jpg)
+![Receiving an invite to join a call](https://CodeOrbit.dev/img/collaboration/receiving-an-invite.jpg)
 
-### Inviting non-Zed users
+### Inviting non-CodeOrbit users
 
-If someone you want to collaborate with has not yet signed up for Zed, they will need to [download the app](https://zed.dev/download) and sign in for the first time before you can add them. Identity is tied to GitHub accounts, so new users will need to authenticate with GitHub in order to sign into Zed.
+If someone you want to collaborate with has not yet signed up for CodeOrbit, they will need to [download the app](https://CodeOrbit.dev/download) and sign in for the first time before you can add them. Identity is tied to GitHub accounts, so new users will need to authenticate with GitHub in order to sign into CodeOrbit.
 
 ### Voice chat
 
-When joining a call, Zed will automatically share your microphone with other users in the call, if your OS allows it. This isn't tied to your project. You can disable this for your client via the [`mute_on_join`](./configuring-zed.md#calls) setting.
+When joining a call, CodeOrbit will automatically share your microphone with other users in the call, if your OS allows it. This isn't tied to your project. You can disable this for your client via the [`mute_on_join`](./configuring-CodeOrbit.md#calls) setting.
 
 ## Collaborating on a project
 
 ### Share a project
 
-When you invite a collaborator to join your project, a new call begins. Your Zed windows will show the call participants in the title bar of the window.
+When you invite a collaborator to join your project, a new call begins. Your CodeOrbit windows will show the call participants in the title bar of the window.
 
-![A new Zed call with two collaborators](https://zed.dev/img/collaboration/new-call.png)
+![A new CodeOrbit call with two collaborators](https://CodeOrbit.dev/img/collaboration/new-call.png)
 
 Collaborators in the same project as you are in color, and have a cursor color. Collaborators in other projects are shown in gray. Collaborators that have access to the current project will have their own cursor color under their avatar.
 
@@ -54,7 +54,7 @@ To follow a collaborator, click on their avatar in the top right of the window. 
 
 When you join a project, you'll immediately start following the collaborator that invited you.
 
-![Automatically following the person inviting us to a project](https://zed.dev/img/collaboration/joining-a-call.png)
+![Automatically following the person inviting us to a project](https://CodeOrbit.dev/img/collaboration/joining-a-call.png)
 
 When you are in a pane that is following a collaborator, you will:
 
@@ -76,7 +76,7 @@ This pane-specific behavior allows you to follow someone in one pane while navig
 
 Share your screen with collaborators in the current call by clicking on the `Share screen` button in the top right of the window.
 
-Collaborators will see your screen if they are following you and you start viewing a window outside Zed or a project that is not shared.
+Collaborators will see your screen if they are following you and you start viewing a window outside CodeOrbit or a project that is not shared.
 
 Collaborators can see your entire screen when you are screen sharing, so be careful not to share anything you don't want to share. Remember to stop screen sharing when you are finished.
 

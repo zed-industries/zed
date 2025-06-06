@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "inline_completion"
 version = "0.1.0"
 edition.workspace = true
@@ -17,4 +17,4 @@ gpui.workspace = true
 language.workspace = true
 project.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
+codeorbit_llm_client.workspace = true

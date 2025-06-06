@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+﻿use anyhow::Context as _;
 use collections::HashMap;
 use dap::{Capabilities, adapters::DebugAdapterName};
 use db::kvp::KEY_VALUE_STORE;
@@ -92,23 +92,23 @@ impl From<DebuggerPaneItem> for SharedString {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct SerializedLayout {
-    pub(crate) panes: SerializedPaneLayout,
+pub(crate) struct SerialiCodeOrbitLayout {
+    pub(crate) panes: SerialiCodeOrbitPaneLayout,
     pub(crate) dock_axis: Axis,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) enum SerializedPaneLayout {
-    Pane(SerializedPane),
+pub(crate) enum SerialiCodeOrbitPaneLayout {
+    Pane(SerialiCodeOrbitPane),
     Group {
         axis: Axis,
         flexes: Option<Vec<f32>>,
-        children: Vec<SerializedPaneLayout>,
+        children: Vec<SerialiCodeOrbitPaneLayout>,
     },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct SerializedPane {
+pub(crate) struct SerialiCodeOrbitPane {
     pub children: Vec<DebuggerPaneItem>,
     pub active_item: Option<DebuggerPaneItem>,
 }
@@ -117,49 +117,49 @@ const DEBUGGER_PANEL_PREFIX: &str = "debugger_panel_";
 
 pub(crate) async fn serialize_pane_layout(
     adapter_name: DebugAdapterName,
-    pane_group: SerializedLayout,
+    pane_group: SerialiCodeOrbitLayout,
 ) -> anyhow::Result<()> {
-    let serialized_pane_group = serde_json::to_string(&pane_group)
+    let serialiCodeOrbit_pane_group = serde_json::to_string(&pane_group)
         .context("Serializing pane group with serde_json as a string")?;
     KEY_VALUE_STORE
         .write_kvp(
             format!("{DEBUGGER_PANEL_PREFIX}-{adapter_name}"),
-            serialized_pane_group,
+            serialiCodeOrbit_pane_group,
         )
         .await
 }
 
-pub(crate) fn build_serialized_layout(
+pub(crate) fn build_serialiCodeOrbit_layout(
     pane_group: &Member,
     dock_axis: Axis,
     cx: &App,
-) -> SerializedLayout {
-    SerializedLayout {
+) -> SerialiCodeOrbitLayout {
+    SerialiCodeOrbitLayout {
         dock_axis,
-        panes: build_serialized_pane_layout(pane_group, cx),
+        panes: build_serialiCodeOrbit_pane_layout(pane_group, cx),
     }
 }
 
-pub(crate) fn build_serialized_pane_layout(pane_group: &Member, cx: &App) -> SerializedPaneLayout {
+pub(crate) fn build_serialiCodeOrbit_pane_layout(pane_group: &Member, cx: &App) -> SerialiCodeOrbitPaneLayout {
     match pane_group {
         Member::Axis(PaneAxis {
             axis,
             members,
             flexes,
             bounding_boxes: _,
-        }) => SerializedPaneLayout::Group {
+        }) => SerialiCodeOrbitPaneLayout::Group {
             axis: *axis,
             children: members
                 .iter()
-                .map(|member| build_serialized_pane_layout(member, cx))
+                .map(|member| build_serialiCodeOrbit_pane_layout(member, cx))
                 .collect::<Vec<_>>(),
             flexes: Some(flexes.lock().clone()),
         },
-        Member::Pane(pane_handle) => SerializedPaneLayout::Pane(serialize_pane(pane_handle, cx)),
+        Member::Pane(pane_handle) => SerialiCodeOrbitPaneLayout::Pane(serialize_pane(pane_handle, cx)),
     }
 }
 
-fn serialize_pane(pane: &Entity<Pane>, cx: &App) -> SerializedPane {
+fn serialize_pane(pane: &Entity<Pane>, cx: &App) -> SerialiCodeOrbitPane {
     let pane = pane.read(cx);
     let children = pane
         .items()
@@ -174,26 +174,26 @@ fn serialize_pane(pane: &Entity<Pane>, cx: &App) -> SerializedPane {
         .and_then(|item| item.act_as::<SubView>(cx))
         .map(|view| view.read(cx).view_kind());
 
-    SerializedPane {
+    SerialiCodeOrbitPane {
         children,
         active_item,
     }
 }
 
-pub(crate) async fn get_serialized_layout(
+pub(crate) async fn get_serialiCodeOrbit_layout(
     adapter_name: impl AsRef<str>,
-) -> Option<SerializedLayout> {
+) -> Option<SerialiCodeOrbitLayout> {
     let key = format!("{DEBUGGER_PANEL_PREFIX}-{}", adapter_name.as_ref());
 
     KEY_VALUE_STORE
         .read_kvp(&key)
         .log_err()
         .flatten()
-        .and_then(|value| serde_json::from_str::<SerializedLayout>(&value).ok())
+        .and_then(|value| serde_json::from_str::<SerialiCodeOrbitLayout>(&value).ok())
 }
 
 pub(crate) fn deserialize_pane_layout(
-    serialized: SerializedPaneLayout,
+    serialiCodeOrbit: SerialiCodeOrbitPaneLayout,
     should_invert: bool,
     workspace: &WeakEntity<Workspace>,
     project: &Entity<Project>,
@@ -208,8 +208,8 @@ pub(crate) fn deserialize_pane_layout(
     window: &mut Window,
     cx: &mut Context<RunningState>,
 ) -> Option<Member> {
-    match serialized {
-        SerializedPaneLayout::Group {
+    match serialiCodeOrbit {
+        SerialiCodeOrbitPaneLayout::Group {
             axis,
             flexes,
             children,
@@ -250,14 +250,14 @@ pub(crate) fn deserialize_pane_layout(
                 flexes.clone(),
             )))
         }
-        SerializedPaneLayout::Pane(serialized_pane) => {
+        SerialiCodeOrbitPaneLayout::Pane(serialiCodeOrbit_pane) => {
             let pane = running::new_debugger_pane(workspace.clone(), project.clone(), window, cx);
             subscriptions.insert(
                 pane.entity_id(),
                 cx.subscribe_in(&pane, window, RunningState::handle_pane_event),
             );
 
-            let sub_views: Vec<_> = serialized_pane
+            let sub_views: Vec<_> = serialiCodeOrbit_pane
                 .children
                 .iter()
                 .map(|child| match child {
@@ -323,7 +323,7 @@ pub(crate) fn deserialize_pane_layout(
             pane.update(cx, |pane, cx| {
                 let mut active_idx = 0;
                 for (idx, sub_view) in sub_views.into_iter().enumerate() {
-                    if serialized_pane
+                    if serialiCodeOrbit_pane
                         .active_item
                         .is_some_and(|active| active == sub_view.read(cx).view_kind())
                     {
@@ -341,18 +341,18 @@ pub(crate) fn deserialize_pane_layout(
 }
 
 #[cfg(test)]
-impl SerializedPaneLayout {
-    pub(crate) fn in_order(&self) -> Vec<SerializedPaneLayout> {
+impl SerialiCodeOrbitPaneLayout {
+    pub(crate) fn in_order(&self) -> Vec<SerialiCodeOrbitPaneLayout> {
         let mut panes = vec![];
 
         Self::inner_in_order(&self, &mut panes);
         panes
     }
 
-    fn inner_in_order(&self, panes: &mut Vec<SerializedPaneLayout>) {
+    fn inner_in_order(&self, panes: &mut Vec<SerialiCodeOrbitPaneLayout>) {
         match self {
-            SerializedPaneLayout::Pane(_) => panes.push((*self).clone()),
-            SerializedPaneLayout::Group {
+            SerialiCodeOrbitPaneLayout::Pane(_) => panes.push((*self).clone()),
+            SerialiCodeOrbitPaneLayout::Group {
                 axis: _,
                 flexes: _,
                 children,

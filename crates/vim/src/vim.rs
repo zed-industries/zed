@@ -1,4 +1,4 @@
-//! Vim support for Zed.
+﻿//! Vim support for CodeOrbit.
 
 #[cfg(test)]
 mod test;

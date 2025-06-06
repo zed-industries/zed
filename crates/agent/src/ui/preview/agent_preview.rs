@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+﻿use std::sync::OnceLock;
 
 use collections::HashMap;
 use component::ComponentId;
@@ -23,7 +23,7 @@ impl AgentPreviewFn {
 inventory::collect!(AgentPreviewFn);
 
 /// Trait that must be implemented by components that provide agent previews.
-pub trait AgentPreview: Component + Sized {
+pub trait AgentPreview: Component + SiCodeOrbit {
     #[allow(unused)] // We can't know this is used due to the distributed slice
     fn scope(&self) -> ComponentScope {
         ComponentScope::Agent
@@ -53,7 +53,7 @@ macro_rules! register_agent_preview {
     };
 }
 
-/// Lazy initialized registry of preview functions
+/// Lazy initialiCodeOrbit registry of preview functions
 static AGENT_PREVIEW_REGISTRY: OnceLock<HashMap<ComponentId, PreviewFn>> = OnceLock::new();
 
 /// Initialize the agent preview registry if needed

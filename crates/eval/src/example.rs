@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     error::Error,
     fmt::{self, Debug},
     path::Path,
@@ -19,7 +19,7 @@ use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
-use zed_llm_client::CompletionIntent;
+use codeorbit_llm_client::CompletionIntent;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
@@ -194,9 +194,9 @@ impl ExampleContext {
         });
 
         if result.is_ok() {
-            println!("{}✅ {}", self.log_prefix, message);
+            println!("{}âœ… {}", self.log_prefix, message);
         } else {
-            println!("{}❌ {}", self.log_prefix, message);
+            println!("{}âŒ {}", self.log_prefix, message);
         }
 
         result
@@ -257,9 +257,9 @@ impl ExampleContext {
                             let mut tool_metrics = tool_metrics.lock().unwrap();
                             if let Some(tool_result) = thread.tool_result(&tool_use_id) {
                                 let message = if tool_result.is_error {
-                                    format!("✖︎ {}", tool_use.name)
+                                    format!("âœ–ï¸Ž {}", tool_use.name)
                                 } else {
-                                    format!("✔︎ {}", tool_use.name)
+                                    format!("âœ”ï¸Ž {}", tool_use.name)
                                 };
                                 println!("{log_prefix}{message}");
                                 tool_metrics
@@ -299,7 +299,7 @@ impl ExampleContext {
                 | ThreadEvent::CheckpointChanged
                 | ThreadEvent::CancelEditing => {
                     tx.try_send(Ok(())).ok();
-                    if std::env::var("ZED_EVAL_DEBUG").is_ok() {
+                    if std::env::var("codeorbit_EVAL_DEBUG").is_ok() {
                         println!("{}Event: {:#?}", log_prefix, event);
                     }
                 }

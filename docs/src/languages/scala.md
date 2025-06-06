@@ -1,7 +1,7 @@
-# Scala
+﻿# Scala
 
-Scala language support in Zed is provided by the community-maintained [Scala extension](https://github.com/scalameta/metals-zed).
-Report issues to: [https://github.com/scalameta/metals-zed/issues](https://github.com/scalameta/metals-zed/issues)
+Scala language support in CodeOrbit is provided by the community-maintained [Scala extension](https://github.com/scalameta/metals-CodeOrbit).
+Report issues to: [https://github.com/scalameta/metals-CodeOrbit/issues](https://github.com/scalameta/metals-CodeOrbit/issues)
 
 - Tree-sitter: [tree-sitter/tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala)
 - Language Server: [scalameta/metals](https://github.com/scalameta/metals)
@@ -25,5 +25,5 @@ Behavior of the Metals language server can be controlled with:
 You can place these files in the root of your project or specifying their location in the Metals configuration. See [Metals User Configuration](https://scalameta.org/metals/docs/editors/user-configuration) for more.
 
 <!--
-TBD: Provide LSP configuration example for metals in Zed settings.json. metals.{javaHome,excludedPackages,customProjectRoot} etc.
+TBD: Provide LSP configuration example for metals in CodeOrbit settings.json. metals.{javaHome,excludedPackages,customProjectRoot} etc.
 -->

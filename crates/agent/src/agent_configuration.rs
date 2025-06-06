@@ -1,4 +1,4 @@
-mod add_context_server_modal;
+﻿mod add_context_server_modal;
 mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -22,7 +22,7 @@ use ui::{
     prelude::*,
 };
 use util::ResultExt as _;
-use zed_actions::ExtensionCategoryFilter;
+use codeorbit_actions::ExtensionCategoryFilter;
 
 pub(crate) use add_context_server_modal::AddContextServerModal;
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
@@ -395,7 +395,7 @@ impl AgentConfiguration {
                 v_flex()
                     .gap_0p5()
                     .child(Headline::new("Model Context Protocol (MCP) Servers"))
-                    .child(Label::new("Connect to context servers via the Model Context Protocol either via Zed extensions or directly.").color(Color::Muted)),
+                    .child(Label::new("Connect to context servers via the Model Context Protocol either via CodeOrbit extensions or directly.").color(Color::Muted)),
             )
             .children(
                 context_server_ids.into_iter().map(|context_server_id| {
@@ -434,7 +434,7 @@ impl AgentConfiguration {
                             .icon_position(IconPosition::Start)
                             .on_click(|_event, window, cx| {
                                 window.dispatch_action(
-                                    zed_actions::Extensions {
+                                    codeorbit_actions::Extensions {
                                         category_filter: Some(
                                             ExtensionCategoryFilter::ContextServers,
                                         ),

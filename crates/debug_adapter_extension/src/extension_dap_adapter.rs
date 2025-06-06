@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+﻿use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -7,7 +7,7 @@ use dap::adapters::{
 };
 use extension::{Extension, WorktreeDelegate};
 use gpui::AsyncApp;
-use task::{DebugScenario, ZedDebugConfig};
+use task::{DebugScenario, CodeOrbitDebugConfig};
 
 pub(crate) struct ExtensionDapAdapter {
     extension: Arc<dyn Extension>,
@@ -82,7 +82,7 @@ impl DebugAdapter for ExtensionDapAdapter {
             .await
     }
 
-    fn config_from_zed_format(&self, _zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    fn config_from_CodeOrbit_format(&self, _CodeOrbit_scenario: CodeOrbitDebugConfig) -> Result<DebugScenario> {
         Err(anyhow::anyhow!("DAP extensions are not implemented yet"))
     }
 }

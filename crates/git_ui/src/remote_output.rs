@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+﻿use anyhow::Context as _;
 use git::repository::{Remote, RemoteCommandOutput};
 use linkify::{LinkFinder, LinkKind};
 use ui::SharedString;
@@ -42,7 +42,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                 }
             } else {
                 SuccessMessage {
-                    message: "Synchronized with remotes".into(),
+                    message: "SynchroniCodeOrbit with remotes".into(),
                     style: SuccessStyle::ToastWithLog { output },
                 }
             }

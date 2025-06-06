@@ -1,7 +1,7 @@
-//! A module for working with processes.
+﻿//! A module for working with processes.
 
-use crate::wit::zed::extension::process;
-pub use crate::wit::zed::extension::process::{Command, Output};
+use crate::wit::CodeOrbit::extension::process;
+pub use crate::wit::CodeOrbit::extension::process::{Command, Output};
 
 impl Command {
     pub fn new(program: impl Into<String>) -> Self {

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 databases=$(psql --tuples-only --command "
   SELECT
@@ -7,7 +7,7 @@ databases=$(psql --tuples-only --command "
     pg_database
   WHERE
     datistemplate = false
-    AND datname like 'zed-test-%'
+    AND datname like 'CodeOrbit-test-%'
 ")
 
 for database in $databases; do

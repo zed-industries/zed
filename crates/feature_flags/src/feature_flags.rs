@@ -1,4 +1,4 @@
-use futures::channel::oneshot;
+﻿use futures::channel::oneshot;
 use futures::{FutureExt, select_biased};
 use gpui::{App, Context, Global, Subscription, Task, Window};
 use std::cell::RefCell;
@@ -13,8 +13,8 @@ struct FeatureFlags {
     staff: bool,
 }
 
-pub static ZED_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
-    std::env::var("ZED_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0")
+pub static codeorbit_DISABLE_STAFF: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var("codeorbit_DISABLE_STAFF").map_or(false, |value| !value.is_empty() && value != "0")
 });
 
 impl FeatureFlags {
@@ -36,13 +36,13 @@ impl Global for FeatureFlags {}
 /// To create a feature flag, implement this trait on a trivial type and use it as
 /// a generic parameter when called [`FeatureFlagAppExt::has_flag`].
 ///
-/// Feature flags are enabled for members of Zed staff by default. To disable this behavior
-/// so you can test flags being disabled, set ZED_DISABLE_STAFF=1 in your environment,
-/// which will force Zed to treat the current user as non-staff.
+/// Feature flags are enabled for members of CodeOrbit staff by default. To disable this behavior
+/// so you can test flags being disabled, set codeorbit_DISABLE_STAFF=1 in your environment,
+/// which will force CodeOrbit to treat the current user as non-staff.
 pub trait FeatureFlag {
     const NAME: &'static str;
 
-    /// Returns whether this feature flag is enabled for Zed staff.
+    /// Returns whether this feature flag is enabled for CodeOrbit staff.
     fn enabled_for_staff() -> bool {
         true
     }
@@ -66,9 +66,9 @@ impl FeatureFlag for LlmClosedBetaFeatureFlag {
     const NAME: &'static str = "llm-closed-beta";
 }
 
-pub struct ZedProFeatureFlag {}
-impl FeatureFlag for ZedProFeatureFlag {
-    const NAME: &'static str = "zed-pro";
+pub struct CodeOrbitProFeatureFlag {}
+impl FeatureFlag for CodeOrbitProFeatureFlag {
+    const NAME: &'static str = "CodeOrbit-pro";
 }
 
 pub struct NotebookFeatureFlag;

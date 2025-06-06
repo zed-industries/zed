@@ -1,4 +1,4 @@
-mod assets;
+﻿mod assets;
 mod color;
 mod vscode;
 
@@ -18,7 +18,7 @@ use theme::{Appearance, AppearanceContent};
 use crate::vscode::VsCodeTheme;
 use crate::vscode::VsCodeThemeConverter;
 
-const ZED_THEME_SCHEMA_URL: &str = "https://zed.dev/schema/themes/v0.2.0.json";
+const codeorbit_THEME_SCHEMA_URL: &str = "https://CodeOrbit.dev/schema/themes/v0.2.0.json";
 
 #[derive(Debug, Deserialize)]
 struct FamilyMetadata {
@@ -28,7 +28,7 @@ struct FamilyMetadata {
 
     /// Overrides for specific syntax tokens.
     ///
-    /// Use this to ensure certain Zed syntax tokens are matched
+    /// Use this to ensure certain CodeOrbit syntax tokens are matched
     /// to an exact set of scopes when it is not otherwise possible
     /// to rely on the default mappings in the theme importer.
     #[serde(default)]
@@ -128,7 +128,7 @@ fn main() -> Result<()> {
     let mut theme = serde_json::to_value(theme).unwrap();
     theme.as_object_mut().unwrap().insert(
         "$schema".to_string(),
-        serde_json::Value::String(ZED_THEME_SCHEMA_URL.to_string()),
+        serde_json::Value::String(codeorbit_THEME_SCHEMA_URL.to_string()),
     );
     let theme_json = serde_json::to_string_pretty(&theme).unwrap();
 

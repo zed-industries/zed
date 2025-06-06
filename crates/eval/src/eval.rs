@@ -1,4 +1,4 @@
-mod assertions;
+﻿mod assertions;
 mod example;
 mod examples;
 mod explorer;
@@ -96,8 +96,8 @@ fn main() {
     std::fs::create_dir_all(&examples_dir).unwrap();
     std::fs::create_dir_all(&paths::config_dir()).unwrap();
 
-    let zed_commit_sha = commit_sha_for_path(&root_dir);
-    let zed_branch_name = git_branch_for_path(&root_dir);
+    let codeorbit_commit_sha = commit_sha_for_path(&root_dir);
+    let codeorbit_branch_name = git_branch_for_path(&root_dir);
     let args = Args::parse();
     let languages: HashSet<String> = args.languages.into_iter().collect();
 
@@ -111,14 +111,14 @@ fn main() {
         let telemetry = app_state.client.telemetry();
         telemetry.start(system_id, installation_id, session_id, cx);
 
-        let enable_telemetry = env::var("ZED_EVAL_TELEMETRY").map_or(false, |value| value == "1")
+        let enable_telemetry = env::var("codeorbit_EVAL_TELEMETRY").map_or(false, |value| value == "1")
             && telemetry.has_checksum_seed();
         if enable_telemetry {
             println!("Telemetry enabled");
             telemetry::event!(
                 "Agent Eval Started",
-                zed_commit_sha = zed_commit_sha,
-                zed_branch_name = zed_branch_name,
+                codeorbit_commit_sha = codeorbit_commit_sha,
+                codeorbit_branch_name = codeorbit_branch_name,
                 run_id = run_id,
             );
         }
@@ -227,7 +227,7 @@ fn main() {
                     if !repo_path.join(".git").is_dir() {
                         println!(
                             "{:<width$} < {}",
-                            "↓ Cloning",
+                            "â†“ Cloning",
                             repo_url,
                             width = max_name_width
                         );
@@ -242,7 +242,7 @@ fn main() {
                     } else {
                         println!(
                             "{:<width$}  < {}",
-                            "✔︎ Already cloned",
+                            "âœ”ï¸Ž Already cloned",
                             repo_url,
                             width = max_name_width
                         );
@@ -270,8 +270,8 @@ fn main() {
                 let app_state = app_state.clone();
                 let model = agent_model.model.clone();
                 let judge_model = judge_model.model.clone();
-                let zed_commit_sha = zed_commit_sha.clone();
-                let zed_branch_name = zed_branch_name.clone();
+                let codeorbit_commit_sha = codeorbit_commit_sha.clone();
+                let codeorbit_branch_name = codeorbit_branch_name.clone();
                 let run_id = run_id.clone();
                 let examples = examples.clone();
                 let results = results_by_example_name.clone();
@@ -288,8 +288,8 @@ fn main() {
                             let judge_output = judge_example(
                                 example.clone(),
                                 judge_model.clone(),
-                                &zed_commit_sha,
-                                &zed_branch_name,
+                                &codeorbit_commit_sha,
+                                &codeorbit_branch_name,
                                 &run_id,
                                 &run_output,
                                 enable_telemetry,
@@ -348,7 +348,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
-        "Zed/{} ({}; {})",
+        "CodeOrbit/{} ({}; {})",
         AppVersion::global(cx),
         std::env::consts::OS,
         std::env::consts::ARCH
@@ -507,8 +507,8 @@ pub fn git_branch_for_path(repo_path: &Path) -> String {
 async fn judge_example(
     example: ExampleInstance,
     model: Arc<dyn LanguageModel>,
-    zed_commit_sha: &str,
-    zed_branch_name: &str,
+    codeorbit_commit_sha: &str,
+    codeorbit_branch_name: &str,
     run_id: &str,
     run_output: &RunOutput,
     enable_telemetry: bool,
@@ -519,8 +519,8 @@ async fn judge_example(
     if enable_telemetry {
         telemetry::event!(
             "Agent Example Evaluated",
-            zed_commit_sha = zed_commit_sha,
-            zed_branch_name = zed_branch_name,
+            codeorbit_commit_sha = codeorbit_commit_sha,
+            codeorbit_branch_name = codeorbit_branch_name,
             run_id = run_id,
             example_name = example.name.clone(),
             example_repetition = example.repetition,

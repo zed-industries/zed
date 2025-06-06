@@ -1,6 +1,6 @@
-# HTML
+﻿# HTML
 
-HTML support is available through the [HTML extension](https://github.com/zed-industries/zed/tree/main/extensions/html).
+HTML support is available through the [HTML extension](https://github.com/CodeOrbit-industries/CodeOrbit/tree/main/extensions/html).
 
 - Tree-sitter: [tree-sitter/tree-sitter-html](https://github.com/tree-sitter/tree-sitter-html)
 - Language Server: [microsoft/vscode-html-languageservice](https://github.com/microsoft/vscode-html-languageservice)
@@ -17,9 +17,9 @@ This extension is automatically installed, but if you do not want to use it, you
 
 ## Formatting
 
-By default Zed uses [Prettier](https://prettier.io/) for formatting HTML.
+By default CodeOrbit uses [Prettier](https://prettier.io/) for formatting HTML.
 
-You can disable `format_on_save` by adding the following to your Zed `settings.json`:
+You can disable `format_on_save` by adding the following to your CodeOrbit `settings.json`:
 
 ```json
   "languages": {
@@ -33,7 +33,7 @@ You can still trigger formatting manually with {#kb editor::Format} or by openin
 
 ### LSP Formatting
 
-To use the `vscode-html-language-server` language server auto-formatting instead of Prettier, add the following to your Zed settings:
+To use the `vscode-html-language-server` language server auto-formatting instead of Prettier, add the following to your CodeOrbit settings:
 
 ```json
   "languages": {
@@ -43,7 +43,7 @@ To use the `vscode-html-language-server` language server auto-formatting instead
   }
 ```
 
-You can customize various [formatting options](https://code.visualstudio.com/docs/languages/html#_formatting) for `vscode-html-language-server` via your Zed `settings.json`:
+You can customize various [formatting options](https://code.visualstudio.com/docs/languages/html#_formatting) for `vscode-html-language-server` via your CodeOrbit `settings.json`:
 
 ```json
   "lsp": {

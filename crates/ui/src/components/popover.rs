@@ -1,4 +1,4 @@
-use crate::prelude::*;
+﻿use crate::prelude::*;
 use crate::v_flex;
 use gpui::{
     AnyElement, App, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, Window, div,
@@ -80,7 +80,7 @@ impl Popover {
 
     pub fn aside(mut self, aside: impl IntoElement) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.aside = Some(aside.into_element().into_any());
         self

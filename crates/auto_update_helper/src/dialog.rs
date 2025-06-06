@@ -1,4 +1,4 @@
-use std::{cell::RefCell, sync::mpsc::Receiver};
+﻿use std::{cell::RefCell, sync::mpsc::Receiver};
 
 use anyhow::{Context as _, Result};
 use windows::{
@@ -40,7 +40,7 @@ struct DialogInfo {
 
 pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWND> {
     unsafe {
-        let class_name = windows::core::w!("Zed-Auto-Updater-Dialog-Class");
+        let class_name = windows::core::w!("CodeOrbit-Auto-Updater-Dialog-Class");
         let module = GetModuleHandleW(None).context("unable to get module handle")?;
         let handle = LoadImageW(
             Some(module.into()),
@@ -72,7 +72,7 @@ pub(crate) fn create_dialog_window(receiver: Receiver<Result<()>>) -> Result<HWN
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
             class_name,
-            windows::core::w!("Zed Editor"),
+            windows::core::w!("CodeOrbit Editor"),
             WS_VISIBLE | WS_POPUP | WS_CAPTION,
             rect.right / 2 - width / 2,
             rect.bottom / 2 - height / 2,
@@ -171,7 +171,7 @@ unsafe extern "system" fn wnd_proc(
                 &HSTRING::from(font_name),
             );
             let temp = SelectObject(hdc, font.into());
-            let string = HSTRING::from("Zed Editor is updating...");
+            let string = HSTRING::from("CodeOrbit Editor is updating...");
             return_if_failed!(TextOutW(hdc, 20, 15, &string).ok());
             return_if_failed!(DeleteObject(temp).ok());
 
@@ -188,7 +188,7 @@ unsafe extern "system" fn wnd_proc(
             with_dialog_data(hwnd, |data| {
                 if let Ok(result) = data.borrow_mut().rx.recv() {
                     if let Err(e) = result {
-                        log::error!("Failed to update Zed: {:?}", e);
+                        log::error!("Failed to update CodeOrbit: {:?}", e);
                         show_error(format!("Error: {:?}", e));
                     }
                 }

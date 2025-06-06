@@ -1,6 +1,6 @@
-# TypeScript
+﻿# TypeScript
 
-TypeScript and TSX support are available natively in Zed.
+TypeScript and TSX support are available natively in CodeOrbit.
 
 - Tree-sitter: [tree-sitter/tree-sitter-typescript](https://github.com/tree-sitter/tree-sitter-typescript)
 - Language Server: [yioneko/vtsls](https://github.com/yioneko/vtsls)
@@ -12,7 +12,7 @@ TBD: Document the difference between Language servers
 
 ## Language servers
 
-By default Zed uses [vtsls](https://github.com/yioneko/vtsls) for TypeScript, TSX, and JavaScript files.
+By default CodeOrbit uses [vtsls](https://github.com/yioneko/vtsls) for TypeScript, TSX, and JavaScript files.
 You can configure the use of [typescript-language-server](https://github.com/typescript-language-server/typescript-language-server) per language in your settings file:
 
 ```json
@@ -65,9 +65,9 @@ Prettier will also be used for TypeScript files by default. To disable this:
 
 ## Inlay Hints
 
-Zed sets the following initialization options to make the language server send back inlay hints (that is, when Zed has inlay hints enabled in the settings).
+CodeOrbit sets the following initialization options to make the language server send back inlay hints (that is, when CodeOrbit has inlay hints enabled in the settings).
 
-You can override these settings in your Zed `settings.json` when using `typescript-language-server`:
+You can override these settings in your CodeOrbit `settings.json` when using `typescript-language-server`:
 
 ```json
 {
@@ -157,5 +157,5 @@ When using `vtsls`:
 
 ## See also
 
-- [Zed Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
-- [Zed Deno documentation](./deno.md)
+- [CodeOrbit Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.
+- [CodeOrbit Deno documentation](./deno.md)

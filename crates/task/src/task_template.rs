@@ -1,4 +1,4 @@
-use anyhow::{Context as _, bail};
+﻿use anyhow::{Context as _, bail};
 use collections::{HashMap, HashSet};
 use schemars::{JsonSchema, r#gen::SchemaSettings};
 use serde::{Deserialize, Serialize};
@@ -9,15 +9,15 @@ use util::{ResultExt, truncate_and_remove_front};
 
 use crate::{
     AttachRequest, ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId,
-    VariableName, ZED_VARIABLE_NAME_PREFIX,
+    VariableName, codeorbit_VARIABLE_NAME_PREFIX,
     serde_helpers::{non_empty_string_vec, non_empty_string_vec_json_schema},
 };
 
-/// A template definition of a Zed task to run.
+/// A template definition of a CodeOrbit task to run.
 /// May use the [`VariableName`] to get the corresponding substitutions into its fields.
 ///
 /// Template itself is not ready to spawn a task, it needs to be resolved with a [`TaskContext`] first, that
-/// contains all relevant Zed state in task variables.
+/// contains all relevant CodeOrbit state in task variables.
 /// A single template may produce different tasks (or none) for different contexts.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -42,20 +42,20 @@ pub struct TaskTemplate {
     #[serde(default)]
     pub allow_concurrent_runs: bool,
     /// What to do with the terminal pane and tab, after the command was started:
-    /// * `always` — always show the task's pane, and focus the corresponding tab in it (default)
-    // * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
-    // * `never` — do not alter focus, but still add/reuse the task's tab in its pane
+    /// * `always` â€” always show the task's pane, and focus the corresponding tab in it (default)
+    // * `no_focus` â€” always show the task's pane, add the task's tab in it, but don't focus it
+    // * `never` â€” do not alter focus, but still add/reuse the task's tab in its pane
     #[serde(default)]
     pub reveal: RevealStrategy,
     /// Where to place the task's terminal item after starting the task.
-    /// * `dock` — in the terminal dock, "regular" terminal items' place (default).
-    /// * `center` — in the central pane group, "main" editor area.
+    /// * `dock` â€” in the terminal dock, "regular" terminal items' place (default).
+    /// * `center` â€” in the central pane group, "main" editor area.
     #[serde(default)]
     pub reveal_target: RevealTarget,
     /// What to do with the terminal pane and tab, after the command had finished:
-    /// * `never` — do nothing when the command finishes (default)
-    /// * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
-    /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
+    /// * `never` â€” do nothing when the command finishes (default)
+    /// * `always` â€” always hide the terminal tab, hide the pane also if it was the last tab in it
+    /// * `on_success` â€” hide the terminal tab on task success only, otherwise behaves similar to `always`.
     #[serde(default)]
     pub hide: HideStrategy,
     /// Represents the tags which this template attaches to.
@@ -127,7 +127,7 @@ impl TaskTemplates {
 
 impl TaskTemplate {
     /// Replaces all `VariableName` task variables in the task template string fields.
-    /// If any replacement fails or the new string substitutions still have [`ZED_VARIABLE_NAME_PREFIX`],
+    /// If any replacement fails or the new string substitutions still have [`codeorbit_VARIABLE_NAME_PREFIX`],
     /// `None` is returned.
     ///
     /// Every [`ResolvedTask`] gets a [`TaskId`], based on the `id_base` (to avoid collision with various task sources),
@@ -336,7 +336,7 @@ fn substitute_all_template_variables_in_str<A: AsRef<str>>(
                 name.push_str(default);
             }
             return Ok(Some(name));
-        } else if variable_name.starts_with(ZED_VARIABLE_NAME_PREFIX) {
+        } else if variable_name.starts_with(codeorbit_VARIABLE_NAME_PREFIX) {
             bail!("Unknown variable name: {variable_name}");
         }
         // This is an unknown variable.
@@ -629,7 +629,7 @@ mod tests {
             assert_eq!(
                 spawn_in_terminal.label,
                 format!(
-                    "test label for 1234 and …{}",
+                    "test label for 1234 and â€¦{}",
                     &long_value[long_value.len() - MAX_DISPLAY_VARIABLE_LENGTH..]
                 ),
                 "Human-readable label should have long substitutions trimmed"
@@ -642,9 +642,9 @@ mod tests {
             assert_eq!(
                 spawn_in_terminal.args,
                 &[
-                    "arg1 $ZED_SELECTED_TEXT",
-                    "arg2 $ZED_COLUMN",
-                    "arg3 $ZED_SYMBOL",
+                    "arg1 $codeorbit_SELECTED_TEXT",
+                    "arg2 $codeorbit_COLUMN",
+                    "arg3 $codeorbit_SYMBOL",
                 ],
                 "Args should not be substituted with variables"
             );
@@ -692,7 +692,7 @@ mod tests {
             );
             assert_eq!(
                 resolved_task_attempt, None,
-                "If any of the Zed task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})"
+                "If any of the CodeOrbit task variables is not substituted, the task should not be resolved, but got some resolution without the variable {removed_variable:?} (index {i})"
             );
         }
     }
@@ -716,11 +716,11 @@ mod tests {
     }
 
     #[test]
-    fn test_errors_on_missing_zed_variable() {
+    fn test_errors_on_missing_CodeOrbit_variable() {
         let task = TaskTemplate {
             label: "My task".into(),
             command: "echo".into(),
-            args: vec!["$ZED_VARIABLE".into()],
+            args: vec!["$codeorbit_VARIABLE".into()],
             ..TaskTemplate::default()
         };
         assert!(

@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -30,11 +30,11 @@ pub struct FileFinderSettingsContent {
     /// Default: true
     pub git_status: Option<bool>,
     /// Whether to use gitignored files when searching.
-    /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    /// Only the file CodeOrbit had indexed will be used, not necessary all the gitignored files.
     ///
     /// Can accept 3 values:
     /// * `Some(true)`: Use all gitignored files
-    /// * `Some(false)`: Use only the files Zed had indexed
+    /// * `Some(false)`: Use only the files CodeOrbit had indexed
     /// * `None`: Be smart and search for ignored when called from a gitignored worktree
     ///
     /// Default: None

@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 set -euo pipefail
 source script/lib/blob-store.sh
@@ -13,7 +13,7 @@ bundle_name=""
 can_code_sign=false
 
 # This must match the team in the provisioning profile.
-IDENTITY="Zed Industries, Inc."
+IDENTITY="CodeOrbit Industries, Inc."
 APPLE_NOTARIZATION_TEAM="MQ55VZLNZQ"
 
 # Function for displaying help info
@@ -64,7 +64,7 @@ if [[ $# -gt 0 ]]; then
 fi
 
 # Get release channel
-pushd crates/zed
+pushd crates/CodeOrbit
 channel=$(<RELEASE_CHANNEL)
 export ZED_RELEASE_CHANNEL="${channel}"
 popd
@@ -72,8 +72,8 @@ popd
 export ZED_BUNDLE=true
 
 cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
-if [ "$cargo_bundle_version" != "cargo-bundle v0.6.1-zed" ]; then
-    cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+if [ "$cargo_bundle_version" != "cargo-bundle v0.6.1-CodeOrbit" ]; then
+    cargo install cargo-bundle --git https://github.com/CodeOrbit-industries/cargo-bundle.git --branch CodeOrbit-deploy
 fi
 
 # Deal with versions of macOS that don't include libstdc++ headers
@@ -88,17 +88,17 @@ script/generate-licenses
 
 if [ "$local_arch" = true ]; then
     echo "Building for local target only."
-    cargo build ${build_flag} --package zed --package cli --package remote_server
+    cargo build ${build_flag} --package CodeOrbit --package cli --package remote_server
 else
-    echo "Compiling zed binaries"
-    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
+    echo "Compiling CodeOrbit binaries"
+    cargo build ${build_flag} --package CodeOrbit --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
     # Build remote_server in separate invocation to prevent feature unification from other crates
     # from influencing dynamic libraries required by it.
     cargo build ${build_flag} --package remote_server     --target aarch64-apple-darwin --target x86_64-apple-darwin
 fi
 
 echo "Creating application bundle"
-pushd crates/zed
+pushd crates/CodeOrbit
 cp Cargo.toml Cargo.toml.backup
 sed \
     -i.backup \
@@ -121,18 +121,18 @@ if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n 
     can_code_sign=true
 
     echo "Setting up keychain for code signing..."
-    security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
-    security default-keychain -s zed.keychain
-    security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-    echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
-    security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-    rm /tmp/zed-certificate.p12
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
+    security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" CodeOrbit.keychain || echo ""
+    security default-keychain -s CodeOrbit.keychain
+    security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" CodeOrbit.keychain
+    echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/CodeOrbit-certificate.p12
+    security import /tmp/CodeOrbit-certificate.p12 -k CodeOrbit.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+    rm /tmp/CodeOrbit-certificate.p12
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" CodeOrbit.keychain
 
     function cleanup() {
         echo "Cleaning up keychain"
         security default-keychain -s login.keychain
-        security delete-keychain zed.keychain
+        security delete-keychain CodeOrbit.keychain
     }
 
     trap cleanup EXIT
@@ -191,31 +191,31 @@ function prepare_binaries() {
     local app_path=$2
 
     echo "Unpacking dSYMs for $architecture"
-    exe_path="target/${architecture}/${target_dir}/Zed"
+    exe_path="target/${architecture}/${target_dir}/CodeOrbit"
     if ! dsymutil --flat "${exe_path}" 2> target/dsymutil.log; then
         echo "dsymutil failed"
         cat target/dsymutil.log
         exit 1
     fi
     uuid=$(dwarfdump --uuid "${exe_path}" | cut -d ' ' -f 2 | tr 'A-F' 'a-f')
-    version="$(cargo metadata --no-deps --manifest-path crates/zed/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "zed"))[0].version')"
+    version="$(cargo metadata --no-deps --manifest-path crates/CodeOrbit/Cargo.toml --offline --format-version=1 | jq -r '.packages | map(select(.name == "CodeOrbit"))[0].version')"
     if [ "$channel" == "nightly" ]; then
         version="$version-$(git rev-parse --short HEAD)"
     fi
 
     echo "Removing existing gzipped dSYMs for $architecture"
-    rm -f target/${architecture}/${target_dir}/Zed.dwarf.gz
+    rm -f target/${architecture}/${target_dir}/CodeOrbit.dwarf.gz
 
     echo "Gzipping dSYMs for $architecture"
-    gzip -f target/${architecture}/${target_dir}/Zed.dwarf
+    gzip -f target/${architecture}/${target_dir}/CodeOrbit.dwarf
 
     echo "Uploading dSYMs${architecture} for $architecture to by-uuid/${uuid}.dwarf.gz"
     upload_to_blob_store_public \
-        "zed-debug-symbols" \
-        target/${architecture}/${target_dir}/Zed.dwarf.gz \
+        "CodeOrbit-debug-symbols" \
+        target/${architecture}/${target_dir}/CodeOrbit.dwarf.gz \
         "by-uuid/${uuid}.dwarf.gz"
 
-    cp target/${architecture}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
+    cp target/${architecture}/${target_dir}/CodeOrbit "${app_path}/Contents/MacOS/CodeOrbit"
     cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
 }
 
@@ -233,15 +233,15 @@ function sign_app_binaries() {
     download_git "${architecture}" "${app_path}/Contents/MacOS/git"
 
     # Note: The app identifier for our development builds is the same as the app identifier for nightly.
-    cp crates/zed/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
+    cp crates/CodeOrbit/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
 
     if [[ $can_code_sign = true ]]; then
         echo "Code signing binaries"
         # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
         /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zed" -v
-        /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/CodeOrbit/resources/CodeOrbit.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/CodeOrbit" -v
+        /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/CodeOrbit/resources/CodeOrbit.entitlements --sign "$IDENTITY" "${app_path}" -v
     else
         echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_KEY, APPLE_NOTARIZATION_KEY_ID, APPLE_NOTARIZATION_ISSUER_ID"
         if [[ "$local_only" = false ]]; then
@@ -258,9 +258,9 @@ function sign_app_binaries() {
         # - get a signing key for the MQ55VZLNZQ team from Nathan.
         # - create your own signing key, and update references to MQ55VZLNZQ to your own team ID
         # then comment out this line.
-        cat crates/zed/resources/zed.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/zed.entitlements"
+        cat crates/CodeOrbit/resources/CodeOrbit.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/CodeOrbit.entitlements"
 
-        codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
+        codesign --force --deep --entitlements "${app_path}/Contents/Resources/CodeOrbit.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
     fi
 
     if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
@@ -301,7 +301,7 @@ function sign_app_binaries() {
     else
         dmg_target_directory="target/${architecture_dir}/${target_dir}"
         dmg_source_directory="${dmg_target_directory}/dmg"
-        dmg_file_path="${dmg_target_directory}/Zed.dmg"
+        dmg_file_path="${dmg_target_directory}/CodeOrbit.dmg"
         xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
 
         rm -rf ${dmg_source_directory}
@@ -313,10 +313,10 @@ function sign_app_binaries() {
         ln -s /Applications ${dmg_source_directory}
 
         echo "Creating final DMG at ${dmg_file_path} using ${dmg_source_directory}"
-        hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+        hdiutil create -volname CodeOrbit -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
 
         # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
-        # This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
+        # This symlink causes CPU issues with CodeOrbit if the CodeOrbit codebase is the project being worked on, so we simply remove it for now.
         echo "Removing symlink to /Applications from ${dmg_source_directory}"
         rm ${dmg_source_directory}/Applications
 
@@ -344,7 +344,7 @@ function sign_binary() {
 
     if [[ $can_code_sign = true ]]; then
         echo "Code signing executable $binary_path"
-        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${binary_path}" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/CodeOrbit/resources/CodeOrbit.entitlements --sign "$IDENTITY" "${binary_path}" -v
     fi
 }
 
@@ -363,6 +363,6 @@ else
 
     sign_binary "target/x86_64-apple-darwin/release/remote_server"
     sign_binary "target/aarch64-apple-darwin/release/remote_server"
-    gzip -f --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
-    gzip -f --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
+    gzip -f --stdout --best target/x86_64-apple-darwin/release/remote_server > target/CodeOrbit-remote-server-macos-x86_64.gz
+    gzip -f --stdout --best target/aarch64-apple-darwin/release/remote_server > target/CodeOrbit-remote-server-macos-aarch64.gz
 fi

@@ -1,4 +1,4 @@
-use collections::HashMap;
+﻿use collections::HashMap;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -512,7 +512,7 @@ pub struct ModelHint {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NotificationType {
-    Initialized,
+    InitialiCodeOrbit,
     Progress,
     Message,
     ResourcesUpdated,
@@ -525,7 +525,7 @@ pub enum NotificationType {
 impl NotificationType {
     pub fn as_str(&self) -> &'static str {
         match self {
-            NotificationType::Initialized => "notifications/initialized",
+            NotificationType::InitialiCodeOrbit => "notifications/initialiCodeOrbit",
             NotificationType::Progress => "notifications/progress",
             NotificationType::Message => "notifications/message",
             NotificationType::ResourcesUpdated => "notifications/resources/updated",
@@ -540,7 +540,7 @@ impl NotificationType {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum ClientNotification {
-    Initialized,
+    InitialiCodeOrbit,
     Progress(ProgressParams),
     RootsListChanged,
     Cancelled {

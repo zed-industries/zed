@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "docs_preprocessor"
 version = "0.1.0"
 edition.workspace = true
@@ -15,7 +15,7 @@ settings.workspace = true
 regex.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-zed.workspace = true
+CodeOrbit.workspace = true
 gpui.workspace = true
 command_palette.workspace = true
 

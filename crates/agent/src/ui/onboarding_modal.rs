@@ -1,4 +1,4 @@
-use gpui::{
+﻿use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
 };
 use ui::{TintColor, Vector, VectorName, prelude::*};
@@ -40,7 +40,7 @@ impl AgentOnboardingModal {
     }
 
     fn view_blog(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        cx.open_url("http://zed.dev/blog/fastest-ai-code-editor");
+        cx.open_url("http://CodeOrbit.dev/blog/fastest-ai-code-editor");
         cx.notify();
 
         agent_onboarding_event!("Blog Link Clicked");
@@ -136,7 +136,7 @@ impl Render for AgentOnboardingModal {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Headline::new("Agentic Editing in Zed").size(HeadlineSize::Large)),
+                    .child(Headline::new("Agentic Editing in CodeOrbit").size(HeadlineSize::Large)),
             )
             .child(h_flex().absolute().top_2().right_2().child(
                 IconButton::new("cancel", IconName::X).on_click(cx.listener(
@@ -160,7 +160,7 @@ impl Render for AgentOnboardingModal {
             .full_width()
             .on_click(cx.listener(Self::view_blog));
 
-        let copy = "Zed now natively supports agentic editing, enabling fluid collaboration between humans and AI.";
+        let copy = "CodeOrbit now natively supports agentic editing, enabling fluid collaboration between humans and AI.";
 
         base.child(Label::new(copy).color(Color::Muted)).child(
             v_flex()

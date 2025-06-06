@@ -1,4 +1,4 @@
-//! Provides `language`-related settings.
+﻿//! Provides `language`-related settings.
 
 use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
@@ -99,7 +99,7 @@ pub struct LanguageSettings {
     pub ensure_final_newline_on_save: bool,
     /// How to perform a buffer format.
     pub formatter: SelectedFormatter,
-    /// Zed's Prettier integration settings.
+    /// CodeOrbit's Prettier integration settings.
     pub prettier: PrettierSettings,
     /// Whether to automatically close JSX tags.
     pub jsx_tag_auto_close: JsxTagAutoCloseSettings,
@@ -162,9 +162,9 @@ impl LanguageSettings {
     /// A token representing the rest of the available language servers.
     const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
 
-    /// Returns the customized list of language servers from the list of
+    /// Returns the customiCodeOrbit list of language servers from the list of
     /// available language servers.
-    pub fn customized_language_servers(
+    pub fn customiCodeOrbit_language_servers(
         &self,
         available_language_servers: &[LanguageServerName],
     ) -> Vec<LanguageServerName> {
@@ -215,13 +215,13 @@ pub enum EditPredictionProvider {
     #[default]
     Copilot,
     Supermaven,
-    Zed,
+    CodeOrbit,
 }
 
 impl EditPredictionProvider {
-    pub fn is_zed(&self) -> bool {
+    pub fn is_CodeOrbit(&self) -> bool {
         match self {
-            EditPredictionProvider::Zed => true,
+            EditPredictionProvider::CodeOrbit => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
             | EditPredictionProvider::Supermaven => false,
@@ -444,7 +444,7 @@ pub struct LanguageSettingsContent {
     /// Default: auto
     #[serde(default)]
     pub formatter: Option<SelectedFormatter>,
-    /// Zed's Prettier integration settings.
+    /// CodeOrbit's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
     /// and configure default Prettier, used when no project-level Prettier installation is found.
     ///
@@ -503,12 +503,12 @@ pub struct LanguageSettingsContent {
     #[serde(default)]
     pub inlay_hints: Option<InlayHintSettings>,
     /// Whether to automatically type closing characters for you. For example,
-    /// when you type (, Zed will automatically add a closing ) at the correct position.
+    /// when you type (, CodeOrbit will automatically add a closing ) at the correct position.
     ///
     /// Default: true
     pub use_autoclose: Option<bool>,
     /// Whether to automatically surround text with characters for you. For example,
-    /// when you select text and type (, Zed will automatically surround text with ().
+    /// when you select text and type (, CodeOrbit will automatically surround text with ().
     ///
     /// Default: true
     pub use_auto_surround: Option<bool>,
@@ -770,7 +770,7 @@ pub enum ShowWhitespaceSetting {
 /// Controls which formatter should be used when formatting code.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum SelectedFormatter {
-    /// Format files using Zed's Prettier integration (if applicable),
+    /// Format files using CodeOrbit's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
     #[default]
     Auto,
@@ -896,7 +896,7 @@ impl AsRef<[Formatter]> for FormatterList {
 pub enum Formatter {
     /// Format code using the current language server.
     LanguageServer { name: Option<String> },
-    /// Format code using Zed's Prettier integration.
+    /// Format code using CodeOrbit's Prettier integration.
     Prettier,
     /// Format code using an external command.
     External {
@@ -1046,13 +1046,13 @@ pub struct LanguageTaskConfig {
     pub variables: HashMap<String, String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Use LSP tasks over Zed language extension ones.
+    /// Use LSP tasks over CodeOrbit language extension ones.
     /// If no LSP tasks are returned due to error/timeout or regular execution,
-    /// Zed language extension tasks will be used instead.
+    /// CodeOrbit language extension tasks will be used instead.
     ///
-    /// Other Zed tasks will still be shown:
-    /// * Zed task from either of the task config file
-    /// * Zed task from history (e.g. one-off task was spawned before)
+    /// Other CodeOrbit tasks will still be shown:
+    /// * CodeOrbit task from either of the task config file
+    /// * CodeOrbit task from history (e.g. one-off task was spawned before)
     #[serde(default = "default_true")]
     pub prefer_lsp: bool,
 }

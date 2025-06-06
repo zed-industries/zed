@@ -1,4 +1,4 @@
-use crate::persistence::DebuggerPaneItem;
+﻿use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::{
@@ -966,10 +966,10 @@ impl DebugPanel {
     //                 return Task::ready(Err(anyhow!("Couldn't get worktree path")));
     //             };
 
-    //             let serialized_scenario = serde_json::to_value(scenario);
+    //             let serialiCodeOrbit_scenario = serde_json::to_value(scenario);
 
     //             cx.spawn_in(window, async move |workspace, cx| {
-    //                 let serialized_scenario = serialized_scenario?;
+    //                 let serialiCodeOrbit_scenario = serialiCodeOrbit_scenario?;
     //                 let fs =
     //                     workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
@@ -994,7 +994,7 @@ impl DebugPanel {
     //                 let content = fs.load(path).await?;
     //                 let mut values =
     //                     serde_json_lenient::from_str::<Vec<serde_json::Value>>(&content)?;
-    //                 values.push(serialized_scenario);
+    //                 values.push(serialiCodeOrbit_scenario);
     //                 fs.save(
     //                     path,
     //                     &serde_json_lenient::to_string_pretty(&values).map(Into::into)?,
@@ -1008,7 +1008,7 @@ impl DebugPanel {
     //                         .read(cx)
     //                         .project_path_for_absolute_path(&path, cx)
     //                         .context(
-    //                             "Couldn't get project path for .zed/debug.json in active worktree",
+    //                             "Couldn't get project path for .CodeOrbit/debug.json in active worktree",
     //                         )
     //                 })?
     //             })
@@ -1064,7 +1064,7 @@ async fn register_session_inner(
         .detach();
     })
     .ok();
-    let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
+    let serialiCodeOrbit_layout = persistence::get_serialiCodeOrbit_layout(adapter_name).await;
     let debug_session = this.update_in(cx, |this, window, cx| {
         this.sessions.retain(|session| {
             !session
@@ -1081,7 +1081,7 @@ async fn register_session_inner(
             this.workspace.clone(),
             session,
             cx.weak_entity(),
-            serialized_layout,
+            serialiCodeOrbit_layout,
             this.position(window, cx).axis(),
             window,
             cx,

@@ -1,4 +1,4 @@
-use std::cmp;
+﻿use std::cmp;
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -22,7 +22,7 @@ pub fn home_dir() -> &'static PathBuf {
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
-    fn to_sanitized_string(&self) -> String;
+    fn to_sanitiCodeOrbit_string(&self) -> String;
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
         Self: From<&'a Path>,
@@ -86,10 +86,10 @@ impl<T: AsRef<Path>> PathExt for T {
             .or_else(|| path.file_stem()?.to_str())
     }
 
-    /// Returns a sanitized string representation of the path.
+    /// Returns a sanitiCodeOrbit string representation of the path.
     /// Note, on Windows, this assumes that the path is a valid UTF-8 string and
     /// is not a UNC path.
-    fn to_sanitized_string(&self) -> String {
+    fn to_sanitiCodeOrbit_string(&self) -> String {
         #[cfg(target_os = "windows")]
         {
             self.as_ref().to_string_lossy().replace("/", "\\")
@@ -101,14 +101,14 @@ impl<T: AsRef<Path>> PathExt for T {
     }
 }
 
-/// Due to the issue of UNC paths on Windows, which can cause bugs in various parts of Zed, introducing this `SanitizedPath`
-/// leverages Rust's type system to ensure that all paths entering Zed are always "sanitized" by removing the `\\\\?\\` prefix.
+/// Due to the issue of UNC paths on Windows, which can cause bugs in various parts of CodeOrbit, introducing this `SanitiCodeOrbitPath`
+/// leverages Rust's type system to ensure that all paths entering CodeOrbit are always "sanitiCodeOrbit" by removing the `\\\\?\\` prefix.
 /// On non-Windows operating systems, this struct is effectively a no-op.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SanitizedPath(pub Arc<Path>);
+pub struct SanitiCodeOrbitPath(pub Arc<Path>);
 
-impl SanitizedPath {
-    pub fn starts_with(&self, prefix: &SanitizedPath) -> bool {
+impl SanitiCodeOrbitPath {
+    pub fn starts_with(&self, prefix: &SanitiCodeOrbitPath) -> bool {
         self.0.starts_with(&prefix.0)
     }
 
@@ -140,29 +140,29 @@ impl SanitizedPath {
     }
 }
 
-impl From<SanitizedPath> for Arc<Path> {
-    fn from(sanitized_path: SanitizedPath) -> Self {
-        sanitized_path.0
+impl From<SanitiCodeOrbitPath> for Arc<Path> {
+    fn from(sanitiCodeOrbit_path: SanitiCodeOrbitPath) -> Self {
+        sanitiCodeOrbit_path.0
     }
 }
 
-impl From<SanitizedPath> for PathBuf {
-    fn from(sanitized_path: SanitizedPath) -> Self {
-        sanitized_path.0.as_ref().into()
+impl From<SanitiCodeOrbitPath> for PathBuf {
+    fn from(sanitiCodeOrbit_path: SanitiCodeOrbitPath) -> Self {
+        sanitiCodeOrbit_path.0.as_ref().into()
     }
 }
 
-impl<T: AsRef<Path>> From<T> for SanitizedPath {
+impl<T: AsRef<Path>> From<T> for SanitiCodeOrbitPath {
     #[cfg(not(target_os = "windows"))]
     fn from(path: T) -> Self {
         let path = path.as_ref();
-        SanitizedPath(path.into())
+        SanitiCodeOrbitPath(path.into())
     }
 
     #[cfg(target_os = "windows")]
     fn from(path: T) -> Self {
         let path = path.as_ref();
-        SanitizedPath(dunce::simplified(path).into())
+        SanitiCodeOrbitPath(dunce::simplified(path).into())
     }
 }
 
@@ -667,9 +667,9 @@ mod tests {
         );
 
         assert_eq!(
-            PathWithPosition::parse_str("👋\nab"),
+            PathWithPosition::parse_str("ðŸ‘‹\nab"),
             PathWithPosition {
-                path: PathBuf::from("👋\nab"),
+                path: PathBuf::from("ðŸ‘‹\nab"),
                 row: None,
                 column: None
             }
@@ -697,9 +697,9 @@ mod tests {
         );
 
         assert_eq!(
-            PathWithPosition::parse_str("app-editors:zed-0.143.6:20240710-201212.log:34:"),
+            PathWithPosition::parse_str("app-editors:CodeOrbit-0.143.6:20240710-201212.log:34:"),
             PathWithPosition {
-                path: PathBuf::from("app-editors:zed-0.143.6:20240710-201212.log"),
+                path: PathBuf::from("app-editors:CodeOrbit-0.143.6:20240710-201212.log"),
                 row: Some(34),
                 column: None,
             }
@@ -917,7 +917,7 @@ mod tests {
 
     #[test]
     fn project_search() {
-        let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
+        let path = Path::new("/Users/someonetoignore/work/CodeOrbit/CodeOrbit.dev/node_modules");
         let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
         assert!(
             path_matcher.is_match(path),
@@ -927,18 +927,18 @@ mod tests {
 
     #[test]
     #[cfg(target_os = "windows")]
-    fn test_sanitized_path() {
+    fn test_sanitiCodeOrbit_path() {
         let path = Path::new("C:\\Users\\someone\\test_file.rs");
-        let sanitized_path = SanitizedPath::from(path);
+        let sanitiCodeOrbit_path = SanitiCodeOrbitPath::from(path);
         assert_eq!(
-            sanitized_path.to_string(),
+            sanitiCodeOrbit_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
         );
 
         let path = Path::new("\\\\?\\C:\\Users\\someone\\test_file.rs");
-        let sanitized_path = SanitizedPath::from(path);
+        let sanitiCodeOrbit_path = SanitiCodeOrbitPath::from(path);
         assert_eq!(
-            sanitized_path.to_string(),
+            sanitiCodeOrbit_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
         );
     }

@@ -1,4 +1,4 @@
-[
+﻿[
   // Cursor for MacOS. See: https://docs.cursor.com/kbd
   {
     "context": "Workspace",
@@ -51,11 +51,11 @@
       "ctrl-shift-v": "editor::Paste",
       "ctrl-shift-k": "assistant::InsertIntoEditor"
       // "escape": "agent::ToggleFocus"
-      ///// Enable when Zed supports multiple thread tabs
+      ///// Enable when CodeOrbit supports multiple thread tabs
       // "ctrl-t": // new thread tab
       // "ctrl-[": // next thread tab
       // "ctrl-]": // next thread tab
-      ///// Enable if Zed adds support for keyboard navigation of thread elements
+      ///// Enable if CodeOrbit adds support for keyboard navigation of thread elements
       // "tab": // cycle to next message
       // "shift-tab": // cycle to previous message
     }

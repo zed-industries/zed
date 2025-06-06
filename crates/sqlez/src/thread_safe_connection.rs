@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+﻿use anyhow::Context as _;
 use collections::HashMap;
 use futures::{Future, FutureExt, channel::oneshot};
 use parking_lot::{Mutex, RwLock};
@@ -140,7 +140,7 @@ impl ThreadSafeConnection {
         }
     }
 
-    /// Opens a new db connection with the initialized file path. This is internal and only
+    /// Opens a new db connection with the initialiCodeOrbit file path. This is internal and only
     /// called from the deref function.
     fn open_file(uri: &str) -> Connection {
         Connection::open_file(uri)
@@ -309,7 +309,7 @@ mod test {
 
     #[test]
     #[should_panic]
-    fn wild_zed_lost_failure() {
+    fn wild_CodeOrbit_lost_failure() {
         enum TestWorkspace {}
         impl Domain for TestWorkspace {
             fn name() -> &'static str {
@@ -341,7 +341,7 @@ mod test {
         }
 
         let builder =
-            ThreadSafeConnection::builder::<TestWorkspace>("wild_zed_lost_failure", false)
+            ThreadSafeConnection::builder::<TestWorkspace>("wild_CodeOrbit_lost_failure", false)
                 .with_connection_initialize_query("PRAGMA FOREIGN_KEYS=true");
 
         smol::block_on(builder.build()).unwrap();

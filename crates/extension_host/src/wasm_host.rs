@@ -1,4 +1,4 @@
-pub mod wit;
+﻿pub mod wit;
 
 use crate::ExtensionManifest;
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -57,7 +57,7 @@ pub struct WasmExtension {
     pub manifest: Arc<ExtensionManifest>,
     pub work_dir: Arc<Path>,
     #[allow(unused)]
-    pub zed_api_version: SemanticVersion,
+    pub codeorbit_api_version: SemanticVersion,
 }
 
 #[async_trait]
@@ -484,7 +484,7 @@ impl WasmHost {
         let this = self.clone();
         let manifest = manifest.clone();
         executor.clone().spawn(async move {
-            let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
+            let codeorbit_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
@@ -502,7 +502,7 @@ impl WasmHost {
             let mut extension = Extension::instantiate_async(
                 &mut store,
                 this.release_channel,
-                zed_api_version,
+                codeorbit_api_version,
                 &component,
             )
             .await?;
@@ -525,7 +525,7 @@ impl WasmHost {
                 manifest: manifest.clone(),
                 work_dir: this.work_dir.join(manifest.id.as_ref()).into(),
                 tx,
-                zed_api_version,
+                codeorbit_api_version,
             })
         })
     }
@@ -575,11 +575,11 @@ pub fn parse_wasm_extension_version(
         if let wasmparser::Payload::CustomSection(s) =
             part.context("error parsing wasm extension")?
         {
-            if s.name() == "zed:api-version" {
+            if s.name() == "CodeOrbit:api-version" {
                 version = parse_wasm_extension_version_custom_section(s.data());
                 if version.is_none() {
                     bail!(
-                        "extension {} has invalid zed:api-version section: {:?}",
+                        "extension {} has invalid CodeOrbit:api-version section: {:?}",
                         extension_id,
                         s.data()
                     );
@@ -593,7 +593,7 @@ pub fn parse_wasm_extension_version(
     //
     // By parsing the entirety of the Wasm bytes before we return, we're able to detect this problem
     // earlier as an `Err` rather than as a panic.
-    version.with_context(|| format!("extension {extension_id} has no zed:api-version section"))
+    version.with_context(|| format!("extension {extension_id} has no CodeOrbit:api-version section"))
 }
 
 fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVersion> {

@@ -1,4 +1,4 @@
-name: "Close Stale Issues"
+﻿name: "Close Stale Issues"
 on:
   schedule:
     - cron: "0 7,9,11 * * 3"
@@ -6,16 +6,16 @@ on:
 
 jobs:
   stale:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639 # v9
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           stale-issue-message: >
-            Hi there! 👋
+            Hi there! ðŸ‘‹
 
-            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. If you are able to reproduce this issue in the latest version of Zed, please let us know by commenting on this issue, and we will keep it open. If you can't reproduce it, feel free to close the issue yourself. Otherwise, we'll close it in 7 days.
+            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. If you are able to reproduce this issue in the latest version of CodeOrbit, please let us know by commenting on this issue, and we will keep it open. If you can't reproduce it, feel free to close the issue yourself. Otherwise, we'll close it in 7 days.
 
             Thanks for your help!
           close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please open a new issue with a link to this issue."

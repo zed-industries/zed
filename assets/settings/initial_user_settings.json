@@ -1,10 +1,10 @@
-// Zed settings
+﻿// CodeOrbit settings
 //
-// For information on how to configure Zed, see the Zed
-// documentation: https://zed.dev/docs/configuring-zed
+// For information on how to configure CodeOrbit, see the CodeOrbit
+// documentation: https://CodeOrbit.dev/docs/configuring-CodeOrbit
 //
-// To see all of Zed's default settings without changing your
-// custom settings, run `zed: open default settings` from the
+// To see all of CodeOrbit's default settings without changing your
+// custom settings, run `CodeOrbit: open default settings` from the
 // command palette (cmd-shift-p / ctrl-shift-p)
 {
   "ui_font_size": 16,

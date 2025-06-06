@@ -1,7 +1,7 @@
-# Biome
+﻿# Biome
 
-[Biome](https://biomejs.dev/) support in Zed is provided by the community-maintained [Biome extension](https://github.com/biomejs/biome-zed).
-Report issues to: [https://github.com/biomejs/biome-zed/issues](https://github.com/biomejs/biome-zed/issues)
+[Biome](https://biomejs.dev/) support in CodeOrbit is provided by the community-maintained [Biome extension](https://github.com/biomejs/biome-CodeOrbit).
+Report issues to: [https://github.com/biomejs/biome-CodeOrbit/issues](https://github.com/biomejs/biome-CodeOrbit/issues)
 
 - Language Server: [biomejs/biome](https://github.com/biomejs/biome)
 
@@ -32,4 +32,4 @@ By default, the `biome.json` file is required to be in the root of the workspace
 
 For a full list of `biome.json` options see [Biome Configuration](https://biomejs.dev/reference/configuration/) documentation.
 
-See the [Biome Zed Extension README](https://github.com/biomejs/biome-zed) for a complete list of features and configuration options.
+See the [Biome CodeOrbit Extension README](https://github.com/biomejs/biome-CodeOrbit) for a complete list of features and configuration options.

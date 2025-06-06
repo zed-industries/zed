@@ -1,6 +1,6 @@
-# Lua
+﻿# Lua
 
-Lua support is available through the [Lua extension](https://github.com/zed-extensions/lua).
+Lua support is available through the [Lua extension](https://github.com/CodeOrbit-extensions/lua).
 
 - Tree-sitter: [tree-sitter-grammars/tree-sitter-lua](https://github.com/tree-sitter-grammars/tree-sitter-lua)
 - Language server: [LuaLS/lua-language-server](https://github.com/LuaLS/lua-language-server)
@@ -18,15 +18,15 @@ To configure LuaLS you can create a `.luarc.json` file in the root of your works
 }
 ```
 
-See [LuaLS Settings Documentation](https://luals.github.io/wiki/settings/) for all available configuration options, or when editing this file in Zed available settings options will autocomplete, (e.g `runtime.version` will show `"Lua 5.1"`, `"Lua 5.2"`, `"Lua 5.3"`, `"Lua 5.4"` and `"LuaJIT"` as allowed values). Note when importing settings options from VSCode, remove the `Lua.` prefix. (e.g. `runtime.version` instead of `Lua.runtime.version`).
+See [LuaLS Settings Documentation](https://luals.github.io/wiki/settings/) for all available configuration options, or when editing this file in CodeOrbit available settings options will autocomplete, (e.g `runtime.version` will show `"Lua 5.1"`, `"Lua 5.2"`, `"Lua 5.3"`, `"Lua 5.4"` and `"LuaJIT"` as allowed values). Note when importing settings options from VSCode, remove the `Lua.` prefix. (e.g. `runtime.version` instead of `Lua.runtime.version`).
 
 ### LuaCATS Definitions
 
 LuaLS can provide enhanced LSP autocompletion suggestions and type validation with the help of LuaCATS (Lua Comment and Type System) definitions. These definitions are available for many common Lua libraries, and local paths containing them can be specified via `workspace.library` in `luarc.json`. You can do this via relative paths if you checkout your definitions into the same partent directory of your project (`../playdate-luacats`, `../love2d`, etc). Alternatively you can create submodule(s) inside your project for each LuaCATS definition repo.
 
-### LÖVE (Love2D) {#love2d}
+### LÃ–VE (Love2D) {#love2d}
 
-To use [LÖVE (Love2D)](https://love2d.org/) in Zed, checkout [LuaCATS/love2d](https://github.com/LuaCATS/love2d) into a folder called `love2d-luacats` into the parent folder of your project:
+To use [LÃ–VE (Love2D)](https://love2d.org/) in CodeOrbit, checkout [LuaCATS/love2d](https://github.com/LuaCATS/love2d) into a folder called `love2d-luacats` into the parent folder of your project:
 
 ```sh
 cd .. && git clone https://github.com/LuaCATS/love2d love2d-luacats
@@ -47,7 +47,7 @@ Then in your `.luarc.json`:
 
 ### PlaydateSDK
 
-To use [Playdate Lua SDK](https://play.date/dev/) in Zed, checkout [playdate-luacats](https://github.com/notpeter/playdate-luacats) into the parent folder of your project:
+To use [Playdate Lua SDK](https://play.date/dev/) in CodeOrbit, checkout [playdate-luacats](https://github.com/notpeter/playdate-luacats) into the parent folder of your project:
 
 ```sh
 cd .. && git clone https://github.com/notpeter/playdate-luacats
@@ -86,9 +86,9 @@ Then in your `.luarc.json`:
 
 ### Inlay Hints
 
-To enable [Inlay Hints](../configuring-languages.md#inlay-hints) for LuaLS in Zed
+To enable [Inlay Hints](../configuring-languages.md#inlay-hints) for LuaLS in CodeOrbit
 
-1. Add the following to your Zed settings.json:
+1. Add the following to your CodeOrbit settings.json:
 
 ```json
   "languages": {
@@ -118,7 +118,7 @@ To enable auto-formatting with your LuaLS (provided by [CppCXY/EmmyLuaCodeStyle]
 }
 ```
 
-Then add the following to your Zed `settings.json`:
+Then add the following to your CodeOrbit `settings.json`:
 
 ```json
 {

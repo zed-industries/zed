@@ -1,4 +1,4 @@
-use crate::db::{BillingCustomerId, BillingSubscriptionId};
+﻿use crate::db::{BillingCustomerId, BillingSubscriptionId};
 use crate::stripe_client;
 use chrono::{Datelike as _, NaiveDate, Utc};
 use sea_orm::entity::prelude::*;
@@ -87,20 +87,20 @@ impl ActiveModelBehavior for ActiveModel {}
 #[sea_orm(rs_type = "String", db_type = "String(StringLen::None)")]
 #[serde(rename_all = "snake_case")]
 pub enum SubscriptionKind {
-    #[sea_orm(string_value = "zed_pro")]
-    ZedPro,
-    #[sea_orm(string_value = "zed_pro_trial")]
-    ZedProTrial,
-    #[sea_orm(string_value = "zed_free")]
-    ZedFree,
+    #[sea_orm(string_value = "codeorbit_pro")]
+    CodeOrbitPro,
+    #[sea_orm(string_value = "codeorbit_pro_trial")]
+    CodeOrbitProTrial,
+    #[sea_orm(string_value = "codeorbit_free")]
+    CodeOrbitFree,
 }
 
-impl From<SubscriptionKind> for zed_llm_client::Plan {
+impl From<SubscriptionKind> for codeorbit_llm_client::Plan {
     fn from(value: SubscriptionKind) -> Self {
         match value {
-            SubscriptionKind::ZedPro => Self::ZedPro,
-            SubscriptionKind::ZedProTrial => Self::ZedProTrial,
-            SubscriptionKind::ZedFree => Self::ZedFree,
+            SubscriptionKind::CodeOrbitPro => Self::CodeOrbitPro,
+            SubscriptionKind::CodeOrbitProTrial => Self::CodeOrbitProTrial,
+            SubscriptionKind::CodeOrbitFree => Self::CodeOrbitFree,
         }
     }
 }

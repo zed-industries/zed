@@ -1,4 +1,4 @@
-use super::{
+﻿use super::{
     BoolExt, MacKeyboardLayout,
     attributed_string::{NSAttributedString, NSMutableAttributedString},
     events::key_to_native,
@@ -195,8 +195,8 @@ impl MacPlatform {
             foreground_executor: ForegroundExecutor::new(dispatcher),
             renderer_context: renderer::Context::default(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
-            text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
-            metadata_pasteboard_type: unsafe { ns_string("zed-metadata") },
+            text_hash_pasteboard_type: unsafe { ns_string("CodeOrbit-text-hash") },
+            metadata_pasteboard_type: unsafe { ns_string("CodeOrbit-metadata") },
             reopen: None,
             quit: None,
             menu_command: None,
@@ -317,7 +317,7 @@ impl MacPlatform {
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
-                    // https://github.com/zed-industries/zed/issues/23621
+                    // https://github.com/CodeOrbit-industries/CodeOrbit/issues/23621
                     let keystrokes = keymap
                         .bindings_for_action(action.as_ref())
                         .find_or_first(|binding| {
@@ -658,7 +658,7 @@ impl Platform for MacPlatform {
                 let result = if error == nil {
                     Ok(())
                 } else {
-                    let msg: id = msg_send![error, localizedDescription];
+                    let msg: id = msg_send![error, localiCodeOrbitDescription];
                     Err(anyhow!("Failed to register: {msg:?}"))
                 };
 
@@ -748,7 +748,7 @@ impl Platform for MacPlatform {
                                         .split(|&b| b == b'.')
                                         .collect::<Vec<_>>();
 
-                                    // https://github.com/zed-industries/zed/issues/16969
+                                    // https://github.com/CodeOrbit-industries/CodeOrbit/issues/16969
                                     // Workaround a bug in macOS Sequoia that adds an extra file-extension
                                     // sometimes. e.g. `a.sql` becomes `a.sql.s` or `a.txtx` becomes `a.txtx.txt`
                                     //
@@ -926,7 +926,7 @@ impl Platform for MacPlatform {
                 CursorStyle::ResizeColumn => msg_send![class!(NSCursor), resizeLeftRightCursor],
                 CursorStyle::ResizeRow => msg_send![class!(NSCursor), resizeUpDownCursor],
                 CursorStyle::ResizeUp => msg_send![class!(NSCursor), resizeUpCursor],
-                CursorStyle::ResizeDown => msg_send![class!(NSCursor), resizeDownCursor],
+                CursorStyle::ResiCodeOrbitown => msg_send![class!(NSCursor), resiCodeOrbitownCursor],
 
                 // Undocumented, private class methods:
                 // https://stackoverflow.com/questions/27242353/cocoa-predefined-resize-mouse-cursor
@@ -1492,7 +1492,7 @@ unsafe extern "C" {
     pub(super) fn LMGetKbdType() -> u16;
     pub(super) static kTISPropertyUnicodeKeyLayoutData: CFStringRef;
     pub(super) static kTISPropertyInputSourceID: CFStringRef;
-    pub(super) static kTISPropertyLocalizedName: CFStringRef;
+    pub(super) static kTISPropertyLocaliCodeOrbitName: CFStringRef;
 }
 
 mod security {

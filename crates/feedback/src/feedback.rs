@@ -1,31 +1,31 @@
-use gpui::{App, ClipboardItem, PromptLevel, actions};
+﻿use gpui::{App, ClipboardItem, PromptLevel, actions};
 use system_specs::SystemSpecs;
 use util::ResultExt;
 use workspace::Workspace;
-use zed_actions::feedback::FileBugReport;
+use codeorbit_actions::feedback::FileBugReport;
 
 pub mod feedback_modal;
 
 pub mod system_specs;
 
 actions!(
-    zed,
+    CodeOrbit,
     [
         CopySystemSpecsIntoClipboard,
-        EmailZed,
-        OpenZedRepo,
+        EmailCodeOrbit,
+        OpenCodeOrbitRepo,
         RequestFeature,
     ]
 );
 
-const ZED_REPO_URL: &str = "https://github.com/zed-industries/zed";
+const codeorbit_REPO_URL: &str = "https://github.com/CodeOrbit-industries/CodeOrbit";
 
-const REQUEST_FEATURE_URL: &str = "https://github.com/zed-industries/zed/discussions/new/choose";
+const REQUEST_FEATURE_URL: &str = "https://github.com/CodeOrbit-industries/CodeOrbit/discussions/new/choose";
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {
     format!(
         concat!(
-            "https://github.com/zed-industries/zed/issues/new",
+            "https://github.com/CodeOrbit-industries/CodeOrbit/issues/new",
             "?",
             "template=10_bug_report.yml",
             "&",
@@ -35,9 +35,9 @@ fn file_bug_report_url(specs: &SystemSpecs) -> String {
     )
 }
 
-fn email_zed_url(specs: &SystemSpecs) -> String {
+fn email_CodeOrbit_url(specs: &SystemSpecs) -> String {
     format!(
-        concat!("mailto:hi@zed.dev", "?", "body={}"),
+        concat!("mailto:hi@CodeOrbit.dev", "?", "body={}"),
         email_body(specs)
     )
 }
@@ -89,19 +89,19 @@ pub fn init(cx: &mut App) {
                 })
                 .detach();
             })
-            .register_action(move |_, _: &EmailZed, window, cx| {
+            .register_action(move |_, _: &EmailCodeOrbit, window, cx| {
                 let specs = SystemSpecs::new(window, cx);
                 cx.spawn_in(window, async move |_, cx| {
                     let specs = specs.await;
                     cx.update(|_, cx| {
-                        cx.open_url(&email_zed_url(&specs));
+                        cx.open_url(&email_CodeOrbit_url(&specs));
                     })
                     .log_err();
                 })
                 .detach();
             })
-            .register_action(move |_, _: &OpenZedRepo, _, cx| {
-                cx.open_url(ZED_REPO_URL);
+            .register_action(move |_, _: &OpenCodeOrbitRepo, _, cx| {
+                cx.open_url(codeorbit_REPO_URL);
             });
     })
     .detach();

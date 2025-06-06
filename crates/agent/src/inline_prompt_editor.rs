@@ -1,4 +1,4 @@
-use crate::agent_model_selector::AgentModelSelector;
+﻿use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context::ContextCreasesAddon;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
@@ -19,7 +19,7 @@ use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
-use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
+use feature_flags::{FeatureFlagAppExt as _, CodeOrbitProFeatureFlag};
 use fs::Fs;
 use gpui::{
     AnyElement, App, ClickEvent, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
@@ -144,7 +144,7 @@ impl<T: 'static> Render for PromptEditor<T> {
 
                                 let error_message = SharedString::from(error.to_string());
                                 if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                                    && cx.has_flag::<ZedProFeatureFlag>()
+                                    && cx.has_flag::<CodeOrbitProFeatureFlag>()
                                 {
                                     el.child(
                                         v_flex()
@@ -263,7 +263,7 @@ impl<T: 'static> PromptEditor<T> {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text("Add a promptâ€¦", cx);
             editor.set_text(prompt, window, cx);
             insert_message_creases(
                 &mut editor,
@@ -294,11 +294,11 @@ impl<T: 'static> PromptEditor<T> {
         };
 
         let agent_panel_keybinding =
-            ui::text_for_action(&zed_actions::assistant::ToggleFocus, window, cx)
-                .map(|keybinding| format!("{keybinding} to chat ― "))
+            ui::text_for_action(&codeorbit_actions::assistant::ToggleFocus, window, cx)
+                .map(|keybinding| format!("{keybinding} to chat â€• "))
                 .unwrap_or_default();
 
-        format!("{action}… ({agent_panel_keybinding}↓↑ for history)")
+        format!("{action}â€¦ ({agent_panel_keybinding}â†“â†‘ for history)")
     }
 
     pub fn prompt(&self, cx: &App) -> String {
@@ -719,7 +719,7 @@ impl<T: 'static> PromptEditor<T> {
                         .weight(FontWeight::BOLD),
                 )
                 .child(Label::new(
-                    "Try Zed Pro for higher limits, a wider range of models, and more.",
+                    "Try CodeOrbit Pro for higher limits, a wider range of models, and more.",
                 ))
                 .child(
                     h_flex()
@@ -753,7 +753,7 @@ impl<T: 'static> PromptEditor<T> {
                                 .child(Button::new("more-info", "More Info").on_click(
                                     |_event, window, cx| {
                                         window.dispatch_action(
-                                            Box::new(zed_actions::OpenAccountSettings),
+                                            Box::new(codeorbit_actions::OpenAccountSettings),
                                             cx,
                                         )
                                     },
@@ -832,7 +832,7 @@ pub enum PromptEditorEvent {
     ConfirmRequested { execute: bool },
     CancelRequested,
     DismissRequested,
-    Resized { height_in_lines: u8 },
+    ResiCodeOrbit { height_in_lines: u8 },
 }
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
@@ -978,7 +978,7 @@ impl PromptEditor<BufferCodegen> {
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
             CodegenStatus::Error(error) => {
-                if cx.has_flag::<ZedProFeatureFlag>()
+                if cx.has_flag::<CodeOrbitProFeatureFlag>()
                     && error.error_code() == proto::ErrorCode::RateLimitExceeded
                     && !RateLimitNotice::dismissed()
                 {
@@ -1147,7 +1147,7 @@ impl PromptEditor<TerminalCodegen> {
             } => {
                 if height_in_lines != *current_height {
                     *current_height = height_in_lines;
-                    cx.emit(PromptEditorEvent::Resized { height_in_lines });
+                    cx.emit(PromptEditorEvent::ResiCodeOrbit { height_in_lines });
                 }
             }
             PromptEditorMode::Buffer { .. } => unreachable!(),

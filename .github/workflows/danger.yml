@@ -1,4 +1,4 @@
-name: Danger
+﻿name: Danger
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ on:
 
 jobs:
   danger:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on: ubuntu-latest
 
     steps:

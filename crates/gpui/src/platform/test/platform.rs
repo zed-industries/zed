@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
     PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
@@ -436,10 +436,10 @@ struct TestKeyboardLayout;
 
 impl PlatformKeyboardLayout for TestKeyboardLayout {
     fn id(&self) -> &str {
-        "zed.keyboard.example"
+        "CodeOrbit.keyboard.example"
     }
 
     fn name(&self) -> &str {
-        "zed.keyboard.example"
+        "CodeOrbit.keyboard.example"
     }
 }

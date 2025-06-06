@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use db::{
     define_connection, query,
     sqlez::{bindable::Column, statement::Statement},
@@ -8,20 +8,20 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub(crate) struct SerializedCommandInvocation {
+pub(crate) struct SerialiCodeOrbitCommandInvocation {
     pub(crate) command_name: String,
     pub(crate) user_query: String,
     pub(crate) last_invoked: OffsetDateTime,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub(crate) struct SerializedCommandUsage {
+pub(crate) struct SerialiCodeOrbitCommandUsage {
     pub(crate) command_name: String,
     pub(crate) invocations: u16,
     pub(crate) last_invoked: OffsetDateTime,
 }
 
-impl Column for SerializedCommandUsage {
+impl Column for SerialiCodeOrbitCommandUsage {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (command_name, next_index): (String, i32) = Column::column(statement, start_index)?;
         let (invocations, next_index): (u16, i32) = Column::column(statement, next_index)?;
@@ -36,7 +36,7 @@ impl Column for SerializedCommandUsage {
     }
 }
 
-impl Column for SerializedCommandInvocation {
+impl Column for SerialiCodeOrbitCommandInvocation {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (command_name, next_index): (String, i32) = Column::column(statement, start_index)?;
         let (user_query, next_index): (String, i32) = Column::column(statement, next_index)?;
@@ -77,7 +77,7 @@ impl CommandPaletteDB {
     }
 
     query! {
-        pub fn get_last_invoked(command: &str) -> Result<Option<SerializedCommandInvocation>> {
+        pub fn get_last_invoked(command: &str) -> Result<Option<SerialiCodeOrbitCommandInvocation>> {
             SELECT
             command_name,
             user_query,
@@ -89,7 +89,7 @@ impl CommandPaletteDB {
     }
 
     query! {
-        pub fn get_command_usage(command: &str) -> Result<Option<SerializedCommandUsage>> {
+        pub fn get_command_usage(command: &str) -> Result<Option<SerialiCodeOrbitCommandUsage>> {
             SELECT command_name, COUNT(1), MAX(last_invoked)
             FROM command_invocations
             WHERE command_name=(?)
@@ -105,7 +105,7 @@ impl CommandPaletteDB {
     }
 
     query! {
-        pub fn list_commands_used() -> Result<Vec<SerializedCommandUsage>> {
+        pub fn list_commands_used() -> Result<Vec<SerialiCodeOrbitCommandUsage>> {
             SELECT command_name, COUNT(1), MAX(last_invoked)
             FROM command_invocations
             GROUP BY command_name
@@ -117,7 +117,7 @@ impl CommandPaletteDB {
 #[cfg(test)]
 mod tests {
 
-    use crate::persistence::{CommandPaletteDB, SerializedCommandUsage};
+    use crate::persistence::{CommandPaletteDB, SerialiCodeOrbitCommandUsage};
 
     #[gpui::test]
     async fn test_saves_and_retrieves_command_invocation() {
@@ -158,7 +158,7 @@ mod tests {
         let command_usage = db.get_command_usage("go to line: toggle").unwrap();
 
         assert!(command_usage.is_some());
-        let command_usage: SerializedCommandUsage = command_usage.expect("is some");
+        let command_usage: SerialiCodeOrbitCommandUsage = command_usage.expect("is some");
 
         assert_eq!(command_usage.command_name, "go to line: toggle");
         assert_eq!(command_usage.invocations, 2);

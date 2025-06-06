@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
@@ -664,7 +664,7 @@ fn video_frame_buffer_to_webrtc(_frame: ScreenCaptureFrame) -> Option<impl AsRef
     None as Option<Box<dyn VideoBuffer>>
 }
 
-trait DeviceChangeListenerApi: Stream<Item = ()> + Sized {
+trait DeviceChangeListenerApi: Stream<Item = ()> + SiCodeOrbit {
     fn new(input: bool) -> Result<Self>;
 }
 
@@ -679,7 +679,7 @@ mod macos {
     };
     use futures::{StreamExt, channel::mpsc::UnboundedReceiver};
 
-    /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
+    /// Implementation from: https://github.com/CodeOrbit-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
     pub struct CoreAudioDefaultDeviceChangeListener {
         rx: UnboundedReceiver<()>,
         callback: Box<PropertyListenerCallbackWrapper>,

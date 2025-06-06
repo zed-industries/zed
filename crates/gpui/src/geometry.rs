@@ -1,4 +1,4 @@
-//! The GPUI geometry module is a collection of types and traits that
+﻿//! The GPUI geometry module is a collection of types and traits that
 //! can be used to describe common units, concepts, and the relationships
 //! between them.
 
@@ -654,13 +654,13 @@ where
     T: Clone + Debug + Default + PartialEq,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Size {{ {:?} × {:?} }}", self.width, self.height)
+        write!(f, "Size {{ {:?} Ã— {:?} }}", self.width, self.height)
     }
 }
 
 impl<T: Clone + Debug + Default + PartialEq + Display> Display for Size<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} × {}", self.width, self.height)
+        write!(f, "{} Ã— {}", self.width, self.height)
     }
 }
 
@@ -776,8 +776,8 @@ impl Bounds<Pixels> {
             })
     }
 
-    /// Generate maximized bounds for the given display or primary display if none is provided
-    pub fn maximized(display_id: Option<DisplayId>, cx: &App) -> Self {
+    /// Generate maximiCodeOrbit bounds for the given display or primary display if none is provided
+    pub fn maximiCodeOrbit(display_id: Option<DisplayId>, cx: &App) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
@@ -1356,7 +1356,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Corner, Point, Size};
+    /// # use CodeOrbit::{Bounds, Corner, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
@@ -1732,7 +1732,7 @@ impl<T: Clone + Debug + Default + PartialEq + Copy> Copy for Edges<T> {}
 impl<T: Clone + Debug + Default + PartialEq> Edges<T> {
     /// Constructs `Edges` where all sides are set to the same specified value.
     ///
-    /// This function creates an `Edges` instance with the `top`, `right`, `bottom`, and `left` fields all initialized
+    /// This function creates an `Edges` instance with the `top`, `right`, `bottom`, and `left` fields all initialiCodeOrbit
     /// to the same value provided as an argument. This is useful when you want to have uniform edges around a box,
     /// such as padding or margin with the same size on all sides.
     ///
@@ -2119,7 +2119,7 @@ impl Corner {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Corner;
+    /// # use CodeOrbit::Corner;
     /// assert_eq!(Corner::TopLeft.opposite_corner(), Corner::BottomRight);
     /// ```
     pub fn opposite_corner(self) -> Self {
@@ -2136,7 +2136,7 @@ impl Corner {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Corner;
+    /// # use CodeOrbit::Corner;
     /// let result = Corner::TopLeft.other_side_corner_along(Axis::Horizontal);
     /// assert_eq!(result, Corner::TopRight);
     /// ```
@@ -2181,7 +2181,7 @@ where
 {
     /// Constructs `Corners` where all sides are set to the same specified value.
     ///
-    /// This function creates a `Corners` instance with the `top_left`, `top_right`, `bottom_right`, and `bottom_left` fields all initialized
+    /// This function creates a `Corners` instance with the `top_left`, `top_right`, `bottom_right`, and `bottom_left` fields all initialiCodeOrbit
     /// to the same value provided as an argument. This is useful when you want to have uniform corners around a box,
     /// such as a uniform border radius on a rectangle.
     ///
@@ -2221,7 +2221,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Corner, Corners};
+    /// # use CodeOrbit::{Corner, Corners};
     /// let corners = Corners {
     ///     top_left: 1,
     ///     top_right: 2,

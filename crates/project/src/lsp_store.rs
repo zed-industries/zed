@@ -1,4 +1,4 @@
-pub mod clangd_ext;
+﻿pub mod clangd_ext;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
@@ -91,7 +91,7 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use url::Url;
 use util::{
     ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
-    paths::{PathExt, SanitizedPath},
+    paths::{PathExt, SanitiCodeOrbitPath},
     post_inc,
 };
 
@@ -1864,7 +1864,7 @@ impl LocalLspStore {
                                             .ok()
                                             .flatten()
                                     })
-                                    .map(|p| p.path.to_sanitized_string())
+                                    .map(|p| p.path.to_sanitiCodeOrbit_string())
                                     .join(", ");
                                 zlog::warn!(
                                     logger =>
@@ -2234,7 +2234,7 @@ impl LocalLspStore {
             Patch::new(snapshot.edits_since::<PointUtf16>(saved_version).collect())
         });
 
-        let mut sanitized_diagnostics = Vec::with_capacity(diagnostics.len());
+        let mut sanitiCodeOrbit_diagnostics = Vec::with_capacity(diagnostics.len());
 
         for entry in diagnostics {
             let start;
@@ -2264,14 +2264,14 @@ impl LocalLspStore {
                 }
             }
 
-            sanitized_diagnostics.push(DiagnosticEntry {
+            sanitiCodeOrbit_diagnostics.push(DiagnosticEntry {
                 range,
                 diagnostic: entry.diagnostic,
             });
         }
         drop(edits_since_save);
 
-        let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
+        let set = DiagnosticSet::new(sanitiCodeOrbit_diagnostics, &snapshot);
         buffer.update(cx, |buffer, cx| {
             buffer.update_diagnostics(server_id, set, cx)
         });
@@ -3159,7 +3159,7 @@ impl LocalLspStore {
             } else {
                 let (path, pattern) = match &watcher.glob_pattern {
                     lsp::GlobPattern::String(s) => {
-                        let watcher_path = SanitizedPath::from(s);
+                        let watcher_path = SanitiCodeOrbitPath::from(s);
                         let path = glob_literal_prefix(watcher_path.as_path());
                         let pattern = watcher_path
                             .as_path()
@@ -3251,7 +3251,7 @@ impl LocalLspStore {
             let worktree_root_path = tree.abs_path();
             match &watcher.glob_pattern {
                 lsp::GlobPattern::String(s) => {
-                    let watcher_path = SanitizedPath::from(s);
+                    let watcher_path = SanitiCodeOrbitPath::from(s);
                     let relative = watcher_path
                         .as_path()
                         .strip_prefix(&worktree_root_path)
@@ -3619,7 +3619,7 @@ impl LspStore {
         if let Some(extension_events) = extension::ExtensionEvents::try_global(cx).as_ref() {
             cx.subscribe(
                 extension_events,
-                Self::reload_zed_json_schemas_on_extensions_changed,
+                Self::reload_CodeOrbit_json_schemas_on_extensions_changed,
             )
             .detach();
         } else {
@@ -3885,7 +3885,7 @@ impl LspStore {
         Ok(())
     }
 
-    pub fn reload_zed_json_schemas_on_extensions_changed(
+    pub fn reload_CodeOrbit_json_schemas_on_extensions_changed(
         &mut self,
         _: Entity<extension::ExtensionEvents>,
         evt: &extension::Event,
@@ -3915,7 +3915,7 @@ impl LspStore {
                             let (json_adapter, json_server) = match states {
                                 LanguageServerState::Running {
                                     adapter, server, ..
-                                } if adapter.adapter.is_primary_zed_json_schema_adapter() => {
+                                } if adapter.adapter.is_primary_CodeOrbit_json_schema_adapter() => {
                                     (adapter.adapter.clone(), server.clone())
                                 }
                                 _ => continue,
@@ -3959,7 +3959,7 @@ impl LspStore {
                 return;
             };
             for (adapter, server, delegate) in servers {
-                adapter.clear_zed_json_schema_cache().await;
+                adapter.clear_CodeOrbit_json_schema_cache().await;
 
                 let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
                         adapter,
@@ -5446,7 +5446,7 @@ impl LspStore {
 
         let mut new_label = match completion_item {
             Some(completion_item) => {
-                // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
+                // NB: CodeOrbit does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
                 // So we have to update the label here anyway...
                 let language = snapshot.language();
                 match language {
@@ -5684,7 +5684,7 @@ impl LspStore {
                                 && range.end.cmp(&primary.end, buffer).is_ge();
 
                             //Skip additional edits which overlap with the primary completion edit
-                            //https://github.com/zed-industries/zed/pull/1871
+                            //https://github.com/CodeOrbit-industries/CodeOrbit/pull/1871
                             if !start_within && !end_within {
                                 buffer.edit([(range, text)], None, cx);
                             }
@@ -9442,29 +9442,29 @@ impl LspStore {
         }
     }
 
-    fn deserialize_symbol(serialized_symbol: proto::Symbol) -> Result<CoreSymbol> {
-        let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
-        let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
-        let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
+    fn deserialize_symbol(serialiCodeOrbit_symbol: proto::Symbol) -> Result<CoreSymbol> {
+        let source_worktree_id = WorktreeId::from_proto(serialiCodeOrbit_symbol.source_worktree_id);
+        let worktree_id = WorktreeId::from_proto(serialiCodeOrbit_symbol.worktree_id);
+        let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialiCodeOrbit_symbol.kind) };
         let path = ProjectPath {
             worktree_id,
-            path: Arc::<Path>::from_proto(serialized_symbol.path),
+            path: Arc::<Path>::from_proto(serialiCodeOrbit_symbol.path),
         };
 
-        let start = serialized_symbol.start.context("invalid start")?;
-        let end = serialized_symbol.end.context("invalid end")?;
+        let start = serialiCodeOrbit_symbol.start.context("invalid start")?;
+        let end = serialiCodeOrbit_symbol.end.context("invalid end")?;
         Ok(CoreSymbol {
-            language_server_name: LanguageServerName(serialized_symbol.language_server_name.into()),
+            language_server_name: LanguageServerName(serialiCodeOrbit_symbol.language_server_name.into()),
             source_worktree_id,
             source_language_server_id: LanguageServerId::from_proto(
-                serialized_symbol.language_server_id,
+                serialiCodeOrbit_symbol.language_server_id,
             ),
             path,
-            name: serialized_symbol.name,
+            name: serialiCodeOrbit_symbol.name,
             range: Unclipped(PointUtf16::new(start.row, start.column))
                 ..Unclipped(PointUtf16::new(end.row, end.column)),
             kind,
-            signature: serialized_symbol
+            signature: serialiCodeOrbit_symbol
                 .signature
                 .try_into()
                 .map_err(|_| anyhow!("invalid signature"))?,
@@ -9472,7 +9472,7 @@ impl LspStore {
     }
 
     pub(crate) fn serialize_completion(completion: &CoreCompletion) -> proto::Completion {
-        let mut serialized_completion = proto::Completion {
+        let mut serialiCodeOrbit_completion = proto::Completion {
             old_replace_start: Some(serialize_anchor(&completion.replace_range.start)),
             old_replace_end: Some(serialize_anchor(&completion.replace_range.end)),
             new_text: completion.new_text.clone(),
@@ -9491,32 +9491,32 @@ impl LspStore {
                     .map(|range| (serialize_anchor(&range.start), serialize_anchor(&range.end)))
                     .unzip();
 
-                serialized_completion.old_insert_start = old_insert_start;
-                serialized_completion.old_insert_end = old_insert_end;
-                serialized_completion.source = proto::completion::Source::Lsp as i32;
-                serialized_completion.server_id = server_id.0 as u64;
-                serialized_completion.lsp_completion = serde_json::to_vec(lsp_completion).unwrap();
-                serialized_completion.lsp_defaults = lsp_defaults
+                serialiCodeOrbit_completion.old_insert_start = old_insert_start;
+                serialiCodeOrbit_completion.old_insert_end = old_insert_end;
+                serialiCodeOrbit_completion.source = proto::completion::Source::Lsp as i32;
+                serialiCodeOrbit_completion.server_id = server_id.0 as u64;
+                serialiCodeOrbit_completion.lsp_completion = serde_json::to_vec(lsp_completion).unwrap();
+                serialiCodeOrbit_completion.lsp_defaults = lsp_defaults
                     .as_deref()
                     .map(|lsp_defaults| serde_json::to_vec(lsp_defaults).unwrap());
-                serialized_completion.resolved = *resolved;
+                serialiCodeOrbit_completion.resolved = *resolved;
             }
             CompletionSource::BufferWord {
                 word_range,
                 resolved,
             } => {
-                serialized_completion.source = proto::completion::Source::BufferWord as i32;
-                serialized_completion.buffer_word_start = Some(serialize_anchor(&word_range.start));
-                serialized_completion.buffer_word_end = Some(serialize_anchor(&word_range.end));
-                serialized_completion.resolved = *resolved;
+                serialiCodeOrbit_completion.source = proto::completion::Source::BufferWord as i32;
+                serialiCodeOrbit_completion.buffer_word_start = Some(serialize_anchor(&word_range.start));
+                serialiCodeOrbit_completion.buffer_word_end = Some(serialize_anchor(&word_range.end));
+                serialiCodeOrbit_completion.resolved = *resolved;
             }
             CompletionSource::Custom => {
-                serialized_completion.source = proto::completion::Source::Custom as i32;
-                serialized_completion.resolved = true;
+                serialiCodeOrbit_completion.source = proto::completion::Source::Custom as i32;
+                serialiCodeOrbit_completion.resolved = true;
             }
         }
 
-        serialized_completion
+        serialiCodeOrbit_completion
     }
 
     pub(crate) fn deserialize_completion(completion: proto::Completion) -> Result<CoreCompletion> {
@@ -10728,7 +10728,7 @@ mod tests {
     #[test]
     fn test_multi_len_chars_normalization() {
         let mut label = CodeLabel {
-            text: "myElˇ (parameter) myElˇ: {\n    foo: string;\n}".to_string(),
+            text: "myElË‡ (parameter) myElË‡: {\n    foo: string;\n}".to_string(),
             runs: vec![(0..6, HighlightId(1))],
             filter_range: 0..6,
         };
@@ -10736,7 +10736,7 @@ mod tests {
         assert_eq!(
             label,
             CodeLabel {
-                text: "myElˇ (parameter) myElˇ: { foo: string; }".to_string(),
+                text: "myElË‡ (parameter) myElË‡: { foo: string; }".to_string(),
                 runs: vec![(0..6, HighlightId(1))],
                 filter_range: 0..6,
             }

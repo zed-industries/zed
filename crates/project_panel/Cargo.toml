@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "project_panel"
 version = "0.1.0"
 edition.workspace = true
@@ -39,7 +39,7 @@ client.workspace = true
 worktree.workspace = true
 workspace.workspace = true
 language.workspace = true
-zed_actions.workspace = true
+codeorbit_actions.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

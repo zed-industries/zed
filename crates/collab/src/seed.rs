@@ -1,4 +1,4 @@
-use crate::db::{self, ChannelRole, NewUserParams};
+﻿use crate::db::{self, ChannelRole, NewUserParams};
 
 use anyhow::Context as _;
 use chrono::{DateTime, Utc};
@@ -161,7 +161,7 @@ async fn fetch_github<T: DeserializeOwned>(client: &reqwest::Client, url: &str) 
             request_builder.header("Authorization", format!("Bearer {}", github_token));
     }
     let response = request_builder
-        .header("user-agent", "zed")
+        .header("user-agent", "CodeOrbit")
         .send()
         .await
         .unwrap_or_else(|error| panic!("failed to fetch '{url}': {error}"));

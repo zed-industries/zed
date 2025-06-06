@@ -1,4 +1,4 @@
-#![allow(unused, dead_code)]
+﻿#![allow(unused, dead_code)]
 use std::future::Future;
 use std::{path::PathBuf, sync::Arc};
 
@@ -57,7 +57,7 @@ pub fn init(cx: &mut App) {
                 workspace::register_project_item::<NotebookEditor>(cx);
             } else {
                 // todo: there is no way to unregister a project item, so if the feature flag
-                // gets turned off they need to restart Zed.
+                // gets turned off they need to restart CodeOrbit.
             }
         }
     })
@@ -713,7 +713,7 @@ impl Item for NotebookEditor {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Some(cx.new(|cx| Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)))
     }
@@ -835,7 +835,7 @@ impl ProjectItem for NotebookEditor {
         cx: &mut Context<Self>,
     ) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Self::new(project, item, window, cx)
     }

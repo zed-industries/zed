@@ -1,4 +1,4 @@
-mod async_body;
+﻿mod async_body;
 pub mod github;
 
 pub use anyhow::{Result, anyhow};
@@ -209,12 +209,12 @@ impl HttpClientWithUrl {
         format!("{}{}", self.base_url(), path)
     }
 
-    /// Builds a Zed API URL using the given path.
-    pub fn build_zed_api_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
+    /// Builds a CodeOrbit API URL using the given path.
+    pub fn build_CodeOrbit_api_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
-            "https://zed.dev" => "https://api.zed.dev",
-            "https://staging.zed.dev" => "https://api-staging.zed.dev",
+            "https://CodeOrbit.dev" => "https://api.CodeOrbit.dev",
+            "https://staging.CodeOrbit.dev" => "https://api-staging.CodeOrbit.dev",
             "http://localhost:3000" => "http://localhost:8080",
             other => other,
         };
@@ -225,12 +225,12 @@ impl HttpClientWithUrl {
         )?)
     }
 
-    /// Builds a Zed LLM URL using the given path.
-    pub fn build_zed_llm_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
+    /// Builds a CodeOrbit LLM URL using the given path.
+    pub fn build_CodeOrbit_llm_url(&self, path: &str, query: &[(&str, &str)]) -> Result<Url> {
         let base_url = self.base_url();
         let base_api_url = match base_url.as_ref() {
-            "https://zed.dev" => "https://llm.zed.dev",
-            "https://staging.zed.dev" => "https://llm-staging.zed.dev",
+            "https://CodeOrbit.dev" => "https://llm.CodeOrbit.dev",
+            "https://staging.CodeOrbit.dev" => "https://llm-staging.CodeOrbit.dev",
             "http://localhost:3000" => "http://localhost:8787",
             other => other,
         };

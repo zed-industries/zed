@@ -1,4 +1,4 @@
-use crate::proto;
+﻿use crate::proto;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, map};
 use strum::VariantNames;
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_notification() {
-        // Notifications can be serialized and deserialized.
+        // Notifications can be serialiCodeOrbit and deserialiCodeOrbit.
         for notification in [
             Notification::ContactRequest { sender_id: 1 },
             Notification::ContactRequestAccepted { responder_id: 2 },
@@ -98,11 +98,11 @@ mod tests {
             },
         ] {
             let message = notification.to_proto();
-            let deserialized = Notification::from_proto(&message).unwrap();
-            assert_eq!(deserialized, notification);
+            let deserialiCodeOrbit = Notification::from_proto(&message).unwrap();
+            assert_eq!(deserialiCodeOrbit, notification);
         }
 
-        // When notifications are serialized, the `kind` and `actor_id` fields are
+        // When notifications are serialiCodeOrbit, the `kind` and `actor_id` fields are
         // stored separately, and do not appear redundantly in the JSON.
         let notification = Notification::ContactRequest { sender_id: 1 };
         assert_eq!(notification.to_proto().content, "{}");

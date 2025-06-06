@@ -1,7 +1,7 @@
-use notify::EventKind;
+﻿use notify::EventKind;
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
-use util::{ResultExt, paths::SanitizedPath};
+use util::{ResultExt, paths::SanitiCodeOrbitPath};
 
 use crate::{PathEvent, PathEventKind, Watcher};
 
@@ -24,7 +24,7 @@ impl FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let root_path = SanitizedPath::from(path);
+        let root_path = SanitiCodeOrbitPath::from(path);
 
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
@@ -44,7 +44,7 @@ impl Watcher for FsWatcher {
                         .paths
                         .iter()
                         .filter_map(|event_path| {
-                            let event_path = SanitizedPath::from(event_path);
+                            let event_path = SanitiCodeOrbitPath::from(event_path);
                             event_path.starts_with(&root_path).then(|| PathEvent {
                                 path: event_path.as_path().to_path_buf(),
                                 kind,
@@ -106,7 +106,7 @@ static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error
 
 fn handle_event(event: Result<notify::Event, notify::Error>) {
     // Filter out access events, which could lead to a weird bug on Linux after upgrading notify
-    // https://github.com/zed-industries/zed/actions/runs/14085230504/job/39449448832
+    // https://github.com/CodeOrbit-industries/CodeOrbit/actions/runs/14085230504/job/39449448832
     let Some(event) = event
         .log_err()
         .filter(|event| !matches!(event.kind, EventKind::Access(_)))

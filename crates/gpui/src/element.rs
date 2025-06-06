@@ -1,4 +1,4 @@
-//! Elements are the workhorses of GPUI. They are responsible for laying out and painting all of
+﻿//! Elements are the workhorses of GPUI. They are responsible for laying out and painting all of
 //! the contents of a window. Elements form a tree and are laid out according to the web layout
 //! standards as implemented by [taffy](https://github.com/DioxusLabs/taffy). Most of the time,
 //! you won't need to interact with this module or these APIs directly. Elements provide their
@@ -110,7 +110,7 @@ pub trait Element: 'static + IntoElement {
 }
 
 /// Implemented by any type that can be converted into an element.
-pub trait IntoElement: Sized {
+pub trait IntoElement: SiCodeOrbit {
     /// The specific type of element into which the implementing type is converted.
     /// Useful for converting other types into elements automatically, like Strings
     type Element: Element;
@@ -128,7 +128,7 @@ impl<T: IntoElement> FluentBuilder for T {}
 
 /// An object that can be drawn to the screen. This is the trait that distinguishes "views" from
 /// other entities. Views are `Entity`'s which `impl Render` and drawn to the screen.
-pub trait Render: 'static + Sized {
+pub trait Render: 'static + SiCodeOrbit {
     /// Render this view into an element tree.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement;
 }
@@ -160,7 +160,7 @@ pub trait ParentElement {
     /// Add a single child element to this element.
     fn child(mut self, child: impl IntoElement) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.extend(std::iter::once(child.into_element().into_any()));
         self
@@ -169,7 +169,7 @@ pub trait ParentElement {
     /// Add multiple child elements to this element.
     fn children(mut self, children: impl IntoIterator<Item = impl IntoElement>) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.extend(children.into_iter().map(|child| child.into_any_element()));
         self

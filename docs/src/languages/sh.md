@@ -1,12 +1,12 @@
-# Shell Scripts
+﻿# Shell Scripts
 
-Shell Scripts (bash, zsh, dash, sh) are supported natively by Zed.
+Shell Scripts (bash, zsh, dash, sh) are supported natively by CodeOrbit.
 
 - Tree-sitter: [tree-sitter/tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash)
 
 ## Settings
 
-You can configure various settings for Shell Scripts in your Zed User Settings (`~/.config/zed/settings.json`) or Zed Project Settings (`.zed/settings.json`):
+You can configure various settings for Shell Scripts in your CodeOrbit User Settings (`~/.config/CodeOrbit/settings.json`) or CodeOrbit Project Settings (`.CodeOrbit/settings.json`):
 
 ```json
   "languages": {
@@ -19,7 +19,7 @@ You can configure various settings for Shell Scripts in your Zed User Settings (
 
 ### Formatting
 
-Zed supports auto-formatting Shell Scripts using external tools like [`shfmt`](https://github.com/mvdan/sh).
+CodeOrbit supports auto-formatting Shell Scripts using external tools like [`shfmt`](https://github.com/mvdan/sh).
 
 1. Install `shfmt`:
 
@@ -39,7 +39,7 @@ which shfmt
 shfmt --version
 ```
 
-3. Configure Zed to automatically format Shell Scripts with `shfmt` on save:
+3. Configure CodeOrbit to automatically format Shell Scripts with `shfmt` on save:
 
 ```json
   "languages": {
@@ -58,5 +58,5 @@ shfmt --version
 
 ## See also:
 
-- [Zed Docs: Language Support: Bash](./bash.md)
-- [Zed Docs: Language Support: Fish](./fish.md)
+- [CodeOrbit Docs: Language Support: Bash](./bash.md)
+- [CodeOrbit Docs: Language Support: Fish](./fish.md)

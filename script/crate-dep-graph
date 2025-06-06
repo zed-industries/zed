@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 set -e
 
@@ -11,7 +11,7 @@ graph_file=target/crate-graph.html
 cargo depgraph \
     --workspace-only \
     --offline \
-    --root=zed,cli,collab \
+    --root=CodeOrbit,cli,collab \
     --dedup-transitive-deps \
     | dot -Tsvg > $graph_file
 

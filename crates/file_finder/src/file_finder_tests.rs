@@ -1,4 +1,4 @@
-use std::{future::IntoFuture, path::Path, time::Duration};
+﻿use std::{future::IntoFuture, path::Path, time::Duration};
 
 use super::*;
 use editor::Editor;
@@ -23,26 +23,26 @@ fn test_path_elision() {
         let slice = PathComponentSlice::new(&path);
         let matches = Vec::from_iter(matches);
         if let Some(range) = slice.elision_range(budget - 1, &matches) {
-            path.replace_range(range, "…");
+            path.replace_range(range, "â€¦");
         }
         assert_eq!(path, expected);
     }
 
     // Simple cases, mostly to check that different path shapes are handled gracefully.
-    check("p/a/b/c/d/", 6, [], "p/…/d/");
+    check("p/a/b/c/d/", 6, [], "p/â€¦/d/");
     check("p/a/b/c/d/", 1, [2, 4, 6], "p/a/b/c/d/");
-    check("p/a/b/c/d/", 10, [2, 6], "p/a/…/c/d/");
-    check("p/a/b/c/d/", 8, [6], "p/…/c/d/");
+    check("p/a/b/c/d/", 10, [2, 6], "p/a/â€¦/c/d/");
+    check("p/a/b/c/d/", 8, [6], "p/â€¦/c/d/");
 
-    check("p/a/b/c/d", 5, [], "p/…/d");
+    check("p/a/b/c/d", 5, [], "p/â€¦/d");
     check("p/a/b/c/d", 9, [2, 4, 6], "p/a/b/c/d");
-    check("p/a/b/c/d", 9, [2, 6], "p/a/…/c/d");
-    check("p/a/b/c/d", 7, [6], "p/…/c/d");
+    check("p/a/b/c/d", 9, [2, 6], "p/a/â€¦/c/d");
+    check("p/a/b/c/d", 7, [6], "p/â€¦/c/d");
 
-    check("/p/a/b/c/d/", 7, [], "/p/…/d/");
+    check("/p/a/b/c/d/", 7, [], "/p/â€¦/d/");
     check("/p/a/b/c/d/", 11, [3, 5, 7], "/p/a/b/c/d/");
-    check("/p/a/b/c/d/", 11, [3, 7], "/p/a/…/c/d/");
-    check("/p/a/b/c/d/", 9, [7], "/p/…/c/d/");
+    check("/p/a/b/c/d/", 11, [3, 7], "/p/a/â€¦/c/d/");
+    check("/p/a/b/c/d/", 9, [7], "/p/â€¦/c/d/");
 
     // If the budget can't be met, no elision is done.
     check(
@@ -57,7 +57,7 @@ fn test_path_elision() {
         "project/one/two/X/three/sub",
         21,
         [16],
-        "project/…/X/three/sub",
+        "project/â€¦/X/three/sub",
     );
 
     // Elision stops when the budget is met, even though there are more components in the chosen segment.
@@ -66,7 +66,7 @@ fn test_path_elision() {
         "project/one/two/three/X/sub",
         21,
         [22],
-        "project/…/three/X/sub",
+        "project/â€¦/three/X/sub",
     )
 }
 
@@ -262,7 +262,7 @@ async fn test_unicode_paths(cx: &mut TestAppContext) {
             path!("/root"),
             json!({
                 "a": {
-                    "İg": " ",
+                    "Ä°g": " ",
                 }
             }),
         )
@@ -280,7 +280,7 @@ async fn test_unicode_paths(cx: &mut TestAppContext) {
     cx.dispatch_action(Confirm);
     cx.read(|cx| {
         let active_editor = workspace.read(cx).active_item_as::<Editor>(cx).unwrap();
-        assert_eq!(active_editor.read(cx).title(cx), "İg");
+        assert_eq!(active_editor.read(cx).title(cx), "Ä°g");
     });
 }
 
@@ -355,8 +355,8 @@ async fn test_complex_path(cx: &mut TestAppContext) {
         .insert_tree(
             path!("/root"),
             json!({
-                "其他": {
-                    "S数据表格": {
+                "å…¶ä»–": {
+                    "Sæ•°æ®è¡¨æ ¼": {
                         "task.xlsx": "some content",
                     },
                 }
@@ -373,7 +373,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
         assert_eq!(picker.delegate.matches.len(), 2);
         assert_eq!(
             collect_search_matches(picker).search_paths_only(),
-            vec![PathBuf::from("其他/S数据表格/task.xlsx")],
+            vec![PathBuf::from("å…¶ä»–/Sæ•°æ®è¡¨æ ¼/task.xlsx")],
         )
     });
     cx.dispatch_action(Confirm);
@@ -2717,7 +2717,7 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
                 PathBuf::from("layout/app.html"),
                 PathBuf::from("layout/+page.svelte"),
             ],
-            "File with 'layout' in filename should be prioritized over files in 'layout' directory"
+            "File with 'layout' in filename should be prioritiCodeOrbit over files in 'layout' directory"
         );
     });
 }

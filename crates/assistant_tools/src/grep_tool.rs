@@ -1,4 +1,4 @@
-use crate::schema::json_schema_for;
+﻿use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use futures::StreamExt;
@@ -269,7 +269,7 @@ impl Tool for GrepTool {
 
                     if let Some(parent_symbols) = &parent_symbols {
                         for symbol in parent_symbols {
-                            write!(output, "{} › ", symbol.text)?;
+                            write!(output, "{} â€º ", symbol.text)?;
                         }
                     }
 
@@ -590,7 +590,7 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### fn top_level_function › L1-3
+            ### fn top_level_function â€º L1-3
             ```
             fn top_level_function() {
                 println!("This is at the top level");
@@ -620,7 +620,7 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### mod feature_module › pub mod nested_module › pub fn nested_function › L10-14
+            ### mod feature_module â€º pub mod nested_module â€º pub fn nested_function â€º L10-14
             ```
                     ) {
                         println!("Function in nested module");
@@ -652,7 +652,7 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### mod feature_module › pub mod nested_module › pub fn nested_function › L7-14
+            ### mod feature_module â€º pub mod nested_module â€º pub fn nested_function â€º L7-14
             ```
                     pub fn nested_function(
                         first_arg: String,
@@ -688,7 +688,7 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### impl MyStruct › fn method_with_block › L26-28
+            ### impl MyStruct â€º fn method_with_block â€º L26-28
             ```
                     if condition {
                         println!("Inside if block");
@@ -719,7 +719,7 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### impl MyStruct › fn long_function › L31-41
+            ### impl MyStruct â€º fn long_function â€º L31-41
             ```
                 fn long_function() {
                     println!("Line 1");
@@ -760,7 +760,7 @@ mod tests {
 
             ## Matches in root/test_syntax.rs
 
-            ### impl MyStruct › fn long_function › L41-45
+            ### impl MyStruct â€º fn long_function â€º L41-45
             ```
                     println!("Line 10");
                     println!("Line 11");
@@ -1116,7 +1116,7 @@ mod tests {
         fs.insert_tree(
             path!("/worktree1"),
             json!({
-                ".zed": {
+                ".CodeOrbit": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/fixture.*"],
                         "private_files": ["**/secret.rs"]
@@ -1139,7 +1139,7 @@ mod tests {
         fs.insert_tree(
             path!("/worktree2"),
             json!({
-                ".zed": {
+                ".CodeOrbit": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/internal.*"],
                         "private_files": ["**/private.js", "**/data.json"]

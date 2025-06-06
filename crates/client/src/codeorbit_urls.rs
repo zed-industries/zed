@@ -1,0 +1,19 @@
+﻿//! Contains helper functions for constructing URLs to various CodeOrbit-related pages.
+//!
+//! These URLs will adapt to the configured server URL in order to construct
+//! links appropriate for the environment (e.g., by linking to a local copy of
+//! CodeOrbit.dev in development).
+
+use gpui::App;
+use settings::Settings;
+
+use crate::ClientSettings;
+
+fn server_url(cx: &App) -> &str {
+    &ClientSettings::get_global(cx).server_url
+}
+
+/// Returns the URL to the account page on CodeOrbit.dev.
+pub fn account_url(cx: &App) -> String {
+    format!("{server_url}/account", server_url = server_url(cx))
+}

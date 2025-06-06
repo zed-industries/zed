@@ -1,4 +1,4 @@
-use gpui::{
+﻿use gpui::{
     AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity,
 };
 use itertools::Itertools;
@@ -14,7 +14,7 @@ pub fn register(workspace: &mut Workspace) {
 
 pub fn open(
     workspace: &mut Workspace,
-    _: &zed_actions::git::SelectRepo,
+    _: &codeorbit_actions::git::SelectRepo,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {

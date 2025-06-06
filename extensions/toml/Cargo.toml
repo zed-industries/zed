@@ -1,5 +1,5 @@
-[package]
-name = "zed_toml"
+﻿[package]
+name = "codeorbit_toml"
 version = "0.1.4"
 edition.workspace = true
 publish.workspace = true
@@ -13,4 +13,4 @@ path = "src/toml.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.1.0"
+codeorbit_extension_api = "0.1.0"

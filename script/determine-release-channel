@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -11,8 +11,8 @@ elif [ -z "${GITHUB_REF-}" ]; then
     exit 1
 fi
 
-version=$(script/get-crate-version zed)
-channel=$(cat crates/zed/RELEASE_CHANNEL)
+version=$(script/get-crate-version CodeOrbit)
+channel=$(cat crates/CodeOrbit/RELEASE_CHANNEL)
 echo "Publishing version: ${version} on release channel ${channel}"
 echo "RELEASE_CHANNEL=${channel}" >> $GITHUB_ENV
 echo "RELEASE_VERSION=${version}" >> $GITHUB_ENV

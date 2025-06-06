@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
-GitHub PR Analyzer for zed-industries/zed repository
+GitHub PR Analyzer for CodeOrbit-industries/CodeOrbit repository
 Downloads all PRs and groups them by first assignee with status, open date, and last updated date.
 """
 
@@ -15,8 +15,8 @@ import os
 
 # GitHub API configuration
 GITHUB_API_BASE = "https://api.github.com"
-REPO_OWNER = "zed-industries"
-REPO_NAME = "zed"
+REPO_OWNER = "CodeOrbit-industries"
+REPO_NAME = "CodeOrbit"
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 def make_github_request(url, params=None):
@@ -179,7 +179,7 @@ def save_json_report(grouped_prs, filename="pr_report.json"):
     try:
         with open(filename, 'w') as f:
             json.dump(grouped_prs, f, indent=2)
-        print(f"📄 Report saved to {filename}")
+        print(f"ðŸ“„ Report saved to {filename}")
     except Exception as e:
         print(f"Error saving JSON report: {e}")
 
@@ -189,7 +189,7 @@ def main():
     print("==================")
 
     if not GITHUB_TOKEN:
-        print("⚠️  Warning: GITHUB_TOKEN not set. You may hit rate limits.")
+        print("âš ï¸  Warning: GITHUB_TOKEN not set. You may hit rate limits.")
         print("   Set GITHUB_TOKEN environment variable for authenticated requests.")
         print()
 
@@ -197,7 +197,7 @@ def main():
     prs = fetch_all_prs()
 
     if not prs:
-        print("❌ Failed to fetch PRs. Please check your connection and try again.")
+        print("âŒ Failed to fetch PRs. Please check your connection and try again.")
         sys.exit(1)
 
     # Analyze and group PRs

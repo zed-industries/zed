@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "web_search_providers"
 version = "0.1.0"
 edition.workspace = true
@@ -22,4 +22,4 @@ serde.workspace = true
 serde_json.workspace = true
 web_search.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
+codeorbit_llm_client.workspace = true

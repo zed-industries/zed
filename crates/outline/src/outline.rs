@@ -1,4 +1,4 @@
-use std::ops::Range;
+﻿use std::ops::Range;
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
@@ -23,7 +23,7 @@ use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut App) {
     cx.observe_new(OutlineView::register).detach();
-    zed_actions::outline::TOGGLE_OUTLINE
+    codeorbit_actions::outline::TOGGLE_OUTLINE
         .set(|view, window, cx| {
             let Ok(editor) = view.downcast::<Editor>() else {
                 return;
@@ -36,7 +36,7 @@ pub fn init(cx: &mut App) {
 
 pub fn toggle(
     editor: Entity<Editor>,
-    _: &zed_actions::outline::ToggleOutline,
+    _: &codeorbit_actions::outline::ToggleOutline,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -510,7 +510,7 @@ mod tests {
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
     ) -> Entity<Picker<OutlineViewDelegate>> {
-        cx.dispatch_action(zed_actions::outline::ToggleOutline);
+        cx.dispatch_action(codeorbit_actions::outline::ToggleOutline);
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<OutlineView>(cx)

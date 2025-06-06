@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
     SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
     ToggleRegex, ToggleReplace, ToggleWholeWord, buffer_search::Deploy,
@@ -392,7 +392,7 @@ impl Render for ProjectSearchView {
             let is_search_underway = model.pending_search.is_some();
 
             let heading_text = if is_search_underway {
-                "Searching…"
+                "Searchingâ€¦"
             } else if has_no_results {
                 "No Results"
             } else {
@@ -566,7 +566,7 @@ impl Item for ProjectSearchView {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         let model = self.entity.update(cx, |model, cx| model.clone(cx));
         Some(cx.new(|cx| Self::new(self.workspace.clone(), model, window, cx, None)))
@@ -755,7 +755,7 @@ impl ProjectSearchView {
 
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search all files…", cx);
+            editor.set_placeholder_text("Search all filesâ€¦", cx);
             editor.set_text(query_text, window, cx);
             editor
         });
@@ -778,7 +778,7 @@ impl ProjectSearchView {
         );
         let replacement_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Replace in project…", cx);
+            editor.set_placeholder_text("Replace in projectâ€¦", cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
             }

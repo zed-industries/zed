@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer, RowExt,
     display_map::ToDisplayPoint,
 };
@@ -288,7 +288,7 @@ impl EditorTestContext {
         })
     }
 
-    // Returns anchors for the current buffer using `«` and `»`
+    // Returns anchors for the current buffer using `Â«` and `Â»`
     pub fn text_anchor_range(&mut self, marked_text: &str) -> Range<language::Anchor> {
         let ranges = self.ranges(marked_text);
         let snapshot = self.buffer_snapshot();
@@ -520,7 +520,7 @@ impl EditorTestContext {
     }
 
     #[track_caller]
-    pub fn assert_editor_text_highlights<Tag: ?Sized + 'static>(&mut self, marked_text: &str) {
+    pub fn assert_editor_text_highlights<Tag: ?SiCodeOrbit + 'static>(&mut self, marked_text: &str) {
         let expected_ranges = self.ranges(marked_text);
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let actual_ranges: Vec<Range<usize>> = snapshot
@@ -537,7 +537,7 @@ impl EditorTestContext {
     pub fn assert_editor_selections(&mut self, expected_selections: Vec<Range<usize>>) {
         let expected_marked_text =
             generate_marked_text(&self.buffer_text(), &expected_selections, true)
-                .replace(" \n", "•\n");
+                .replace(" \n", "â€¢\n");
 
         self.assert_selections(expected_selections, expected_marked_text)
     }
@@ -568,7 +568,7 @@ impl EditorTestContext {
         let actual_selections = self.editor_selections();
         let actual_marked_text =
             generate_marked_text(&self.buffer_text(), &actual_selections, true)
-                .replace(" \n", "•\n");
+                .replace(" \n", "â€¢\n");
         if expected_selections != actual_selections {
             pretty_assertions::assert_eq!(
                 actual_marked_text,

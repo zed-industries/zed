@@ -1,4 +1,4 @@
-#![cfg_attr(target_os = "windows", allow(unused, dead_code))]
+﻿#![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -9,7 +9,7 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
     /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
-    /// by having Zed act like netcat communicating over a Unix socket.
+    /// by having CodeOrbit act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
 }
@@ -85,12 +85,12 @@ fn main() {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {
                 ReleaseChannel::Stable | ReleaseChannel::Preview => {
-                    println!("{}", env!("ZED_PKG_VERSION"))
+                    println!("{}", env!("codeorbit_PKG_VERSION"))
                 }
                 ReleaseChannel::Nightly | ReleaseChannel::Dev => {
                     println!(
                         "{}",
-                        option_env!("ZED_COMMIT_SHA").unwrap_or(release_channel.dev_name())
+                        option_env!("codeorbit_COMMIT_SHA").unwrap_or(release_channel.dev_name())
                     )
                 }
             };

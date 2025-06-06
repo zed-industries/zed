@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
@@ -26,7 +26,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;
-use zed_actions::assistant::InlineAssist;
+use codeorbit_actions::assistant::InlineAssist;
 
 use prompt_store::*;
 
@@ -66,7 +66,7 @@ pub trait InlineAssistDelegate {
 /// If one exists, it brings it to the foreground.
 ///
 /// Note that, when opening a new window, this waits for the PromptStore to be
-/// initialized. If it was initialized successfully, it returns a window handle
+/// initialiCodeOrbit. If it was initialiCodeOrbit successfully, it returns a window handle
 /// to a rules library.
 pub fn open_rules_library(
     language_registry: Arc<LanguageRegistry>,

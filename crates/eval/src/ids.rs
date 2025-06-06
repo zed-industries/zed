@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -19,11 +19,11 @@ pub fn get_or_create_id(path: &Path) -> Result<String> {
 pub fn eval_system_id_path() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("zed-eval-system-id")
+        .join("CodeOrbit-eval-system-id")
 }
 
 pub fn eval_installation_id_path() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("zed-eval-installation-id")
+        .join("CodeOrbit-eval-installation-id")
 }

@@ -1,4 +1,4 @@
-use std::pin::Pin;
+﻿use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::Arc;
 
@@ -141,7 +141,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         };
 
         let err = match copilot.read(cx).status() {
-            Status::Authorized => return Task::ready(Ok(())),
+            Status::AuthoriCodeOrbit => return Task::ready(Ok(())),
             Status::Disabled => anyhow!(
                 "Copilot must be enabled for Copilot Chat to work. Please enable Copilot and try again."
             ),
@@ -151,7 +151,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             Status::Starting { task: _ } => anyhow!(
                 "Copilot is still starting, please wait for Copilot to start then try again"
             ),
-            Status::Unauthorized => anyhow!(
+            Status::UnauthoriCodeOrbit => anyhow!(
                 "Unable to authorize with Copilot. Please make sure that you have an active Copilot and Copilot Chat subscription."
             ),
             Status::SignedOut { .. } => {
@@ -644,7 +644,7 @@ impl Render for ConfigurationView {
                     h_flex()
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(Label::new("Authorized")),
+                        .child(Label::new("AuthoriCodeOrbit")),
                 )
                 .child(
                     Button::new("sign_out", "Sign Out")
@@ -667,14 +667,14 @@ impl Render for ConfigurationView {
                     Status::Starting { task: _ } => h_flex()
                         .gap_2()
                         .child(loading_icon)
-                        .child(Label::new("Starting Copilot…")),
+                        .child(Label::new("Starting Copilotâ€¦")),
                     Status::SigningIn { prompt: _ }
                     | Status::SignedOut {
                         awaiting_signing_in: true,
                     } => h_flex()
                         .gap_2()
                         .child(loading_icon)
-                        .child(Label::new("Signing into Copilot…")),
+                        .child(Label::new("Signing into Copilotâ€¦")),
                     Status::Error(_) => {
                         const LABEL: &str = "Copilot had issues starting. Please try restarting it. If the issue persists, try reinstalling Copilot.";
                         v_flex()
@@ -683,7 +683,7 @@ impl Render for ConfigurationView {
                             .child(svg().size_8().path(IconName::CopilotError.path()))
                     }
                     _ => {
-                        const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+                        const LABEL: &str = "To use CodeOrbit's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
                         v_flex().gap_2().child(Label::new(LABEL)).child(
                             Button::new("sign_in", "Sign in to use GitHub Copilot")
                                 .icon_color(Color::Muted)

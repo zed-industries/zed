@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+﻿use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandResult,
@@ -465,7 +465,7 @@ mod custom_path_matcher {
     use std::{fmt::Debug as _, path::Path};
 
     use globset::{Glob, GlobSet, GlobSetBuilder};
-    use util::paths::SanitizedPath;
+    use util::paths::SanitiCodeOrbitPath;
 
     #[derive(Clone, Debug, Default)]
     pub struct PathMatcher {
@@ -492,7 +492,7 @@ mod custom_path_matcher {
         pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
             let globs = globs
                 .into_iter()
-                .map(|glob| Glob::new(&SanitizedPath::from(glob).to_glob_string()))
+                .map(|glob| Glob::new(&SanitiCodeOrbitPath::from(glob).to_glob_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
             let sources_with_trailing_slash = globs
@@ -657,7 +657,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            path!("/zed"),
+            path!("/CodeOrbit"),
             json!({
                 "assets": {
                     "dir1": {
@@ -682,51 +682,51 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, [path!("/zed").as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/CodeOrbit").as_ref()], cx).await;
 
         let result =
-            cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
+            cx.update(|cx| collect_files(project.clone(), &["CodeOrbit/assets/themes".to_string()], cx));
         let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
 
         // Sanity check
-        assert!(result.text.starts_with(separator!("zed/assets/themes\n")));
+        assert!(result.text.starts_with(separator!("CodeOrbit/assets/themes\n")));
         assert_eq!(result.sections.len(), 7);
 
         // Ensure that full file paths are included in the real output
         assert!(
             result
                 .text
-                .contains(separator!("zed/assets/themes/andromeda/LICENSE"))
+                .contains(separator!("CodeOrbit/assets/themes/andromeda/LICENSE"))
         );
         assert!(
             result
                 .text
-                .contains(separator!("zed/assets/themes/ayu/LICENSE"))
+                .contains(separator!("CodeOrbit/assets/themes/ayu/LICENSE"))
         );
         assert!(
             result
                 .text
-                .contains(separator!("zed/assets/themes/summercamp/LICENSE"))
+                .contains(separator!("CodeOrbit/assets/themes/summercamp/LICENSE"))
         );
 
         assert_eq!(result.sections[5].label, "summercamp");
 
-        // Ensure that things are in descending order, with properly relativized paths
+        // Ensure that things are in descending order, with properly relativiCodeOrbit paths
         assert_eq!(
             result.sections[0].label,
-            separator!("zed/assets/themes/andromeda/LICENSE")
+            separator!("CodeOrbit/assets/themes/andromeda/LICENSE")
         );
         assert_eq!(result.sections[1].label, "andromeda");
         assert_eq!(
             result.sections[2].label,
-            separator!("zed/assets/themes/ayu/LICENSE")
+            separator!("CodeOrbit/assets/themes/ayu/LICENSE")
         );
         assert_eq!(result.sections[3].label, "ayu");
         assert_eq!(
             result.sections[4].label,
-            separator!("zed/assets/themes/summercamp/LICENSE")
+            separator!("CodeOrbit/assets/themes/summercamp/LICENSE")
         );
 
         // Ensure that the project lasts until after the last await
@@ -739,7 +739,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            path!("/zed"),
+            path!("/CodeOrbit"),
             json!({
                 "assets": {
                     "themes": {
@@ -759,40 +759,40 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, [path!("/zed").as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/CodeOrbit").as_ref()], cx).await;
 
         let result =
-            cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
+            cx.update(|cx| collect_files(project.clone(), &["CodeOrbit/assets/themes".to_string()], cx));
         let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
 
-        assert!(result.text.starts_with(separator!("zed/assets/themes\n")));
+        assert!(result.text.starts_with(separator!("CodeOrbit/assets/themes\n")));
         assert_eq!(
             result.sections[0].label,
-            separator!("zed/assets/themes/LICENSE")
+            separator!("CodeOrbit/assets/themes/LICENSE")
         );
         assert_eq!(
             result.sections[1].label,
-            separator!("zed/assets/themes/summercamp/LICENSE")
+            separator!("CodeOrbit/assets/themes/summercamp/LICENSE")
         );
         assert_eq!(
             result.sections[2].label,
-            separator!("zed/assets/themes/summercamp/subdir/LICENSE")
+            separator!("CodeOrbit/assets/themes/summercamp/subdir/LICENSE")
         );
         assert_eq!(
             result.sections[3].label,
-            separator!("zed/assets/themes/summercamp/subdir/subsubdir/LICENSE")
+            separator!("CodeOrbit/assets/themes/summercamp/subdir/subsubdir/LICENSE")
         );
         assert_eq!(result.sections[4].label, "subsubdir");
         assert_eq!(result.sections[5].label, "subdir");
         assert_eq!(result.sections[6].label, "summercamp");
-        assert_eq!(result.sections[7].label, separator!("zed/assets/themes"));
+        assert_eq!(result.sections[7].label, separator!("CodeOrbit/assets/themes"));
 
         assert_eq!(
             result.text,
             separator!(
-                "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n"
+                "CodeOrbit/assets/themes\n```CodeOrbit/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```CodeOrbit/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```CodeOrbit/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```CodeOrbit/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n"
             )
         );
 

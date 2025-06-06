@@ -1,4 +1,4 @@
-use collections::HashMap;
+﻿use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll};
 use gpui::{Context, Window};
 use language::{Bias, Point, SelectionGoal};
@@ -253,167 +253,167 @@ mod test {
     #[gpui::test]
     async fn test_change_case(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.set_shared_state("ˇabC\n").await;
+        cx.set_shared_state("Ë‡abC\n").await;
         cx.simulate_shared_keystrokes("~").await;
-        cx.shared_state().await.assert_eq("AˇbC\n");
+        cx.shared_state().await.assert_eq("AË‡bC\n");
         cx.simulate_shared_keystrokes("2 ~").await;
-        cx.shared_state().await.assert_eq("ABˇc\n");
+        cx.shared_state().await.assert_eq("ABË‡c\n");
 
         // works in visual mode
-        cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
+        cx.set_shared_state("aðŸ˜€CÂ«dÃ‰1*fË‡Â»\n").await;
         cx.simulate_shared_keystrokes("~").await;
-        cx.shared_state().await.assert_eq("a😀CˇDé1*F\n");
+        cx.shared_state().await.assert_eq("aðŸ˜€CË‡DÃ©1*F\n");
 
         // works with multibyte characters
         cx.simulate_shared_keystrokes("~").await;
-        cx.set_shared_state("aˇC😀é1*F\n").await;
+        cx.set_shared_state("aË‡CðŸ˜€Ã©1*F\n").await;
         cx.simulate_shared_keystrokes("4 ~").await;
-        cx.shared_state().await.assert_eq("ac😀É1ˇ*F\n");
+        cx.shared_state().await.assert_eq("acðŸ˜€Ã‰1Ë‡*F\n");
 
         // works with line selections
-        cx.set_shared_state("abˇC\n").await;
+        cx.set_shared_state("abË‡C\n").await;
         cx.simulate_shared_keystrokes("shift-v ~").await;
-        cx.shared_state().await.assert_eq("ˇABc\n");
+        cx.shared_state().await.assert_eq("Ë‡ABc\n");
 
         // works in visual block mode
-        cx.set_shared_state("ˇaa\nbb\ncc").await;
+        cx.set_shared_state("Ë‡aa\nbb\ncc").await;
         cx.simulate_shared_keystrokes("ctrl-v j ~").await;
-        cx.shared_state().await.assert_eq("ˇAa\nBb\ncc");
+        cx.shared_state().await.assert_eq("Ë‡Aa\nBb\ncc");
 
-        // works with multiple cursors (zed only)
-        cx.set_state("aˇßcdˇe\n", Mode::Normal);
+        // works with multiple cursors (CodeOrbit only)
+        cx.set_state("aË‡ÃŸcdË‡e\n", Mode::Normal);
         cx.simulate_keystrokes("~");
-        cx.assert_state("aSSˇcdˇE\n", Mode::Normal);
+        cx.assert_state("aSSË‡cdË‡E\n", Mode::Normal);
     }
 
     #[gpui::test]
     async fn test_convert_to_upper_case(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         // works in visual mode
-        cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
+        cx.set_shared_state("aðŸ˜€CÂ«dÃ‰1*fË‡Â»\n").await;
         cx.simulate_shared_keystrokes("shift-u").await;
-        cx.shared_state().await.assert_eq("a😀CˇDÉ1*F\n");
+        cx.shared_state().await.assert_eq("aðŸ˜€CË‡DÃ‰1*F\n");
 
         // works with line selections
-        cx.set_shared_state("abˇC\n").await;
+        cx.set_shared_state("abË‡C\n").await;
         cx.simulate_shared_keystrokes("shift-v shift-u").await;
-        cx.shared_state().await.assert_eq("ˇABC\n");
+        cx.shared_state().await.assert_eq("Ë‡ABC\n");
 
         // works in visual block mode
-        cx.set_shared_state("ˇaa\nbb\ncc").await;
+        cx.set_shared_state("Ë‡aa\nbb\ncc").await;
         cx.simulate_shared_keystrokes("ctrl-v j shift-u").await;
-        cx.shared_state().await.assert_eq("ˇAa\nBb\ncc");
+        cx.shared_state().await.assert_eq("Ë‡Aa\nBb\ncc");
     }
 
     #[gpui::test]
     async fn test_convert_to_lower_case(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         // works in visual mode
-        cx.set_shared_state("A😀c«DÉ1*fˇ»\n").await;
+        cx.set_shared_state("AðŸ˜€cÂ«DÃ‰1*fË‡Â»\n").await;
         cx.simulate_shared_keystrokes("u").await;
-        cx.shared_state().await.assert_eq("A😀cˇdé1*f\n");
+        cx.shared_state().await.assert_eq("AðŸ˜€cË‡dÃ©1*f\n");
 
         // works with line selections
-        cx.set_shared_state("ABˇc\n").await;
+        cx.set_shared_state("ABË‡c\n").await;
         cx.simulate_shared_keystrokes("shift-v u").await;
-        cx.shared_state().await.assert_eq("ˇabc\n");
+        cx.shared_state().await.assert_eq("Ë‡abc\n");
 
         // works in visual block mode
-        cx.set_shared_state("ˇAa\nBb\nCc").await;
+        cx.set_shared_state("Ë‡Aa\nBb\nCc").await;
         cx.simulate_shared_keystrokes("ctrl-v j u").await;
-        cx.shared_state().await.assert_eq("ˇaa\nbb\nCc");
+        cx.shared_state().await.assert_eq("Ë‡aa\nbb\nCc");
     }
 
     #[gpui::test]
     async fn test_change_case_motion(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("ˇabc def").await;
+        cx.set_shared_state("Ë‡abc def").await;
         cx.simulate_shared_keystrokes("g shift-u w").await;
-        cx.shared_state().await.assert_eq("ˇABC def");
+        cx.shared_state().await.assert_eq("Ë‡ABC def");
 
         cx.simulate_shared_keystrokes("g u w").await;
-        cx.shared_state().await.assert_eq("ˇabc def");
+        cx.shared_state().await.assert_eq("Ë‡abc def");
 
         cx.simulate_shared_keystrokes("g ~ w").await;
-        cx.shared_state().await.assert_eq("ˇABC def");
+        cx.shared_state().await.assert_eq("Ë‡ABC def");
 
         cx.simulate_shared_keystrokes(".").await;
-        cx.shared_state().await.assert_eq("ˇabc def");
+        cx.shared_state().await.assert_eq("Ë‡abc def");
 
-        cx.set_shared_state("abˇc def").await;
+        cx.set_shared_state("abË‡c def").await;
         cx.simulate_shared_keystrokes("g ~ i w").await;
-        cx.shared_state().await.assert_eq("ˇABC def");
+        cx.shared_state().await.assert_eq("Ë‡ABC def");
 
         cx.simulate_shared_keystrokes(".").await;
-        cx.shared_state().await.assert_eq("ˇabc def");
+        cx.shared_state().await.assert_eq("Ë‡abc def");
 
         cx.simulate_shared_keystrokes("g shift-u $").await;
-        cx.shared_state().await.assert_eq("ˇABC DEF");
+        cx.shared_state().await.assert_eq("Ë‡ABC DEF");
     }
 
     #[gpui::test]
     async fn test_change_case_motion_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("abc dˇef\n").await;
+        cx.set_shared_state("abc dË‡ef\n").await;
         cx.simulate_shared_keystrokes("g shift-u i w").await;
-        cx.shared_state().await.assert_eq("abc ˇDEF\n");
+        cx.shared_state().await.assert_eq("abc Ë‡DEF\n");
     }
 
     #[gpui::test]
     async fn test_convert_to_rot13(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         // works in visual mode
-        cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
+        cx.set_shared_state("aðŸ˜€CÂ«dÃ‰1*fË‡Â»\n").await;
         cx.simulate_shared_keystrokes("g ?").await;
-        cx.shared_state().await.assert_eq("a😀CˇqÉ1*s\n");
+        cx.shared_state().await.assert_eq("aðŸ˜€CË‡qÃ‰1*s\n");
 
         // works with line selections
-        cx.set_shared_state("abˇC\n").await;
+        cx.set_shared_state("abË‡C\n").await;
         cx.simulate_shared_keystrokes("shift-v g ?").await;
-        cx.shared_state().await.assert_eq("ˇnoP\n");
+        cx.shared_state().await.assert_eq("Ë‡noP\n");
 
         // works in visual block mode
-        cx.set_shared_state("ˇaa\nbb\ncc").await;
+        cx.set_shared_state("Ë‡aa\nbb\ncc").await;
         cx.simulate_shared_keystrokes("ctrl-v j g ?").await;
-        cx.shared_state().await.assert_eq("ˇna\nob\ncc");
+        cx.shared_state().await.assert_eq("Ë‡na\nob\ncc");
     }
 
     #[gpui::test]
     async fn test_change_rot13_motion(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("ˇabc def").await;
+        cx.set_shared_state("Ë‡abc def").await;
         cx.simulate_shared_keystrokes("g ? w").await;
-        cx.shared_state().await.assert_eq("ˇnop def");
+        cx.shared_state().await.assert_eq("Ë‡nop def");
 
         cx.simulate_shared_keystrokes("g ? w").await;
-        cx.shared_state().await.assert_eq("ˇabc def");
+        cx.shared_state().await.assert_eq("Ë‡abc def");
 
         cx.simulate_shared_keystrokes(".").await;
-        cx.shared_state().await.assert_eq("ˇnop def");
+        cx.shared_state().await.assert_eq("Ë‡nop def");
 
-        cx.set_shared_state("abˇc def").await;
+        cx.set_shared_state("abË‡c def").await;
         cx.simulate_shared_keystrokes("g ? i w").await;
-        cx.shared_state().await.assert_eq("ˇnop def");
+        cx.shared_state().await.assert_eq("Ë‡nop def");
 
         cx.simulate_shared_keystrokes(".").await;
-        cx.shared_state().await.assert_eq("ˇabc def");
+        cx.shared_state().await.assert_eq("Ë‡abc def");
 
         cx.simulate_shared_keystrokes("g ? $").await;
-        cx.shared_state().await.assert_eq("ˇnop qrs");
+        cx.shared_state().await.assert_eq("Ë‡nop qrs");
     }
 
     #[gpui::test]
     async fn test_change_rot13_object(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
-        cx.set_shared_state("ˇabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        cx.set_shared_state("Ë‡abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
             .await;
         cx.simulate_shared_keystrokes("g ? i w").await;
         cx.shared_state()
             .await
-            .assert_eq("ˇnopqrstuvwxyzabcdefghijklmNOPQRSTUVWXYZABCDEFGHIJKLM");
+            .assert_eq("Ë‡nopqrstuvwxyzabcdefghijklmNOPQRSTUVWXYZABCDEFGHIJKLM");
     }
 }

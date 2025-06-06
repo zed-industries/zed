@@ -1,4 +1,4 @@
-name: bump_patch_version
+﻿name: bump_patch_version
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   bump_patch_version:
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -28,7 +28,7 @@ jobs:
         run: |
           set -eux
 
-          channel=$(cat crates/zed/RELEASE_CHANNEL)
+          channel=$(cat crates/CodeOrbit/RELEASE_CHANNEL)
 
           tag_suffix=""
           case $channel in
@@ -43,9 +43,9 @@ jobs:
               ;;
           esac
           which cargo-set-version > /dev/null || cargo install cargo-edit
-          output=$(cargo set-version -p zed --bump patch 2>&1 | sed 's/.* //')
-          export GIT_COMMITTER_NAME="Zed Bot"
-          export GIT_COMMITTER_EMAIL="hi@zed.dev"
-          git commit -am "Bump to $output for @$GITHUB_ACTOR" --author "Zed Bot <hi@zed.dev>"
+          output=$(cargo set-version -p CodeOrbit --bump patch 2>&1 | sed 's/.* //')
+          export GIT_COMMITTER_NAME="CodeOrbit Bot"
+          export GIT_COMMITTER_EMAIL="hi@CodeOrbit.dev"
+          git commit -am "Bump to $output for @$GITHUB_ACTOR" --author "CodeOrbit Bot <hi@CodeOrbit.dev>"
           git tag v${output}${tag_suffix}
           git push origin HEAD v${output}${tag_suffix}

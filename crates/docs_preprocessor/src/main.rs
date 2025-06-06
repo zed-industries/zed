@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use clap::{Arg, ArgMatches, Command};
 use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
@@ -21,8 +21,8 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
 
 pub fn make_app() -> Command {
-    Command::new("zed-docs-preprocessor")
-        .about("Preprocesses Zed Docs content to provide rich action & keybinding support and more")
+    Command::new("CodeOrbit-docs-preprocessor")
+        .about("Preprocesses CodeOrbit Docs content to provide rich action & keybinding support and more")
         .subcommand(
             Command::new("supports")
                 .arg(Arg::new("renderer").required(true))
@@ -32,9 +32,9 @@ pub fn make_app() -> Command {
 
 fn main() -> Result<()> {
     let matches = make_app().get_matches();
-    // call a zed:: function so everything in `zed` crate is linked and
+    // call a CodeOrbit:: function so everything in `CodeOrbit` crate is linked and
     // all actions in the actual app are registered
-    zed::stdout_is_a_pty();
+    CodeOrbit::stdout_is_a_pty();
 
     if let Some(sub_args) = matches.subcommand_matches("supports") {
         handle_supports(sub_args);

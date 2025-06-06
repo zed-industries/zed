@@ -1,4 +1,4 @@
-mod registrar;
+﻿mod registrar;
 
 use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
@@ -28,7 +28,7 @@ use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
-use zed_actions::outline::ToggleOutline;
+use codeorbit_actions::outline::ToggleOutline;
 
 use ui::{
     BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
@@ -181,12 +181,12 @@ impl Render for BufferSearchBar {
             query_editor.placeholder_text().is_none()
         }) {
             self.query_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text("Search…", cx);
+                editor.set_placeholder_text("Searchâ€¦", cx);
             });
         }
 
         self.replacement_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Replace with…", cx);
+            editor.set_placeholder_text("Replace withâ€¦", cx);
         });
 
         let mut color_override = None;

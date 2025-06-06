@@ -1,13 +1,13 @@
-# YAML
+﻿# YAML
 
-YAML support is available natively in Zed.
+YAML support is available natively in CodeOrbit.
 
-- Tree-sitter: [zed-industries/tree-sitter-yaml](https://github.com/zed-industries/tree-sitter-yaml)
+- Tree-sitter: [CodeOrbit-industries/tree-sitter-yaml](https://github.com/CodeOrbit-industries/tree-sitter-yaml)
 - Language Server: [redhat-developer/yaml-language-server](https://github.com/redhat-developer/yaml-language-server)
 
 ## Configuration
 
-You can configure various [yaml-language-server settings](https://github.com/redhat-developer/yaml-language-server?tab=readme-ov-file#language-server-settings) by adding them to your Zed settings.json in a `yaml-language-server` block under the `lsp` key. For example:
+You can configure various [yaml-language-server settings](https://github.com/redhat-developer/yaml-language-server?tab=readme-ov-file#language-server-settings) by adding them to your CodeOrbit settings.json in a `yaml-language-server` block under the `lsp` key. For example:
 
 ```json
   "lsp": {
@@ -32,7 +32,7 @@ Note, settings keys must be nested, so `yaml.keyOrdering` becomes `{"yaml": { "k
 
 ## Formatting
 
-By default, Zed uses Prettier for formatting YAML files.
+By default, CodeOrbit uses Prettier for formatting YAML files.
 
 ### Prettier Formatting
 
@@ -53,7 +53,7 @@ You can customize the formatting behavior of Prettier. For example to use single
 
 ### yaml-language-server Formatting
 
-To use `yaml-language-server` instead of Prettier for YAML formatting, add the following to your Zed `settings.json`:
+To use `yaml-language-server` instead of Prettier for YAML formatting, add the following to your CodeOrbit `settings.json`:
 
 ```json
   "languages": {

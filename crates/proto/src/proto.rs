@@ -1,4 +1,4 @@
-#![allow(non_snake_case)]
+﻿#![allow(non_snake_case)]
 
 pub mod error;
 mod macros;
@@ -14,7 +14,7 @@ use std::{
 };
 pub use typed_envelope::*;
 
-include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
+include!(concat!(env!("OUT_DIR"), "/CodeOrbit.messages.rs"));
 
 pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
 pub const SSH_PROJECT_ID: u64 = 0;

@@ -1,4 +1,4 @@
-use std::{path::Path, sync::Arc};
+﻿use std::{path::Path, sync::Arc};
 
 use dap::client::DebugAdapterClient;
 use gpui::{App, AppContext, Subscription};
@@ -21,7 +21,7 @@ pub fn intercept_debug_sessions<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
                     configure(&client);
                     cx.background_spawn(async move {
                         client
-                            .fake_event(dap::messages::Events::Initialized(
+                            .fake_event(dap::messages::Events::InitialiCodeOrbit(
                                 Some(Default::default()),
                             ))
                             .await

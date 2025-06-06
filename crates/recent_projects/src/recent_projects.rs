@@ -1,4 +1,4 @@
-pub mod disconnected_overlay;
+﻿pub mod disconnected_overlay;
 mod remote_servers;
 mod ssh_config;
 mod ssh_connections;
@@ -26,10 +26,10 @@ use std::{
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
+    CloseIntent, HistoryManager, ModalView, OpenOptions, SerialiCodeOrbitWorkspaceLocation, WORKSPACE_DB,
     Workspace, WorkspaceId, with_active_or_new_workspace,
 };
-use zed_actions::{OpenRecent, OpenRemote};
+use codeorbit_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
@@ -153,7 +153,7 @@ impl Render for RecentProjects {
 
 pub struct RecentProjectsDelegate {
     workspace: WeakEntity<Workspace>,
-    workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>,
+    workspaces: Vec<(WorkspaceId, SerialiCodeOrbitWorkspaceLocation)>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     render_paths: bool,
@@ -177,12 +177,12 @@ impl RecentProjectsDelegate {
         }
     }
 
-    pub fn set_workspaces(&mut self, workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>) {
+    pub fn set_workspaces(&mut self, workspaces: Vec<(WorkspaceId, SerialiCodeOrbitWorkspaceLocation)>) {
         self.workspaces = workspaces;
         self.has_any_non_local_projects = !self
             .workspaces
             .iter()
-            .all(|(_, location)| matches!(location, SerializedWorkspaceLocation::Local(_, _)));
+            .all(|(_, location)| matches!(location, SerialiCodeOrbitWorkspaceLocation::Local(_, _)));
     }
 }
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
@@ -290,7 +290,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         Task::ready(Ok(()))
                     } else {
                         match candidate_workspace_location {
-                            SerializedWorkspaceLocation::Local(paths, _) => {
+                            SerialiCodeOrbitWorkspaceLocation::Local(paths, _) => {
                                 let paths = paths.paths().to_vec();
                                 if replace_current_window {
                                     cx.spawn_in(window, async move |workspace, cx| {
@@ -319,7 +319,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace.open_workspace_for_paths(false, paths, window, cx)
                                 }
                             }
-                            SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                            SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_project) => {
                                 let app_state = workspace.app_state().clone();
 
                                 let replace_window = if replace_current_window {
@@ -414,12 +414,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .gap_3()
                         .when(self.has_any_non_local_projects, |this| {
                             this.child(match location {
-                                SerializedWorkspaceLocation::Local(_, _) => {
+                                SerialiCodeOrbitWorkspaceLocation::Local(_, _) => {
                                     Icon::new(IconName::Screen)
                                         .color(Color::Muted)
                                         .into_any_element()
                                 }
-                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
+                                SerialiCodeOrbitWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
                                     .color(Color::Muted)
                                     .into_any_element(),
                             })
@@ -705,7 +705,7 @@ mod tests {
                     }];
                     delegate.set_workspaces(vec![(
                         WorkspaceId::default(),
-                        SerializedWorkspaceLocation::from_local_paths(vec![path!("/test/path/")]),
+                        SerialiCodeOrbitWorkspaceLocation::from_local_paths(vec![path!("/test/path/")]),
                     )]);
                 });
             })

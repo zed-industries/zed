@@ -1,10 +1,10 @@
-[package]
-name = "zed_extension_api"
+﻿[package]
+name = "codeorbit_extension_api"
 version = "0.6.0"
-description = "APIs for creating Zed extensions in Rust"
-repository = "https://github.com/zed-industries/zed"
-documentation = "https://docs.rs/zed_extension_api"
-keywords = ["zed", "extension"]
+description = "APIs for creating CodeOrbit extensions in Rust"
+repository = "https://github.com/CodeOrbit-industries/CodeOrbit"
+documentation = "https://docs.rs/codeorbit_extension_api"
+keywords = ["CodeOrbit", "extension"]
 edition.workspace = true
 # Change back to `true` when we're ready to publish v0.6.0.
 publish = false

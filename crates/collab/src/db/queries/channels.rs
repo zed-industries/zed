@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use anyhow::Context as _;
 use rpc::{
     ErrorCode, ErrorCodeExt,
@@ -83,7 +83,7 @@ impl Database {
                 name: ActiveValue::Set(name.to_string()),
                 visibility: ActiveValue::Set(ChannelVisibility::Members),
                 parent_path: ActiveValue::Set(parent_path),
-                requires_zed_cla: ActiveValue::NotSet,
+                requires_CodeOrbit_cla: ActiveValue::NotSet,
                 channel_order: ActiveValue::Set(max_order + 1),
             }
             .insert(&*tx)
@@ -227,15 +227,15 @@ impl Database {
     }
 
     #[cfg(test)]
-    pub async fn set_channel_requires_zed_cla(
+    pub async fn set_channel_requires_CodeOrbit_cla(
         &self,
         channel_id: ChannelId,
-        requires_zed_cla: bool,
+        requires_CodeOrbit_cla: bool,
     ) -> Result<()> {
         self.transaction(move |tx| async move {
             let channel = self.get_channel_internal(channel_id, &tx).await?;
             let mut model = channel.into_active_model();
-            model.requires_zed_cla = ActiveValue::Set(requires_zed_cla);
+            model.requires_CodeOrbit_cla = ActiveValue::Set(requires_CodeOrbit_cla);
             model.update(&*tx).await?;
             Ok(())
         })

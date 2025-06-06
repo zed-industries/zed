@@ -1,4 +1,4 @@
-use super::{SerializedAxis, SerializedWindowBounds};
+﻿use super::{SerialiCodeOrbitAxis, SerialiCodeOrbitWindowBounds};
 use crate::{
     Member, Pane, PaneAxis, SerializableItemRegistry, Workspace, WorkspaceId, item::ItemHandle,
 };
@@ -18,11 +18,11 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, paths::SanitizedPath};
+use util::{ResultExt, paths::SanitiCodeOrbitPath};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct SerializedSshProject {
+pub struct SerialiCodeOrbitSshProject {
     pub id: SshProjectId,
     pub host: String,
     pub port: Option<u16>,
@@ -30,7 +30,7 @@ pub struct SerializedSshProject {
     pub user: Option<String>,
 }
 
-impl SerializedSshProject {
+impl SerialiCodeOrbitSshProject {
     pub fn ssh_urls(&self) -> Vec<PathBuf> {
         self.paths
             .iter()
@@ -52,13 +52,13 @@ impl SerializedSshProject {
     }
 }
 
-impl StaticColumnCount for SerializedSshProject {
+impl StaticColumnCount for SerialiCodeOrbitSshProject {
     fn column_count() -> usize {
         5
     }
 }
 
-impl Bind for &SerializedSshProject {
+impl Bind for &SerialiCodeOrbitSshProject {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.id.0, start_index)?;
         let next_index = statement.bind(&self.host, next_index)?;
@@ -69,7 +69,7 @@ impl Bind for &SerializedSshProject {
     }
 }
 
-impl Column for SerializedSshProject {
+impl Column for SerialiCodeOrbitSshProject {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let id = statement.column_int64(start_index)?;
         let host = statement.column_text(start_index + 1)?.to_string();
@@ -99,9 +99,9 @@ impl LocalPaths {
     pub fn new<P: AsRef<Path>>(paths: impl IntoIterator<Item = P>) -> Self {
         let mut paths: Vec<PathBuf> = paths
             .into_iter()
-            .map(|p| SanitizedPath::from(p).into())
+            .map(|p| SanitiCodeOrbitPath::from(p).into())
             .collect();
-        // Ensure all future `zed workspace1 workspace2` and `zed workspace2 workspace1` calls are using the same workspace.
+        // Ensure all future `CodeOrbit workspace1 workspace2` and `CodeOrbit workspace2 workspace1` calls are using the same workspace.
         // The actual workspace order is stored in the `LocalPathsOrder` struct.
         paths.sort();
         Self(Arc::new(paths))
@@ -170,13 +170,13 @@ impl Column for LocalPathsOrder {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum SerializedWorkspaceLocation {
+pub enum SerialiCodeOrbitWorkspaceLocation {
     Local(LocalPaths, LocalPathsOrder),
-    Ssh(SerializedSshProject),
+    Ssh(SerialiCodeOrbitSshProject),
 }
 
-impl SerializedWorkspaceLocation {
-    /// Create a new `SerializedWorkspaceLocation` from a list of local paths.
+impl SerialiCodeOrbitWorkspaceLocation {
+    /// Create a new `SerialiCodeOrbitWorkspaceLocation` from a list of local paths.
     ///
     /// The paths will be sorted and the order will be stored in the `LocalPathsOrder` struct.
     ///
@@ -184,13 +184,13 @@ impl SerializedWorkspaceLocation {
     ///
     /// ```
     /// use std::path::Path;
-    /// use zed_workspace::SerializedWorkspaceLocation;
+    /// use codeorbit_workspace::SerialiCodeOrbitWorkspaceLocation;
     ///
-    /// let location = SerializedWorkspaceLocation::from_local_paths(vec![
+    /// let location = SerialiCodeOrbitWorkspaceLocation::from_local_paths(vec![
     ///     Path::new("path/to/workspace1"),
     ///     Path::new("path/to/workspace2"),
     /// ]);
-    /// assert_eq!(location, SerializedWorkspaceLocation::Local(
+    /// assert_eq!(location, SerialiCodeOrbitWorkspaceLocation::Local(
     ///    LocalPaths::new(vec![
     ///         Path::new("path/to/workspace1"),
     ///         Path::new("path/to/workspace2"),
@@ -201,14 +201,14 @@ impl SerializedWorkspaceLocation {
     ///
     /// ```
     /// use std::path::Path;
-    /// use zed_workspace::SerializedWorkspaceLocation;
+    /// use codeorbit_workspace::SerialiCodeOrbitWorkspaceLocation;
     ///
-    /// let location = SerializedWorkspaceLocation::from_local_paths(vec![
+    /// let location = SerialiCodeOrbitWorkspaceLocation::from_local_paths(vec![
     ///     Path::new("path/to/workspace2"),
     ///     Path::new("path/to/workspace1"),
     /// ]);
     ///
-    /// assert_eq!(location, SerializedWorkspaceLocation::Local(
+    /// assert_eq!(location, SerialiCodeOrbitWorkspaceLocation::Local(
     ///    LocalPaths::new(vec![
     ///         Path::new("path/to/workspace1"),
     ///         Path::new("path/to/workspace2"),
@@ -234,7 +234,7 @@ impl SerializedWorkspaceLocation {
     /// Get sorted paths
     pub fn sorted_paths(&self) -> Arc<Vec<PathBuf>> {
         match self {
-            SerializedWorkspaceLocation::Local(paths, order) => {
+            SerialiCodeOrbitWorkspaceLocation::Local(paths, order) => {
                 if order.order().len() == 0 {
                     paths.paths().clone()
                 } else {
@@ -249,17 +249,17 @@ impl SerializedWorkspaceLocation {
                     )
                 }
             }
-            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
+            SerialiCodeOrbitWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
         }
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct SerializedWorkspace {
+pub(crate) struct SerialiCodeOrbitWorkspace {
     pub(crate) id: WorkspaceId,
-    pub(crate) location: SerializedWorkspaceLocation,
-    pub(crate) center_group: SerializedPaneGroup,
-    pub(crate) window_bounds: Option<SerializedWindowBounds>,
+    pub(crate) location: SerialiCodeOrbitWorkspaceLocation,
+    pub(crate) center_group: SerialiCodeOrbitPaneGroup,
+    pub(crate) window_bounds: Option<SerialiCodeOrbitWindowBounds>,
     pub(crate) centered_layout: bool,
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
@@ -331,27 +331,27 @@ impl Bind for DockData {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum SerializedPaneGroup {
+pub(crate) enum SerialiCodeOrbitPaneGroup {
     Group {
-        axis: SerializedAxis,
+        axis: SerialiCodeOrbitAxis,
         flexes: Option<Vec<f32>>,
-        children: Vec<SerializedPaneGroup>,
+        children: Vec<SerialiCodeOrbitPaneGroup>,
     },
-    Pane(SerializedPane),
+    Pane(SerialiCodeOrbitPane),
 }
 
 #[cfg(test)]
-impl Default for SerializedPaneGroup {
+impl Default for SerialiCodeOrbitPaneGroup {
     fn default() -> Self {
-        Self::Pane(SerializedPane {
-            children: vec![SerializedItem::default()],
+        Self::Pane(SerialiCodeOrbitPane {
+            children: vec![Serialicodeorbit-editem::default()],
             active: false,
             pinned_count: 0,
         })
     }
 }
 
-impl SerializedPaneGroup {
+impl SerialiCodeOrbitPaneGroup {
     #[async_recursion(?Send)]
     pub(crate) async fn deserialize(
         self,
@@ -365,7 +365,7 @@ impl SerializedPaneGroup {
         Vec<Option<Box<dyn ItemHandle>>>,
     )> {
         match self {
-            SerializedPaneGroup::Group {
+            SerialiCodeOrbitPaneGroup::Group {
                 axis,
                 children,
                 flexes,
@@ -398,14 +398,14 @@ impl SerializedPaneGroup {
                     items,
                 ))
             }
-            SerializedPaneGroup::Pane(serialized_pane) => {
+            SerialiCodeOrbitPaneGroup::Pane(serialiCodeOrbit_pane) => {
                 let pane = workspace
                     .update_in(cx, |workspace, window, cx| {
                         workspace.add_pane(window, cx).downgrade()
                     })
                     .log_err()?;
-                let active = serialized_pane.active;
-                let new_items = serialized_pane
+                let active = serialiCodeOrbit_pane.active;
+                let new_items = serialiCodeOrbit_pane
                     .deserialize_to(project, &pane, workspace_id, workspace.clone(), cx)
                     .await
                     .log_err()?;
@@ -435,15 +435,15 @@ impl SerializedPaneGroup {
 }
 
 #[derive(Debug, PartialEq, Eq, Default, Clone)]
-pub struct SerializedPane {
+pub struct SerialiCodeOrbitPane {
     pub(crate) active: bool,
-    pub(crate) children: Vec<SerializedItem>,
+    pub(crate) children: Vec<Serialicodeorbit-editem>,
     pub(crate) pinned_count: usize,
 }
 
-impl SerializedPane {
-    pub fn new(children: Vec<SerializedItem>, active: bool, pinned_count: usize) -> Self {
-        SerializedPane {
+impl SerialiCodeOrbitPane {
+    pub fn new(children: Vec<Serialicodeorbit-editem>, active: bool, pinned_count: usize) -> Self {
+        SerialiCodeOrbitPane {
             children,
             active,
             pinned_count,
@@ -520,14 +520,14 @@ pub type PaneId = i64;
 pub type ItemId = u64;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-pub struct SerializedItem {
+pub struct Serialicodeorbit-editem {
     pub kind: Arc<str>,
     pub item_id: ItemId,
     pub active: bool,
     pub preview: bool,
 }
 
-impl SerializedItem {
+impl Serialicodeorbit-editem {
     pub fn new(kind: impl AsRef<str>, item_id: ItemId, active: bool, preview: bool) -> Self {
         Self {
             kind: Arc::from(kind.as_ref()),
@@ -539,9 +539,9 @@ impl SerializedItem {
 }
 
 #[cfg(test)]
-impl Default for SerializedItem {
+impl Default for Serialicodeorbit-editem {
     fn default() -> Self {
-        SerializedItem {
+        Serialicodeorbit-editem {
             kind: Arc::from("Terminal"),
             item_id: 100000,
             active: false,
@@ -550,12 +550,12 @@ impl Default for SerializedItem {
     }
 }
 
-impl StaticColumnCount for SerializedItem {
+impl StaticColumnCount for Serialicodeorbit-editem {
     fn column_count() -> usize {
         4
     }
 }
-impl Bind for &SerializedItem {
+impl Bind for &Serialicodeorbit-editem {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let next_index = statement.bind(&self.kind, start_index)?;
         let next_index = statement.bind(&self.item_id, next_index)?;
@@ -564,14 +564,14 @@ impl Bind for &SerializedItem {
     }
 }
 
-impl Column for SerializedItem {
+impl Column for Serialicodeorbit-editem {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (kind, next_index) = Arc::<str>::column(statement, start_index)?;
         let (item_id, next_index) = ItemId::column(statement, next_index)?;
         let (active, next_index) = bool::column(statement, next_index)?;
         let (preview, next_index) = bool::column(statement, next_index)?;
         Ok((
-            SerializedItem {
+            Serialicodeorbit-editem {
                 kind,
                 item_id,
                 active,
@@ -589,11 +589,11 @@ mod tests {
     #[test]
     fn test_serialize_local_paths() {
         let paths = vec!["b", "a", "c"];
-        let serialized = SerializedWorkspaceLocation::from_local_paths(paths);
+        let serialiCodeOrbit = SerialiCodeOrbitWorkspaceLocation::from_local_paths(paths);
 
         assert_eq!(
-            serialized,
-            SerializedWorkspaceLocation::Local(
+            serialiCodeOrbit,
+            SerialiCodeOrbitWorkspaceLocation::Local(
                 LocalPaths::new(vec!["a", "b", "c"]),
                 LocalPathsOrder::new(vec![1, 0, 2])
             )
@@ -603,9 +603,9 @@ mod tests {
     #[test]
     fn test_sorted_paths() {
         let paths = vec!["b", "a", "c"];
-        let serialized = SerializedWorkspaceLocation::from_local_paths(paths);
+        let serialiCodeOrbit = SerialiCodeOrbitWorkspaceLocation::from_local_paths(paths);
         assert_eq!(
-            serialized.sorted_paths(),
+            serialiCodeOrbit.sorted_paths(),
             Arc::new(vec![
                 PathBuf::from("b"),
                 PathBuf::from("a"),
@@ -619,10 +619,10 @@ mod tests {
             PathBuf::from("c"),
         ]);
         let order = vec![2, 0, 1];
-        let serialized =
-            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
+        let serialiCodeOrbit =
+            SerialiCodeOrbitWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
         assert_eq!(
-            serialized.sorted_paths(),
+            serialiCodeOrbit.sorted_paths(),
             Arc::new(vec![
                 PathBuf::from("b"),
                 PathBuf::from("c"),
@@ -636,12 +636,12 @@ mod tests {
             PathBuf::from("c"),
         ]);
         let order = vec![];
-        let serialized =
-            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
-        assert_eq!(serialized.sorted_paths(), paths);
+        let serialiCodeOrbit =
+            SerialiCodeOrbitWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
+        assert_eq!(serialiCodeOrbit.sorted_paths(), paths);
 
         let urls = ["/a", "/b", "/c"];
-        let serialized = SerializedWorkspaceLocation::Ssh(SerializedSshProject {
+        let serialiCodeOrbit = SerialiCodeOrbitWorkspaceLocation::Ssh(SerialiCodeOrbitSshProject {
             id: SshProjectId(0),
             host: "host".to_string(),
             port: Some(22),
@@ -649,7 +649,7 @@ mod tests {
             user: Some("user".to_string()),
         });
         assert_eq!(
-            serialized.sorted_paths(),
+            serialiCodeOrbit.sorted_paths(),
             Arc::new(
                 urls.iter()
                     .map(|p| PathBuf::from(format!("user@host:22{}", p)))

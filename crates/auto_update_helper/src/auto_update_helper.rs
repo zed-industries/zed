@@ -1,4 +1,4 @@
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+﻿#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(target_os = "windows")]
 mod dialog;
@@ -8,7 +8,7 @@ mod updater;
 #[cfg(target_os = "windows")]
 fn main() {
     if let Err(e) = windows_impl::run() {
-        log::error!("Error: Zed update failed, {:?}", e);
+        log::error!("Error: CodeOrbit update failed, {:?}", e);
         windows_impl::show_error(format!("Error: {:?}", e));
     }
 }
@@ -48,7 +48,7 @@ mod windows_impl {
             .context("No parent directory")?
             .to_path_buf();
 
-        log::info!("======= Starting Zed update =======");
+        log::info!("======= Starting CodeOrbit update =======");
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
         std::thread::spawn(move || {
@@ -86,7 +86,7 @@ mod windows_impl {
             MessageBoxW(
                 None,
                 &HSTRING::from(content),
-                windows::core::w!("Error: Zed update failed."),
+                windows::core::w!("Error: CodeOrbit update failed."),
                 MB_ICONERROR | MB_SYSTEMMODAL,
             )
         };

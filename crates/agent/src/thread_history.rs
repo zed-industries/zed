@@ -1,4 +1,4 @@
-use std::fmt::Display;
+﻿use std::fmt::Display;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -798,7 +798,7 @@ impl EntryTimeFormat {
             .unwrap_or(UtcOffset::UTC);
 
         match &self {
-            EntryTimeFormat::DateAndTime => time_format::format_localized_timestamp(
+            EntryTimeFormat::DateAndTime => time_format::format_localiCodeOrbit_timestamp(
                 timestamp,
                 OffsetDateTime::now_utc(),
                 timezone,

@@ -1,8 +1,8 @@
-# Slash Commands Example Extension
+﻿# Slash Commands Example Extension
 
 This is an example extension showcasing how to write slash commands.
 
-See: [Extensions: Slash Commands](https://zed.dev/docs/extensions/slash-commands) in the Zed Docs.
+See: [Extensions: Slash Commands](https://CodeOrbit.dev/docs/extensions/slash-commands) in the CodeOrbit Docs.
 
 ## Pre-requisites
 
@@ -15,8 +15,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ## Setup
 
 ```sh
-git clone https://github.com/zed-industries/zed.git
-cp -RL zed/extensions/slash-commands-example .
+git clone https://github.com/CodeOrbit-industries/CodeOrbit.git
+cp -RL CodeOrbit/extensions/slash-commands-example .
 
 cd slash-commands-example/
 
@@ -33,11 +33,11 @@ path = "src/slash_commands_example.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-zed_extension_api = "0.1.0"
+codeorbit_extension_api = "0.1.0"
 EOF
 
 curl -O https://raw.githubusercontent.com/rust-lang/rust/master/LICENSE-APACHE
-echo "# Zed Slash Commands Example Extension" > README.md
+echo "# CodeOrbit Slash Commands Example Extension" > README.md
 echo "Cargo.lock" > .gitignore
 echo "target/" >> .gitignore
 echo "*.wasm" >> .gitignore
@@ -47,14 +47,14 @@ git add .
 git commit -m "Initial commit"
 
 cd ..
-mv slash-commands-example MY-SUPER-COOL-ZED-EXTENSION
-zed $_
+mv slash-commands-example MY-SUPER-COOL-CodeOrbit-EXTENSION
+CodeOrbit $_
 ```
 
 ## Installation
 
 1. Open the command palette (`cmd-shift-p` or `ctrl-shift-p`).
-2. Launch `zed: install dev extension`
+2. Launch `CodeOrbit: install dev extension`
 3. Select the extension folder created above
 
 ## Test
@@ -71,15 +71,15 @@ Rename `slash-commands-example.rs` you'll also have to update `Cargo.toml`
 
 Rebuild to see these changes reflected:
 
-1. Open Zed Extensions (`cmd-shift-x` or `ctrl-shift-x`).
+1. Open CodeOrbit Extensions (`cmd-shift-x` or `ctrl-shift-x`).
 2. Click `Rebuild` next to your Dev Extension (formerly "Slash Command Example")
 
 ## Troubleshooting / Logs
 
-- MacOS: `tail -f ~/Library/Logs/Zed/Zed.log`
-- Linux: `tail -f ~/.local/share/zed/logs/Zed.log`
+- MacOS: `tail -f ~/Library/Logs/CodeOrbit/CodeOrbit.log`
+- Linux: `tail -f ~/.local/share/CodeOrbit/logs/CodeOrbit.log`
 
 ## Documentation
 
-- [zed.dev docs: Extensions: Developing Extensions](https://zed.dev/docs/extensions/developing-extensions)
-- [zed.dev docs: Extensions: Slash Commands](https://zed.dev/docs/extensions/slash-commands)
+- [CodeOrbit.dev docs: Extensions: Developing Extensions](https://CodeOrbit.dev/docs/extensions/developing-extensions)
+- [CodeOrbit.dev docs: Extensions: Slash Commands](https://CodeOrbit.dev/docs/extensions/slash-commands)

@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     os::windows::process::CommandExt,
     path::Path,
     time::{Duration, Instant},
@@ -19,50 +19,50 @@ type Job = fn(&Path) -> Result<()>;
 pub(crate) const JOBS: [Job; 6] = [
     // Delete old files
     |app_dir| {
-        let zed_executable = app_dir.join("Zed.exe");
-        log::info!("Removing old file: {}", zed_executable.display());
-        std::fs::remove_file(&zed_executable).context(format!(
+        let codeorbit_executable = app_dir.join("CodeOrbit.exe");
+        log::info!("Removing old file: {}", codeorbit_executable.display());
+        std::fs::remove_file(&codeorbit_executable).context(format!(
             "Failed to remove old file {}",
-            zed_executable.display()
+            codeorbit_executable.display()
         ))
     },
     |app_dir| {
-        let zed_cli = app_dir.join("bin\\zed.exe");
-        log::info!("Removing old file: {}", zed_cli.display());
-        std::fs::remove_file(&zed_cli)
-            .context(format!("Failed to remove old file {}", zed_cli.display()))
+        let codeorbit_cli = app_dir.join("bin\\CodeOrbit.exe");
+        log::info!("Removing old file: {}", codeorbit_cli.display());
+        std::fs::remove_file(&codeorbit_cli)
+            .context(format!("Failed to remove old file {}", codeorbit_cli.display()))
     },
     // Copy new files
     |app_dir| {
-        let zed_executable_source = app_dir.join("install\\Zed.exe");
-        let zed_executable_dest = app_dir.join("Zed.exe");
+        let codeorbit_executable_source = app_dir.join("install\\CodeOrbit.exe");
+        let codeorbit_executable_dest = app_dir.join("CodeOrbit.exe");
         log::info!(
             "Copying new file {} to {}",
-            zed_executable_source.display(),
-            zed_executable_dest.display()
+            codeorbit_executable_source.display(),
+            codeorbit_executable_dest.display()
         );
-        std::fs::copy(&zed_executable_source, &zed_executable_dest)
+        std::fs::copy(&codeorbit_executable_source, &codeorbit_executable_dest)
             .map(|_| ())
             .context(format!(
                 "Failed to copy new file {} to {}",
-                zed_executable_source.display(),
-                zed_executable_dest.display()
+                codeorbit_executable_source.display(),
+                codeorbit_executable_dest.display()
             ))
     },
     |app_dir| {
-        let zed_cli_source = app_dir.join("install\\bin\\zed.exe");
-        let zed_cli_dest = app_dir.join("bin\\zed.exe");
+        let codeorbit_cli_source = app_dir.join("install\\bin\\CodeOrbit.exe");
+        let codeorbit_cli_dest = app_dir.join("bin\\CodeOrbit.exe");
         log::info!(
             "Copying new file {} to {}",
-            zed_cli_source.display(),
-            zed_cli_dest.display()
+            codeorbit_cli_source.display(),
+            codeorbit_cli_dest.display()
         );
-        std::fs::copy(&zed_cli_source, &zed_cli_dest)
+        std::fs::copy(&codeorbit_cli_source, &codeorbit_cli_dest)
             .map(|_| ())
             .context(format!(
                 "Failed to copy new file {} to {}",
-                zed_cli_source.display(),
-                zed_cli_dest.display()
+                codeorbit_cli_source.display(),
+                codeorbit_cli_dest.display()
             ))
     },
     // Clean up installer folder and updates folder
@@ -88,14 +88,14 @@ pub(crate) const JOBS: [Job; 6] = [
 pub(crate) const JOBS: [Job; 2] = [
     |_| {
         std::thread::sleep(Duration::from_millis(1000));
-        if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
+        if let Ok(config) = std::env::var("codeorbit_AUTO_UPDATE") {
             match config.as_str() {
                 "err" => Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Simulated error",
                 ))
                 .context("Anyhow!"),
-                _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
+                _ => panic!("Unknown codeorbit_AUTO_UPDATE value: {}", config),
             }
         } else {
             Ok(())
@@ -103,14 +103,14 @@ pub(crate) const JOBS: [Job; 2] = [
     },
     |_| {
         std::thread::sleep(Duration::from_millis(1000));
-        if let Ok(config) = std::env::var("ZED_AUTO_UPDATE") {
+        if let Ok(config) = std::env::var("codeorbit_AUTO_UPDATE") {
             match config.as_str() {
                 "err" => Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Simulated error",
                 ))
                 .context("Anyhow!"),
-                _ => panic!("Unknown ZED_AUTO_UPDATE value: {}", config),
+                _ => panic!("Unknown codeorbit_AUTO_UPDATE value: {}", config),
             }
         } else {
             Ok(())
@@ -145,7 +145,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>) -> Result<()> 
             }
         }
     }
-    let _ = std::process::Command::new(app_dir.join("Zed.exe"))
+    let _ = std::process::Command::new(app_dir.join("CodeOrbit.exe"))
         .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
         .spawn();
     log::info!("Update completed successfully");
@@ -162,7 +162,7 @@ mod test {
         assert!(perform_update(app_dir, None).is_ok());
 
         // Simulate a timeout
-        unsafe { std::env::set_var("ZED_AUTO_UPDATE", "err") };
+        unsafe { std::env::set_var("codeorbit_AUTO_UPDATE", "err") };
         let ret = perform_update(app_dir, None);
         assert!(ret.is_err_and(|e| e.to_string().as_str() == "Timed out"));
     }

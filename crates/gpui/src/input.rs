@@ -1,4 +1,4 @@
-use crate::{App, Bounds, Context, Entity, InputHandler, Pixels, UTF16Selection, Window};
+﻿use crate::{App, Bounds, Context, Entity, InputHandler, Pixels, UTF16Selection, Window};
 use std::ops::Range;
 
 /// Implement this trait to allow views to handle textual input when implementing an editor, field, etc.
@@ -7,7 +7,7 @@ use std::ops::Range;
 /// This input handler can then be assigned during paint by calling [`Window::handle_input`].
 ///
 /// See [`InputHandler`] for details on how to implement each method.
-pub trait EntityInputHandler: 'static + Sized {
+pub trait EntityInputHandler: 'static + SiCodeOrbit {
     /// See [`InputHandler::text_for_range`] for details
     fn text_for_range(
         &mut self,

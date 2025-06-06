@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     borrow::{Borrow, Cow},
     collections::BTreeMap,
     sync::atomic::{self, AtomicBool},
@@ -207,8 +207,8 @@ impl<'a> Matcher<'a> {
 
         let path_len = prefix.len() + path.len();
 
-        if let Some(memoized) = self.score_matrix[query_idx * path_len + path_idx] {
-            return memoized;
+        if let Some(memoiCodeOrbit) = self.score_matrix[query_idx * path_len + path_idx] {
+            return memoiCodeOrbit;
         }
 
         let mut score = 0.0;
@@ -484,24 +484,24 @@ mod tests {
     #[test]
     fn test_match_multibyte_path_entries() {
         let paths = vec![
-            "aαbβ/cγdδ",
-            "αβγδ/bcde",
-            "c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f",
-            "/d/🆒/h",
+            "aÎ±bÎ²/cÎ³dÎ´",
+            "Î±Î²Î³Î´/bcde",
+            "c1ï¸âƒ£2ï¸âƒ£3ï¸âƒ£/d4ï¸âƒ£5ï¸âƒ£6ï¸âƒ£/e7ï¸âƒ£8ï¸âƒ£9ï¸âƒ£/f",
+            "/d/ðŸ†’/h",
         ];
-        assert_eq!("1️⃣".len(), 7);
+        assert_eq!("1ï¸âƒ£".len(), 7);
         assert_eq!(
             match_single_path_query("bcd", false, &paths),
             vec![
-                ("αβγδ/bcde", vec![9, 10, 11]),
-                ("aαbβ/cγdδ", vec![3, 7, 10]),
+                ("Î±Î²Î³Î´/bcde", vec![9, 10, 11]),
+                ("aÎ±bÎ²/cÎ³dÎ´", vec![3, 7, 10]),
             ]
         );
         assert_eq!(
             match_single_path_query("cde", false, &paths),
             vec![
-                ("αβγδ/bcde", vec![10, 11, 12]),
-                ("c1️⃣2️⃣3️⃣/d4️⃣5️⃣6️⃣/e7️⃣8️⃣9️⃣/f", vec![0, 23, 46]),
+                ("Î±Î²Î³Î´/bcde", vec![10, 11, 12]),
+                ("c1ï¸âƒ£2ï¸âƒ£3ï¸âƒ£/d4ï¸âƒ£5ï¸âƒ£6ï¸âƒ£/e7ï¸âƒ£8ï¸âƒ£9ï¸âƒ£/f", vec![0, 23, 46]),
             ]
         );
     }
@@ -509,35 +509,35 @@ mod tests {
     #[test]
     fn match_unicode_path_entries() {
         let mixed_unicode_paths = vec![
-            "İolu/oluş",
-            "İstanbul/code",
-            "Athens/Şanlıurfa",
-            "Çanakkale/scripts",
-            "paris/Düzce_İl",
-            "Berlin_Önemli_Ğündem",
-            "KİTAPLIK/london/dosya",
+            "Ä°olu/oluÅŸ",
+            "Ä°stanbul/code",
+            "Athens/ÅžanlÄ±urfa",
+            "Ã‡anakkale/scripts",
+            "paris/DÃ¼zce_Ä°l",
+            "Berlin_Ã–nemli_ÄžÃ¼ndem",
+            "KÄ°TAPLIK/london/dosya",
             "tokyo/kyoto/fuji",
             "new_york/san_francisco",
         ];
 
         assert_eq!(
-            match_single_path_query("İo/oluş", false, &mixed_unicode_paths),
-            vec![("İolu/oluş", vec![0, 2, 4, 6, 8, 10, 12])]
+            match_single_path_query("Ä°o/oluÅŸ", false, &mixed_unicode_paths),
+            vec![("Ä°olu/oluÅŸ", vec![0, 2, 4, 6, 8, 10, 12])]
         );
 
         assert_eq!(
-            match_single_path_query("İst/code", false, &mixed_unicode_paths),
-            vec![("İstanbul/code", vec![0, 2, 4, 6, 8, 10, 12, 14])]
+            match_single_path_query("Ä°st/code", false, &mixed_unicode_paths),
+            vec![("Ä°stanbul/code", vec![0, 2, 4, 6, 8, 10, 12, 14])]
         );
 
         assert_eq!(
-            match_single_path_query("athens/şa", false, &mixed_unicode_paths),
-            vec![("Athens/Şanlıurfa", vec![0, 1, 2, 3, 4, 5, 6, 7, 9])]
+            match_single_path_query("athens/ÅŸa", false, &mixed_unicode_paths),
+            vec![("Athens/ÅžanlÄ±urfa", vec![0, 1, 2, 3, 4, 5, 6, 7, 9])]
         );
 
         assert_eq!(
-            match_single_path_query("BerlinÖĞ", false, &mixed_unicode_paths),
-            vec![("Berlin_Önemli_Ğündem", vec![0, 1, 2, 3, 4, 5, 7, 15])]
+            match_single_path_query("BerlinÃ–Äž", false, &mixed_unicode_paths),
+            vec![("Berlin_Ã–nemli_ÄžÃ¼ndem", vec![0, 1, 2, 3, 4, 5, 7, 15])]
         );
 
         assert_eq!(
@@ -546,46 +546,46 @@ mod tests {
         );
 
         let mixed_script_paths = vec![
-            "résumé_Москва",
-            "naïve_київ_implementation",
-            "café_北京_app",
-            "東京_über_driver",
-            "déjà_vu_cairo",
-            "seoul_piñata_game",
-            "voilà_istanbul_result",
+            "rÃ©sumÃ©_ÐœÐ¾ÑÐºÐ²Ð°",
+            "naÃ¯ve_ÐºÐ¸Ñ—Ð²_implementation",
+            "cafÃ©_åŒ—äº¬_app",
+            "æ±äº¬_Ã¼ber_driver",
+            "dÃ©jÃ _vu_cairo",
+            "seoul_piÃ±ata_game",
+            "voilÃ _istanbul_result",
         ];
 
         assert_eq!(
-            match_single_path_query("résmé", false, &mixed_script_paths),
-            vec![("résumé_Москва", vec![0, 1, 3, 5, 6])]
+            match_single_path_query("rÃ©smÃ©", false, &mixed_script_paths),
+            vec![("rÃ©sumÃ©_ÐœÐ¾ÑÐºÐ²Ð°", vec![0, 1, 3, 5, 6])]
         );
 
         assert_eq!(
-            match_single_path_query("café北京", false, &mixed_script_paths),
-            vec![("café_北京_app", vec![0, 1, 2, 3, 6, 9])]
+            match_single_path_query("cafÃ©åŒ—äº¬", false, &mixed_script_paths),
+            vec![("cafÃ©_åŒ—äº¬_app", vec![0, 1, 2, 3, 6, 9])]
         );
 
         assert_eq!(
             match_single_path_query("ista", false, &mixed_script_paths),
-            vec![("voilà_istanbul_result", vec![7, 8, 9, 10])]
+            vec![("voilÃ _istanbul_result", vec![7, 8, 9, 10])]
         );
 
         let complex_paths = vec![
-            "document_📚_library",
-            "project_👨‍👩‍👧‍👦_family",
-            "flags_🇯🇵🇺🇸🇪🇺_world",
-            "code_😀😃😄😁_happy",
-            "photo_👩‍👩‍👧‍👦_album",
+            "document_ðŸ“š_library",
+            "project_ðŸ‘¨â€ðŸ‘©â€ðŸ‘§â€ðŸ‘¦_family",
+            "flags_ðŸ‡¯ðŸ‡µðŸ‡ºðŸ‡¸ðŸ‡ªðŸ‡º_world",
+            "code_ðŸ˜€ðŸ˜ƒðŸ˜„ðŸ˜_happy",
+            "photo_ðŸ‘©â€ðŸ‘©â€ðŸ‘§â€ðŸ‘¦_album",
         ];
 
         assert_eq!(
-            match_single_path_query("doc📚lib", false, &complex_paths),
-            vec![("document_📚_library", vec![0, 1, 2, 9, 14, 15, 16])]
+            match_single_path_query("docðŸ“šlib", false, &complex_paths),
+            vec![("document_ðŸ“š_library", vec![0, 1, 2, 9, 14, 15, 16])]
         );
 
         assert_eq!(
             match_single_path_query("codehappy", false, &complex_paths),
-            vec![("code_😀😃😄😁_happy", vec![0, 1, 2, 3, 22, 23, 24, 25, 26])]
+            vec![("code_ðŸ˜€ðŸ˜ƒðŸ˜„ðŸ˜_happy", vec![0, 1, 2, 3, 22, 23, 24, 25, 26])]
         );
     }
 

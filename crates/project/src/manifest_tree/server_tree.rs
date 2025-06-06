@@ -1,4 +1,4 @@
-//! This module defines an LSP Tree.
+﻿//! This module defines an LSP Tree.
 //!
 //! An LSP Tree is responsible for determining which language servers apply to a given project path.
 //!
@@ -44,8 +44,8 @@ pub struct LanguageServerTree {
 }
 
 /// A node in language server tree represents either:
-/// - A language server that has already been initialized/updated for a given project
-/// - A soon-to-be-initialized language server.
+/// - A language server that has already been initialiCodeOrbit/updated for a given project
+/// - A soon-to-be-initialiCodeOrbit language server.
 #[derive(Clone)]
 pub struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
@@ -70,11 +70,11 @@ impl<'a> From<&'a InnerTreeNode> for LaunchDisposition<'a> {
 }
 impl LanguageServerTreeNode {
     /// Returns a language server ID for this node if there is one.
-    /// Returns None if this node has not been initialized yet or it is no longer in the tree.
+    /// Returns None if this node has not been initialiCodeOrbit yet or it is no longer in the tree.
     pub(crate) fn server_id(&self) -> Option<LanguageServerId> {
         self.0.upgrade()?.id.get().copied()
     }
-    /// Returns a language server ID for this node if it has already been initialized; otherwise runs the provided closure to initialize the language server node in a tree.
+    /// Returns a language server ID for this node if it has already been initialiCodeOrbit; otherwise runs the provided closure to initialize the language server node in a tree.
     /// May return None if the node no longer belongs to the server tree it was created in.
     pub(crate) fn server_id_or_init(
         &self,
@@ -146,7 +146,7 @@ impl LanguageServerTree {
         })
     }
 
-    /// Get all language server root points for a given path and language; the language servers might already be initialized at a given path.
+    /// Get all language server root points for a given path and language; the language servers might already be initialiCodeOrbit at a given path.
     pub(crate) fn get<'a>(
         &'a mut self,
         path: ProjectPath,
@@ -269,7 +269,7 @@ impl LanguageServerTree {
             .collect::<Vec<_>>();
 
         let desired_language_servers =
-            settings.customized_language_servers(&available_language_servers);
+            settings.customiCodeOrbit_language_servers(&available_language_servers);
         let adapters_with_settings = desired_language_servers
             .into_iter()
             .filter_map(|desired_adapter| {

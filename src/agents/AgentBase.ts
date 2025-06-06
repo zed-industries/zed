@@ -1,6 +1,6 @@
-/**
+﻿/**
  * Abstract base class for all agents in the CodeOrbit system.
- * All specialized agents should extend this class.
+ * All specialiCodeOrbit agents should extend this class.
  */
 export abstract class AgentBase {
   constructor(
@@ -24,7 +24,7 @@ export abstract class AgentBase {
   public abstract getCapabilities(): string[];
 
   /**
-   * Helper method to create a standardized success response
+   * Helper method to create a standardiCodeOrbit success response
    */
   protected createSuccessResult(
     output: string,
@@ -42,7 +42,7 @@ export abstract class AgentBase {
   }
 
   /**
-   * Helper method to create a standardized error response
+   * Helper method to create a standardiCodeOrbit error response
    */
   protected createErrorResult(
     error: string,

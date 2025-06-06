@@ -1,3 +1,3 @@
-# Additional Learning Materials
+﻿# Additional Learning Materials
 
-- [Text Manipulation Kung Fu for the Aspiring Black Belt](https://zed.dev/blog/text-manipulation)
+- [Text Manipulation Kung Fu for the Aspiring Black Belt](https://CodeOrbit.dev/blog/text-manipulation)

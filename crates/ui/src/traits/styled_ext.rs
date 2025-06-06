@@ -1,4 +1,4 @@
-use gpui::{App, Styled, hsla};
+﻿use gpui::{App, Styled, hsla};
 
 use crate::ElevationIndex;
 use crate::prelude::*;
@@ -17,9 +17,9 @@ fn elevated_borderless<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) 
         .shadow(index.shadow(cx))
 }
 
-/// Extends [`gpui::Styled`] with Zed-specific styling methods.
+/// Extends [`gpui::Styled`] with CodeOrbit-specific styling methods.
 #[cfg_attr(debug_assertions, gpui_macros::derive_inspector_reflection)]
-pub trait StyledExt: Styled + Sized {
+pub trait StyledExt: Styled + SiCodeOrbit {
     /// Horizontally stacks elements.
     ///
     /// Sets `flex()`, `flex_row()`, `items_center()`

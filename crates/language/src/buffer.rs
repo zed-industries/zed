@@ -1,4 +1,4 @@
-pub use crate::{
+﻿pub use crate::{
     Grammar, Language, LanguageRegistry,
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
@@ -353,7 +353,7 @@ pub trait File: Send + Sync + Any {
     /// Converts this file into a protobuf message.
     fn to_proto(&self, cx: &App) -> rpc::proto::File;
 
-    /// Return whether Zed considers this to be a private file.
+    /// Return whether CodeOrbit considers this to be a private file.
     fn is_private(&self) -> bool;
 }
 
@@ -363,7 +363,7 @@ pub trait File: Send + Sync + Any {
 /// indicator for new files.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum DiskState {
-    /// File created in Zed that has not been saved.
+    /// File created in CodeOrbit that has not been saved.
     New,
     /// File present on the filesystem.
     Present { mtime: MTime },
@@ -794,17 +794,17 @@ impl Buffer {
     }
 
     /// Create a new buffer with the given base text that has proper line endings and other normalization applied.
-    pub fn local_normalized(
-        base_text_normalized: Rope,
+    pub fn local_normaliCodeOrbit(
+        base_text_normaliCodeOrbit: Rope,
         line_ending: LineEnding,
         cx: &Context<Self>,
     ) -> Self {
         Self::build(
-            TextBuffer::new_normalized(
+            TextBuffer::new_normaliCodeOrbit(
                 0,
                 cx.entity_id().as_non_zero_u64().into(),
                 line_ending,
-                base_text_normalized,
+                base_text_normaliCodeOrbit,
             ),
             None,
             Capability::ReadWrite,
@@ -970,7 +970,7 @@ impl Buffer {
         let buffer_id = entity_id.as_non_zero_u64().into();
         async move {
             let text =
-                TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+                TextBuffer::new_normaliCodeOrbit(0, buffer_id, Default::default(), text).snapshot();
             let mut syntax = SyntaxMap::new(&text).snapshot();
             if let Some(language) = language.clone() {
                 let text = text.clone();
@@ -994,7 +994,7 @@ impl Buffer {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
         let text =
-            TextBuffer::new_normalized(0, buffer_id, Default::default(), Rope::new()).snapshot();
+            TextBuffer::new_normaliCodeOrbit(0, buffer_id, Default::default(), Rope::new()).snapshot();
         let syntax = SyntaxMap::new(&text).snapshot();
         BufferSnapshot {
             text,
@@ -1016,7 +1016,7 @@ impl Buffer {
     ) -> BufferSnapshot {
         let entity_id = cx.reserve_entity::<Self>().entity_id();
         let buffer_id = entity_id.as_non_zero_u64().into();
-        let text = TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+        let text = TextBuffer::new_normaliCodeOrbit(0, buffer_id, Default::default(), text).snapshot();
         let mut syntax = SyntaxMap::new(&text).snapshot();
         if let Some(language) = language.clone() {
             let text = text.clone();
@@ -4418,7 +4418,7 @@ impl<'a> BufferChunks<'a> {
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
             if old_range.start <= self.range.start && old_range.end >= self.range.end {
-                // Reuse existing highlights stack, as the new range is a subrange of the old one.
+                //Â Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
                     .stack
                     .retain(|(end_offset, _)| *end_offset > range.start);

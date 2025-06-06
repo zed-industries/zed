@@ -1,4 +1,4 @@
-//! The Zed Rust Extension API allows you write extensions for [Zed](https://zed.dev/) in Rust.
+﻿//! The CodeOrbit Rust Extension API allows you write extensions for [CodeOrbit](https://CodeOrbit.dev/) in Rust.
 
 pub mod http_client;
 pub mod process;
@@ -18,22 +18,22 @@ pub use wit::{
     CodeLabel, CodeLabelSpan, CodeLabelSpanLiteral, Command, DownloadedFileType, EnvVars,
     KeyValueStore, LanguageServerInstallationStatus, Project, Range, Worktree, download_file,
     make_file_executable,
-    zed::extension::context_server::ContextServerConfiguration,
-    zed::extension::dap::{
+    CodeOrbit::extension::context_server::ContextServerConfiguration,
+    CodeOrbit::extension::dap::{
         DebugAdapterBinary, DebugTaskDefinition, StartDebuggingRequestArguments,
         StartDebuggingRequestArgumentsRequest, TcpArguments, TcpArgumentsTemplate,
         resolve_tcp_template,
     },
-    zed::extension::github::{
+    CodeOrbit::extension::github::{
         GithubRelease, GithubReleaseAsset, GithubReleaseOptions, github_release_by_tag_name,
         latest_github_release,
     },
-    zed::extension::nodejs::{
+    CodeOrbit::extension::nodejs::{
         node_binary_path, npm_install_package, npm_package_installed_version,
         npm_package_latest_version,
     },
-    zed::extension::platform::{Architecture, Os, current_platform},
-    zed::extension::slash_command::{
+    CodeOrbit::extension::platform::{Architecture, Os, current_platform},
+    CodeOrbit::extension::slash_command::{
         SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection,
     },
 };
@@ -48,12 +48,12 @@ pub use wit::Guest;
 /// Constructs for interacting with language servers over the
 /// Language Server Protocol (LSP).
 pub mod lsp {
-    pub use crate::wit::zed::extension::lsp::{
+    pub use crate::wit::CodeOrbit::extension::lsp::{
         Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind,
     };
 }
 
-/// A result returned from a Zed extension.
+/// A result returned from a CodeOrbit extension.
 pub type Result<T, E = String> = core::result::Result<T, E>;
 
 /// Updates the installation status for the given language server.
@@ -64,12 +64,12 @@ pub fn set_language_server_installation_status(
     wit::set_language_server_installation_status(&language_server_id.0, status)
 }
 
-/// A Zed extension.
+/// A CodeOrbit extension.
 pub trait Extension: Send + Sync {
     /// Returns a new instance of the extension.
     fn new() -> Self
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
 
     /// Returns the command used to start the language server for the specified
     /// language.
@@ -209,7 +209,7 @@ pub trait Extension: Send + Sync {
     }
 }
 
-/// Registers the provided type as a Zed extension.
+/// Registers the provided type as a CodeOrbit extension.
 ///
 /// The type must implement the [`Extension`] trait.
 #[macro_export]
@@ -218,8 +218,8 @@ macro_rules! register_extension {
         #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
             std::env::set_current_dir(std::env::var("PWD").unwrap()).unwrap();
-            zed_extension_api::register_extension(|| {
-                Box::new(<$extension_type as zed_extension_api::Extension>::new())
+            codeorbit_extension_api::register_extension(|| {
+                Box::new(<$extension_type as codeorbit_extension_api::Extension>::new())
             });
         }
     };
@@ -240,9 +240,9 @@ fn extension() -> &'static mut dyn Extension {
 static mut EXTENSION: Option<Box<dyn Extension>> = None;
 
 #[cfg(target_arch = "wasm32")]
-#[unsafe(link_section = "zed:api-version")]
+#[unsafe(link_section = "CodeOrbit:api-version")]
 #[doc(hidden)]
-pub static ZED_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
+pub static codeorbit_API_VERSION: [u8; 6] = *include_bytes!(concat!(env!("OUT_DIR"), "/version_bytes"));
 
 mod wit {
 

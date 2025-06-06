@@ -1,10 +1,10 @@
-# Icon Themes
+﻿# Icon Themes
 
-Extensions may provide icon themes in order to change the icons Zed uses for folders and files.
+Extensions may provide icon themes in order to change the icons CodeOrbit uses for folders and files.
 
 ## Example extension
 
-The [Material Icon Theme](https://github.com/zed-extensions/material-icon-theme) serves as an example for the structure of an extension containing an icon theme.
+The [Material Icon Theme](https://github.com/CodeOrbit-extensions/material-icon-theme) serves as an example for the structure of an extension containing an icon theme.
 
 ## Directory structure
 
@@ -13,13 +13,13 @@ There are two important directories for an icon theme extension:
 - `icon_themes`: This directory will contain one or more JSON files containing the icon theme definitions.
 - `icons`: This directory contains the icons assets that will be distributed with the extension. You can created subdirectories in this directory, if so desired.
 
-Each icon theme file should adhere to the JSON schema specified at [`https://zed.dev/schema/icon_themes/v0.2.0.json`](https://zed.dev/schema/icon_themes/v0.2.0.json).
+Each icon theme file should adhere to the JSON schema specified at [`https://CodeOrbit.dev/schema/icon_themes/v0.2.0.json`](https://CodeOrbit.dev/schema/icon_themes/v0.2.0.json).
 
 Here is an example of the structure of an icon theme:
 
 ```json
 {
-  "$schema": "https://zed.dev/schema/icon_themes/v0.2.0.json",
+  "$schema": "https://CodeOrbit.dev/schema/icon_themes/v0.2.0.json",
   "name": "My Icon Theme",
   "author": "Your Name",
   "themes": [

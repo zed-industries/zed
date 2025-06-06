@@ -1,4 +1,4 @@
-mod actions;
+﻿mod actions;
 mod app_menus;
 mod assets;
 mod stories;
@@ -68,7 +68,7 @@ fn main() {
     gpui::Application::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
 
-        let http_client = ReqwestClient::user_agent("zed_storybook").unwrap();
+        let http_client = ReqwestClient::user_agent("codeorbit_storybook").unwrap();
         cx.set_http_client(Arc::new(http_client));
 
         settings::init(cx);
@@ -124,7 +124,7 @@ impl Render for StoryWrapper {
             .flex()
             .flex_col()
             .size_full()
-            .font_family("Zed Plex Mono")
+            .font_family("CodeOrbit Plex Mono")
             .child(self.story.clone())
     }
 }

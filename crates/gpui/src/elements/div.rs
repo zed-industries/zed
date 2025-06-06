@@ -1,4 +1,4 @@
-//! Div is the central, reusable element that most GPUI trees will be built from.
+﻿//! Div is the central, reusable element that most GPUI trees will be built from.
 //! It functions as a container for other elements, and provides a number of
 //! useful features for laying out and styling its children as well as binding
 //! mouse events and action handlers. It is meant to be similar to the HTML `<div>`
@@ -481,7 +481,7 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_click(&mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static)
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.click_listeners
             .push(Box::new(move |event, window, cx| {
@@ -500,7 +500,7 @@ impl Interactivity {
         value: T,
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
     ) where
-        Self: Sized,
+        Self: SiCodeOrbit,
         T: 'static,
         W: 'static + Render,
     {
@@ -523,7 +523,7 @@ impl Interactivity {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     pub fn on_hover(&mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static)
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         debug_assert!(
             self.hover_listener.is_none(),
@@ -536,7 +536,7 @@ impl Interactivity {
     /// The imperative API equivalent to [`InteractiveElement::tooltip`]
     pub fn tooltip(&mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static)
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         debug_assert!(
             self.tooltip_builder.is_none(),
@@ -555,7 +555,7 @@ impl Interactivity {
         &mut self,
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         debug_assert!(
             self.tooltip_builder.is_none(),
@@ -586,7 +586,7 @@ impl Interactivity {
 
 /// A trait for elements that want to use the standard GPUI event handlers that don't
 /// require any state.
-pub trait InteractiveElement: Sized {
+pub trait InteractiveElement: SiCodeOrbit {
     /// Retrieve the interactivity state associated with this element
     fn interactivity(&mut self) -> &mut Interactivity;
 
@@ -1011,7 +1011,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set the given styles to be applied when this element is active.
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity().active_style = Some(Box::new(f(StyleRefinement::default())));
         self
@@ -1024,7 +1024,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         f: impl FnOnce(StyleRefinement) -> StyleRefinement,
     ) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity().group_active_style = Some(GroupStyle {
             group: group_name.into(),
@@ -1039,7 +1039,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_click(mut self, listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity().on_click(listener);
         self
@@ -1058,7 +1058,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         constructor: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
     ) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
         T: 'static,
         W: 'static + Render,
     {
@@ -1073,7 +1073,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// See [`Context::listener`](crate::Context::listener) to get access to a view's state from this callback.
     fn on_hover(mut self, listener: impl Fn(&bool, &mut Window, &mut App) + 'static) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity().on_hover(listener);
         self
@@ -1083,7 +1083,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     /// The fluent API equivalent to [`Interactivity::tooltip`]
     fn tooltip(mut self, build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity().tooltip(build_tooltip);
         self
@@ -1097,7 +1097,7 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
     ) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity().hoverable_tooltip(build_tooltip);
         self
@@ -1109,7 +1109,7 @@ pub trait FocusableElement: InteractiveElement {
     /// Set the given styles to be applied when this element, specifically, is focused.
     fn focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity().focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
@@ -1118,7 +1118,7 @@ pub trait FocusableElement: InteractiveElement {
     /// Set the given styles to be applied when this element is inside another element that is focused.
     fn in_focus(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         self.interactivity().in_focus_style = Some(Box::new(f(StyleRefinement::default())));
         self
@@ -2080,7 +2080,7 @@ impl Interactivity {
                                 // if the hitbox is not being hovered.
                                 // This avoids dragging elements that changed their position
                                 // immediately after being clicked.
-                                // See https://github.com/zed-industries/zed/issues/24600 for more details
+                                // See https://github.com/CodeOrbit-industries/CodeOrbit/issues/24600 for more details
                                 pending_mouse_down.take();
                                 window.refresh();
                             }

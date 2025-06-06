@@ -1,5 +1,5 @@
-use super::{RandomizedTest, TestClient, TestError, TestServer, UserTestPlan};
-use crate::{db::UserId, tests::run_randomized_test};
+﻿use super::{RandomiCodeOrbitTest, TestClient, TestError, TestServer, UserTestPlan};
+use crate::{db::UserId, tests::run_randomiCodeOrbit_test};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use call::ActiveCall;
@@ -31,14 +31,14 @@ use util::{ResultExt, path};
 
 #[gpui::test(
     iterations = 100,
-    on_failure = "crate::tests::save_randomized_test_plan"
+    on_failure = "crate::tests::save_randomiCodeOrbit_test_plan"
 )]
 async fn test_random_project_collaboration(
     cx: &mut TestAppContext,
     executor: BackgroundExecutor,
     rng: StdRng,
 ) {
-    run_randomized_test::<ProjectCollaborationTest>(cx, executor, rng).await;
+    run_randomiCodeOrbit_test::<ProjectCollaborationTest>(cx, executor, rng).await;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -143,7 +143,7 @@ enum LspRequestKind {
 struct ProjectCollaborationTest;
 
 #[async_trait(?Send)]
-impl RandomizedTest for ProjectCollaborationTest {
+impl RandomiCodeOrbitTest for ProjectCollaborationTest {
     type Operation = ClientOperation;
 
     async fn initialize(server: &mut TestServer, users: &[UserTestPlan]) {

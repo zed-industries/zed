@@ -1,4 +1,4 @@
-mod application_menu;
+﻿mod application_menu;
 mod collab;
 mod onboarding_banner;
 mod platforms;
@@ -38,7 +38,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenRecent, OpenRemote};
+use codeorbit_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
 
@@ -311,7 +311,7 @@ impl TitleBar {
         let platform_style = PlatformStyle::platform();
         let application_menu = match platform_style {
             PlatformStyle::Mac => {
-                if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
+                if option_env!("codeorbit_USE_CROSS_PLATFORM_MENU").is_some() {
                     Some(cx.new(|cx| ApplicationMenu::new(window, cx)))
                 } else {
                     None
@@ -336,10 +336,10 @@ impl TitleBar {
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
                 "Agentic Onboarding",
-                IconName::ZedAssistant,
+                IconName::CodeOrbitAssistant,
                 "Agentic Editing",
                 None,
-                zed_actions::agent::OpenOnboardingModal.boxed_clone(),
+                codeorbit_actions::agent::OpenOnboardingModal.boxed_clone(),
                 cx,
             )
         });
@@ -529,7 +529,7 @@ impl TitleBar {
             .tooltip(move |window, cx| {
                 Tooltip::for_action(
                     "Recent Projects",
-                    &zed_actions::OpenRecent {
+                    &codeorbit_actions::OpenRecent {
                         create_new_window: false,
                     },
                     window,
@@ -575,7 +575,7 @@ impl TitleBar {
                 .tooltip(move |window, cx| {
                     Tooltip::with_meta(
                         "Recent Branches",
-                        Some(&zed_actions::git::Branch),
+                        Some(&codeorbit_actions::git::Branch),
                         "Local branches only",
                         window,
                         cx,
@@ -583,7 +583,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, window, cx| {
                     let _ = workspace.update(cx, |_this, cx| {
-                        window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
+                        window.dispatch_action(codeorbit_actions::git::Branch.boxed_clone(), cx);
                     });
                 })
                 .when(
@@ -655,12 +655,12 @@ impl TitleBar {
             client::Status::UpgradeRequired => {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
-                    Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
+                    Some(AutoUpdateStatus::Updated { .. }) => "Please restart CodeOrbit to Collaborate",
                     Some(AutoUpdateStatus::Installing { .. })
                     | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
                     Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
-                        "Please update Zed to Collaborate"
+                        "Please update CodeOrbit to Collaborate"
                     }
                 };
 
@@ -718,27 +718,27 @@ impl TitleBar {
                                 "Current Plan: {}",
                                 match plan {
                                     None => "None",
-                                    Some(proto::Plan::Free) => "Zed Free",
-                                    Some(proto::Plan::ZedPro) => "Zed Pro",
-                                    Some(proto::Plan::ZedProTrial) => "Zed Pro (Trial)",
+                                    Some(proto::Plan::Free) => "CodeOrbit Free",
+                                    Some(proto::Plan::CodeOrbitPro) => "CodeOrbit Pro",
+                                    Some(proto::Plan::CodeOrbitProTrial) => "CodeOrbit Pro (Trial)",
                                 }
                             ),
-                            zed_actions::OpenAccountSettings.boxed_clone(),
+                            codeorbit_actions::OpenAccountSettings.boxed_clone(),
                         )
                         .separator()
-                        .action("Settings", zed_actions::OpenSettings.boxed_clone())
-                        .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        .action("Settings", codeorbit_actions::OpenSettings.boxed_clone())
+                        .action("Key Bindings", Box::new(codeorbit_actions::OpenKeymap))
                         .action(
-                            "Themes…",
-                            zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                            "Themesâ€¦",
+                            codeorbit_actions::theme_selector::Toggle::default().boxed_clone(),
                         )
                         .action(
-                            "Icon Themes…",
-                            zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
+                            "Icon Themesâ€¦",
+                            codeorbit_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                         )
                         .action(
                             "Extensions",
-                            zed_actions::Extensions::default().boxed_clone(),
+                            codeorbit_actions::Extensions::default().boxed_clone(),
                         )
                         .separator()
                         .action("Sign Out", client::SignOut.boxed_clone())
@@ -770,19 +770,19 @@ impl TitleBar {
                 .anchor(Corner::TopRight)
                 .menu(|window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
-                        menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
-                            .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        menu.action("Settings", codeorbit_actions::OpenSettings.boxed_clone())
+                            .action("Key Bindings", Box::new(codeorbit_actions::OpenKeymap))
                             .action(
-                                "Themes…",
-                                zed_actions::theme_selector::Toggle::default().boxed_clone(),
+                                "Themesâ€¦",
+                                codeorbit_actions::theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action(
-                                "Icon Themes…",
-                                zed_actions::icon_theme_selector::Toggle::default().boxed_clone(),
+                                "Icon Themesâ€¦",
+                                codeorbit_actions::icon_theme_selector::Toggle::default().boxed_clone(),
                             )
                             .action(
                                 "Extensions",
-                                zed_actions::Extensions::default().boxed_clone(),
+                                codeorbit_actions::Extensions::default().boxed_clone(),
                             )
                     })
                     .into()

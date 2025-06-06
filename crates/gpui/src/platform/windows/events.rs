@@ -1,4 +1,4 @@
-use std::rc::Rc;
+﻿use std::rc::Rc;
 
 use ::util::ResultExt;
 use anyhow::Context as _;
@@ -173,10 +173,10 @@ fn handle_size_msg(
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
 
-    // Don't resize the renderer when the window is minimized, but record that it was minimized so
+    // Don't resize the renderer when the window is minimiCodeOrbit, but record that it was minimiCodeOrbit so
     // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
-    if wparam.0 == SIZE_MINIMIZED as usize {
-        lock.restore_from_minimized = lock.callbacks.request_frame.take();
+    if wparam.0 == SIZE_MINIMICodeOrbit as usize {
+        lock.restore_from_minimiCodeOrbit = lock.callbacks.request_frame.take();
         return Some(0);
     }
 
@@ -184,10 +184,10 @@ fn handle_size_msg(
     let height = lparam.hiword().max(1) as i32;
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    if lock.restore_from_minimized.is_some() {
+    if lock.restore_from_minimiCodeOrbit.is_some() {
         lock.renderer
             .update_drawable_size_even_if_unchanged(new_size);
-        lock.callbacks.request_frame = lock.restore_from_minimized.take();
+        lock.callbacks.request_frame = lock.restore_from_minimiCodeOrbit.take();
     } else {
         lock.renderer.update_drawable_size(new_size);
     }
@@ -734,8 +734,8 @@ fn handle_calc_client_size(
         return None;
     }
 
-    let is_maximized = state_ptr.state.borrow().is_maximized();
-    let insets = get_client_area_insets(handle, is_maximized, state_ptr.windows_version);
+    let is_maximiCodeOrbit = state_ptr.state.borrow().is_maximiCodeOrbit();
+    let insets = get_client_area_insets(handle, is_maximiCodeOrbit, state_ptr.windows_version);
     // wparam is TRUE so lparam points to an NCCALCSIZE_PARAMS structure
     let mut params = lparam.0 as *mut NCCALCSIZE_PARAMS;
     let mut requested_client_rect = unsafe { &mut ((*params).rgrc) };
@@ -748,7 +748,7 @@ fn handle_calc_client_size(
     // Fix auto hide taskbar not showing. This solution is based on the approach
     // used by Chrome. However, it may result in one row of pixels being obscured
     // in our client area. But as Chrome says, "there seems to be no better solution."
-    if is_maximized {
+    if is_maximiCodeOrbit {
         if let Some(ref taskbar_position) = state_ptr
             .state
             .borrow()
@@ -933,7 +933,7 @@ fn handle_hit_test_msg(
         y: lparam.signed_hiword().into(),
     };
     unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-    if !state_ptr.state.borrow().is_maximized() && cursor_point.y >= 0 && cursor_point.y <= frame_y
+    if !state_ptr.state.borrow().is_maximiCodeOrbit() && cursor_point.y >= 0 && cursor_point.y <= frame_y
     {
         return Some(HTTOP as _);
     }
@@ -1090,7 +1090,7 @@ fn handle_nc_mouse_up_msg(
                 true
             }
             (HTMAXBUTTON, HTMAXBUTTON) => {
-                if state_ptr.state.borrow().is_maximized() {
+                if state_ptr.state.borrow().is_maximiCodeOrbit() {
                     unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
                 } else {
                     unsafe { ShowWindowAsync(handle, SW_MAXIMIZE).ok().log_err() };
@@ -1392,19 +1392,19 @@ pub(crate) fn current_modifiers() -> Modifiers {
 
 fn get_client_area_insets(
     handle: HWND,
-    is_maximized: bool,
+    is_maximiCodeOrbit: bool,
     windows_version: WindowsVersion,
 ) -> RECT {
-    // For maximized windows, Windows outdents the window rect from the screen's client rect
+    // For maximiCodeOrbit windows, Windows outdents the window rect from the screen's client rect
     // by `frame_thickness` on each edge, meaning `insets` must contain `frame_thickness`
     // on all sides (including the top) to avoid the client area extending onto adjacent
     // monitors.
     //
-    // For non-maximized windows, things become complicated:
+    // For non-maximiCodeOrbit windows, things become complicated:
     //
     // - On Windows 10
     // The top inset must be zero, since if there is any nonclient area, Windows will draw
-    // a full native titlebar outside the client area. (This doesn't occur in the maximized
+    // a full native titlebar outside the client area. (This doesn't occur in the maximiCodeOrbit
     // case.)
     //
     // - On Windows 11
@@ -1412,7 +1412,7 @@ fn get_client_area_insets(
     // tests. Without this, the top 1-2 rows of pixels in our window would be obscured.
     let dpi = unsafe { GetDpiForWindow(handle) };
     let frame_thickness = get_frame_thickness(dpi);
-    let top_insets = if is_maximized {
+    let top_insets = if is_maximiCodeOrbit {
         frame_thickness
     } else {
         match windows_version {

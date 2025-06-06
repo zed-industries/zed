@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     pin::pin,
@@ -25,7 +25,7 @@ use smol::{
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::{ResultExt, paths::SanitizedPath};
+use util::{ResultExt, paths::SanitiCodeOrbitPath};
 use worktree::{
     Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
     WorktreeSettings,
@@ -57,7 +57,7 @@ pub struct WorktreeStore {
     worktrees_reordered: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
-        HashMap<SanitizedPath, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
+        HashMap<SanitiCodeOrbitPath, Shared<Task<Result<Entity<Worktree>, Arc<anyhow::Error>>>>>,
     state: WorktreeStoreState,
 }
 
@@ -147,10 +147,10 @@ impl WorktreeStore {
 
     pub fn find_worktree(
         &self,
-        abs_path: impl Into<SanitizedPath>,
+        abs_path: impl Into<SanitiCodeOrbitPath>,
         cx: &App,
     ) -> Option<(Entity<Worktree>, PathBuf)> {
-        let abs_path: SanitizedPath = abs_path.into();
+        let abs_path: SanitiCodeOrbitPath = abs_path.into();
         for tree in self.worktrees() {
             if let Ok(relative_path) = abs_path.as_path().strip_prefix(tree.read(cx).abs_path()) {
                 return Some((tree.clone(), relative_path.into()));
@@ -206,11 +206,11 @@ impl WorktreeStore {
 
     pub fn create_worktree(
         &mut self,
-        abs_path: impl Into<SanitizedPath>,
+        abs_path: impl Into<SanitiCodeOrbitPath>,
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>>> {
-        let abs_path: SanitizedPath = abs_path.into();
+        let abs_path: SanitiCodeOrbitPath = abs_path.into();
         if !self.loading_worktrees.contains_key(&abs_path) {
             let task = match &self.state {
                 WorktreeStoreState::Remote {
@@ -250,11 +250,11 @@ impl WorktreeStore {
     fn create_ssh_worktree(
         &mut self,
         client: AnyProtoClient,
-        abs_path: impl Into<SanitizedPath>,
+        abs_path: impl Into<SanitiCodeOrbitPath>,
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>, Arc<anyhow::Error>>> {
-        let mut abs_path = Into::<SanitizedPath>::into(abs_path).to_string();
+        let mut abs_path = Into::<SanitiCodeOrbitPath>::into(abs_path).to_string();
         // If we start with `/~` that means the ssh path was something like `ssh://user@host/~/home-dir-folder/`
         // in which case want to strip the leading the `/`.
         // On the host-side, the `~` will get expanded.
@@ -283,7 +283,7 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
-            let root_path_buf = PathBuf::from_proto(response.canonicalized_path.clone());
+            let root_path_buf = PathBuf::from_proto(response.canonicaliCodeOrbit_path.clone());
             let root_name = root_path_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -297,7 +297,7 @@ impl WorktreeStore {
                         id: response.worktree_id,
                         root_name,
                         visible,
-                        abs_path: response.canonicalized_path,
+                        abs_path: response.canonicaliCodeOrbit_path,
                     },
                     client,
                     cx,
@@ -314,12 +314,12 @@ impl WorktreeStore {
     fn create_local_worktree(
         &mut self,
         fs: Arc<dyn Fs>,
-        abs_path: impl Into<SanitizedPath>,
+        abs_path: impl Into<SanitiCodeOrbitPath>,
         visible: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Worktree>, Arc<anyhow::Error>>> {
         let next_entry_id = self.next_entry_id.clone();
-        let path: SanitizedPath = abs_path.into();
+        let path: SanitiCodeOrbitPath = abs_path.into();
 
         cx.spawn(async move |this, cx| {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, cx).await;

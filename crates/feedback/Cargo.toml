@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "feedback"
 version = "0.1.0"
 edition.workspace = true
@@ -26,7 +26,7 @@ ui.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 workspace.workspace = true
-zed_actions.workspace = true
+codeorbit_actions.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

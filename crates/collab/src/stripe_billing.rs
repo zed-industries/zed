@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow};
 use chrono::Utc;
@@ -76,17 +76,17 @@ impl StripeBilling {
             }
         }
 
-        log::info!("StripeBilling: initialized");
+        log::info!("StripeBilling: initialiCodeOrbit");
 
         Ok(())
     }
 
-    pub async fn zed_pro_price_id(&self) -> Result<StripePriceId> {
-        self.find_price_id_by_lookup_key("zed-pro").await
+    pub async fn codeorbit_pro_price_id(&self) -> Result<StripePriceId> {
+        self.find_price_id_by_lookup_key("CodeOrbit-pro").await
     }
 
-    pub async fn zed_free_price_id(&self) -> Result<StripePriceId> {
-        self.find_price_id_by_lookup_key("zed-free").await
+    pub async fn codeorbit_free_price_id(&self) -> Result<StripePriceId> {
+        self.find_price_id_by_lookup_key("CodeOrbit-free").await
     }
 
     pub async fn find_price_id_by_lookup_key(&self, lookup_key: &str) -> Result<StripePriceId> {
@@ -113,20 +113,20 @@ impl StripeBilling {
         &self,
         subscription: &StripeSubscription,
     ) -> Option<SubscriptionKind> {
-        let zed_pro_price_id = self.zed_pro_price_id().await.ok()?;
-        let zed_free_price_id = self.zed_free_price_id().await.ok()?;
+        let codeorbit_pro_price_id = self.codeorbit_pro_price_id().await.ok()?;
+        let codeorbit_free_price_id = self.codeorbit_free_price_id().await.ok()?;
 
         subscription.items.iter().find_map(|item| {
             let price = item.price.as_ref()?;
 
-            if price.id == zed_pro_price_id {
+            if price.id == codeorbit_pro_price_id {
                 Some(if subscription.status == SubscriptionStatus::Trialing {
-                    SubscriptionKind::ZedProTrial
+                    SubscriptionKind::CodeOrbitProTrial
                 } else {
-                    SubscriptionKind::ZedPro
+                    SubscriptionKind::CodeOrbitPro
                 })
-            } else if price.id == zed_free_price_id {
-                Some(SubscriptionKind::ZedFree)
+            } else if price.id == codeorbit_free_price_id {
+                Some(SubscriptionKind::CodeOrbitFree)
             } else {
                 None
             }
@@ -224,20 +224,20 @@ impl StripeBilling {
         Ok(())
     }
 
-    pub async fn checkout_with_zed_pro(
+    pub async fn checkout_with_CodeOrbit_pro(
         &self,
         customer_id: &StripeCustomerId,
         github_login: &str,
         success_url: &str,
     ) -> Result<String> {
-        let zed_pro_price_id = self.zed_pro_price_id().await?;
+        let codeorbit_pro_price_id = self.codeorbit_pro_price_id().await?;
 
         let mut params = StripeCreateCheckoutSessionParams::default();
         params.mode = Some(StripeCheckoutSessionMode::Subscription);
         params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
         params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
-            price: Some(zed_pro_price_id.to_string()),
+            price: Some(codeorbit_pro_price_id.to_string()),
             quantity: Some(1),
         }]);
         params.success_url = Some(success_url);
@@ -246,14 +246,14 @@ impl StripeBilling {
         Ok(session.url.context("no checkout session URL")?)
     }
 
-    pub async fn checkout_with_zed_pro_trial(
+    pub async fn checkout_with_CodeOrbit_pro_trial(
         &self,
         customer_id: &StripeCustomerId,
         github_login: &str,
         feature_flags: Vec<String>,
         success_url: &str,
     ) -> Result<String> {
-        let zed_pro_price_id = self.zed_pro_price_id().await?;
+        let codeorbit_pro_price_id = self.codeorbit_pro_price_id().await?;
 
         let eligible_for_extended_trial = feature_flags
             .iter()
@@ -290,7 +290,7 @@ impl StripeBilling {
         params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
         params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
-            price: Some(zed_pro_price_id.to_string()),
+            price: Some(codeorbit_pro_price_id.to_string()),
             quantity: Some(1),
         }]);
         params.success_url = Some(success_url);
@@ -299,11 +299,11 @@ impl StripeBilling {
         Ok(session.url.context("no checkout session URL")?)
     }
 
-    pub async fn subscribe_to_zed_free(
+    pub async fn subscribe_to_CodeOrbit_free(
         &self,
         customer_id: StripeCustomerId,
     ) -> Result<StripeSubscription> {
-        let zed_free_price_id = self.zed_free_price_id().await?;
+        let codeorbit_free_price_id = self.codeorbit_free_price_id().await?;
 
         let existing_subscriptions = self
             .client
@@ -322,7 +322,7 @@ impl StripeBilling {
         let params = StripeCreateSubscriptionParams {
             customer: customer_id,
             items: vec![StripeCreateSubscriptionItems {
-                price: Some(zed_free_price_id),
+                price: Some(codeorbit_free_price_id),
                 quantity: Some(1),
             }],
         };

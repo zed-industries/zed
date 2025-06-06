@@ -1,4 +1,4 @@
-use crate::schema::json_schema_for;
+﻿use crate::schema::json_schema_for;
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
@@ -652,7 +652,7 @@ mod tests {
         fs.insert_tree(
             path!("/worktree1"),
             json!({
-                ".zed": {
+                ".CodeOrbit": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/fixture.*"],
                         "private_files": ["**/secret.rs", "**/config.toml"]
@@ -675,7 +675,7 @@ mod tests {
         fs.insert_tree(
             path!("/worktree2"),
             json!({
-                ".zed": {
+                ".CodeOrbit": {
                     "settings.json": r#"{
                         "file_scan_exclusions": ["**/internal.*"],
                         "private_files": ["**/private.js", "**/data.json"]

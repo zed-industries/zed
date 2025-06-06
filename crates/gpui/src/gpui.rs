@@ -1,15 +1,15 @@
-//! # Welcome to GPUI!
+﻿//! # Welcome to GPUI!
 //!
 //! GPUI is a hybrid immediate and retained mode, GPU accelerated, UI framework
 //! for Rust, designed to support a wide variety of applications.
 //!
 //! ## Getting Started
 //!
-//! GPUI is still in active development as we work on the Zed code editor and isn't yet on crates.io.
+//! GPUI is still in active development as we work on the CodeOrbit code editor and isn't yet on crates.io.
 //! You'll also need to use the latest version of stable rust. Add the following to your Cargo.toml:
 //!
 //! ```
-//! gpui = { git = "https://github.com/zed-industries/zed" }
+//! gpui = { git = "https://github.com/CodeOrbit-industries/CodeOrbit" }
 //! ```
 //!
 //! Everything in GPUI starts with an [`Application`]. You can create one with [`Application::new`], and
@@ -55,9 +55,9 @@
 //!   own kind of context, a [`TestAppContext`] which provides ways of simulating common platform input. See [`app::test_context`]
 //!   and [`test`] modules for more details.
 //!
-//! Currently, the best way to learn about these APIs is to read the Zed source code, ask us about it at a fireside hack, or drop
-//! a question in the [Zed Discord](https://zed.dev/community-links). We're working on improving the documentation, creating more examples,
-//! and will be publishing more guides to GPUI on our [blog](https://zed.dev/blog).
+//! Currently, the best way to learn about these APIs is to read the CodeOrbit source code, ask us about it at a fireside hack, or drop
+//! a question in the [CodeOrbit Discord](https://CodeOrbit.dev/community-links). We're working on improving the documentation, creating more examples,
+//! and will be publishing more guides to GPUI on our [blog](https://CodeOrbit.dev/blog).
 
 #![deny(missing_docs)]
 #![allow(clippy::type_complexity)] // Not useful, GPUI makes heavy use of callbacks

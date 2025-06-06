@@ -1,4 +1,4 @@
-mod chunk;
+﻿mod chunk;
 mod offset_utf16;
 mod point;
 mod point_utf16;
@@ -130,7 +130,7 @@ impl Rope {
         self.check_invariants();
     }
 
-    /// A copy of `push` specialized for working with large quantities of text.
+    /// A copy of `push` specialiCodeOrbit for working with large quantities of text.
     fn push_large(&mut self, mut text: &str) {
         // To avoid frequent reallocs when loading large swaths of file contents,
         // we estimate worst-case `new_chunks` capacity;
@@ -1441,14 +1441,14 @@ mod tests {
     #[test]
     fn test_all_4_byte_chars() {
         let mut rope = Rope::new();
-        let text = "🏀".repeat(256);
+        let text = "ðŸ€".repeat(256);
         rope.push(&text);
         assert_eq!(rope.text(), text);
     }
 
     #[test]
     fn test_clip() {
-        let rope = Rope::from("🧘");
+        let rope = Rope::from("ðŸ§˜");
 
         assert_eq!(rope.clip_offset(1, Bias::Left), 0);
         assert_eq!(rope.clip_offset(1, Bias::Right), 4);

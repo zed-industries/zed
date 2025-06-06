@@ -1,4 +1,4 @@
-use gpui::{AppContext as _, UpdateGlobal, px, size};
+﻿use gpui::{AppContext as _, UpdateGlobal, px, size};
 use indoc::indoc;
 use settings::SettingsStore;
 use std::{
@@ -35,14 +35,14 @@ impl SharedState {
     pub fn assert_matches(&self) {
         if self.neovim != self.editor || self.neovim_mode != self.editor_mode {
             panic!(
-                indoc! {"Test failed (zed does not match nvim behavior)
+                indoc! {"Test failed (CodeOrbit does not match nvim behavior)
                     # initial state:
                     {}
                     # keystrokes:
                     {}
                     # neovim ({}):
                     {}
-                    # zed ({}):
+                    # CodeOrbit ({}):
                     {}"},
                 self.initial,
                 self.recent_keystrokes,
@@ -56,7 +56,7 @@ impl SharedState {
 
     #[track_caller]
     pub fn assert_eq(&mut self, marked_text: &str) {
-        let marked_text = marked_text.replace('•', " ");
+        let marked_text = marked_text.replace('â€¢', " ");
         if self.neovim == marked_text
             && self.neovim == self.editor
             && self.neovim_mode == self.editor_mode
@@ -79,16 +79,16 @@ impl SharedState {
                 {}
                 # neovim ({}):
                 {}
-                # zed ({}):
+                # CodeOrbit ({}):
                 {}"},
             message,
             self.initial,
             self.recent_keystrokes,
-            marked_text.replace(" \n", "•\n"),
+            marked_text.replace(" \n", "â€¢\n"),
             self.neovim_mode,
-            self.neovim.replace(" \n", "•\n"),
+            self.neovim.replace(" \n", "â€¢\n"),
             self.editor_mode,
-            self.editor.replace(" \n", "•\n"),
+            self.editor.replace(" \n", "â€¢\n"),
         )
     }
 }
@@ -121,7 +121,7 @@ impl SharedClipboard {
                 {}
                 # currently expected: {:?}
                 # neovim register \"{}: {:?}
-                # zed register \"{}: {:?}"},
+                # CodeOrbit register \"{}: {:?}"},
             message,
             self.state.initial,
             self.state.recent_keystrokes,
@@ -208,7 +208,7 @@ impl NeovimBackedTestContext {
     }
 
     pub async fn set_shared_state(&mut self, marked_text: &str) {
-        let mode = if marked_text.contains('»') {
+        let mode = if marked_text.contains('Â»') {
             Mode::Visual
         } else {
             Mode::Normal
@@ -254,7 +254,7 @@ impl NeovimBackedTestContext {
     }
 
     pub async fn set_scroll_height(&mut self, rows: u32) {
-        // match Zed's scrolling behavior
+        // match CodeOrbit's scrolling behavior
         self.neovim.set_option(&format!("scrolloff={}", 3)).await;
         // +2 to account for the vim command UI at the bottom.
         self.neovim.set_option(&format!("lines={}", rows + 2)).await;
@@ -346,7 +346,7 @@ impl NeovimBackedTestContext {
 
         for cursor_offset in cursor_offsets.iter() {
             let mut marked_text = unmarked_text.clone();
-            marked_text.insert(*cursor_offset, 'ˇ');
+            marked_text.insert(*cursor_offset, 'Ë‡');
 
             let state = self.simulate(keystrokes, &marked_text).await;
             if state.neovim != state.editor || state.neovim_mode != state.editor_mode {
@@ -381,7 +381,7 @@ mod test {
     async fn neovim_backed_test_context_works(cx: &mut TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.shared_state().await.assert_matches();
-        cx.set_shared_state("This is a tesˇt").await;
+        cx.set_shared_state("This is a tesË‡t").await;
         cx.shared_state().await.assert_matches();
     }
 }

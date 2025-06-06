@@ -1,4 +1,4 @@
-/// KeyDispatch is where GPUI deals with binding actions to key events.
+﻿/// KeyDispatch is where GPUI deals with binding actions to key events.
 ///
 /// The key pieces to making a key binding work are to define an action,
 /// implement a method that takes that action as a type parameter,
@@ -26,7 +26,7 @@
 ///```
 ///
 /// The keybindings themselves are managed independently by calling cx.bind_keys().
-/// (Though mostly when developing Zed itself, you just need to add a new line to
+/// (Though mostly when developing CodeOrbit itself, you just need to add a new line to
 ///  assets/keymaps/default-{platform}.json).
 ///
 /// ```rust
@@ -41,7 +41,7 @@
 ///
 /// In real apps, it is a little more complicated than this, because typically you have
 /// several nested views that each register keyboard handlers. In this case action matching
-/// bubbles up from the bottom. For example in Zed, the Workspace is the top-level view, which contains Pane's, which contain Editors. If there are conflicting keybindings defined
+/// bubbles up from the bottom. For example in CodeOrbit, the Workspace is the top-level view, which contains Pane's, which contain Editors. If there are conflicting keybindings defined
 /// then the Editor's bindings take precedence over the Pane's bindings, which take precedence over the Workspace.
 ///
 /// In GPUI, keybindings are not limited to just single keystrokes, you can define
@@ -634,7 +634,7 @@ mod tests {
 
         fn debug_name() -> &'static str
         where
-            Self: ::std::marker::Sized,
+            Self: ::std::marker::SiCodeOrbit,
         {
             "test::TestAction"
         }
@@ -652,7 +652,7 @@ mod tests {
 
         fn build(_value: serde_json::Value) -> anyhow::Result<Box<dyn Action>>
         where
-            Self: Sized,
+            Self: SiCodeOrbit,
         {
             Ok(Box::new(TestAction))
         }

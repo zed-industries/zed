@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+﻿use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
@@ -596,7 +596,7 @@ async fn stream_completion(
         .header(
             "Editor-Version",
             format!(
-                "Zed/{}",
+                "CodeOrbit/{}",
                 option_env!("CARGO_PKG_VERSION").unwrap_or("unknown")
             ),
         )

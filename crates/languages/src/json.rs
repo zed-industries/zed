@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail};
+﻿use anyhow::{Context as _, Result, bail};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
@@ -39,15 +39,15 @@ const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
 pub(super) fn json_task_context() -> ContextProviderWithTasks {
     ContextProviderWithTasks::new(TaskTemplates(vec![
         TaskTemplate {
-            label: "package script $ZED_CUSTOM_script".to_owned(),
-            command: "npm --prefix $ZED_DIRNAME run".to_owned(),
+            label: "package script $codeorbit_CUSTOM_script".to_owned(),
+            command: "npm --prefix $codeorbit_DIRNAME run".to_owned(),
             args: vec![VariableName::Custom("script".into()).template_value()],
             tags: vec!["package-script".into()],
             ..TaskTemplate::default()
         },
         TaskTemplate {
-            label: "composer script $ZED_CUSTOM_script".to_owned(),
-            command: "composer -d $ZED_DIRNAME".to_owned(),
+            label: "composer script $codeorbit_CUSTOM_script".to_owned(),
+            command: "composer -d $codeorbit_DIRNAME".to_owned(),
             args: vec![VariableName::Custom("script".into()).template_value()],
             tags: vec!["composer-script".into()],
             ..TaskTemplate::default()
@@ -149,7 +149,7 @@ impl JsonLspAdapter {
             schemas.as_array_mut().unwrap().push(serde_json::json!(
                 {
                     "fileMatch": [
-                        "zed-inspector-style.json"
+                        "CodeOrbit-inspector-style.json"
                     ],
                     "schema": generate_inspector_style_schema(),
                 }
@@ -335,11 +335,11 @@ impl LspAdapter for JsonLspAdapter {
         .collect()
     }
 
-    fn is_primary_zed_json_schema_adapter(&self) -> bool {
+    fn is_primary_CodeOrbit_json_schema_adapter(&self) -> bool {
         true
     }
 
-    async fn clear_zed_json_schema_cache(&self) {
+    async fn clear_CodeOrbit_json_schema_cache(&self) {
         self.workspace_config.write().await.take();
     }
 }
@@ -401,7 +401,7 @@ impl LspAdapter for NodeVersionAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         let release = latest_github_release(
-            "zed-industries/package-version-server",
+            "CodeOrbit-industries/package-version-server",
             true,
             false,
             delegate.http_client(),

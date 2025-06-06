@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+﻿use anyhow::{Context, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
@@ -280,8 +280,8 @@ pub async fn complete(
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
+        .header("HTTP-Referer", "https://CodeOrbit.dev")
+        .header("X-Title", "CodeOrbit Editor");
 
     let mut request_body = request;
     request_body.stream = false;
@@ -344,8 +344,8 @@ pub async fn stream_completion(
         .uri(uri)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key))
-        .header("HTTP-Referer", "https://zed.dev")
-        .header("X-Title", "Zed Editor");
+        .header("HTTP-Referer", "https://CodeOrbit.dev")
+        .header("X-Title", "CodeOrbit Editor");
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;

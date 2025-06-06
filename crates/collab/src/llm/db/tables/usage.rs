@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     db::UserId,
     llm::db::{ModelId, UsageId, UsageMeasureId},
 };
@@ -10,7 +10,7 @@ use sea_orm::entity::prelude::*;
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: UsageId,
-    /// The ID of the Zed user.
+    /// The ID of the CodeOrbit user.
     ///
     /// Corresponds to the `users` table in the primary collab database.
     pub user_id: UserId,

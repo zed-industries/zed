@@ -1,4 +1,4 @@
-mod cloud;
+﻿mod cloud;
 
 use client::Client;
 use gpui::{App, Context, Entity};
@@ -18,7 +18,7 @@ fn register_web_search_providers(
     client: Arc<Client>,
     cx: &mut Context<WebSearchRegistry>,
 ) {
-    register_zed_web_search_provider(
+    register_CodeOrbit_web_search_provider(
         registry,
         client.clone(),
         &LanguageModelRegistry::global(cx),
@@ -29,7 +29,7 @@ fn register_web_search_providers(
         &LanguageModelRegistry::global(cx),
         move |this, registry, event, cx| match event {
             language_model::Event::DefaultModelChanged => {
-                register_zed_web_search_provider(this, client.clone(), &registry, cx)
+                register_CodeOrbit_web_search_provider(this, client.clone(), &registry, cx)
             }
             _ => {}
         },
@@ -37,21 +37,21 @@ fn register_web_search_providers(
     .detach();
 }
 
-fn register_zed_web_search_provider(
+fn register_CodeOrbit_web_search_provider(
     registry: &mut WebSearchRegistry,
     client: Arc<Client>,
     language_model_registry: &Entity<LanguageModelRegistry>,
     cx: &mut Context<WebSearchRegistry>,
 ) {
-    let using_zed_provider = language_model_registry
+    let using_CodeOrbit_provider = language_model_registry
         .read(cx)
         .default_model()
-        .map_or(false, |default| default.is_provided_by_zed());
-    if using_zed_provider {
+        .map_or(false, |default| default.is_provided_by_CodeOrbit());
+    if using_CodeOrbit_provider {
         registry.register_provider(cloud::CloudWebSearchProvider::new(client, cx), cx)
     } else {
         registry.unregister_provider(WebSearchProviderId(
-            cloud::ZED_WEB_SEARCH_PROVIDER_ID.into(),
+            cloud::codeorbit_WEB_SEARCH_PROVIDER_ID.into(),
         ));
     }
 }

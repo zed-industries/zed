@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
@@ -377,13 +377,13 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 // Cases to test when modifying this:
                 //
                 //           qwerty key | none | cmd   | cmd-shift
-                // * Armenian         s | ս    | cmd-s | cmd-shift-s  (layout is non-ASCII, so we use cmd layout)
+                // * Armenian         s | Õ½    | cmd-s | cmd-shift-s  (layout is non-ASCII, so we use cmd layout)
                 // * Dvorak+QWERTY    s | o    | cmd-s | cmd-shift-s  (layout switches on cmd)
-                // * Ukrainian+QWERTY s | с    | cmd-s | cmd-shift-s  (macOS reports cmd-s instead of cmd-S)
-                // * Czech            7 | ý    | cmd-ý | cmd-7        (layout has shifted numbers)
+                // * Ukrainian+QWERTY s | Ñ    | cmd-s | cmd-shift-s  (macOS reports cmd-s instead of cmd-S)
+                // * Czech            7 | Ã½    | cmd-Ã½ | cmd-7        (layout has shifted numbers)
                 // * Norwegian        7 | 7    | cmd-7 | cmd-/        (macOS reports cmd-shift-7 instead of cmd-/)
                 // * Russian          7 | 7    | cmd-7 | cmd-&        (shift-7 is . but when cmd is down, should use cmd layout)
-                // * German QWERTZ    ; | ö    | cmd-ö | cmd-Ö        (Zed's shift special case only applies to a-z)
+                // * German QWERTZ    ; | Ã¶    | cmd-Ã¶ | cmd-Ã–        (CodeOrbit's shift special case only applies to a-z)
                 //
                 let mut chars_ignoring_modifiers =
                     chars_for_modified_key(native_event.keyCode(), NO_MOD);

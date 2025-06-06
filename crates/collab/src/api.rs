@@ -1,4 +1,4 @@
-pub mod billing;
+﻿pub mod billing;
 pub mod contributors;
 pub mod events;
 pub mod extensions;
@@ -39,7 +39,7 @@ impl Header for CloudflareIpCountryHeader {
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let country_code = values
@@ -67,12 +67,12 @@ pub struct SystemIdHeader(String);
 impl Header for SystemIdHeader {
     fn name() -> &'static HeaderName {
         static SYSTEM_ID_HEADER: OnceLock<HeaderName> = OnceLock::new();
-        SYSTEM_ID_HEADER.get_or_init(|| HeaderName::from_static("x-zed-system-id"))
+        SYSTEM_ID_HEADER.get_or_init(|| HeaderName::from_static("x-CodeOrbit-system-id"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let system_id = values
@@ -133,7 +133,7 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
 
     if token != state.config.api_token {
         Err(Error::http(
-            StatusCode::UNAUTHORIZED,
+            StatusCode::UNAUTHORICodeOrbit,
             "invalid authorization token".to_string(),
         ))?
     }
@@ -318,7 +318,7 @@ async fn create_access_token(
             }
         } else {
             return Err(Error::http(
-                StatusCode::UNAUTHORIZED,
+                StatusCode::UNAUTHORICodeOrbit,
                 "you do not have permission to impersonate other users".to_string(),
             ));
         }

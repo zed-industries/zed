@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     Templates,
     edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent},
     schema::json_schema_for,
@@ -511,7 +511,7 @@ impl EditFileToolCard {
                 EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
-                    sized_by_content: true,
+                    siCodeOrbit_by_content: true,
                 },
                 multibuffer.clone(),
                 Some(project.clone()),
@@ -679,17 +679,17 @@ impl EditFileToolCard {
 
     pub fn finalize(&mut self, cx: &mut Context<Self>) -> Result<()> {
         let ranges = self.excerpt_ranges(cx);
-        let buffer = self.buffer.take().context("card was already finalized")?;
+        let buffer = self.buffer.take().context("card was already finaliCodeOrbit")?;
         let base_text = self
             .base_text
             .take()
-            .context("card was already finalized")?;
+            .context("card was already finaliCodeOrbit")?;
         let language_registry = self.project.read(cx).languages().clone();
 
         // Replace the buffer in the multibuffer with the snapshot
         let buffer = cx.new(|cx| {
             let language = buffer.read(cx).language().cloned();
-            let buffer = TextBuffer::new_normalized(
+            let buffer = TextBuffer::new_normaliCodeOrbit(
                 0,
                 cx.entity_id().as_non_zero_u64().into(),
                 buffer.read(cx).line_ending(),
@@ -1055,7 +1055,7 @@ async fn build_buffer(
         .await
         .ok();
     let buffer = cx.new(|cx| {
-        let buffer = TextBuffer::new_normalized(
+        let buffer = TextBuffer::new_normaliCodeOrbit(
             0,
             cx.entity_id().as_non_zero_u64().into(),
             line_ending,

@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
 use db::sqlez::statement::Statement;
 use fs::MTime;
@@ -11,20 +11,20 @@ use db::{define_connection, query};
 use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Debug, PartialEq, Default)]
-pub(crate) struct SerializedEditor {
+pub(crate) struct SerialiCodeOrbitEditor {
     pub(crate) abs_path: Option<PathBuf>,
     pub(crate) contents: Option<String>,
     pub(crate) language: Option<String>,
     pub(crate) mtime: Option<MTime>,
 }
 
-impl StaticColumnCount for SerializedEditor {
+impl StaticColumnCount for SerialiCodeOrbitEditor {
     fn column_count() -> usize {
         6
     }
 }
 
-impl Bind for SerializedEditor {
+impl Bind for SerialiCodeOrbitEditor {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         let start_index = statement.bind(&self.abs_path, start_index)?;
         let start_index = statement.bind(
@@ -54,7 +54,7 @@ impl Bind for SerializedEditor {
     }
 }
 
-impl Column for SerializedEditor {
+impl Column for SerialiCodeOrbitEditor {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (abs_path, start_index): (Option<PathBuf>, i32) =
             Column::column(statement, start_index)?;
@@ -198,14 +198,14 @@ const MAX_QUERY_PLACEHOLDERS: usize = 32000;
 
 impl EditorDb {
     query! {
-        pub fn get_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerializedEditor>> {
+        pub fn get_serialiCodeOrbit_editor(item_id: ItemId, workspace_id: WorkspaceId) -> Result<Option<SerialiCodeOrbitEditor>> {
             SELECT path, buffer_path, contents, language, mtime_seconds, mtime_nanos FROM editors
             WHERE item_id = ? AND workspace_id = ?
         }
     }
 
     query! {
-        pub async fn save_serialized_editor(item_id: ItemId, workspace_id: WorkspaceId, serialized_editor: SerializedEditor) -> Result<()> {
+        pub async fn save_serialiCodeOrbit_editor(item_id: ItemId, workspace_id: WorkspaceId, serialiCodeOrbit_editor: SerialiCodeOrbitEditor) -> Result<()> {
             INSERT INTO editors
                 (item_id, workspace_id, path, buffer_path, contents, language, mtime_seconds, mtime_nanos)
             VALUES
@@ -380,78 +380,78 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_save_and_get_serialized_editor() {
+    async fn test_save_and_get_serialiCodeOrbit_editor() {
         let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
-        let serialized_editor = SerializedEditor {
+        let serialiCodeOrbit_editor = SerialiCodeOrbitEditor {
             abs_path: Some(PathBuf::from("testing.txt")),
             contents: None,
             language: None,
             mtime: None,
         };
 
-        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+        DB.save_serialiCodeOrbit_editor(1234, workspace_id, serialiCodeOrbit_editor.clone())
             .await
             .unwrap();
 
         let have = DB
-            .get_serialized_editor(1234, workspace_id)
+            .get_serialiCodeOrbit_editor(1234, workspace_id)
             .unwrap()
             .unwrap();
-        assert_eq!(have, serialized_editor);
+        assert_eq!(have, serialiCodeOrbit_editor);
 
         // Now update contents and language
-        let serialized_editor = SerializedEditor {
+        let serialiCodeOrbit_editor = SerialiCodeOrbitEditor {
             abs_path: Some(PathBuf::from("testing.txt")),
             contents: Some("Test".to_owned()),
             language: Some("Go".to_owned()),
             mtime: None,
         };
 
-        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+        DB.save_serialiCodeOrbit_editor(1234, workspace_id, serialiCodeOrbit_editor.clone())
             .await
             .unwrap();
 
         let have = DB
-            .get_serialized_editor(1234, workspace_id)
+            .get_serialiCodeOrbit_editor(1234, workspace_id)
             .unwrap()
             .unwrap();
-        assert_eq!(have, serialized_editor);
+        assert_eq!(have, serialiCodeOrbit_editor);
 
         // Now set all the fields to NULL
-        let serialized_editor = SerializedEditor {
+        let serialiCodeOrbit_editor = SerialiCodeOrbitEditor {
             abs_path: None,
             contents: None,
             language: None,
             mtime: None,
         };
 
-        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+        DB.save_serialiCodeOrbit_editor(1234, workspace_id, serialiCodeOrbit_editor.clone())
             .await
             .unwrap();
 
         let have = DB
-            .get_serialized_editor(1234, workspace_id)
+            .get_serialiCodeOrbit_editor(1234, workspace_id)
             .unwrap()
             .unwrap();
-        assert_eq!(have, serialized_editor);
+        assert_eq!(have, serialiCodeOrbit_editor);
 
         // Storing and retrieving mtime
-        let serialized_editor = SerializedEditor {
+        let serialiCodeOrbit_editor = SerialiCodeOrbitEditor {
             abs_path: None,
             contents: None,
             language: None,
             mtime: Some(MTime::from_seconds_and_nanos(100, 42)),
         };
 
-        DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())
+        DB.save_serialiCodeOrbit_editor(1234, workspace_id, serialiCodeOrbit_editor.clone())
             .await
             .unwrap();
 
         let have = DB
-            .get_serialized_editor(1234, workspace_id)
+            .get_serialiCodeOrbit_editor(1234, workspace_id)
             .unwrap()
             .unwrap();
-        assert_eq!(have, serialized_editor);
+        assert_eq!(have, serialiCodeOrbit_editor);
     }
 }

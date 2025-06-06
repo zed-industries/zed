@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "assistant_context_editor"
 version = "0.1.0"
 edition.workspace = true
@@ -56,8 +56,8 @@ util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
-zed_actions.workspace = true
-zed_llm_client.workspace = true
+codeorbit_actions.workspace = true
+codeorbit_llm_client.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true

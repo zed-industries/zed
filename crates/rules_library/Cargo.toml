@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "rules_library"
 version = "0.1.0"
 edition.workspace = true
@@ -31,4 +31,4 @@ ui.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
-zed_actions.workspace = true
+codeorbit_actions.workspace = true

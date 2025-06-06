@@ -1,13 +1,13 @@
-//! CodeOrbit - AI-Powered Development Assistant for Zed
+﻿//! CodeOrbit - AI-Powered Development Assistant for CodeOrbit
 //! 
-//! This crate provides AI-powered development assistance within the Zed editor,
+//! This crate provides AI-powered development assistance within the CodeOrbit editor,
 //! featuring a multi-agent system for handling various development tasks.
 
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_crate_level_docs)]
 
 use std::sync::Arc;
-use zed::{
+use CodeOrbit::{
     AppContext, Command, Context, Global, View, ViewContext, WindowContext, WindowHandle,
 };
 
@@ -68,16 +68,16 @@ impl CodeOrbit {
     }
 }
 
-/// Registers the CodeOrbit extension with Zed.
+/// Registers the CodeOrbit extension with CodeOrbit.
 #[no_mangle]
-pub fn init(_: &zed::AppContext) {
+pub fn init(_: &CodeOrbit::AppContext) {
     // Initialize logging
     env_logger::init();
     
     // Register commands
-    zed::register_global(CodeOrbit::new);
+    CodeOrbit::register_global(CodeOrbit::new);
     
-    zed::register_action("toggle_codeorbit_panel", |_cx| {
+    CodeOrbit::register_action("toggle_codeorbit_panel", |_cx| {
         Box::new(|cx: &mut WindowContext| {
             if let Some(global) = cx.global::<CodeOrbit>() {
                 cx.dispatch_action(global, |codeorbit, cx| {
@@ -87,7 +87,7 @@ pub fn init(_: &zed::AppContext) {
         })
     });
     
-    log::info!("CodeOrbit extension initialized");
+    log::info!("CodeOrbit extension initialiCodeOrbit");
 }
 
 /// A simple test function to verify the extension is loaded.
@@ -97,7 +97,7 @@ mod tests {
     
     #[test]
     fn test_extension_initialization() {
-        // This is a simple test to verify the extension can be initialized
+        // This is a simple test to verify the extension can be initialiCodeOrbit
         let codeorbit = CodeOrbit::default();
         assert!(codeorbit.panel.is_none());
     }

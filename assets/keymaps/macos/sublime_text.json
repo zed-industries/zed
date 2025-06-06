@@ -1,4 +1,4 @@
-[
+﻿[
   {
     "bindings": {
       "cmd-{": "pane::ActivatePreviousItem",
@@ -94,7 +94,7 @@
       "cmd-k cmd-b": "workspace::ToggleLeftDock",
       "cmd-t": "file_finder::Toggle",
       "shift-cmd-r": "project_symbols::Toggle",
-      // Currently busted: https://github.com/zed-industries/feedback/issues/898
+      // Currently busted: https://github.com/CodeOrbit-industries/feedback/issues/898
       "ctrl-0": "project_panel::ToggleFocus"
     }
   }

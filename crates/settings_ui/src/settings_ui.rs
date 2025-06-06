@@ -1,4 +1,4 @@
-mod appearance_settings_controls;
+﻿mod appearance_settings_controls;
 
 use std::any::TypeId;
 use std::sync::Arc;
@@ -38,8 +38,8 @@ pub struct ImportCursorSettings {
     pub skip_prompt: bool,
 }
 
-impl_actions!(zed, [ImportVsCodeSettings, ImportCursorSettings]);
-actions!(zed, [OpenSettingsEditor]);
+impl_actions!(CodeOrbit, [ImportVsCodeSettings, ImportCursorSettings]);
+actions!(CodeOrbit, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenSettingsEditor, cx| {

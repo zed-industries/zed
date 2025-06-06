@@ -1,6 +1,6 @@
-# Local Collaboration
+﻿# Local Collaboration
 
-First, make sure you've installed Zed's backend dependencies for your platform:
+First, make sure you've installed CodeOrbit's backend dependencies for your platform:
 
 - [macOS](./macos.md#backend-dependencies)
 - [Linux](./linux.md#backend-dependencies)
@@ -10,7 +10,7 @@ Note that `collab` can be compiled only with MSVC toolchain on Windows
 
 ## Database setup
 
-Before you can run the `collab` server locally, you'll need to set up a `zed` Postgres database.
+Before you can run the `collab` server locally, you'll need to set up a `CodeOrbit` Postgres database.
 
 ### On macOS and Linux
 
@@ -18,7 +18,7 @@ Before you can run the `collab` server locally, you'll need to set up a `zed` Po
 script/bootstrap
 ```
 
-This script will set up the `zed` Postgres database, and populate it with some users. It requires internet access, because it fetches some users from the GitHub API.
+This script will set up the `CodeOrbit` Postgres database, and populate it with some users. It requires internet access, because it fetches some users from the GitHub API.
 
 The script will seed the database with various content defined by:
 
@@ -31,7 +31,7 @@ To use a different set of admin users, you can create your own version of that j
 ```json
 {
   "admins": ["admin1", "admin2"],
-  "channels": ["zed"]
+  "channels": ["CodeOrbit"]
 }
 ```
 
@@ -45,7 +45,7 @@ To use a different set of admin users, you can create your own version of that j
 
 ### On macOS and Linux
 
-Ensure that Postgres is configured and running, then run Zed's collaboration server and the `livekit` dev server:
+Ensure that Postgres is configured and running, then run CodeOrbit's collaboration server and the `livekit` dev server:
 
 ```sh
 foreman start
@@ -59,13 +59,13 @@ Alternatively, if you're not testing voice and screenshare, you can just run `co
 cargo run -p collab -- serve all
 ```
 
-In a new terminal, run two or more instances of Zed.
+In a new terminal, run two or more instances of CodeOrbit.
 
 ```sh
-script/zed-local -3
+script/CodeOrbit-local -3
 ```
 
-This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.
+This script starts one to four instances of CodeOrbit, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.
 
 ### On Windows
 
@@ -87,21 +87,21 @@ Otherwise,
 .\path\to\livekit-serve.exe --dev
 ```
 
-In a new terminal, run two or more instances of Zed.
+In a new terminal, run two or more instances of CodeOrbit.
 
 ```powershell
-node .\script\zed-local -2
+node .\script\CodeOrbit-local -2
 ```
 
 Note that this requires `node.exe` to be in your `PATH`.
 
 ## Running a local collab server
 
-If you want to run your own version of the zed collaboration service, you can, but note that this is still under development, and there is no good support for authentication nor extensions.
+If you want to run your own version of the CodeOrbit collaboration service, you can, but note that this is still under development, and there is no good support for authentication nor extensions.
 
-Configuration is done through environment variables. By default it will read the configuration from [`.env.toml`](https://github.com/zed-industries/zed/blob/main/crates/collab/.env.toml) and you should use that as a guide for setting this up.
+Configuration is done through environment variables. By default it will read the configuration from [`.env.toml`](https://github.com/CodeOrbit-industries/CodeOrbit/blob/main/crates/collab/.env.toml) and you should use that as a guide for setting this up.
 
-By default Zed assumes that the DATABASE_URL is a Postgres database, but you can make it use Sqlite by compiling with `--features sqlite` and using a sqlite DATABASE_URL with `?mode=rwc`.
+By default CodeOrbit assumes that the DATABASE_URL is a Postgres database, but you can make it use Sqlite by compiling with `--features sqlite` and using a sqlite DATABASE_URL with `?mode=rwc`.
 
 To authenticate you must first configure the server by creating a seed.json file that contains at a minimum your github handle. This will be used to create the user on demand.
 
@@ -113,4 +113,4 @@ To authenticate you must first configure the server by creating a seed.json file
 
 By default the collab server will seed the database when first creating it, but if you want to add more users you can explicitly reseed them with `SEED_PATH=./seed.json cargo run -p collab seed`
 
-Then when running the zed client you must specify two environment variables, `ZED_ADMIN_API_TOKEN` (which should match the value of `API_TOKEN` in .env.toml) and `ZED_IMPERSONATE` (which should match one of the users in your seed.json)
+Then when running the CodeOrbit client you must specify two environment variables, `codeorbit_ADMIN_API_TOKEN` (which should match the value of `API_TOKEN` in .env.toml) and `codeorbit_IMPERSONATE` (which should match one of the users in your seed.json)

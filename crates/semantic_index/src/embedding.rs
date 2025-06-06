@@ -1,4 +1,4 @@
-mod lmstudio;
+﻿mod lmstudio;
 mod ollama;
 mod open_ai;
 
@@ -67,7 +67,7 @@ impl fmt::Display for Embedding {
         let digits_to_display = 3;
 
         // Start the Embedding display format
-        write!(f, "Embedding(sized: {}; values: [", self.len())?;
+        write!(f, "Embedding(siCodeOrbit: {}; values: [", self.len())?;
 
         for (index, value) in self.0.iter().enumerate().take(digits_to_display) {
             // Lead with comma if not the first element
@@ -127,8 +127,8 @@ mod test {
 
     #[gpui::test]
     fn test_normalize_embedding() {
-        let normalized = Embedding::new(vec![1.0, 1.0, 1.0]);
+        let normaliCodeOrbit = Embedding::new(vec![1.0, 1.0, 1.0]);
         let value: f32 = 1.0 / 3.0_f32.sqrt();
-        assert_eq!(normalized, Embedding(vec![value; 3]));
+        assert_eq!(normaliCodeOrbit, Embedding(vec![value; 3]));
     }
 }

@@ -1,4 +1,4 @@
-use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
+﻿use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
     AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
     KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
@@ -364,7 +364,7 @@ impl MacWindowState {
         if let Some(traffic_light_position) = self.traffic_light_position {
             if self.is_fullscreen() {
                 // Moving traffic lights while fullscreen doesn't work,
-                // see https://github.com/zed-industries/zed/issues/4712
+                // see https://github.com/CodeOrbit-industries/CodeOrbit/issues/4712
                 return;
             }
 
@@ -435,7 +435,7 @@ impl MacWindowState {
         self.display_link = None;
     }
 
-    fn is_maximized(&self) -> bool {
+    fn is_maximiCodeOrbit(&self) -> bool {
         unsafe {
             let bounds = self.bounds();
             let screen_size = self.native_window.screen().visibleFrame().into();
@@ -808,8 +808,8 @@ impl PlatformWindow for MacWindow {
         self.0.as_ref().lock().window_bounds()
     }
 
-    fn is_maximized(&self) -> bool {
-        self.0.as_ref().lock().is_maximized()
+    fn is_maximiCodeOrbit(&self) -> bool {
+        self.0.as_ref().lock().is_maximiCodeOrbit()
     }
 
     fn content_size(&self) -> Size<Pixels> {
@@ -915,8 +915,8 @@ impl PlatformWindow for MacWindow {
         // See also https://developer.apple.com/documentation/appkit/nsalert/1524532-addbuttonwithtitle#discussion
         // ```
         // By default, the first button has a key equivalent of Return,
-        // any button with a title of “Cancel” has a key equivalent of Escape,
-        // and any button with the title “Don’t Save” has a key equivalent of Command-D (but only if it’s not the first button).
+        // any button with a title of â€œCancelâ€ has a key equivalent of Escape,
+        // and any button with the title â€œDonâ€™t Saveâ€ has a key equivalent of Command-D (but only if itâ€™s not the first button).
         // ```
         //
         // To avoid situations when the last element added is "Cancel" and it gets the focus
@@ -1255,7 +1255,7 @@ fn get_scale_factor(native_window: id) -> f32 {
     };
 
     // We are not certain what triggers this, but it seems that sometimes
-    // this method would return 0 (https://github.com/zed-industries/zed/issues/6412)
+    // this method would return 0 (https://github.com/CodeOrbit-industries/CodeOrbit/issues/6412)
     // It seems most likely that this would happen if the window has no screen
     // (if it is off-screen), though we'd expect to see viewDidChangeBackingProperties before
     // it was rendered for real.
@@ -1334,7 +1334,7 @@ extern "C" fn handle_key_up(this: &Object, _: Sel, native_event: id) {
 //  Czech (QWERTY) layout:
 //   - in vim mode `option-4`  should go to end of line (same as $)
 //  Japanese (Romaji) layout:
-//   - type `a i left down up enter enter` should create an unmarked text "愛"
+//   - type `a i left down up enter enter` should create an unmarked text "æ„›"
 extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: bool) -> BOOL {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();

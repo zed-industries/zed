@@ -1,4 +1,4 @@
-use call::ActiveCall;
+﻿use call::ActiveCall;
 use dap::DebugRequestType;
 use dap::requests::{Initialize, Launch, StackTrace};
 use dap::{SourceBreakpoint, requests::SetBreakpoints};
@@ -56,16 +56,16 @@ pub fn _active_session(
     })
 }
 
-struct ZedInstance<'a> {
+struct CodeOrbitInstance<'a> {
     client: TestClient,
     project: Option<Entity<Project>>,
     active_call: Entity<ActiveCall>,
     cx: &'a mut TestAppContext,
 }
 
-impl<'a> ZedInstance<'a> {
+impl<'a> CodeOrbitInstance<'a> {
     fn new(client: TestClient, cx: &'a mut TestAppContext) -> Self {
-        ZedInstance {
+        CodeOrbitInstance {
             project: None,
             client,
             active_call: cx.read(ActiveCall::global),
@@ -134,7 +134,7 @@ async fn _setup_three_member_test<'a, 'b, 'c>(
     host_cx: &'a mut TestAppContext,
     first_remote_cx: &'b mut TestAppContext,
     second_remote_cx: &'c mut TestAppContext,
-) -> (ZedInstance<'a>, ZedInstance<'b>, ZedInstance<'c>) {
+) -> (CodeOrbitInstance<'a>, CodeOrbitInstance<'b>, CodeOrbitInstance<'c>) {
     let host_client = server.create_client(host_cx, "user_host").await;
     let first_remote_client = server.create_client(first_remote_cx, "user_remote_1").await;
     let second_remote_client = server
@@ -153,18 +153,18 @@ async fn _setup_three_member_test<'a, 'b, 'c>(
         ])
         .await;
 
-    let host_zed = ZedInstance::new(host_client, host_cx);
-    let first_remote_zed = ZedInstance::new(first_remote_client, first_remote_cx);
-    let second_remote_zed = ZedInstance::new(second_remote_client, second_remote_cx);
+    let host_CodeOrbit = CodeOrbitInstance::new(host_client, host_cx);
+    let first_remote_CodeOrbit = CodeOrbitInstance::new(first_remote_client, first_remote_cx);
+    let second_remote_CodeOrbit = CodeOrbitInstance::new(second_remote_client, second_remote_cx);
 
-    (host_zed, first_remote_zed, second_remote_zed)
+    (host_CodeOrbit, first_remote_CodeOrbit, second_remote_CodeOrbit)
 }
 
 async fn setup_two_member_test<'a, 'b>(
     server: &mut TestServer,
     host_cx: &'a mut TestAppContext,
     remote_cx: &'b mut TestAppContext,
-) -> (ZedInstance<'a>, ZedInstance<'b>) {
+) -> (CodeOrbitInstance<'a>, CodeOrbitInstance<'b>) {
     let host_client = server.create_client(host_cx, "user_host").await;
     let remote_client = server.create_client(remote_cx, "user_remote").await;
 
@@ -175,10 +175,10 @@ async fn setup_two_member_test<'a, 'b>(
         .create_room(&mut [(&host_client, host_cx), (&remote_client, remote_cx)])
         .await;
 
-    let host_zed = ZedInstance::new(host_client, host_cx);
-    let remote_zed = ZedInstance::new(remote_client, remote_cx);
+    let host_CodeOrbit = CodeOrbitInstance::new(host_client, host_cx);
+    let remote_CodeOrbit = CodeOrbitInstance::new(remote_client, remote_cx);
 
-    (host_zed, remote_zed)
+    (host_CodeOrbit, remote_CodeOrbit)
 }
 
 #[gpui::test]
@@ -189,14 +189,14 @@ async fn test_debug_panel_item_opens_on_remote(
     let executor = host_cx.executor();
     let mut server = TestServer::start(executor).await;
 
-    let (mut host_zed, mut remote_zed) =
+    let (mut host_CodeOrbit, mut remote_CodeOrbit) =
         setup_two_member_test(&mut server, host_cx, remote_cx).await;
 
-    let (host_project_id, _) = host_zed.host_project(None).await;
-    remote_zed.join_project(host_project_id).await;
+    let (host_project_id, _) = host_CodeOrbit.host_project(None).await;
+    remote_CodeOrbit.join_project(host_project_id).await;
 
-    let (_client_host, _host_workspace, host_project, host_cx) = host_zed.expand().await;
-    let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+    let (_client_host, _host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
+    let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
     remote_cx.run_until_parked();
 
@@ -274,12 +274,12 @@ async fn test_active_debug_panel_item_set_on_join_project(
     let executor = host_cx.executor();
     let mut server = TestServer::start(executor).await;
 
-    let (mut host_zed, mut remote_zed) =
+    let (mut host_CodeOrbit, mut remote_CodeOrbit) =
         setup_two_member_test(&mut server, host_cx, remote_cx).await;
 
-    let (host_project_id, _) = host_zed.host_project(None).await;
+    let (host_project_id, _) = host_CodeOrbit.host_project(None).await;
 
-    let (_client_host, _host_workspace, host_project, host_cx) = host_zed.expand().await;
+    let (_client_host, _host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
 
     host_cx.run_until_parked();
 
@@ -325,8 +325,8 @@ async fn test_active_debug_panel_item_set_on_join_project(
     // Give host_client time to send a debug panel item to collab server
     host_cx.run_until_parked();
 
-    remote_zed.join_project(host_project_id).await;
-    let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+    remote_CodeOrbit.join_project(host_project_id).await;
+    let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
     host_cx.run_until_parked();
     remote_cx.run_until_parked();
@@ -376,14 +376,14 @@ async fn test_debug_panel_remote_button_presses(
     // let executor = host_cx.executor();
     // let mut server = TestServer::start(executor).await;
 
-    // let (mut host_zed, mut remote_zed) =
+    // let (mut host_CodeOrbit, mut remote_CodeOrbit) =
     //     setup_two_member_test(&mut server, host_cx, remote_cx).await;
 
-    // let (host_project_id, _) = host_zed.host_project(None).await;
-    // remote_zed.join_project(host_project_id).await;
+    // let (host_project_id, _) = host_CodeOrbit.host_project(None).await;
+    // remote_CodeOrbit.join_project(host_project_id).await;
 
-    // let (_client_host, host_workspace, host_project, host_cx) = host_zed.expand().await;
-    // let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+    // let (_client_host, host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
+    // let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
     // let task = host_project.update(host_cx, |project, cx| {
     //     project.start_debug_session(dap::test_config(None), cx)
@@ -703,14 +703,14 @@ async fn test_restart_stack_frame(_host_cx: &mut TestAppContext, _remote_cx: &mu
     // let executor = host_cx.executor();
     // let mut server = TestServer::start(executor).await;
 
-    // let (mut host_zed, mut remote_zed) =
+    // let (mut host_CodeOrbit, mut remote_CodeOrbit) =
     //     setup_two_member_test(&mut server, host_cx, remote_cx).await;
 
-    // let (host_project_id, _) = host_zed.host_project(None).await;
-    // remote_zed.join_project(host_project_id).await;
+    // let (host_project_id, _) = host_CodeOrbit.host_project(None).await;
+    // remote_CodeOrbit.join_project(host_project_id).await;
 
-    // let (_client_host, _host_workspace, host_project, host_cx) = host_zed.expand().await;
-    // let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+    // let (_client_host, _host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
+    // let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
     // let called_restart_frame = Arc::new(AtomicBool::new(false));
 
@@ -838,17 +838,17 @@ async fn test_updated_breakpoints_send_to_dap(
     let executor = host_cx.executor();
     let mut server = TestServer::start(executor).await;
 
-    let (mut host_zed, mut remote_zed) =
+    let (mut host_CodeOrbit, mut remote_CodeOrbit) =
         setup_two_member_test(&mut server, host_cx, remote_cx).await;
 
-    let (host_project_id, worktree_id) = host_zed
+    let (host_project_id, worktree_id) = host_CodeOrbit
         .host_project(Some(json!({"test.txt": "one\ntwo\nthree\nfour\nfive"})))
         .await;
 
-    remote_zed.join_project(host_project_id).await;
+    remote_CodeOrbit.join_project(host_project_id).await;
 
-    let (_client_host, host_workspace, host_project, host_cx) = host_zed.expand().await;
-    let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+    let (_client_host, host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
+    let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
     let project_path = ProjectPath {
         worktree_id,
@@ -1063,15 +1063,15 @@ async fn test_module_list(
     // let executor = host_cx.executor();
     // let mut server = TestServer::start(executor).await;
 
-    // let (mut host_zed, mut remote_zed, mut late_join_zed) =
+    // let (mut host_CodeOrbit, mut remote_CodeOrbit, mut late_join_CodeOrbit) =
     //     setup_three_member_test(&mut server, host_cx, remote_cx, late_join_cx).await;
 
-    // let (host_project_id, _worktree_id) = host_zed.host_project(None).await;
+    // let (host_project_id, _worktree_id) = host_CodeOrbit.host_project(None).await;
 
-    // remote_zed.join_project(host_project_id).await;
+    // remote_CodeOrbit.join_project(host_project_id).await;
 
-    // let (_client_host, host_workspace, host_project, host_cx) = host_zed.expand().await;
-    // let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+    // let (_client_host, host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
+    // let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
     // let task = host_project.update(host_cx, |project, cx| {
     //     project.start_debug_session(dap::test_config(None), cx)
@@ -1117,7 +1117,7 @@ async fn test_module_list(
     //         symbol_file_path: None,
     //         symbol_status: None,
     //         version: None,
-    //         is_optimized: None,
+    //         is_optimiCodeOrbit: None,
     //         is_user_code: None,
     //     },
     //     dap::Module {
@@ -1129,7 +1129,7 @@ async fn test_module_list(
     //         symbol_file_path: None,
     //         symbol_status: None,
     //         version: None,
-    //         is_optimized: None,
+    //         is_optimiCodeOrbit: None,
     //         is_user_code: None,
     //     },
     // ];
@@ -1238,9 +1238,9 @@ async fn test_module_list(
     //     })
     // });
 
-    // late_join_zed.join_project(host_project_id).await;
+    // late_join_CodeOrbit.join_project(host_project_id).await;
     // let (_late_join_client, late_join_workspace, _late_join_project, late_join_cx) =
-    //     late_join_zed.expand().await;
+    //     late_join_CodeOrbit.expand().await;
 
     // late_join_workspace.update(late_join_cx, |workspace, cx| {
     //     let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
@@ -1287,17 +1287,17 @@ async fn test_module_list(
 //     let executor = host_cx.executor();
 //     let mut server = TestServer::start(executor).await;
 
-//     let (mut host_zed, mut remote_zed, mut late_join_zed) =
+//     let (mut host_CodeOrbit, mut remote_CodeOrbit, mut late_join_CodeOrbit) =
 //         setup_three_member_test(&mut server, host_cx, remote_cx, late_join_cx).await;
 
-//     let (host_project_id, _worktree_id) = host_zed
+//     let (host_project_id, _worktree_id) = host_CodeOrbit
 //         .host_project(Some(json!({"test.txt": "one\ntwo\nthree\nfour\nfive"})))
 //         .await;
 
-//     remote_zed.join_project(host_project_id).await;
+//     remote_CodeOrbit.join_project(host_project_id).await;
 
-//     let (_client_host, host_workspace, host_project, host_cx) = host_zed.expand().await;
-//     let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+//     let (_client_host, host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
+//     let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
 //     let task = host_project.update(host_cx, |project, cx| {
 //         project.start_debug_session(
@@ -1676,9 +1676,9 @@ async fn test_module_list(
 //             );
 //         });
 
-//     late_join_zed.join_project(host_project_id).await;
+//     late_join_CodeOrbit.join_project(host_project_id).await;
 //     let (_late_join_client, late_join_workspace, _late_join_project, late_join_cx) =
-//         late_join_zed.expand().await;
+//         late_join_CodeOrbit.expand().await;
 
 //     late_join_cx.run_until_parked();
 
@@ -1727,17 +1727,17 @@ async fn test_ignore_breakpoints(
     // let executor = host_cx.executor();
     // let mut server = TestServer::start(executor).await;
 
-    // let (mut host_zed, mut remote_zed, mut late_join_zed) =
+    // let (mut host_CodeOrbit, mut remote_CodeOrbit, mut late_join_CodeOrbit) =
     //     setup_three_member_test(&mut server, host_cx, remote_cx, cx_c).await;
 
-    // let (host_project_id, worktree_id) = host_zed
+    // let (host_project_id, worktree_id) = host_CodeOrbit
     //     .host_project(Some(json!({"test.txt": "one\ntwo\nthree\nfour\nfive"})))
     //     .await;
 
-    // remote_zed.join_project(host_project_id).await;
+    // remote_CodeOrbit.join_project(host_project_id).await;
 
-    // let (_client_host, host_workspace, host_project, host_cx) = host_zed.expand().await;
-    // let (_client_remote, remote_workspace, remote_project, remote_cx) = remote_zed.expand().await;
+    // let (_client_host, host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
+    // let (_client_remote, remote_workspace, remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
     // let project_path = ProjectPath {
     //     worktree_id,
@@ -1832,7 +1832,7 @@ async fn test_ignore_breakpoints(
     //     .await;
 
     // client
-    //     .fake_event(dap::messages::Events::Initialized(Some(
+    //     .fake_event(dap::messages::Events::InitialiCodeOrbit(Some(
     //         dap::Capabilities {
     //             supports_configuration_done_request: Some(true),
     //             ..Default::default()
@@ -2033,9 +2033,9 @@ async fn test_ignore_breakpoints(
     //     })
     //     .await;
 
-    // late_join_zed.join_project(host_project_id).await;
+    // late_join_CodeOrbit.join_project(host_project_id).await;
     // let (_late_join_client, late_join_workspace, late_join_project, late_join_cx) =
-    //     late_join_zed.expand().await;
+    //     late_join_CodeOrbit.expand().await;
 
     // late_join_cx.run_until_parked();
 
@@ -2163,14 +2163,14 @@ async fn test_debug_panel_console(_host_cx: &mut TestAppContext, _remote_cx: &mu
     // let executor = host_cx.executor();
     // let mut server = TestServer::start(executor).await;
 
-    // let (mut host_zed, mut remote_zed) =
+    // let (mut host_CodeOrbit, mut remote_CodeOrbit) =
     //     setup_two_member_test(&mut server, host_cx, remote_cx).await;
 
-    // let (host_project_id, _) = host_zed.host_project(None).await;
-    // remote_zed.join_project(host_project_id).await;
+    // let (host_project_id, _) = host_CodeOrbit.host_project(None).await;
+    // remote_CodeOrbit.join_project(host_project_id).await;
 
-    // let (_client_host, _host_workspace, host_project, host_cx) = host_zed.expand().await;
-    // let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_zed.expand().await;
+    // let (_client_host, _host_workspace, host_project, host_cx) = host_CodeOrbit.expand().await;
+    // let (_client_remote, remote_workspace, _remote_project, remote_cx) = remote_CodeOrbit.expand().await;
 
     // remote_cx.run_until_parked();
 
@@ -2431,7 +2431,7 @@ async fn test_debug_panel_console(_host_cx: &mut TestAppContext, _remote_cx: &mu
     //                             First item in group 2
     //                             Second item in group 2
     //                         End group 2
-    //                     ⋯    End group 3
+    //                     â‹¯    End group 3
     //                         Third item in group 1
     //                     Second item
     //                 "

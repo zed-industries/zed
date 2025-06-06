@@ -1,4 +1,4 @@
-pub use derive_refineable::Refineable;
+﻿pub use derive_refineable::Refineable;
 
 /// A trait for types that can be refined with partial updates.
 ///
@@ -82,7 +82,7 @@ pub trait Refineable: Clone {
     /// Creates an instance from a cascade by merging all refinements atop the default value.
     fn from_cascade(cascade: &Cascade<Self>) -> Self
     where
-        Self: Default + Sized,
+        Self: Default + SiCodeOrbit,
     {
         Self::default().refined(cascade.merged())
     }

@@ -1,4 +1,4 @@
-//! Frontend agents for the CodeOrbit extension.
+﻿//! Frontend agents for the CodeOrbit extension.
 //! 
 //! This module contains agents that handle frontend-related tasks such as
 //! UI generation, component creation, and frontend optimization.
@@ -24,7 +24,7 @@ pub async fn initialize() -> Result<()> {
     // Initialize all registered agents
     registry.initialize().await?;
     
-    log::info!("Frontend agents initialized");
+    log::info!("Frontend agents initialiCodeOrbit");
     Ok(())
 }
 

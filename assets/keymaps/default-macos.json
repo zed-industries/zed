@@ -1,4 +1,4 @@
-[
+﻿[
   // Standard macOS bindings
   {
     "use_key_equivalents": true,
@@ -35,17 +35,17 @@
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
-      "cmd-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
-      "cmd-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
-      "cmd--": ["zed::DecreaseBufferFontSize", { "persist": false }],
-      "cmd-0": ["zed::ResetBufferFontSize", { "persist": false }],
-      "cmd-,": "zed::OpenSettings",
-      "cmd-q": "zed::Quit",
-      "cmd-h": "zed::Hide",
-      "alt-cmd-h": "zed::HideOthers",
-      "cmd-m": "zed::Minimize",
-      "fn-f": "zed::ToggleFullScreen",
-      "ctrl-cmd-f": "zed::ToggleFullScreen",
+      "cmd-=": ["CodeOrbit::IncreaseBufferFontSize", { "persist": false }],
+      "cmd-+": ["CodeOrbit::IncreaseBufferFontSize", { "persist": false }],
+      "cmd--": ["CodeOrbit::DecreaseBufferFontSize", { "persist": false }],
+      "cmd-0": ["CodeOrbit::ResetBufferFontSize", { "persist": false }],
+      "cmd-,": "CodeOrbit::OpenSettings",
+      "cmd-q": "CodeOrbit::Quit",
+      "cmd-h": "CodeOrbit::Hide",
+      "alt-cmd-h": "CodeOrbit::HideOthers",
+      "cmd-m": "CodeOrbit::Minimize",
+      "fn-f": "CodeOrbit::ToggleFullScreen",
+      "ctrl-cmd-f": "CodeOrbit::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RateCompletions",
       "ctrl-cmd-i": "edit_prediction::ToggleMenu"
     }
@@ -500,7 +500,7 @@
       "cmd-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "cmd-k cmd-d": ["editor::SelectNext", { "replace_newest": true }], // editor.action.moveSelectionToNextFindMatch / find_under_expand_skip
       // macOS binds `ctrl-cmd-d` to Show Dictionary which breaks these two binds
-      // To use `ctrl-cmd-d` or `ctrl-k ctrl-cmd-d` in Zed you must execute this command and then restart:
+      // To use `ctrl-cmd-d` or `ctrl-k ctrl-cmd-d` in CodeOrbit you must execute this command and then restart:
       //   defaults write com.apple.symbolichotkeys AppleSymbolicHotKeys -dict-add 70 '<dict><key>enabled</key><false/></dict>'
       "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }], // editor.action.addSelectionToPreviousFindMatch
       "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
@@ -535,7 +535,7 @@
       "cmd-k cmd-9": ["editor::FoldAtLevel", 9],
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
-      // Using `ctrl-space` / `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
+      // Using `ctrl-space` / `ctrl-shift-space` in CodeOrbit requires disabling the macOS global shortcut.
       // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-shift-space": "editor::ShowWordCompletions",
@@ -610,7 +610,7 @@
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-k cmd-s": "zed::OpenKeymap",
+      "cmd-k cmd-s": "CodeOrbit::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
@@ -634,7 +634,7 @@
       "cmd-k shift-right": "workspace::SwapPaneRight",
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
-      "cmd-shift-x": "zed::Extensions",
+      "cmd-shift-x": "CodeOrbit::Extensions",
       "f5": "debugger::RerunLastSession"
     }
   },
@@ -656,7 +656,7 @@
     "context": "Workspace && debugger_running",
     "use_key_equivalents": true,
     "bindings": {
-      "f5": "zed::NoAction"
+      "f5": "CodeOrbit::NoAction"
     }
   },
   {
@@ -1077,7 +1077,7 @@
       "cmd-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
       "cmd-end": "terminal::ScrollToBottom",
-      // Using `ctrl-shift-space` in Zed requires disabling the macOS global shortcut.
+      // Using `ctrl-shift-space` in CodeOrbit requires disabling the macOS global shortcut.
       // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-shift-space": "terminal::ToggleViMode",
       "ctrl-alt-up": "pane::SplitUp",
@@ -1108,7 +1108,7 @@
     }
   },
   {
-    "context": "ZedPredictModal",
+    "context": "CodeOrbitPredictModal",
     "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel"

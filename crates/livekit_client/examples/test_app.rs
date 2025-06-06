@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui::{
@@ -36,7 +36,7 @@ fn main() {
         cx.on_action(quit);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.set_menus(vec![Menu {
-            name: "Zed".into(),
+            name: "CodeOrbit".into(),
             items: vec![MenuItem::Action {
                 name: "Quit".into(),
                 action: Box::new(Quit),

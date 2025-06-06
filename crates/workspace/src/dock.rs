@@ -1,4 +1,4 @@
-use crate::persistence::model::DockData;
+﻿use crate::persistence::model::DockData;
 use crate::{DraggedDock, Event, ModalLayer, Pane};
 use crate::{Workspace, status_bar::StatusItemView};
 use anyhow::Context as _;
@@ -27,7 +27,7 @@ pub enum PanelEvent {
 
 pub use proto::PanelId;
 
-pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
+pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + SiCodeOrbit {
     fn persistent_name() -> &'static str;
     fn position(&self, window: &Window, cx: &App) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
@@ -198,7 +198,7 @@ pub struct Dock {
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
-    pub(crate) serialized_dock: Option<DockData>,
+    pub(crate) serialiCodeOrbit_dock: Option<DockData>,
     zoom_layer_open: bool,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
@@ -274,7 +274,7 @@ impl Dock {
                 is_open: false,
                 focus_handle: focus_handle.clone(),
                 _subscriptions: [focus_subscription, zoom_subscription],
-                serialized_dock: None,
+                serialiCodeOrbit_dock: None,
                 zoom_layer_open: false,
                 modal_layer,
             }
@@ -564,19 +564,19 @@ impl Dock {
     }
 
     pub fn restore_state(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if let Some(serialized) = self.serialized_dock.clone() {
-            if let Some(active_panel) = serialized.active_panel.filter(|_| serialized.visible) {
+        if let Some(serialiCodeOrbit) = self.serialiCodeOrbit_dock.clone() {
+            if let Some(active_panel) = serialiCodeOrbit.active_panel.filter(|_| serialiCodeOrbit.visible) {
                 if let Some(idx) = self.panel_index_for_persistent_name(active_panel.as_str(), cx) {
                     self.activate_panel(idx, window, cx);
                 }
             }
 
-            if serialized.zoom {
+            if serialiCodeOrbit.zoom {
                 if let Some(panel) = self.active_panel() {
                     panel.set_zoomed(true, window, cx)
                 }
             }
-            self.set_open(serialized.visible, window, cx);
+            self.set_open(serialiCodeOrbit.visible, window, cx);
             return true;
         }
         false

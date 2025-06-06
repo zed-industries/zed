@@ -1,4 +1,4 @@
-//! See [Telemetry in Zed](https://zed.dev/docs/telemetry) for additional information.
+﻿//! See [Telemetry in CodeOrbit](https://CodeOrbit.dev/docs/telemetry) for additional information.
 use futures::channel::mpsc;
 pub use serde_json;
 use std::sync::OnceLock;

@@ -1,4 +1,4 @@
-//! Module for managing breakpoints in a project.
+﻿//! Module for managing breakpoints in a project.
 //!
 //! Breakpoints are separate from a session because they're not associated with any particular debug session. They can also be set up without a session running.
 use anyhow::{Context as _, Result};
@@ -770,7 +770,7 @@ impl BreakpointStore {
             .collect()
     }
 
-    pub fn with_serialized_breakpoints(
+    pub fn with_serialiCodeOrbit_breakpoints(
         &self,
         breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
         cx: &mut Context<BreakpointStore>,
@@ -800,7 +800,7 @@ impl BreakpointStore {
                         })?
                         .await;
                     let Ok(buffer) = buffer else {
-                        log::error!("Todo: Serialized breakpoints which do not have buffer (yet)");
+                        log::error!("Todo: SerialiCodeOrbit breakpoints which do not have buffer (yet)");
                         continue;
                     };
                     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
@@ -812,7 +812,7 @@ impl BreakpointStore {
                         let max_point = snapshot.max_point_utf16();
                         let point = PointUtf16::new(bp.row, 0);
                         if point > max_point {
-                            log::error!("skipping a deserialized breakpoint that's out of range");
+                            log::error!("skipping a deserialiCodeOrbit breakpoint that's out of range");
                             continue;
                         }
                         let position = snapshot.anchor_after(point);
@@ -840,7 +840,7 @@ impl BreakpointStore {
                         } else {
                             "breakpoint"
                         };
-                        log::info!("Deserialized {count} {breakpoint_str} at path: {path}");
+                        log::info!("DeserialiCodeOrbit {count} {breakpoint_str} at path: {path}");
                     }
 
                     this.breakpoints = new_breakpoints;

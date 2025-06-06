@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
 };
@@ -418,7 +418,7 @@ fn blame_entry_relative_timestamp(blame_entry: &BlameEntry) -> String {
     match blame_entry.author_offset_date_time() {
         Ok(timestamp) => {
             let local = chrono::Local::now().offset().local_minus_utc();
-            time_format::format_localized_timestamp(
+            time_format::format_localiCodeOrbit_timestamp(
                 timestamp,
                 time::OffsetDateTime::now_utc(),
                 time::UtcOffset::from_whole_seconds(local).unwrap(),

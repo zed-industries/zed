@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "perplexity"
 version = "0.1.0"
 edition.workspace = true
@@ -14,4 +14,4 @@ workspace = true
 
 [dependencies]
 serde = "1"
-zed_extension_api = { path = "../../crates/extension_api" }
+codeorbit_extension_api = { path = "../../crates/extension_api" }

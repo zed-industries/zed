@@ -1,6 +1,6 @@
-//! An HTTP client.
+﻿//! An HTTP client.
 
-pub use crate::wit::zed::extension::http_client::{
+pub use crate::wit::CodeOrbit::extension::http_client::{
     HttpMethod, HttpRequest, HttpResponse, HttpResponseStream, RedirectPolicy, fetch, fetch_stream,
 };
 

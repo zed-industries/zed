@@ -1,4 +1,4 @@
-use anyhow::Context as _;
+﻿use anyhow::Context as _;
 use fuzzy::StringMatchCandidate;
 
 use collections::HashSet;
@@ -26,25 +26,25 @@ pub fn register(workspace: &mut Workspace) {
 
 pub fn checkout_branch(
     workspace: &mut Workspace,
-    _: &zed_actions::git::CheckoutBranch,
+    _: &codeorbit_actions::git::CheckoutBranch,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open(workspace, &zed_actions::git::Branch, window, cx);
+    open(workspace, &codeorbit_actions::git::Branch, window, cx);
 }
 
 pub fn switch(
     workspace: &mut Workspace,
-    _: &zed_actions::git::Switch,
+    _: &codeorbit_actions::git::Switch,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open(workspace, &zed_actions::git::Branch, window, cx);
+    open(workspace, &codeorbit_actions::git::Branch, window, cx);
 }
 
 pub fn open(
     workspace: &mut Workspace,
-    _: &zed_actions::git::Branch,
+    _: &codeorbit_actions::git::Branch,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -464,7 +464,7 @@ impl PickerDelegate for BranchListDelegate {
                                 .child(div().flex_shrink().overflow_x_hidden().child(
                                     if entry.is_new {
                                         Label::new(format!(
-                                            "Create branch \"{}\"…",
+                                            "Create branch \"{}\"â€¦",
                                             entry.branch.name()
                                         ))
                                         .single_line()

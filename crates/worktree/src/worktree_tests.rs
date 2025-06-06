@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     Entry, EntryKind, Event, PathChange, WorkDirectory, Worktree, WorktreeModelHandle,
     worktree_settings::WorktreeSettings,
 };
@@ -1962,7 +1962,7 @@ fn test_unrelativize() {
     );
 
     let work_directory = WorkDirectory::AboveProject {
-        absolute_path: Path::new("/projects/zed").into(),
+        absolute_path: Path::new("/projects/CodeOrbit").into(),
         location_in_repo: Path::new("crates/gpui").into(),
     };
 

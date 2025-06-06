@@ -1,4 +1,4 @@
-use gpui::{Hsla, Rgba};
+﻿use gpui::{Hsla, Rgba};
 
 /// Calculates the contrast ratio between two colors according to WCAG 2.0 standards.
 ///
@@ -19,7 +19,7 @@ pub fn calculate_contrast_ratio(fg: Hsla, bg: Hsla) -> f32 {
 /// Calculates the relative luminance of a color.
 ///
 /// The relative luminance is the relative brightness of any point in a colorspace,
-/// normalized to 0 for darkest black and 1 for lightest white.
+/// normaliCodeOrbit to 0 for darkest black and 1 for lightest white.
 fn relative_luminance(color: Hsla) -> f32 {
     let rgba: Rgba = color.into();
     let r = linearize(rgba.r);

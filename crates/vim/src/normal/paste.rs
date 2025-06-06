@@ -1,4 +1,4 @@
-use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
+﻿use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
 use gpui::{Context, Window, impl_actions};
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
@@ -56,7 +56,7 @@ impl Vim {
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);
 
-                // unlike zed, if you have a multi-cursor selection from vim block mode,
+                // unlike CodeOrbit, if you have a multi-cursor selection from vim block mode,
                 // pasting it will paste it on subsequent lines, even if you don't yet
                 // have a cursor there.
                 let mut selections_to_process = Vec::new();
@@ -83,8 +83,8 @@ impl Vim {
                 }
 
                 let first_selection_indent_column =
-                    clipboard_selections.as_ref().and_then(|zed_selections| {
-                        zed_selections
+                    clipboard_selections.as_ref().and_then(|codeorbit_selections| {
+                        codeorbit_selections
                             .first()
                             .map(|selection| selection.first_line_indent)
                     });
@@ -324,60 +324,60 @@ mod test {
         // single line
         cx.set_shared_state(indoc! {"
             The quick brown
-            fox ˇjumps over
+            fox Ë‡jumps over
             the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("v w y").await;
         cx.shared_clipboard().await.assert_eq("jumps o");
         cx.set_shared_state(indoc! {"
             The quick brown
-            fox jumps oveˇr
+            fox jumps oveË‡r
             the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("p").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
-            fox jumps overjumps ˇo
+            fox jumps overjumps Ë‡o
             the lazy dog"});
 
         cx.set_shared_state(indoc! {"
             The quick brown
-            fox jumps oveˇr
+            fox jumps oveË‡r
             the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("shift-p").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
-            fox jumps ovejumps ˇor
+            fox jumps ovejumps Ë‡or
             the lazy dog"});
 
         // line mode
         cx.set_shared_state(indoc! {"
             The quick brown
-            fox juˇmps over
+            fox juË‡mps over
             the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("d d").await;
         cx.shared_clipboard().await.assert_eq("fox jumps over\n");
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
-            the laˇzy dog"});
+            the laË‡zy dog"});
         cx.simulate_shared_keystrokes("p").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
             the lazy dog
-            ˇfox jumps over"});
+            Ë‡fox jumps over"});
         cx.simulate_shared_keystrokes("k shift-p").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
-            ˇfox jumps over
+            Ë‡fox jumps over
             the lazy dog
             fox jumps over"});
 
         // multiline, cursor to first character of pasted text.
         cx.set_shared_state(indoc! {"
             The quick brown
-            fox jumps ˇover
+            fox jumps Ë‡over
             the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("v j y").await;
@@ -386,13 +386,13 @@ mod test {
         cx.simulate_shared_keystrokes("p").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
-            fox jumps oˇover
+            fox jumps oË‡over
             the lazy dover
             the lazy dog"});
         cx.simulate_shared_keystrokes("u shift-p").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
-            fox jumps ˇover
+            fox jumps Ë‡over
             the lazy doover
             the lazy dog"});
     }
@@ -410,7 +410,7 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                fox jˇumps over
+                fox jË‡umps over
                 the lazy dog"},
             Mode::Normal,
         );
@@ -418,7 +418,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 The quick brown
-                fox ˇjumps over
+                fox Ë‡jumps over
                 the lazy dog"},
             Mode::Normal,
         );
@@ -426,7 +426,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 The quick brown
-                fox jjumpˇsumps over
+                fox jjumpË‡sumps over
                 the lazy dog"},
             Mode::Normal,
         );
@@ -447,7 +447,7 @@ mod test {
         cx.set_state(
             indoc! {"
                 The quick brown
-                fox jˇumps over
+                fox jË‡umps over
                 the lazy dog"},
             Mode::Normal,
         );
@@ -455,7 +455,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 The quick brown
-                fox ˇjumps over
+                fox Ë‡jumps over
                 the lazy dog"},
             Mode::Normal,
         );
@@ -463,7 +463,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 The quick brown
-                fox jjumpˇsumps over
+                fox jjumpË‡sumps over
                 the lazy dog"},
             Mode::Normal,
         );
@@ -477,7 +477,7 @@ mod test {
             indoc! {"
                 The quick brown
                 the lazy dog
-                ˇfox jjumpsumps over"},
+                Ë‡fox jjumpsumps over"},
             Mode::Normal,
         );
         assert_eq!(
@@ -491,7 +491,7 @@ mod test {
             indoc! {"
                 The quick brown
                 the lazy dog
-                test-copˇyfox jjumpsumps over"},
+                test-copË‡yfox jjumpsumps over"},
             Mode::Normal,
         );
     }
@@ -503,79 +503,79 @@ mod test {
         // copy in visual mode
         cx.set_shared_state(indoc! {"
                 The quick brown
-                fox jˇumps over
+                fox jË‡umps over
                 the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("v i w y").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
-                fox ˇjumps over
+                fox Ë‡jumps over
                 the lazy dog"});
         // paste in visual mode
         cx.simulate_shared_keystrokes("w v i w p").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
-                fox jumps jumpˇs
+                fox jumps jumpË‡s
                 the lazy dog"});
         cx.shared_clipboard().await.assert_eq("over");
         // paste in visual line mode
         cx.simulate_shared_keystrokes("up shift-v shift-p").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            ˇover
+            Ë‡over
             fox jumps jumps
             the lazy dog"});
         cx.shared_clipboard().await.assert_eq("over");
         // paste in visual block mode
         cx.simulate_shared_keystrokes("ctrl-v down down p").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            oveˇrver
+            oveË‡rver
             overox jumps jumps
             overhe lazy dog"});
 
         // copy in visual line mode
         cx.set_shared_state(indoc! {"
                 The quick brown
-                fox juˇmps over
+                fox juË‡mps over
                 the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("shift-v d").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
-                the laˇzy dog"});
+                the laË‡zy dog"});
         // paste in visual mode
         cx.simulate_shared_keystrokes("v i w p").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
-                the•
-                ˇfox jumps over
+                theâ€¢
+                Ë‡fox jumps over
                  dog"});
         cx.shared_clipboard().await.assert_eq("lazy");
         cx.set_shared_state(indoc! {"
             The quick brown
-            fox juˇmps over
+            fox juË‡mps over
             the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("shift-v d").await;
         cx.shared_state().await.assert_eq(indoc! {"
             The quick brown
-            the laˇzy dog"});
+            the laË‡zy dog"});
         cx.shared_clipboard().await.assert_eq("fox jumps over\n");
         // paste in visual line mode
         cx.simulate_shared_keystrokes("k shift-v p").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            ˇfox jumps over
+            Ë‡fox jumps over
             the lazy dog"});
         cx.shared_clipboard().await.assert_eq("The quick brown\n");
 
         // Copy line and paste in visual mode, with cursor on newline character.
         cx.set_shared_state(indoc! {"
-            ˇThe quick brown
+            Ë‡The quick brown
             fox jumps over
             the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("y y shift-v j $ p").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            ˇThe quick brown
+            Ë‡The quick brown
             the lazy dog"});
     }
 
@@ -584,7 +584,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         // copy in visual block mode
         cx.set_shared_state(indoc! {"
-            The ˇquick brown
+            The Ë‡quick brown
             fox jumps over
             the lazy dog"})
             .await;
@@ -592,18 +592,18 @@ mod test {
         cx.shared_clipboard().await.assert_eq("q\nj\nl");
         cx.simulate_shared_keystrokes("p").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            The qˇquick brown
+            The qË‡quick brown
             fox jjumps over
             the llazy dog"});
         cx.simulate_shared_keystrokes("v i w shift-p").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            The ˇq brown
+            The Ë‡q brown
             fox jjjumps over
             the lllazy dog"});
         cx.simulate_shared_keystrokes("v i w shift-p").await;
 
         cx.set_shared_state(indoc! {"
-            The ˇquick brown
+            The Ë‡quick brown
             fox jumps over
             the lazy dog"})
             .await;
@@ -611,13 +611,13 @@ mod test {
         cx.shared_clipboard().await.assert_eq("q\nj");
         cx.simulate_shared_keystrokes("l ctrl-v 2 j shift-p").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            The qˇqick brown
+            The qË‡qick brown
             fox jjmps over
             the lzy dog"});
 
         cx.simulate_shared_keystrokes("shift-v p").await;
         cx.shared_state().await.assert_eq(indoc! {"
-            ˇq
+            Ë‡q
             j
             fox jjmps over
             the lzy dog"});
@@ -629,7 +629,7 @@ mod test {
 
         cx.set_state(
             indoc! {"
-            class A {ˇ
+            class A {Ë‡
             }
         "},
             Mode::Normal,
@@ -638,7 +638,7 @@ mod test {
         cx.assert_state(
             indoc! {"
             class A {
-                a()ˇ{}
+                a()Ë‡{}
             }
             "},
             Mode::Normal,
@@ -649,7 +649,7 @@ mod test {
             indoc! {"
             class A {
                 a(){}
-                ˇa(){}
+                Ë‡a(){}
             }
             "},
             Mode::Normal,
@@ -658,7 +658,7 @@ mod test {
         cx.simulate_keystrokes("u shift-v up y shift-p");
         cx.assert_state(
             indoc! {"
-                ˇclass A {
+                Ë‡class A {
                     a(){}
                 class A {
                     a(){}
@@ -675,7 +675,7 @@ mod test {
         cx.set_state(
             indoc! {"
             mod some_module {
-                ˇfn main() {
+                Ë‡fn main() {
                 }
             }
             "},
@@ -687,7 +687,7 @@ mod test {
             indoc! {"
                 mod some_module {
                     fn main() {
-                        ˇfn main() {
+                        Ë‡fn main() {
                     }
                 }
                 "},
@@ -698,7 +698,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 mod some_module {
-                    ˇfn main() {
+                    Ë‡fn main() {
                     }
                 }
                 "},
@@ -721,7 +721,7 @@ mod test {
             indoc! {"
                 mod some_module {
                     fn main() {
-                    ˇfn main() {
+                    Ë‡fn main() {
                     }
                 }
                 "},
@@ -734,7 +734,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
         cx.set_shared_state(indoc! {"
-            onˇe
+            onË‡e
             two
             three
         "})
@@ -742,7 +742,7 @@ mod test {
         cx.simulate_shared_keystrokes("y y 3 p").await;
         cx.shared_state().await.assert_eq(indoc! {"
             one
-            ˇone
+            Ë‡one
             one
             one
             two
@@ -751,14 +751,14 @@ mod test {
 
         cx.set_shared_state(indoc! {"
             one
-            ˇtwo
+            Ë‡two
             three
         "})
             .await;
         cx.simulate_shared_keystrokes("y $ $ 3 p").await;
         cx.shared_state().await.assert_eq(indoc! {"
             one
-            twotwotwotwˇo
+            twotwotwotwË‡o
             three
         "});
     }
@@ -775,7 +775,7 @@ mod test {
 
         cx.set_shared_state(indoc! {"
                 The quick brown
-                fox jˇumps over
+                fox jË‡umps over
                 the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("y y \" 0 p").await;
@@ -785,7 +785,7 @@ mod test {
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
                 fox jumps over
-                ˇfox jumps over
+                Ë‡fox jumps over
                 the lazy dog"});
         cx.simulate_shared_keystrokes("k k d d").await;
         cx.shared_register('0').await.assert_eq("fox jumps over\n");
@@ -799,13 +799,13 @@ mod test {
         cx.shared_register('1').await.assert_eq("the lazy dog\n");
 
         cx.shared_state().await.assert_eq(indoc! {"
-        ˇfox jumps over"});
+        Ë‡fox jumps over"});
 
         cx.simulate_shared_keystrokes("d d \" 3 p p \" 1 p").await;
         cx.set_shared_state(indoc! {"
                 The quick brown
                 fox jumps over
-                ˇthe lazy dog"})
+                Ë‡the lazy dog"})
             .await;
     }
 
@@ -821,7 +821,7 @@ mod test {
 
         cx.set_shared_state(indoc! {"
                 The quick brown
-                fox jˇumps over
+                fox jË‡umps over
                 the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("\" a d a w").await;
@@ -832,7 +832,7 @@ mod test {
         cx.simulate_shared_keystrokes("\" a p").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
-                fox jumps oveˇr
+                fox jumps oveË‡r
                 the lazy dog"});
         cx.simulate_shared_keystrokes("\" a d a w").await;
         cx.shared_register('a').await.assert_eq(" over");
@@ -850,7 +850,7 @@ mod test {
 
         cx.set_shared_state(indoc! {"
                 The quick brown
-                fox jˇumps over
+                fox jË‡umps over
                 the lazy dog"})
             .await;
         cx.simulate_shared_keystrokes("d i w").await;
@@ -863,7 +863,7 @@ mod test {
 
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
-                the ˇlazy dog"});
+                the Ë‡lazy dog"});
         cx.simulate_shared_keystrokes("\" \" d ^").await;
         cx.shared_register('0').await.assert_eq("the ");
         cx.shared_register('"').await.assert_eq("the ");
@@ -877,7 +877,7 @@ mod test {
         cx.simulate_shared_keystrokes("\" / shift-p").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 The quick brown
-                doˇg"});
+                doË‡g"});
 
         // not testing nvim as it doesn't have a filename
         cx.simulate_keystrokes("\" % p");
@@ -885,14 +885,14 @@ mod test {
         cx.assert_state(
             indoc! {"
                     The quick brown
-                    dogdir/file.rˇs"},
+                    dogdir/file.rË‡s"},
             Mode::Normal,
         );
         #[cfg(target_os = "windows")]
         cx.assert_state(
             indoc! {"
                     The quick brown
-                    dogdir\\file.rˇs"},
+                    dogdir\\file.rË‡s"},
             Mode::Normal,
         );
     }
@@ -909,7 +909,7 @@ mod test {
 
         cx.set_state(
             indoc! {"
-               ˇfish one
+               Ë‡fish one
                fish two
                fish red
                fish blue
@@ -919,10 +919,10 @@ mod test {
         cx.simulate_keystrokes("4 g l w escape d i w 0 shift-p");
         cx.assert_state(
             indoc! {"
-               onˇefish•
-               twˇofish•
-               reˇdfish•
-               bluˇefish•
+               onË‡efishâ€¢
+               twË‡ofishâ€¢
+               reË‡dfishâ€¢
+               bluË‡efishâ€¢
                 "},
             Mode::Normal,
         );
@@ -934,7 +934,7 @@ mod test {
 
         cx.set_state(
             indoc! {"
-                   ˇfish one
+                   Ë‡fish one
                    two three
                    "},
             Mode::Normal,
@@ -944,7 +944,7 @@ mod test {
         cx.simulate_keystrokes("g shift-r i w");
         cx.assert_state(
             indoc! {"
-                fish fisˇh
+                fish fisË‡h
                 two three
                 "},
             Mode::Normal,
@@ -953,7 +953,7 @@ mod test {
         cx.assert_state(
             indoc! {"
             fish fish
-            two fisˇh
+            two fisË‡h
             "},
             Mode::Normal,
         );
@@ -962,7 +962,7 @@ mod test {
 
         cx.set_state(
             indoc! {"
-                   ˇfish one
+                   Ë‡fish one
                    two three
                    "},
             Mode::Normal,
@@ -972,7 +972,7 @@ mod test {
         cx.simulate_keystrokes("v i w g shift-r");
         cx.assert_state(
             indoc! {"
-                fish fisˇh
+                fish fisË‡h
                 two three
                 "},
             Mode::Normal,
@@ -980,7 +980,7 @@ mod test {
         cx.simulate_keystrokes("g shift-r r");
         cx.assert_state(
             indoc! {"
-                fisˇh
+                fisË‡h
                 two three
                 "},
             Mode::Normal,
@@ -989,7 +989,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 fish
-                two fisˇh
+                two fisË‡h
             "},
             Mode::Normal,
         );
@@ -1003,7 +1003,7 @@ mod test {
 
         cx.set_state(
             indoc! {"
-                   ˇfish one
+                   Ë‡fish one
                    two three
                    "},
             Mode::Normal,
@@ -1013,7 +1013,7 @@ mod test {
         cx.simulate_keystrokes("g shift-r i w");
         cx.assert_state(
             indoc! {"
-                fish fisˇh
+                fish fisË‡h
                 two three
                 "},
             Mode::Normal,
@@ -1022,7 +1022,7 @@ mod test {
         cx.assert_state(
             indoc! {"
                 fish fish
-                two fisˇh
+                two fisË‡h
                 "},
             Mode::Normal,
         );

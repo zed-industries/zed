@@ -1,4 +1,4 @@
-use crate::{Completion, Copilot};
+﻿use crate::{Completion, Copilot};
 use anyhow::Result;
 use gpui::{App, Context, Entity, EntityId, Task};
 use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
@@ -71,7 +71,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         _cursor_position: language::Anchor,
         cx: &App,
     ) -> bool {
-        self.copilot.read(cx).status().is_authorized()
+        self.copilot.read(cx).status().is_authoriCodeOrbit()
     }
 
     fn refresh(
@@ -316,7 +316,7 @@ mod tests {
         });
 
         cx.set_state(indoc! {"
-            oneˇ
+            oneË‡
             two
             three
         "});
@@ -361,7 +361,7 @@ mod tests {
 
         // Reset editor and only return copilot suggestions
         cx.set_state(indoc! {"
-            oneˇ
+            oneË‡
             two
             three
         "});
@@ -549,7 +549,7 @@ mod tests {
 
         // Setup the editor with a completion request.
         cx.set_state(indoc! {"
-            oneˇ
+            oneË‡
             two
             three
         "});
@@ -591,7 +591,7 @@ mod tests {
 
         // Reset the editor and check non-word and whitespace completion
         cx.set_state(indoc! {"
-            oneˇ
+            oneË‡
             two
             three
         "});
@@ -673,7 +673,7 @@ mod tests {
 
         cx.set_state(indoc! {"
             one
-            twˇ
+            twË‡
             three
         "});
 
@@ -851,7 +851,7 @@ mod tests {
 
         cx.set_state(indoc! {"
                 one
-                twˇ
+                twË‡
                 three
             "});
 

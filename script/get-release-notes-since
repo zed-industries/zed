@@ -1,4 +1,4 @@
-#!/usr/bin/env node --redirect-warnings=/dev/null
+﻿#!/usr/bin/env node --redirect-warnings=/dev/null
 
 const { execFileSync } = require("child_process");
 const { GITHUB_ACCESS_TOKEN } = process.env;
@@ -82,7 +82,7 @@ async function getReleases(startDate, endDate) {
       },
       body: JSON.stringify({
         query,
-        variables: { owner: "zed-industries", repo: "zed", cursor },
+        variables: { owner: "CodeOrbit-industries", repo: "CodeOrbit", cursor },
       }),
     });
 

@@ -1,4 +1,4 @@
-use crate::commit::parse_git_diff_name_status;
+﻿use crate::commit::parse_git_diff_name_status;
 use crate::status::{GitStatus, StatusCode};
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -219,7 +219,7 @@ impl GitExcludeOverride {
         });
 
         let mut content = self.original_excludes.clone().unwrap_or_default();
-        content.push_str("\n\n#  ====== Auto-added by Zed: =======\n");
+        content.push_str("\n\n#  ====== Auto-added by CodeOrbit: =======\n");
         content.push_str(self.added_excludes.as_ref().unwrap());
         content.push('\n');
 
@@ -1924,10 +1924,10 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
 
 fn checkpoint_author_envs() -> HashMap<String, String> {
     HashMap::from_iter([
-        ("GIT_AUTHOR_NAME".to_string(), "Zed".to_string()),
-        ("GIT_AUTHOR_EMAIL".to_string(), "hi@zed.dev".to_string()),
-        ("GIT_COMMITTER_NAME".to_string(), "Zed".to_string()),
-        ("GIT_COMMITTER_EMAIL".to_string(), "hi@zed.dev".to_string()),
+        ("GIT_AUTHOR_NAME".to_string(), "CodeOrbit".to_string()),
+        ("GIT_AUTHOR_EMAIL".to_string(), "hi@CodeOrbit.dev".to_string()),
+        ("GIT_COMMITTER_NAME".to_string(), "CodeOrbit".to_string()),
+        ("GIT_COMMITTER_EMAIL".to_string(), "hi@CodeOrbit.dev".to_string()),
     ])
 }
 
@@ -2158,14 +2158,14 @@ mod tests {
     fn test_branches_parsing() {
         // suppress "help: octal escapes are not supported, `\0` is always null"
         #[allow(clippy::octal_escapes)]
-        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/zed-patches\0refs/remotes/origin/zed-patches\0\01733187470\0generated protobuf\n";
+        let input = "*\0060964da10574cd9bf06463a53bf6e0769c5c45e\0\0refs/heads/CodeOrbit-patches\0refs/remotes/origin/CodeOrbit-patches\0\01733187470\0generated protobuf\n";
         assert_eq!(
             parse_branch_input(&input).unwrap(),
             vec![Branch {
                 is_head: true,
-                ref_name: "refs/heads/zed-patches".into(),
+                ref_name: "refs/heads/CodeOrbit-patches".into(),
                 upstream: Some(Upstream {
-                    ref_name: "refs/remotes/origin/zed-patches".into(),
+                    ref_name: "refs/remotes/origin/CodeOrbit-patches".into(),
                     tracking: UpstreamTracking::Tracked(UpstreamTrackingStatus {
                         ahead: 0,
                         behind: 0

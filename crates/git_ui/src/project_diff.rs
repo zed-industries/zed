@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     conflict_view::ConflictAddon,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
@@ -612,7 +612,7 @@ impl Item for ProjectDiff {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         let workspace = self.workspace.upgrade()?;
         Some(cx.new(|cx| ProjectDiff::new(self.project.clone(), workspace, window, cx)))
@@ -759,7 +759,7 @@ impl Render for ProjectDiff {
 }
 
 impl SerializableItem for ProjectDiff {
-    fn serialized_item_kind() -> &'static str {
+    fn serialiCodeOrbit_item_kind() -> &'static str {
         "ProjectDiff"
     }
 
@@ -1401,7 +1401,7 @@ mod tests {
             cx,
             &"
                 - foo
-                + ˇFOO
+                + Ë‡FOO
             "
             .unindent(),
         );
@@ -1411,7 +1411,7 @@ mod tests {
         });
         cx.run_until_parked();
 
-        assert_state_with_diff(&editor, cx, &"ˇ".unindent());
+        assert_state_with_diff(&editor, cx, &"Ë‡".unindent());
 
         let text = String::from_utf8(fs.read_file_sync("/project/foo.txt").unwrap()).unwrap();
         assert_eq!(text, "foo\n");
@@ -1463,7 +1463,7 @@ mod tests {
                 - bar
                 + BAR
 
-                - ˇfoo
+                - Ë‡foo
                 + FOO
             "
             .unindent(),
@@ -1481,7 +1481,7 @@ mod tests {
             &editor,
             cx,
             &"
-                - ˇbar
+                - Ë‡bar
                 + BAR
 
                 - foo
@@ -1535,7 +1535,7 @@ mod tests {
             cx,
             &"
                 - original
-                + ˇmodified
+                + Ë‡modified
             "
             .unindent(),
         );
@@ -1582,7 +1582,7 @@ mod tests {
             &"
                 - original
                 + different
-                  ˇ"
+                  Ë‡"
             .unindent(),
         );
 
@@ -1592,7 +1592,7 @@ mod tests {
             &"
                 - original
                 + different
-                  ˇ"
+                  Ë‡"
             .unindent(),
         );
     }
@@ -1656,7 +1656,7 @@ mod tests {
             [EXCERPT]
             [FOLDED]
             [EXCERPT]
-            ˇcreated
+            Ë‡created
         "
         ));
 
@@ -1668,7 +1668,7 @@ mod tests {
             before
             really changed
             [EXCERPT]
-            ˇ[FOLDED]
+            Ë‡[FOLDED]
             [EXCERPT]
             created
         "
@@ -1679,7 +1679,7 @@ mod tests {
         cx.assert_excerpts_with_selections(indoc!(
             "
             [EXCERPT]
-            ˇbefore
+            Ë‡before
             really changed
             [EXCERPT]
             [FOLDED]
@@ -1762,14 +1762,14 @@ mod tests {
 
         let mut cx = EditorTestContext::for_editor_in(editor, cx).await;
 
-        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nË‡{git_contents}"));
 
         cx.dispatch_action(editor::actions::GoToHunk);
         cx.dispatch_action(editor::actions::GoToHunk);
         cx.dispatch_action(git::Restore);
         cx.dispatch_action(editor::actions::MoveToBeginning);
 
-        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nˇ{git_contents}"));
+        cx.assert_excerpts_with_selections(&format!("[EXCERPT]\nË‡{git_contents}"));
     }
 
     #[gpui::test]

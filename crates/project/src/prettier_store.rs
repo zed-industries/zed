@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
@@ -637,7 +637,7 @@ impl PrettierStore {
                                 .await
                                 .context("prettier & plugins install")
                                 .map_err(Arc::new)?;
-                            log::info!("Initialized prettier with plugins: {installed_plugins:?}");
+                            log::info!("InitialiCodeOrbit prettier with plugins: {installed_plugins:?}");
                             project.update(cx, |project, _| {
                                 project.default_prettier.prettier =
                                     PrettierInstallation::Installed(PrettierInstance {

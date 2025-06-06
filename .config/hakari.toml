@@ -1,4 +1,4 @@
-# This file contains settings for `cargo hakari`.
+﻿# This file contains settings for `cargo hakari`.
 # See https://docs.rs/cargo-hakari/latest/cargo_hakari/config for a full list of options.
 
 hakari-package = "workspace-hack"
@@ -27,17 +27,17 @@ third-party = [
 
 [final-excludes]
 workspace-members = [
-    "zed_extension_api",
+    "codeorbit_extension_api",
 
     # exclude all extensions
-    "zed_emmet",
-    "zed_glsl",
-    "zed_html",
+    "codeorbit_emmet",
+    "codeorbit_glsl",
+    "codeorbit_html",
     "perplexity",
-    "zed_proto",
-    "zed_ruff",
+    "codeorbit_proto",
+    "codeorbit_ruff",
     "slash_commands_example",
-    "zed_snippets",
-    "zed_test_extension",
-    "zed_toml",
+    "codeorbit_snippets",
+    "codeorbit_test_extension",
+    "codeorbit_toml",
 ]

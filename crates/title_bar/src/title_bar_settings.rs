@@ -1,4 +1,4 @@
-use db::anyhow;
+﻿use db::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -48,7 +48,7 @@ impl Settings for TitleBarSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> anyhow::Result<Self>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         sources.json_merge()
     }

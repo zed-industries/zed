@@ -1,11 +1,11 @@
-# Using Rules {#using-rules}
+﻿# Using Rules {#using-rules}
 
 A rule is essentially a prompt that is inserted at the beginning of each interaction with the Agent.
-Currently, Zed supports `.rules` files at the directory's root and the Rules Library, which allows you to store multiple rules for on-demand usage.
+Currently, CodeOrbit supports `.rules` files at the directory's root and the Rules Library, which allows you to store multiple rules for on-demand usage.
 
 ## `.rules` files
 
-Zed supports including `.rules` files at the top level of worktrees, and act as project-level instructions that are included in all of your interactions with the Agent Panel.
+CodeOrbit supports including `.rules` files at the top level of worktrees, and act as project-level instructions that are included in all of your interactions with the Agent Panel.
 Other names for this file are also supported for compatibility with other agents, but note that the first file which matches in this list will be used:
 
 - `.rules`
@@ -19,7 +19,7 @@ Other names for this file are also supported for compatibility with other agents
 
 ## Rules Library {#rules-library}
 
-The Rules Library is an interface for writing and managing rules. Like other text-driven UIs in Zed, it is a full editor with syntax highlighting, keyboard shortcuts, etc.
+The Rules Library is an interface for writing and managing rules. Like other text-driven UIs in CodeOrbit, it is a full editor with syntax highlighting, keyboard shortcuts, etc.
 
 You can use the inline assistant right in the rules editor, allowing you to automate and rewrite rules.
 
@@ -50,7 +50,7 @@ Here are a couple of helpful resources for writing better rules:
 
 ### Editing the Default Rules {#default-rules}
 
-Zed allows you to customize the default rules used when interacting with LLMs.
+CodeOrbit allows you to customize the default rules used when interacting with LLMs.
 Or to be more precise, it uses a series of rules that are combined to form the default rules.
 
 Default rules are included in the context of every new thread automatically.
@@ -69,6 +69,6 @@ See the documentation for using [slash commands in rules](./text-threads.md#slas
 
 ### Prompt templates
 
-Zed maintains backwards compatibility with its original template system, which allows you to customize prompts used throughout the application, including the inline assistant.
+CodeOrbit maintains backwards compatibility with its original template system, which allows you to customize prompts used throughout the application, including the inline assistant.
 While the Rules Library is now the primary way to manage prompts, you can still use these legacy templates to override default prompts.
 For more details, see the [Rules Templates](./text-threads.md#rule-templates) section under [Text Threads](./text-threads.md).

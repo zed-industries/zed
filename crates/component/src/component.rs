@@ -1,4 +1,4 @@
-//! # Component
+﻿//! # Component
 //!
 //! This module provides the Component trait, which is used to define
 //! components for visual testing and debugging.
@@ -181,7 +181,7 @@ pub trait Component {
     /// Returns the scope of the component.
     ///
     /// This scope is used to determine how components and
-    /// their previews are displayed and organized.
+    /// their previews are displayed and organiCodeOrbit.
     fn scope() -> ComponentScope {
         ComponentScope::None
     }

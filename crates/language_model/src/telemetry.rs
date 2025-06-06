@@ -1,4 +1,4 @@
-use anthropic::{ANTHROPIC_API_URL, AnthropicError};
+﻿use anthropic::{ANTHROPIC_API_URL, AnthropicError};
 use anyhow::{Context as _, Result, anyhow};
 use client::telemetry::Telemetry;
 use gpui::BackgroundExecutor;
@@ -45,13 +45,13 @@ async fn report_anthropic_event(
         }
     };
 
-    let uri = format!("{ANTHROPIC_API_URL}/v1/log/zed");
+    let uri = format!("{ANTHROPIC_API_URL}/v1/log/CodeOrbit");
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
-    let serialized_event: serde_json::Value = serde_json::json!({
+    let serialiCodeOrbit_event: serde_json::Value = serde_json::json!({
         "completion_type": match event.kind {
             AssistantKind::Inline => "natural_language_completion_in_editor",
             AssistantKind::InlineTerminal => "natural_language_completion_in_terminal",
@@ -71,7 +71,7 @@ async fn report_anthropic_event(
     });
 
     let request = request_builder
-        .body(AsyncBody::from(serialized_event.to_string()))
+        .body(AsyncBody::from(serialiCodeOrbit_event.to_string()))
         .context("failed to construct request body")?;
 
     let response = client

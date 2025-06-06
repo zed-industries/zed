@@ -1,4 +1,4 @@
-use std::ops::Range;
+﻿use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
 use assistant_context_editor::language_model_selector::ToggleModelSelector;
-use client::{UserStore, zed_urls};
+use client::{UserStore, codeorbit_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use fs::Fs;
 use gpui::{
@@ -29,7 +29,7 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use language_model::{
-    LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, ZED_CLOUD_PROVIDER_ID,
+    LanguageModelProviderTosView, LanguageModelRegistry, RequestUsage, codeorbit_CLOUD_PROVIDER_ID,
 };
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
@@ -49,10 +49,10 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
 };
-use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
-use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
-use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
-use zed_llm_client::{CompletionIntent, UsageLimit};
+use codeorbit_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
+use codeorbit_actions::assistant::{OpenRulesLibrary, ToggleFocus};
+use codeorbit_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
+use codeorbit_llm_client::{CompletionIntent, UsageLimit};
 
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
@@ -74,7 +74,7 @@ use crate::{
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
 #[derive(Serialize, Deserialize)]
-struct SerializedAgentPanel {
+struct SerialiCodeOrbitAgentPanel {
     width: Option<Pixels>,
 }
 
@@ -381,7 +381,7 @@ impl AgentPanel {
             KEY_VALUE_STORE
                 .write_kvp(
                     AGENT_PANEL_KEY.into(),
-                    serde_json::to_string(&SerializedAgentPanel { width })?,
+                    serde_json::to_string(&SerialiCodeOrbitAgentPanel { width })?,
                 )
                 .await?;
             anyhow::Ok(())
@@ -425,13 +425,13 @@ impl AgentPanel {
                 })?
                 .await?;
 
-            let serialized_panel = if let Some(panel) = cx
+            let serialiCodeOrbit_panel = if let Some(panel) = cx
                 .background_spawn(async move { KEY_VALUE_STORE.read_kvp(AGENT_PANEL_KEY) })
                 .await
                 .log_err()
                 .flatten()
             {
-                Some(serde_json::from_str::<SerializedAgentPanel>(&panel)?)
+                Some(serde_json::from_str::<SerialiCodeOrbitAgentPanel>(&panel)?)
             } else {
                 None
             };
@@ -447,9 +447,9 @@ impl AgentPanel {
                         cx,
                     )
                 });
-                if let Some(serialized_panel) = serialized_panel {
+                if let Some(serialiCodeOrbit_panel) = serialiCodeOrbit_panel {
                     panel.update(cx, |panel, cx| {
-                        panel.width = serialized_panel.width.map(|w| w.round());
+                        panel.width = serialiCodeOrbit_panel.width.map(|w| w.round());
                         cx.notify();
                     });
                 }
@@ -1504,7 +1504,7 @@ impl Panel for AgentPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
+        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::CodeOrbitAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -1535,7 +1535,7 @@ impl Panel for AgentPanel {
 
 impl AgentPanel {
     fn render_title_view(&self, _window: &mut Window, cx: &Context<Self>) -> AnyElement {
-        const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summary…";
+        const LOADING_SUMMARY_PLACEHOLDER: &str = "Loading Summaryâ€¦";
 
         let content = match &self.active_view {
             ActiveView::Thread {
@@ -1662,17 +1662,17 @@ impl AgentPanel {
                     amount: amount as i32,
                     limit: match limit {
                         proto::usage_limit::Variant::Limited(limited) => {
-                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                            codeorbit_llm_client::UsageLimit::Limited(limited.limit as i32)
                         }
                         proto::usage_limit::Variant::Unlimited(_) => {
-                            zed_llm_client::UsageLimit::Unlimited
+                            codeorbit_llm_client::UsageLimit::Unlimited
                         }
                     },
                 })
             })
         });
 
-        let account_url = zed_urls::account_url(cx);
+        let account_url = codeorbit_urls::account_url(cx);
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty || !editor_empty,
@@ -1782,13 +1782,13 @@ impl AgentPanel {
                         .header("MCP Servers")
                         .action(
                             "View Server Extensions",
-                            Box::new(zed_actions::Extensions {
+                            Box::new(codeorbit_actions::Extensions {
                                 category_filter: Some(
-                                    zed_actions::ExtensionCategoryFilter::ContextServers,
+                                    codeorbit_actions::ExtensionCategoryFilter::ContextServers,
                                 ),
                             }),
                         )
-                        .action("Add Custom Server…", Box::new(AddContextServer))
+                        .action("Add Custom Serverâ€¦", Box::new(AddContextServer))
                         .separator();
 
                     if let Some(usage) = last_usage {
@@ -1815,7 +1815,7 @@ impl AgentPanel {
                                                     format!("{} / {limit}", usage.amount)
                                                 }
                                                 UsageLimit::Unlimited => {
-                                                    format!("{} / ∞", usage.amount)
+                                                    format!("{} / âˆž", usage.amount)
                                                 }
                                             })
                                             .size(LabelSize::Small)
@@ -1823,13 +1823,13 @@ impl AgentPanel {
                                         )
                                         .into_any_element()
                                 },
-                                move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                                move |_, cx| cx.open_url(&codeorbit_urls::account_url(cx)),
                             )
                             .separator()
                     }
 
                     menu = menu
-                        .action("Rules…", Box::new(OpenRulesLibrary::default()))
+                        .action("Rulesâ€¦", Box::new(OpenRulesLibrary::default()))
                         .action("Settings", Box::new(OpenConfiguration))
                         .action(zoom_in_label, Box::new(ToggleZoom));
                     menu
@@ -2021,21 +2021,21 @@ impl AgentPanel {
             return false;
         }
 
-        let is_using_zed_provider = self
+        let is_using_CodeOrbit_provider = self
             .thread
             .read(cx)
             .thread()
             .read(cx)
             .configured_model()
             .map_or(false, |model| {
-                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
+                model.provider.id().0 == codeorbit_CLOUD_PROVIDER_ID
             });
-        if !is_using_zed_provider {
+        if !is_using_CodeOrbit_provider {
             return false;
         }
 
         let plan = self.user_store.read(cx).current_plan();
-        if matches!(plan, Some(Plan::ZedPro | Plan::ZedProTrial)) {
+        if matches!(plan, Some(Plan::CodeOrbitPro | Plan::CodeOrbitProTrial)) {
             return false;
         }
 
@@ -2080,14 +2080,14 @@ impl AgentPanel {
             .gap_2()
             .flex()
             .flex_col()
-            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+            .child(Headline::new("Build better with CodeOrbit Pro").size(HeadlineSize::Small))
             .child(
                 Label::new("Your GitHub account was created less than 30 days ago, so we can't offer you a free trial.")
                     .size(LabelSize::Small),
             )
             .child(
                 Label::new(
-                    "Use your own API keys, upgrade to Zed Pro or send an email to billing-support@zed.dev.",
+                    "Use your own API keys, upgrade to CodeOrbit Pro or send an email to billing-support@CodeOrbit.dev.",
                 )
                 .color(Color::Muted),
             )
@@ -2116,9 +2116,9 @@ impl AgentPanel {
                                     }),
                             )
                             .child(
-                                Button::new("cta-button", "Upgrade to Zed Pro")
+                                Button::new("cta-button", "Upgrade to CodeOrbit Pro")
                                     .style(ButtonStyle::Transparent)
-                                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                                    .on_click(|_, _, cx| cx.open_url(&codeorbit_urls::account_url(cx))),
                             ),
                     ),
             );
@@ -2143,9 +2143,9 @@ impl AgentPanel {
             .gap_2()
             .flex()
             .flex_col()
-            .child(Headline::new("Build better with Zed Pro").size(HeadlineSize::Small))
+            .child(Headline::new("Build better with CodeOrbit Pro").size(HeadlineSize::Small))
             .child(
-                Label::new("Try Zed Pro for free for 14 days - no credit card required.")
+                Label::new("Try CodeOrbit Pro for free for 14 days - no credit card required.")
                     .size(LabelSize::Small),
             )
             .child(
@@ -2181,7 +2181,7 @@ impl AgentPanel {
                             .child(
                                 Button::new("cta-button", "Start Trial")
                                     .style(ButtonStyle::Transparent)
-                                    .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                                    .on_click(|_, _, cx| cx.open_url(&codeorbit_urls::account_url(cx))),
                             ),
                     ),
             );
@@ -2207,7 +2207,7 @@ impl AgentPanel {
                     .flex()
                     .flex_col()
                     .child(
-                        Headline::new("Your Zed Pro trial has expired.").size(HeadlineSize::Small),
+                        Headline::new("Your CodeOrbit Pro trial has expired.").size(HeadlineSize::Small),
                     )
                     .child(
                         Label::new("You've been automatically reset to the free plan.")
@@ -2238,10 +2238,10 @@ impl AgentPanel {
                                             }),
                                     )
                                     .child(
-                                        Button::new("cta-button", "Upgrade to Zed Pro")
+                                        Button::new("cta-button", "Upgrade to CodeOrbit Pro")
                                             .style(ButtonStyle::Transparent)
                                             .on_click(|_, _, cx| {
-                                                cx.open_url(&zed_urls::account_url(cx))
+                                                cx.open_url(&codeorbit_urls::account_url(cx))
                                             }),
                                     ),
                             ),
@@ -2745,7 +2745,7 @@ impl AgentPanel {
     }
 
     fn render_payment_required_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
+        const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using CodeOrbit LLMs. You'll be billed at cost for tokens used.";
 
         v_flex()
             .gap_0p5()
@@ -2775,7 +2775,7 @@ impl AgentPanel {
                                 this.clear_last_error();
                             });
 
-                            cx.open_url(&zed_urls::account_url(cx));
+                            cx.open_url(&codeorbit_urls::account_url(cx));
                             cx.notify();
                         },
                     )))
@@ -2798,18 +2798,18 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let error_message = match plan {
-            Plan::ZedPro => {
+            Plan::CodeOrbitPro => {
                 "Model request limit reached. Upgrade to usage-based billing for more requests."
             }
-            Plan::ZedProTrial => {
-                "Model request limit reached. Upgrade to Zed Pro for more requests."
+            Plan::CodeOrbitProTrial => {
+                "Model request limit reached. Upgrade to CodeOrbit Pro for more requests."
             }
-            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
+            Plan::Free => "Model request limit reached. Upgrade to CodeOrbit Pro for more requests.",
         };
         let call_to_action = match plan {
-            Plan::ZedPro => "Upgrade to usage-based billing",
-            Plan::ZedProTrial => "Upgrade to Zed Pro",
-            Plan::Free => "Upgrade to Zed Pro",
+            Plan::CodeOrbitPro => "Upgrade to usage-based billing",
+            Plan::CodeOrbitProTrial => "Upgrade to CodeOrbit Pro",
+            Plan::Free => "Upgrade to CodeOrbit Pro",
         };
 
         v_flex()
@@ -2841,7 +2841,7 @@ impl AgentPanel {
                                     this.clear_last_error();
                                 });
 
-                                cx.open_url(&zed_urls::account_url(cx));
+                                cx.open_url(&codeorbit_urls::account_url(cx));
                                 cx.notify();
                             },
                         )),

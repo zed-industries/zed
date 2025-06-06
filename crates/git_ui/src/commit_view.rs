@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+﻿use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer};
 use git::repository::{CommitDetails, CommitDiff, CommitSummary, RepoPath};
@@ -134,7 +134,7 @@ impl CommitView {
                 worktree_id,
             });
             let buffer = cx.new(|cx| {
-                let buffer = TextBuffer::new_normalized(
+                let buffer = TextBuffer::new_normaliCodeOrbit(
                     0,
                     cx.entity_id().as_non_zero_u64().into(),
                     LineEnding::default(),
@@ -307,7 +307,7 @@ async fn build_buffer(
         None
     };
     let buffer = cx.new(|cx| {
-        let buffer = TextBuffer::new_normalized(
+        let buffer = TextBuffer::new_normaliCodeOrbit(
             0,
             cx.entity_id().as_non_zero_u64().into(),
             line_ending,

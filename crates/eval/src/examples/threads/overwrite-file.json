@@ -1,4 +1,4 @@
-{
+﻿{
   "completion_mode": "normal",
   "cumulative_token_usage": {
     "cache_creation_input_tokens": 18383,
@@ -17,15 +17,15 @@
           "current_branch": null,
           "diff": "diff --git a/crates/language_model_selector/src/language_model_selector.rs b/crates/language_model_selector/src/language_model_selector.rs\nindex 6775bee98a..e25c9e1415 100644\n--- a/crates/language_model_selector/src/language_model_selector.rs\n+++ b/crates/language_model_selector/src/language_model_selector.rs\n@@ -410,7 +410,8 @@ impl ModelMatcher {\n     }\n \n     pub fn is_match(self: &Self, info: &ModelInfo) -> bool {\n-        self.matched_ids.contains(&info.model.id().0)\n+        let q = (info.model.provider_id(), info.model.id());\n+        self.matched_models.contains(&q)\n     }\n }\n \n",
           "head_sha": "9245656485e58a5d6d717d82209bc8c57cb9c539",
-          "remote_url": "git@github.com:zed-industries/zed.git"
+          "remote_url": "git@github.com:CodeOrbit-industries/CodeOrbit.git"
         },
-        "worktree_path": "/home/silver/develop/zed"
+        "worktree_path": "/home/silver/develop/CodeOrbit"
       }
     ]
   },
   "messages": [
     {
-      "context": "\n<context>\nThe following items were attached by the user. They are up-to-date and don't need to be re-read.\n\n<files>\n```rs zed/crates/language_model_selector/src/language_model_selector.rs\nconst TRY_ZED_PRO_URL [L28]\ntype OnModelChanged [L30]\ntype GetActiveModel [L31]\npub struct LanguageModelSelector [L33-37]\n picker [L34]\n _authenticate_all_providers_task [L35]\n _subscriptions [L36]\nimpl LanguageModelSelector [L39-231]\n pub fn new [L40-81]\n fn handle_language_model_registry_event [L83-104]\n fn authenticate_all_providers [L110-154]\n fn all_models [L156-204]\n pub fn active_model [L206-208]\n fn get_active_model_index [L210-230]\nimpl EventEmitter<DismissEvent> for LanguageModelSelector [L233]\nimpl Focusable for LanguageModelSelector [L235-239]\n fn focus_handle [L236-238]\nimpl Render for LanguageModelSelector [L241-245]\n fn render [L242-244]\npub struct LanguageModelSelectorPopoverMenu [L248-258]\n language_model_selector [L253]\n trigger [L254]\n tooltip [L255]\n handle [L256]\n anchor [L257]\nimpl LanguageModelSelectorPopoverMenu<T, TT> [L260-284]\n pub fn new [L265-278]\n pub fn with_handle [L280-283]\nimpl RenderOnce for LanguageModelSelectorPopoverMenu<T, TT> [L286-304]\n fn render [L291-303]\nstruct ModelInfo [L307-310]\n model [L308]\n icon [L309]\npub struct LanguageModelPickerDelegate [L312-319]\n language_model_selector [L313]\n on_model_changed [L314]\n get_active_model [L315]\n all_models [L316]\n filtered_entries [L317]\n selected_index [L318]\nstruct GroupedModels [L321-324]\n recommended [L322]\n other [L323]\nimpl GroupedModels [L326-385]\n pub fn new [L327-342]\n fn entries [L344-370]\n fn model_infos [L372-384]\nenum LanguageModelPickerEntry [L387-390]\n Model [L388]\n Separator [L389]\nstruct ModelMatcher [L392-396]\n models [L393]\n bg_executor [L394]\n candidates [L395]\nimpl ModelMatcher [L398-452]\n fn new [L399-406]\n pub fn fuzzy_search [L408-424]\n pub fn exact_search [L426-438]\n fn make_match_candidates [L440-451]\nimpl PickerDelegate for LanguageModelPickerDelegate [L454-693]\n type ListItem [L455]\n fn match_count [L457-459]\n fn selected_index [L461-463]\n fn set_selected_index [L465-468]\n fn can_select [L470-480]\n fn placeholder_text [L482-484]\n fn update_matches [L486-546]\n fn confirm [L548-560]\n fn dismissed [L562-566]\n fn render_match [L568-636]\n fn render_footer [L638-692]\n\nShowing symbols 1-71 (total symbols: 71)\n\n```\n</files>\n</context>\n",
+      "context": "\n<context>\nThe following items were attached by the user. They are up-to-date and don't need to be re-read.\n\n<files>\n```rs CodeOrbit/crates/language_model_selector/src/language_model_selector.rs\nconst TRY_CodeOrbit_PRO_URL [L28]\ntype OnModelChanged [L30]\ntype GetActiveModel [L31]\npub struct LanguageModelSelector [L33-37]\n picker [L34]\n _authenticate_all_providers_task [L35]\n _subscriptions [L36]\nimpl LanguageModelSelector [L39-231]\n pub fn new [L40-81]\n fn handle_language_model_registry_event [L83-104]\n fn authenticate_all_providers [L110-154]\n fn all_models [L156-204]\n pub fn active_model [L206-208]\n fn get_active_model_index [L210-230]\nimpl EventEmitter<DismissEvent> for LanguageModelSelector [L233]\nimpl Focusable for LanguageModelSelector [L235-239]\n fn focus_handle [L236-238]\nimpl Render for LanguageModelSelector [L241-245]\n fn render [L242-244]\npub struct LanguageModelSelectorPopoverMenu [L248-258]\n language_model_selector [L253]\n trigger [L254]\n tooltip [L255]\n handle [L256]\n anchor [L257]\nimpl LanguageModelSelectorPopoverMenu<T, TT> [L260-284]\n pub fn new [L265-278]\n pub fn with_handle [L280-283]\nimpl RenderOnce for LanguageModelSelectorPopoverMenu<T, TT> [L286-304]\n fn render [L291-303]\nstruct ModelInfo [L307-310]\n model [L308]\n icon [L309]\npub struct LanguageModelPickerDelegate [L312-319]\n language_model_selector [L313]\n on_model_changed [L314]\n get_active_model [L315]\n all_models [L316]\n filtered_entries [L317]\n selected_index [L318]\nstruct GroupedModels [L321-324]\n recommended [L322]\n other [L323]\nimpl GroupedModels [L326-385]\n pub fn new [L327-342]\n fn entries [L344-370]\n fn model_infos [L372-384]\nenum LanguageModelPickerEntry [L387-390]\n Model [L388]\n Separator [L389]\nstruct ModelMatcher [L392-396]\n models [L393]\n bg_executor [L394]\n candidates [L395]\nimpl ModelMatcher [L398-452]\n fn new [L399-406]\n pub fn fuzzy_search [L408-424]\n pub fn exact_search [L426-438]\n fn make_match_candidates [L440-451]\nimpl PickerDelegate for LanguageModelPickerDelegate [L454-693]\n type ListItem [L455]\n fn match_count [L457-459]\n fn selected_index [L461-463]\n fn set_selected_index [L465-468]\n fn can_select [L470-480]\n fn placeholder_text [L482-484]\n fn update_matches [L486-546]\n fn confirm [L548-560]\n fn dismissed [L562-566]\n fn render_match [L568-636]\n fn render_footer [L638-692]\n\nShowing symbols 1-71 (total symbols: 71)\n\n```\n</files>\n</context>\n",
       "creases": [
         {
           "end": 140,
@@ -38,7 +38,7 @@
       "role": "user",
       "segments": [
         {
-          "text": "I recently introduced fuzzy search in [@language_model_selector.rs](@file:zed/crates/language_model_selector/src/language_model_selector.rs). Can you write unit-test that check it? You can find a test list of models on images. ",
+          "text": "I recently introduced fuzzy search in [@language_model_selector.rs](@file:CodeOrbit/crates/language_model_selector/src/language_model_selector.rs). Can you write unit-test that check it? You can find a test list of models on images. ",
           "type": "text"
         }
       ],
@@ -58,7 +58,7 @@
       ],
       "tool_results": [
         {
-          "content": "zed/crates/language_model_selector/Cargo.toml\nzed/crates/language_model_selector/LICENSE-GPL\nzed/crates/language_model_selector/src\n",
+          "content": "CodeOrbit/crates/language_model_selector/Cargo.toml\nCodeOrbit/crates/language_model_selector/LICENSE-GPL\nCodeOrbit/crates/language_model_selector/src\n",
           "is_error": false,
           "output": null,
           "tool_use_id": "toolu_01FvYMtHs763GL1wA5mpTpqn"
@@ -68,7 +68,7 @@
         {
           "id": "toolu_01FvYMtHs763GL1wA5mpTpqn",
           "input": {
-            "path": "zed/crates/language_model_selector"
+            "path": "CodeOrbit/crates/language_model_selector"
           },
           "name": "list_directory"
         }
@@ -87,7 +87,7 @@
       ],
       "tool_results": [
         {
-          "content": "zed/crates/language_model_selector/src/language_model_selector.rs\n",
+          "content": "CodeOrbit/crates/language_model_selector/src/language_model_selector.rs\n",
           "is_error": false,
           "output": null,
           "tool_use_id": "toolu_01KSLDsLLrf7tgixB1sge3cm"
@@ -97,7 +97,7 @@
         {
           "id": "toolu_01KSLDsLLrf7tgixB1sge3cm",
           "input": {
-            "path": "zed/crates/language_model_selector/src"
+            "path": "CodeOrbit/crates/language_model_selector/src"
           },
           "name": "list_directory"
         }
@@ -116,7 +116,7 @@
       ],
       "tool_results": [
         {
-          "content": "[package]\nname = \"language_model_selector\"\nversion = \"0.1.0\"\nedition.workspace = true\npublish.workspace = true\nlicense = \"GPL-3.0-or-later\"\n\n[lints]\nworkspace = true\n\n[lib]\npath = \"src/language_model_selector.rs\"\n\n[dependencies]\ncollections.workspace = true\nfeature_flags.workspace = true\nfuzzy.workspace = true\ngpui.workspace = true\nlanguage_model.workspace = true\nlog.workspace = true\npicker.workspace = true\nproto.workspace = true\nui.workspace = true\nworkspace-hack.workspace = true\nzed_actions.workspace = true\n",
+          "content": "[package]\nname = \"language_model_selector\"\nversion = \"0.1.0\"\nedition.workspace = true\npublish.workspace = true\nlicense = \"GPL-3.0-or-later\"\n\n[lints]\nworkspace = true\n\n[lib]\npath = \"src/language_model_selector.rs\"\n\n[dependencies]\ncollections.workspace = true\nfeature_flags.workspace = true\nfuzzy.workspace = true\ngpui.workspace = true\nlanguage_model.workspace = true\nlog.workspace = true\npicker.workspace = true\nproto.workspace = true\nui.workspace = true\nworkspace-hack.workspace = true\nCodeOrbit_actions.workspace = true\n",
           "is_error": false,
           "output": null,
           "tool_use_id": "toolu_019Je2MLfJhpJr93g5igoRAH"
@@ -126,7 +126,7 @@
         {
           "id": "toolu_019Je2MLfJhpJr93g5igoRAH",
           "input": {
-            "path": "zed/crates/language_model_selector/Cargo.toml"
+            "path": "CodeOrbit/crates/language_model_selector/Cargo.toml"
           },
           "name": "read_file"
         }
@@ -156,7 +156,7 @@
           "id": "toolu_01GpKFEn6hYrXGiS5yBF3urk",
           "input": {
             "end_line": 452,
-            "path": "zed/crates/language_model_selector/src/language_model_selector.rs",
+            "path": "CodeOrbit/crates/language_model_selector/src/language_model_selector.rs",
             "start_line": 392
           },
           "name": "read_file"
@@ -186,7 +186,7 @@
         {
           "id": "toolu_01RZAvFvpMq16Dwh6d6cnVzy",
           "input": {
-            "include_pattern": "zed/crates/language_model_selector/**/*.rs",
+            "include_pattern": "CodeOrbit/crates/language_model_selector/**/*.rs",
             "regex": "mod tests"
           },
           "name": "grep"
@@ -210,7 +210,7 @@
   ],
   "model": {
     "model": "claude-3-7-sonnet-latest",
-    "provider": "zed.dev"
+    "provider": "CodeOrbit.dev"
   },
   "profile": "Write",
   "request_token_usage": [

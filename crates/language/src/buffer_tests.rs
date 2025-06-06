@@ -1,4 +1,4 @@
-use super::*;
+﻿use super::*;
 use crate::Buffer;
 use crate::language_settings::{
     AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent,
@@ -139,19 +139,19 @@ fn test_select_language(cx: &mut App) {
     // matching suffix that is not the full file extension or filename
     assert_eq!(
         registry
-            .language_for_file(&file("zed/cars"), None, cx)
+            .language_for_file(&file("CodeOrbit/cars"), None, cx)
             .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
-            .language_for_file(&file("zed/a.cars"), None, cx)
+            .language_for_file(&file("CodeOrbit/a.cars"), None, cx)
             .map(|l| l.name()),
         None
     );
     assert_eq!(
         registry
-            .language_for_file(&file("zed/sumk"), None, cx)
+            .language_for_file(&file("CodeOrbit/sumk"), None, cx)
             .map(|l| l.name()),
         None
     );
@@ -311,7 +311,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
 fn file(path: &str) -> Arc<dyn File> {
     Arc::new(TestFile {
         path: Path::new(path).into(),
-        root_name: "zed".into(),
+        root_name: "CodeOrbit".into(),
         local_root: None,
     })
 }
@@ -415,7 +415,7 @@ fn test_edit_events(cx: &mut gpui::App) {
 #[gpui::test]
 async fn test_apply_diff(cx: &mut TestAppContext) {
     let (text, offsets) = marked_text_offsets(
-        "one two three\nfour fiˇve six\nseven eightˇ nine\nten eleven twelve\n",
+        "one two three\nfour fiË‡ve six\nseven eightË‡ nine\nten eleven twelve\n",
     );
     let buffer = cx.new(|cx| Buffer::local(text, cx));
     let anchors = buffer.update(cx, |buffer, _| {
@@ -426,7 +426,7 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
     });
 
     let (text, offsets) = marked_text_offsets(
-        "one two three\n{\nfour FIVEˇ six\n}\nseven AND EIGHTˇ nine\nten eleven twelve\n",
+        "one two three\n{\nfour FIVEË‡ six\n}\nseven AND EIGHTË‡ nine\nten eleven twelve\n",
     );
 
     let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
@@ -441,7 +441,7 @@ async fn test_apply_diff(cx: &mut TestAppContext) {
     });
 
     let (text, offsets) =
-        marked_text_offsets("one two three\n{\nˇ}\nseven AND EIGHTEENˇ nine\nten eleven twelve\n");
+        marked_text_offsets("one two three\n{\nË‡}\nseven AND EIGHTEENË‡ nine\nten eleven twelve\n");
 
     let diff = buffer.update(cx, |b, cx| b.diff(text.clone(), cx)).await;
     buffer.update(cx, |buffer, cx| {
@@ -996,7 +996,7 @@ fn test_text_objects(cx: &mut App) {
     let (text, ranges) = marked_text_ranges(
         indoc! {r#"
             impl Hello {
-                fn say() -> u8 { return /* ˇhi */ 1 }
+                fn say() -> u8 { return /* Ë‡hi */ 1 }
             }"#
         },
         false,
@@ -1033,41 +1033,41 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
     assert(
         indoc! {"
             mod x {
-                moˇd y {
+                moË‡d y {
 
                 }
             }
             let foo = 1;"},
         vec![indoc! {"
-            mod x «{»
+            mod x Â«{Â»
                 mod y {
 
                 }
-            «}»
+            Â«}Â»
             let foo = 1;"}],
     );
 
     assert(
         indoc! {"
             mod x {
-                mod y ˇ{
+                mod y Ë‡{
 
                 }
             }
             let foo = 1;"},
         vec![
             indoc! {"
-                mod x «{»
+                mod x Â«{Â»
                     mod y {
 
                     }
-                «}»
+                Â«}Â»
                 let foo = 1;"},
             indoc! {"
                 mod x {
-                    mod y «{»
+                    mod y Â«{Â»
 
-                    «}»
+                    Â«}Â»
                 }
                 let foo = 1;"},
         ],
@@ -1078,22 +1078,22 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
             mod x {
                 mod y {
 
-                }ˇ
+                }Ë‡
             }
             let foo = 1;"},
         vec![
             indoc! {"
-                mod x «{»
+                mod x Â«{Â»
                     mod y {
 
                     }
-                «}»
+                Â«}Â»
                 let foo = 1;"},
             indoc! {"
                 mod x {
-                    mod y «{»
+                    mod y Â«{Â»
 
-                    «}»
+                    Â«}Â»
                 }
                 let foo = 1;"},
         ],
@@ -1105,14 +1105,14 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
                 mod y {
 
                 }
-            ˇ}
+            Ë‡}
             let foo = 1;"},
         vec![indoc! {"
-            mod x «{»
+            mod x Â«{Â»
                 mod y {
 
                 }
-            «}»
+            Â«}Â»
             let foo = 1;"}],
     );
 
@@ -1123,7 +1123,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
 
                 }
             }
-            let fˇoo = 1;"},
+            let fË‡oo = 1;"},
         vec![],
     );
 
@@ -1135,7 +1135,7 @@ fn test_enclosing_bracket_ranges(cx: &mut App) {
 
                 }
             }
-            let foo = 1;ˇ"},
+            let foo = 1;Ë‡"},
         vec![],
     );
 }
@@ -1148,11 +1148,11 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &
 
     assert(
         indoc! {"
-        for (const a in b)ˇ {
+        for (const a in b)Ë‡ {
             // a comment that's longer than the for-loop header
         }"},
         vec![indoc! {"
-        for «(»const a in b«)» {
+        for Â«(Â»const a in bÂ«)Â» {
             // a comment that's longer than the for-loop header
         }"}],
     );
@@ -1162,13 +1162,13 @@ fn test_enclosing_bracket_ranges_where_brackets_are_not_outermost_children(cx: &
     // they should not be returned. Only the curly braces contain the range.
     assert(
         indoc! {"
-        for (const a in b) {ˇ
+        for (const a in b) {Ë‡
             // a comment that's longer than the for-loop header
         }"},
         vec![indoc! {"
-        for (const a in b) «{»
+        for (const a in b) Â«{Â»
             // a comment that's longer than the for-loop header
-        «}»"}],
+        Â«}Â»"}],
     );
 }
 
@@ -1326,8 +1326,8 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
         buffer.edit_via_marked_text(
             &"
             fn a() {
-            c«()»;
-            d«()»;
+            cÂ«()Â»;
+            dÂ«()Â»;
             }
             "
             .unindent(),
@@ -1350,12 +1350,12 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
         buffer.edit_via_marked_text(
             &"
             fn a() {
-            c«
+            cÂ«
             .f
-            .g()»;
-            d«
+            .g()Â»;
+            dÂ«
             .f
-            .g()»;
+            .g()Â»;
             }
             "
             .unindent(),
@@ -1380,8 +1380,8 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
         // Insert a newline after the open brace. It is auto-indented
         buffer.edit_via_marked_text(
             &"
-            fn a() {«
-            »
+            fn a() {Â«
+            Â»
             c
                 .f
                 .g();
@@ -1398,7 +1398,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
             buffer.text(),
             "
             fn a() {
-                ˇ
+                Ë‡
             c
                 .f
                 .g();
@@ -1408,14 +1408,14 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
             }
             "
             .unindent()
-            .replace("ˇ", "")
+            .replace("Ë‡", "")
         );
 
         // Manually outdent the line. It stays outdented.
         buffer.edit_via_marked_text(
             &"
             fn a() {
-            «»
+            Â«Â»
             c
                 .f
                 .g();
@@ -1467,7 +1467,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
             &"
             fn a() {
                 b();
-                «}»
+                Â«}Â»
             "
             .unindent(),
             Some(AutoindentMode::EachLine),
@@ -1488,7 +1488,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut App)
             &"
             fn a() {
                 b();
-            «    »}
+            Â«    Â»}
             "
             .unindent(),
             Some(AutoindentMode::EachLine),
@@ -1529,7 +1529,7 @@ fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut Ap
         buffer.edit_via_marked_text(
             &"
             fn a() {
-                i«f let Some(x) = y»
+                iÂ«f let Some(x) = yÂ»
             }
             "
             .unindent(),
@@ -1549,7 +1549,7 @@ fn test_autoindent_does_not_adjust_lines_within_newly_created_errors(cx: &mut Ap
         buffer.edit_via_marked_text(
             &"
             fn a() {
-                if let Some(x) = y« {»
+                if let Some(x) = yÂ« {Â»
             }
             "
             .unindent(),
@@ -1586,8 +1586,8 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut App) {
 
         buffer.edit_via_marked_text(
             &"
-            fn a(«
-            b») {}
+            fn a(Â«
+            bÂ») {}
             "
             .unindent(),
             Some(AutoindentMode::EachLine),
@@ -1607,7 +1607,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut App) {
         buffer.edit_via_marked_text(
             &"
             fn a(
-                ˇ) {}
+                Ë‡) {}
             "
             .unindent(),
             Some(AutoindentMode::EachLine),
@@ -1904,18 +1904,18 @@ fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut App) {
         let (text, ranges_to_replace) = marked_text_ranges(
             &"
             mod numbers {
-                «fn one() {
+                Â«fn one() {
                     1
                 }
-            »
-                «fn two() {
+            Â»
+                Â«fn two() {
                     2
                 }
-            »
-                «fn three() {
+            Â»
+                Â«fn three() {
                     3
                 }
-            »}
+            Â»}
             "
             .unindent(),
             false,
@@ -2035,13 +2035,13 @@ fn test_autoindent_with_injected_languages(cx: &mut App) {
     cx.new(|cx| {
         let (text, ranges) = marked_text_ranges(
             &"
-                <div>ˇ
+                <div>Ë‡
                 </div>
                 <script>
-                    init({ˇ
+                    init({Ë‡
                     })
                 </script>
-                <span>ˇ
+                <span>Ë‡
                 </span>
             "
             .unindent(),
@@ -2546,7 +2546,7 @@ fn test_language_at_with_hidden_languages(cx: &mut App) {
 
     cx.new(|cx| {
         let text = r#"
-            this is an *emphasized* word.
+            this is an *emphasiCodeOrbit* word.
         "#
         .unindent();
 
@@ -3324,8 +3324,8 @@ fn test_words_in_range(cx: &mut gpui::App) {
 
     // The first line are words excluded from the results with heuristics, we do not expect them in the test assertions.
     let contents = r#"
-0_isize 123 3.4 4  
-let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
+0_isize 123 3.4 4 Â 
+let word=Ã¶Ã¤pple.barä½  Ã–Ã¤pple word2-Ã¶Ã„pPlE-Pizza-word Ã–Ã„PPLE word
     "#;
 
     let buffer = cx.new(|cx| {
@@ -3350,14 +3350,14 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
         );
         assert_eq!(
             BTreeSet::from_iter([
-                "öäpple".to_string(),
-                "Öäpple".to_string(),
-                "öÄpPlE".to_string(),
-                "ÖÄPPLE".to_string(),
+                "Ã¶Ã¤pple".to_string(),
+                "Ã–Ã¤pple".to_string(),
+                "Ã¶Ã„pPlE".to_string(),
+                "Ã–Ã„PPLE".to_string(),
             ]),
             snapshot
                 .words_in_range(WordsQuery {
-                    fuzzy_contents: Some("öp"),
+                    fuzzy_contents: Some("Ã¶p"),
                     skip_digits: true,
                     range: 0..snapshot.len(),
                 })
@@ -3366,14 +3366,14 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
         );
         assert_eq!(
             BTreeSet::from_iter([
-                "öÄpPlE".to_string(),
-                "Öäpple".to_string(),
-                "ÖÄPPLE".to_string(),
-                "öäpple".to_string(),
+                "Ã¶Ã„pPlE".to_string(),
+                "Ã–Ã¤pple".to_string(),
+                "Ã–Ã„PPLE".to_string(),
+                "Ã¶Ã¤pple".to_string(),
             ]),
             snapshot
                 .words_in_range(WordsQuery {
-                    fuzzy_contents: Some("öÄ"),
+                    fuzzy_contents: Some("Ã¶Ã„"),
                     skip_digits: true,
                     range: 0..snapshot.len(),
                 })
@@ -3384,7 +3384,7 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
             BTreeSet::default(),
             snapshot
                 .words_in_range(WordsQuery {
-                    fuzzy_contents: Some("öÄ好"),
+                    fuzzy_contents: Some("Ã¶Ã„å¥½"),
                     skip_digits: true,
                     range: 0..snapshot.len(),
                 })
@@ -3392,10 +3392,10 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
                 .collect::<BTreeSet<_>>()
         );
         assert_eq!(
-            BTreeSet::from_iter(["bar你".to_string(),]),
+            BTreeSet::from_iter(["barä½ ".to_string(),]),
             snapshot
                 .words_in_range(WordsQuery {
-                    fuzzy_contents: Some("你"),
+                    fuzzy_contents: Some("ä½ "),
                     skip_digits: true,
                     range: 0..snapshot.len(),
                 })
@@ -3415,11 +3415,11 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
         );
         assert_eq!(
             BTreeSet::from_iter([
-                "bar你".to_string(),
-                "öÄpPlE".to_string(),
-                "Öäpple".to_string(),
-                "ÖÄPPLE".to_string(),
-                "öäpple".to_string(),
+                "barä½ ".to_string(),
+                "Ã¶Ã„pPlE".to_string(),
+                "Ã–Ã¤pple".to_string(),
+                "Ã–Ã„PPLE".to_string(),
+                "Ã¶Ã¤pple".to_string(),
                 "let".to_string(),
                 "Pizza".to_string(),
                 "word".to_string(),
@@ -3440,11 +3440,11 @@ let word=öäpple.bar你 Öäpple word2-öÄpPlE-Pizza-word ÖÄPPLE word
                 "123".to_string(),
                 "3".to_string(),
                 "4".to_string(),
-                "bar你".to_string(),
-                "öÄpPlE".to_string(),
-                "Öäpple".to_string(),
-                "ÖÄPPLE".to_string(),
-                "öäpple".to_string(),
+                "barä½ ".to_string(),
+                "Ã¶Ã„pPlE".to_string(),
+                "Ã–Ã¤pple".to_string(),
+                "Ã–Ã„PPLE".to_string(),
+                "Ã¶Ã¤pple".to_string(),
                 "let".to_string(),
                 "Pizza".to_string(),
                 "word".to_string(),

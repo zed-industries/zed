@@ -1,4 +1,4 @@
-pub mod items;
+﻿pub mod items;
 mod toolbar_controls;
 
 mod diagnostic_renderer;
@@ -818,7 +818,7 @@ impl Item for ProjectDiagnosticsEditor {
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(

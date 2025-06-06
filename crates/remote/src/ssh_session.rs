@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     json_log::LogRecord,
     protocol::{
         MESSAGE_LEN_SIZE, MessageId, message_len_from_buffer, read_message_with_len, write_message,
@@ -585,7 +585,7 @@ impl ConnectionIdentifier {
     }
     // This string gets used in a socket name, and so must be relatively short.
     // The total length of:
-    //   /home/{username}/.local/share/zed/server_state/{name}/stdout.sock
+    //   /home/{username}/.local/share/CodeOrbit/server_state/{name}/stdout.sock
     // Must be less than about 100 characters
     //   https://unix.stackexchange.com/questions/367008/why-is-socket-path-length-limited-to-a-hundred-chars
     // So our strings should be at most 20 characters or so.
@@ -1457,7 +1457,7 @@ impl SshRemoteConnection {
         let url = connection_options.ssh_url();
 
         let temp_dir = tempfile::Builder::new()
-            .prefix("zed-ssh-session")
+            .prefix("CodeOrbit-ssh-session")
             .tempdir()?;
         let askpass_delegate = askpass::AskPassDelegate::new(cx, {
             let delegate = delegate.clone();
@@ -1568,7 +1568,7 @@ impl SshRemoteConnection {
             "Darwin" => "macos",
             "Linux" => "linux",
             _ => anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+                "Prebuilt remote servers are not yet available for {os:?}. See https://CodeOrbit.dev/docs/remote-development"
             ),
         };
         // exclude armv5,6,7 as they are 32-bit.
@@ -1582,7 +1582,7 @@ impl SshRemoteConnection {
             "x86_64"
         } else {
             anyhow::bail!(
-                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
+                "Prebuilt remote servers are not yet available for {arch:?}. See https://CodeOrbit.dev/docs/remote-development"
             )
         };
 
@@ -1710,13 +1710,13 @@ impl SshRemoteConnection {
             _ => version.to_string(),
         };
         let binary_name = format!(
-            "zed-remote-server-{}-{}",
+            "CodeOrbit-remote-server-{}-{}",
             release_channel.dev_name(),
             version_str
         );
         let dst_path = paths::remote_server_dir_relative().join(binary_name);
 
-        let build_remote_server = std::env::var("ZED_BUILD_REMOTE_SERVER").ok();
+        let build_remote_server = std::env::var("codeorbit_BUILD_REMOTE_SERVER").ok();
         #[cfg(debug_assertions)]
         if let Some(build_remote_server) = build_remote_server {
             let src_path = self
@@ -1747,7 +1747,7 @@ impl SshRemoteConnection {
             ReleaseChannel::Nightly => Ok(None),
             ReleaseChannel::Dev => {
                 anyhow::bail!(
-                    "ZED_BUILD_REMOTE_SERVER is not set and no remote server exists at ({:?})",
+                    "codeorbit_BUILD_REMOTE_SERVER is not set and no remote server exists at ({:?})",
                     dst_path
                 )
             }

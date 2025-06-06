@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -30,7 +30,7 @@ if [ -z "${ALLOW_MISSING_LICENSES-}" ]; then FAIL_FLAG=--fail; else FAIL_FLAG=""
 set -x
 cargo about generate \
     $FAIL_FLAG \
-    -c script/licenses/zed-licenses.toml \
+    -c script/licenses/CodeOrbit-licenses.toml \
     "$TEMPLATE_FILE" >>"$OUTPUT_FILE"
 set +x
 

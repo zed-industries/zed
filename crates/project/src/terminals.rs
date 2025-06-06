@@ -1,4 +1,4 @@
-use crate::{Project, ProjectPath};
+﻿use crate::{Project, ProjectPath};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
@@ -216,7 +216,7 @@ impl Project {
 
         let (completion_tx, completion_rx) = bounded(1);
 
-        // Start with the environment that we might have inherited from the Zed CLI.
+        // Start with the environment that we might have inherited from the CodeOrbit CLI.
         let mut env = this
             .environment
             .read(cx)
@@ -260,7 +260,7 @@ impl Project {
                             Shell::WithArguments {
                                 program,
                                 args,
-                                title_override: Some(format!("{} — Terminal", host).into()),
+                                title_override: Some(format!("{} â€” Terminal", host).into()),
                             },
                         )
                     }
@@ -308,7 +308,7 @@ impl Project {
                             Shell::WithArguments {
                                 program,
                                 args,
-                                title_override: Some(format!("{} — Terminal", host).into()),
+                                title_override: Some(format!("{} â€” Terminal", host).into()),
                             },
                         )
                     }

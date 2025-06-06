@@ -1,4 +1,4 @@
-use gpui::{Action, MouseButton, prelude::*};
+﻿use gpui::{Action, MouseButton, prelude::*};
 
 use ui::prelude::*;
 
@@ -31,7 +31,7 @@ impl RenderOnce for LinuxWindowControls {
             ))
             .child(WindowControl::new(
                 "maximize-or-restore",
-                if window.is_maximized() {
+                if window.is_maximiCodeOrbit() {
                     WindowControlType::Restore
                 } else {
                     WindowControlType::Maximize

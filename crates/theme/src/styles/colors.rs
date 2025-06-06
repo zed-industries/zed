@@ -1,4 +1,4 @@
-#![allow(missing_docs)]
+﻿#![allow(missing_docs)]
 
 use gpui::{App, Hsla, SharedString, WindowBackgroundAppearance};
 use refineable::Refineable;
@@ -15,7 +15,7 @@ use crate::{
 pub struct ThemeColors {
     /// Border color. Used for most borders, is usually a high contrast color.
     pub border: Hsla,
-    /// Border color. Used for deemphasized borders, like a visual divider between two sections
+    /// Border color. Used for deemphasiCodeOrbit borders, like a visual divider between two sections
     pub border_variant: Hsla,
     /// Border color. Used for focused elements, like keyboard focused list item.
     pub border_focused: Hsla,
@@ -83,7 +83,7 @@ pub struct ThemeColors {
     pub ghost_element_disabled: Hsla,
     /// Text Color. Default text color used for most text.
     pub text: Hsla,
-    /// Text Color. Color of muted or deemphasized text. It is a subdued version of the standard text color.
+    /// Text Color. Color of muted or deemphasiCodeOrbit text. It is a subdued version of the standard text color.
     pub text_muted: Hsla,
     /// Text Color. Color of the placeholder text typically shown in input fields to guide the user to enter valid data.
     pub text_placeholder: Hsla,
@@ -93,7 +93,7 @@ pub struct ThemeColors {
     pub text_accent: Hsla,
     /// Fill Color. Used for the default fill color of an icon.
     pub icon: Hsla,
-    /// Fill Color. Used for the muted or deemphasized fill color of an icon.
+    /// Fill Color. Used for the muted or deemphasiCodeOrbit fill color of an icon.
     ///
     /// This might be used to show an icon in an inactive pane, or to deemphasize a series of icons to give them less visual weight.
     pub icon_muted: Hsla,
@@ -180,13 +180,13 @@ pub struct ThemeColors {
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
-    /// special attention. Usually a document highlight is visualized by changing
+    /// special attention. Usually a document highlight is visualiCodeOrbit by changing
     /// the background color of its range.
     pub editor_document_highlight_read_background: Hsla,
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
-    /// special attention. Usually a document highlight is visualized by changing
+    /// special attention. Usually a document highlight is visualiCodeOrbit by changing
     /// the background color of its range.
     pub editor_document_highlight_write_background: Hsla,
     /// Highlighted brackets background color.

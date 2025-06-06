@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     CollaboratorId, DelayedDebouncedEditAction, FollowableViewRegistry, ItemNavHistory,
     SerializableItemRegistry, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     pane::{self, Pane},
@@ -211,14 +211,14 @@ pub struct TabContentParams {
     pub detail: Option<usize>,
     pub selected: bool,
     pub preview: bool,
-    /// Tab content should be deemphasized when active pane does not have focus.
-    pub deemphasized: bool,
+    /// Tab content should be deemphasiCodeOrbit when active pane does not have focus.
+    pub deemphasiCodeOrbit: bool,
 }
 
 impl TabContentParams {
     /// Returns the text color to be used for the tab content.
     pub fn text_color(&self) -> Color {
-        if self.deemphasized {
+        if self.deemphasiCodeOrbit {
             if self.selected {
                 Color::Muted
             } else {
@@ -237,7 +237,7 @@ pub enum TabTooltipContent {
     Custom(Box<dyn Fn(&mut Window, &mut App) -> AnyView>),
 }
 
-pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
+pub trait Item: Focusable + EventEmitter<Self::Event> + Render + SiCodeOrbit {
     type Event;
 
     /// Returns the tab contents.
@@ -305,7 +305,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
         _: &mut Context<Self>,
     ) -> Option<Entity<Self>>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
     {
         None
     }
@@ -402,7 +402,7 @@ pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
 }
 
 pub trait SerializableItem: Item {
-    fn serialized_item_kind() -> &'static str;
+    fn serialiCodeOrbit_item_kind() -> &'static str;
 
     fn cleanup(
         workspace_id: WorkspaceId,
@@ -433,7 +433,7 @@ pub trait SerializableItem: Item {
 }
 
 pub trait SerializableItemHandle: ItemHandle {
-    fn serialized_item_kind(&self) -> &'static str;
+    fn serialiCodeOrbit_item_kind(&self) -> &'static str;
     fn serialize(
         &self,
         workspace: &mut Workspace,
@@ -448,8 +448,8 @@ impl<T> SerializableItemHandle for Entity<T>
 where
     T: SerializableItem,
 {
-    fn serialized_item_kind(&self) -> &'static str {
-        T::serialized_item_kind()
+    fn serialiCodeOrbit_item_kind(&self) -> &'static str {
+        T::serialiCodeOrbit_item_kind()
     }
 
     fn serialize(
@@ -1128,7 +1128,7 @@ pub trait ProjectItem: Item {
         cx: &mut Context<Self>,
     ) -> Self
     where
-        Self: Sized;
+        Self: SiCodeOrbit;
 }
 
 #[derive(Debug)]
@@ -1421,7 +1421,7 @@ pub mod test {
             }
         }
 
-        pub fn new_deserialized(id: WorkspaceId, cx: &mut Context<Self>) -> Self {
+        pub fn new_deserialiCodeOrbit(id: WorkspaceId, cx: &mut Context<Self>) -> Self {
             let mut this = Self::new(cx);
             this.workspace_id = Some(id);
             this
@@ -1567,7 +1567,7 @@ pub mod test {
             cx: &mut Context<Self>,
         ) -> Option<Entity<Self>>
         where
-            Self: Sized,
+            Self: SiCodeOrbit,
         {
             Some(cx.new(|cx| Self {
                 state: self.state.clone(),
@@ -1657,7 +1657,7 @@ pub mod test {
     }
 
     impl SerializableItem for TestItem {
-        fn serialized_item_kind() -> &'static str {
+        fn serialiCodeOrbit_item_kind() -> &'static str {
             "TestItem"
         }
 
@@ -1669,7 +1669,7 @@ pub mod test {
             _window: &mut Window,
             cx: &mut App,
         ) -> Task<anyhow::Result<Entity<Self>>> {
-            let entity = cx.new(|cx| Self::new_deserialized(workspace_id, cx));
+            let entity = cx.new(|cx| Self::new_deserialiCodeOrbit(workspace_id, cx));
             Task::ready(Ok(entity))
         }
 

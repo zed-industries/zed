@@ -1,4 +1,4 @@
-[
+﻿[
   // Standard Linux bindings
   {
     "bindings": {
@@ -24,12 +24,12 @@
       "shift-escape": "workspace::ToggleZoom",
       "open": "workspace::Open",
       "ctrl-o": "workspace::Open",
-      "ctrl-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
-      "ctrl-+": ["zed::IncreaseBufferFontSize", { "persist": false }],
-      "ctrl--": ["zed::DecreaseBufferFontSize", { "persist": false }],
-      "ctrl-0": ["zed::ResetBufferFontSize", { "persist": false }],
-      "ctrl-,": "zed::OpenSettings",
-      "ctrl-q": "zed::Quit",
+      "ctrl-=": ["CodeOrbit::IncreaseBufferFontSize", { "persist": false }],
+      "ctrl-+": ["CodeOrbit::IncreaseBufferFontSize", { "persist": false }],
+      "ctrl--": ["CodeOrbit::DecreaseBufferFontSize", { "persist": false }],
+      "ctrl-0": ["CodeOrbit::ResetBufferFontSize", { "persist": false }],
+      "ctrl-,": "CodeOrbit::OpenSettings",
+      "ctrl-q": "CodeOrbit::Quit",
       "f4": "debugger::Start",
       "shift-f5": "debugger::Stop",
       "ctrl-shift-f5": "debugger::Restart",
@@ -37,7 +37,7 @@
       "f7": "debugger::StepOver",
       "cmd-f11": "debugger::StepInto",
       "shift-f11": "debugger::StepOut",
-      "f11": "zed::ToggleFullScreen",
+      "f11": "CodeOrbit::ToggleFullScreen",
       "ctrl-alt-z": "edit_prediction::RateCompletions",
       "ctrl-shift-i": "edit_prediction::ToggleMenu"
     }
@@ -532,7 +532,7 @@
       "shift-new": "workspace::NewWindow",
       "ctrl-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
-      "f10": ["app_menu::OpenApplicationMenu", "Zed"],
+      "f10": ["app_menu::OpenApplicationMenu", "CodeOrbit"],
       "alt-1": ["workspace::ActivatePane", 0],
       "alt-2": ["workspace::ActivatePane", 1],
       "alt-3": ["workspace::ActivatePane", 2],
@@ -550,7 +550,7 @@
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
-      "ctrl-k ctrl-s": "zed::OpenKeymap",
+      "ctrl-k ctrl-s": "CodeOrbit::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
@@ -577,7 +577,7 @@
       "ctrl-k shift-right": "workspace::SwapPaneRight",
       "ctrl-k shift-up": "workspace::SwapPaneUp",
       "ctrl-k shift-down": "workspace::SwapPaneDown",
-      "ctrl-shift-x": "zed::Extensions",
+      "ctrl-shift-x": "CodeOrbit::Extensions",
       "ctrl-shift-r": "task::Rerun",
       "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
@@ -593,7 +593,7 @@
   {
     "context": "Workspace && debugger_running",
     "bindings": {
-      "f5": "zed::NoAction"
+      "f5": "CodeOrbit::NoAction"
     }
   },
   {
@@ -1017,7 +1017,7 @@
     }
   },
   {
-    "context": "ZedPredictModal",
+    "context": "CodeOrbitPredictModal",
     "bindings": {
       "escape": "menu::Cancel"
     }

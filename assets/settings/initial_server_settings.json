@@ -1,7 +1,7 @@
-// Server-specific settings
+﻿// Server-specific settings
 //
 // For a full list of overridable settings, and general information on settings,
-// see the documentation: https://zed.dev/docs/configuring-zed#settings-files
+// see the documentation: https://CodeOrbit.dev/docs/configuring-CodeOrbit#settings-files
 {
   "lsp": {}
 }

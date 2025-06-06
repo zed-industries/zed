@@ -1,6 +1,6 @@
-# Tasks
+﻿# Tasks
 
-Zed supports ways to spawn (and rerun) commands using its integrated terminal to output the results. These commands can read a limited subset of Zed state (such as a path to the file currently being edited or selected text).
+CodeOrbit supports ways to spawn (and rerun) commands using its integrated terminal to output the results. These commands can read a limited subset of CodeOrbit state (such as a path to the file currently being edited or selected text).
 
 ```json
 [
@@ -17,14 +17,14 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     // Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish, defaults to `false`.
     "allow_concurrent_runs": false,
     // What to do with the terminal pane and tab, after the command was started:
-    // * `always` — always show the task's pane, and focus the corresponding tab in it (default)
-    // * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
-    // * `never` — do not alter focus, but still add/reuse the task's tab in its pane
+    // * `always` â€” always show the task's pane, and focus the corresponding tab in it (default)
+    // * `no_focus` â€” always show the task's pane, add the task's tab in it, but don't focus it
+    // * `never` â€” do not alter focus, but still add/reuse the task's tab in its pane
     "reveal": "always",
     // What to do with the terminal pane and tab, after the command has finished:
-    // * `never` — Do nothing when the command finishes (default)
-    // * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
-    // * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`
+    // * `never` â€” Do nothing when the command finishes (default)
+    // * `always` â€” always hide the terminal tab, hide the pane also if it was the last tab in it
+    // * `on_success` â€” hide the terminal tab on task success only, otherwise behaves similar to `always`
     "hide": "never",
     // Which shell to use when running a task inside the terminal.
     // May take 3 values:
@@ -64,39 +64,39 @@ Keep `"use_new_terminal": false` and set `"allow_concurrent_runs": true` to allo
 
 Tasks can be defined:
 
-- in the global `tasks.json` file; such tasks are available in all Zed projects you work on. This file is usually located in `~/.config/zed/tasks.json`. You can edit them by using the `zed: open tasks` action.
-- in the worktree-specific (local) `.zed/tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using the `zed: open project tasks` action.
+- in the global `tasks.json` file; such tasks are available in all CodeOrbit projects you work on. This file is usually located in `~/.config/CodeOrbit/tasks.json`. You can edit them by using the `CodeOrbit: open tasks` action.
+- in the worktree-specific (local) `.CodeOrbit/tasks.json` file; such tasks are available only when working on a project with that worktree included. You can edit worktree-specific tasks by using the `CodeOrbit: open project tasks` action.
 - on the fly with [oneshot tasks](#oneshot-tasks). These tasks are project-specific and do not persist across sessions.
 - by language extension.
 
 ## Variables
 
-Zed tasks act just like your shell; that also means that you can reference environmental variables via sh-esque `$VAR_NAME` syntax. A couple of additional environmental variables are set for your convenience.
+CodeOrbit tasks act just like your shell; that also means that you can reference environmental variables via sh-esque `$VAR_NAME` syntax. A couple of additional environmental variables are set for your convenience.
 These variables allow you to pull information from the current editor and use it in your tasks. The following variables are available:
 
-- `ZED_COLUMN`: current line column
-- `ZED_ROW`: current line row
-- `ZED_FILE`: absolute path of the currently opened file (e.g. `/Users/my-user/path/to/project/src/main.rs`)
-- `ZED_FILENAME`: filename of the currently opened file (e.g. `main.rs`)
-- `ZED_DIRNAME`: absolute path of the currently opened file with file name stripped (e.g. `/Users/my-user/path/to/project/src`)
-- `ZED_RELATIVE_FILE`: path of the currently opened file, relative to `ZED_WORKTREE_ROOT` (e.g. `src/main.rs`)
-- `ZED_RELATIVE_DIR`: path of the currently opened file's directory, relative to `ZED_WORKTREE_ROOT` (e.g. `src`)
-- `ZED_STEM`: stem (filename without extension) of the currently opened file (e.g. `main`)
-- `ZED_SYMBOL`: currently selected symbol; should match the last symbol shown in a symbol breadcrumb (e.g. `mod tests > fn test_task_contexts`)
-- `ZED_SELECTED_TEXT`: currently selected text
-- `ZED_WORKTREE_ROOT`: absolute path to the root of the current worktree. (e.g. `/Users/my-user/path/to/project`)
-- `ZED_CUSTOM_RUST_PACKAGE`: (Rust-specific) name of the parent package of $ZED_FILE source file.
+- `codeorbit_COLUMN`: current line column
+- `codeorbit_ROW`: current line row
+- `codeorbit_FILE`: absolute path of the currently opened file (e.g. `/Users/my-user/path/to/project/src/main.rs`)
+- `codeorbit_FILENAME`: filename of the currently opened file (e.g. `main.rs`)
+- `codeorbit_DIRNAME`: absolute path of the currently opened file with file name stripped (e.g. `/Users/my-user/path/to/project/src`)
+- `codeorbit_RELATIVE_FILE`: path of the currently opened file, relative to `codeorbit_WORKTREE_ROOT` (e.g. `src/main.rs`)
+- `codeorbit_RELATIVE_DIR`: path of the currently opened file's directory, relative to `codeorbit_WORKTREE_ROOT` (e.g. `src`)
+- `codeorbit_STEM`: stem (filename without extension) of the currently opened file (e.g. `main`)
+- `codeorbit_SYMBOL`: currently selected symbol; should match the last symbol shown in a symbol breadcrumb (e.g. `mod tests > fn test_task_contexts`)
+- `codeorbit_SELECTED_TEXT`: currently selected text
+- `codeorbit_WORKTREE_ROOT`: absolute path to the root of the current worktree. (e.g. `/Users/my-user/path/to/project`)
+- `codeorbit_CUSTOM_RUST_PACKAGE`: (Rust-specific) name of the parent package of $codeorbit_FILE source file.
 
 To use a variable in a task, prefix it with a dollar sign (`$`):
 
 ```json
 {
   "label": "echo current file's path",
-  "command": "echo $ZED_FILE"
+  "command": "echo $codeorbit_FILE"
 }
 ```
 
-You can also use verbose syntax that allows specifying a default if a given variable is not available: `${ZED_FILE:default_value}`
+You can also use verbose syntax that allows specifying a default if a given variable is not available: `${codeorbit_FILE:default_value}`
 
 These environmental variables can also be used in tasks' `cwd`, `args`, and `label` fields.
 
@@ -109,7 +109,7 @@ For example, instead of this (which will fail if the path has a space):
 ```json
 {
   "label": "stat current file",
-  "command": "stat $ZED_FILE"
+  "command": "stat $codeorbit_FILE"
 }
 ```
 
@@ -119,7 +119,7 @@ Provide the following:
 {
   "label": "stat current file",
   "command": "stat",
-  "args": ["$ZED_FILE"]
+  "args": ["$codeorbit_FILE"]
 }
 ```
 
@@ -128,7 +128,7 @@ Or explicitly include escaped quotes like so:
 ```json
 {
   "label": "stat current file",
-  "command": "stat \"$ZED_FILE\""
+  "command": "stat \"$codeorbit_FILE\""
 }
 ```
 
@@ -165,7 +165,7 @@ This could be useful for launching a terminal application that you want to use i
 // In tasks.json
 {
   "label": "start lazygit",
-  "command": "lazygit -p $ZED_WORKTREE_ROOT"
+  "command": "lazygit -p $codeorbit_WORKTREE_ROOT"
 }
 ```
 
@@ -184,7 +184,7 @@ This could be useful for launching a terminal application that you want to use i
 
 ## Binding runnable tags to task templates
 
-Zed supports overriding the default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
+CodeOrbit supports overriding the default action for inline runnable indicators via workspace-local and global `tasks.json` file with the following precedence hierarchy:
 
 1. Workspace `tasks.json`
 2. Global `tasks.json`
@@ -195,7 +195,7 @@ To tag a task, add the runnable tag name to the `tags` field on the task templat
 ```json
 {
   "label": "echo current file's path",
-  "command": "echo $ZED_FILE",
+  "command": "echo $codeorbit_FILE",
   "tags": ["rust-test"]
 }
 ```
@@ -204,4 +204,4 @@ In doing so, you can change which task is shown in the runnables indicator.
 
 ## Keybindings to run tasks bound to runnables
 
-When you have a task definition that is bound to the runnable, you can quickly run it using [Code Actions](https://zed.dev/docs/configuring-languages?#code-actions) that you can trigger either via `editor: Toggle Code Actions` command or by the `cmd-.`/`ctrl-.` shortcut. Your task will be the first in the dropdown. The task will run immediately if there are no additional Code Actions for this line.
+When you have a task definition that is bound to the runnable, you can quickly run it using [Code Actions](https://CodeOrbit.dev/docs/configuring-languages?#code-actions) that you can trigger either via `editor: Toggle Code Actions` command or by the `cmd-.`/`ctrl-.` shortcut. Your task will be the first in the dropdown. The task will run immediately if there are no additional Code Actions for this line.

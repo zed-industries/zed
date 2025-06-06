@@ -1,4 +1,4 @@
-use gpui::prelude::*;
+﻿use gpui::prelude::*;
 use story::{Story, StoryItem, StorySection};
 use ui::prelude::*;
 
@@ -24,7 +24,7 @@ impl Render for CollabNotificationStory {
                         .child(
                             v_flex()
                                 .overflow_hidden()
-                                .child(Label::new("maxdeviant is sharing a project in Zed")),
+                                .child(Label::new("maxdeviant is sharing a project in CodeOrbit")),
                         ),
                     ),
                 )),
@@ -39,8 +39,8 @@ impl Render for CollabNotificationStory {
                             Button::new("dismiss", "Dismiss"),
                         )
                         .child(Label::new("iamnbutler"))
-                        .child(Label::new("is sharing a project in Zed:"))
-                        .child(Label::new("zed")),
+                        .child(Label::new("is sharing a project in CodeOrbit:"))
+                        .child(Label::new("CodeOrbit")),
                     ),
                 )),
             )

@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AssistantContext, CacheStatus, ContextEvent, ContextId, ContextOperation, ContextSummary,
     InvokedSlashCommandId, MessageCacheMetadata, MessageId, MessageStatus,
 };
@@ -459,7 +459,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &buffer,
         &context_ranges,
         &"
-        «/file src/lib.rs»"
+        Â«/file src/lib.rsÂ»"
             .unindent(),
         cx,
     );
@@ -473,7 +473,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &buffer,
         &context_ranges,
         &"
-        «/file src/main.rs»"
+        Â«/file src/main.rsÂ»"
             .unindent(),
         cx,
     );
@@ -502,7 +502,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &buffer,
         &context_ranges,
         &"
-        «/file src/main.rs»"
+        Â«/file src/main.rsÂ»"
             .unindent(),
         cx,
     );
@@ -522,8 +522,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &buffer,
         &context_ranges,
         &"
-        ⟦«/file src/main.rs»
-        …⟧
+        âŸ¦Â«/file src/main.rsÂ»
+        â€¦âŸ§
         "
         .unindent(),
         cx,
@@ -544,8 +544,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &buffer,
         &context_ranges,
         &"
-        ⟦«/file src/main.rs»
-        src/main.rs…⟧
+        âŸ¦Â«/file src/main.rsÂ»
+        src/main.rsâ€¦âŸ§
         "
         .unindent(),
         cx,
@@ -559,9 +559,9 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &buffer,
         &context_ranges,
         &"
-        ⟦«/file src/main.rs»
+        âŸ¦Â«/file src/main.rsÂ»
         src/main.rs
-        fn main() {}…⟧
+        fn main() {}â€¦âŸ§
         "
         .unindent(),
         cx,
@@ -575,9 +575,9 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &buffer,
         &context_ranges,
         &"
-        ⟦«/file src/main.rs»
-        ⟪src/main.rs
-        fn main() {}⟫…⟧
+        âŸ¦Â«/file src/main.rsÂ»
+        âŸªsrc/main.rs
+        fn main() {}âŸ«â€¦âŸ§
         "
         .unindent(),
         cx,
@@ -589,8 +589,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &buffer,
         &context_ranges,
         &"
-        ⟦⟪src/main.rs
-        fn main() {}⟫⟧
+        âŸ¦âŸªsrc/main.rs
+        fn main() {}âŸ«âŸ§
         "
         .unindent(),
         cx,
@@ -615,38 +615,38 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
             for range in ranges.command_outputs.values() {
                 endpoints.push(Endpoint {
                     offset: range.start.to_offset(buffer),
-                    marker: '⟦',
+                    marker: 'âŸ¦',
                 });
             }
             for range in ranges.parsed_commands.iter() {
                 endpoints.push(Endpoint {
                     offset: range.start.to_offset(buffer),
-                    marker: '«',
+                    marker: 'Â«',
                 });
             }
             for range in ranges.output_sections.iter() {
                 endpoints.push(Endpoint {
                     offset: range.start.to_offset(buffer),
-                    marker: '⟪',
+                    marker: 'âŸª',
                 });
             }
 
             for range in ranges.output_sections.iter() {
                 endpoints.push(Endpoint {
                     offset: range.end.to_offset(buffer),
-                    marker: '⟫',
+                    marker: 'âŸ«',
                 });
             }
             for range in ranges.parsed_commands.iter() {
                 endpoints.push(Endpoint {
                     offset: range.end.to_offset(buffer),
-                    marker: '»',
+                    marker: 'Â»',
                 });
             }
             for range in ranges.command_outputs.values() {
                 endpoints.push(Endpoint {
                     offset: range.end.to_offset(buffer),
-                    marker: '⟧',
+                    marker: 'âŸ§',
                 });
             }
 
@@ -712,10 +712,10 @@ async fn test_serialization(cx: &mut TestAppContext) {
         ]
     );
 
-    let serialized_context = context.read_with(cx, |context, cx| context.serialize(cx));
-    let deserialized_context = cx.new(|cx| {
+    let serialiCodeOrbit_context = context.read_with(cx, |context, cx| context.serialize(cx));
+    let deserialiCodeOrbit_context = cx.new(|cx| {
         AssistantContext::deserialize(
-            serialized_context,
+            serialiCodeOrbit_context,
             Path::new("").into(),
             registry.clone(),
             prompt_builder.clone(),
@@ -725,14 +725,14 @@ async fn test_serialization(cx: &mut TestAppContext) {
             cx,
         )
     });
-    let deserialized_buffer =
-        deserialized_context.read_with(cx, |context, _| context.buffer.clone());
+    let deserialiCodeOrbit_buffer =
+        deserialiCodeOrbit_context.read_with(cx, |context, _| context.buffer.clone());
     assert_eq!(
-        deserialized_buffer.read_with(cx, |buffer, _| buffer.text()),
+        deserialiCodeOrbit_buffer.read_with(cx, |buffer, _| buffer.text()),
         "a\nb\nc\n"
     );
     assert_eq!(
-        cx.read(|cx| messages(&deserialized_context, cx)),
+        cx.read(|cx| messages(&deserialiCodeOrbit_context, cx)),
         [
             (message_0, Role::User, 0..2),
             (message_1.id, Role::Assistant, 2..6),

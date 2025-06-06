@@ -1,4 +1,4 @@
-use zed_extension_api::{self as zed, Result, settings::LspSettings};
+﻿use codeorbit_extension_api::{self as CodeOrbit, Result, settings::LspSettings};
 
 const PROTOBUF_LANGUAGE_SERVER_NAME: &str = "protobuf-language-server";
 
@@ -12,8 +12,8 @@ struct ProtobufExtension;
 impl ProtobufExtension {
     fn language_server_binary(
         &self,
-        _language_server_id: &zed::LanguageServerId,
-        worktree: &zed::Worktree,
+        _language_server_id: &CodeOrbit::LanguageServerId,
+        worktree: &CodeOrbit::Worktree,
     ) -> Result<ProtobufLanguageServerBinary> {
         let binary_settings = LspSettings::for_worktree("protobuf-language-server", worktree)
             .ok()
@@ -40,18 +40,18 @@ impl ProtobufExtension {
     }
 }
 
-impl zed::Extension for ProtobufExtension {
+impl CodeOrbit::Extension for ProtobufExtension {
     fn new() -> Self {
         Self
     }
 
     fn language_server_command(
         &mut self,
-        language_server_id: &zed_extension_api::LanguageServerId,
-        worktree: &zed_extension_api::Worktree,
-    ) -> zed_extension_api::Result<zed_extension_api::Command> {
+        language_server_id: &codeorbit_extension_api::LanguageServerId,
+        worktree: &codeorbit_extension_api::Worktree,
+    ) -> codeorbit_extension_api::Result<codeorbit_extension_api::Command> {
         let binary = self.language_server_binary(language_server_id, worktree)?;
-        Ok(zed::Command {
+        Ok(CodeOrbit::Command {
             command: binary.path,
             args: binary
                 .args
@@ -61,4 +61,4 @@ impl zed::Extension for ProtobufExtension {
     }
 }
 
-zed::register_extension!(ProtobufExtension);
+CodeOrbit::register_extension!(ProtobufExtension);

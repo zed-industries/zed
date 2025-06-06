@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -25,7 +25,7 @@ env:
 jobs:
   job_spec:
     name: Decide which jobs to run
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     outputs:
       run_tests: ${{ steps.filter.outputs.run_tests }}
       run_license: ${{ steps.filter.outputs.run_license }}
@@ -68,7 +68,7 @@ jobs:
     name: Check Postgres and Protobuf migrations, mergability
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'CodeOrbit-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     timeout-minutes: 60
     runs-on:
@@ -115,7 +115,7 @@ jobs:
     name: Check workspace-hack crate
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'CodeOrbit-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
@@ -147,7 +147,7 @@ jobs:
     timeout-minutes: 60
     name: Check formatting and spelling
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -162,7 +162,7 @@ jobs:
         working-directory: ./docs
         run: |
           pnpm dlx prettier@${PRETTIER_VERSION} . --check || {
-            echo "To fix, run from the root of the Zed repo:"
+            echo "To fix, run from the root of the CodeOrbit repo:"
             echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
             false
           }
@@ -172,7 +172,7 @@ jobs:
       - name: Prettier Check on default.json
         run: |
           pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --check || {
-            echo "To fix, run from the root of the Zed repo:"
+            echo "To fix, run from the root of the CodeOrbit repo:"
             echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
             false
           }
@@ -195,7 +195,7 @@ jobs:
     timeout-minutes: 60
     name: Check docs
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
@@ -217,7 +217,7 @@ jobs:
     name: (macOS) Run Clippy and tests
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'CodeOrbit-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - self-hosted
@@ -284,7 +284,7 @@ jobs:
     name: (Linux) Run Clippy and tests
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'CodeOrbit-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
@@ -319,14 +319,14 @@ jobs:
 
       - name: Build other binaries and features
         run: |
-          cargo build -p zed
+          cargo build -p CodeOrbit
           cargo check -p workspace
           cargo check -p gpui --examples
 
       # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
       # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
-      # to clean up the config file, I’ve included the cleanup code here as a precaution.
-      # While it’s not strictly necessary at this moment, I believe it’s better to err on the side of caution.
+      # to clean up the config file, Iâ€™ve included the cleanup code here as a precaution.
+      # While itâ€™s not strictly necessary at this moment, I believe itâ€™s better to err on the side of caution.
       - name: Clean CI config file
         if: always()
         run: rm -rf ./../.cargo
@@ -336,7 +336,7 @@ jobs:
     name: (Linux) Build Remote Server
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'CodeOrbit-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
@@ -375,7 +375,7 @@ jobs:
     name: (Windows) Run Clippy
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'CodeOrbit-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on: windows-2025-16
     steps:
@@ -433,7 +433,7 @@ jobs:
     name: (Windows) Run Tests
     needs: [job_spec]
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'CodeOrbit-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     # Use bigger runners for PRs (speed); smaller for async (cost)
     runs-on: ${{ github.event_name == 'pull_request' && 'windows-2025-32' || 'windows-2025-16' }}
@@ -472,7 +472,7 @@ jobs:
         with:
           working-directory: ${{ env.ZED_WORKSPACE }}
 
-      - name: Build Zed
+      - name: Build CodeOrbit
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo build
 
@@ -504,7 +504,7 @@ jobs:
       - windows_clippy
       - windows_tests
     if: |
-      github.repository_owner == 'zed-industries' &&
+      github.repository_owner == 'CodeOrbit-industries' &&
       always()
     steps:
       - name: Check all tests passed
@@ -522,7 +522,7 @@ jobs:
             [[ "${{ needs.windows_tests.result }}"        != 'success' ]] && { RET_CODE=1; echo "Windows tests failed"; }
             [[ "${{ needs.windows_clippy.result }}"       != 'success' ]] && { RET_CODE=1; echo "Windows clippy failed"; }
             [[ "${{ needs.build_remote_server.result }}"  != 'success' ]] && { RET_CODE=1; echo "Remote server build failed"; }
-            # This check is intentionally disabled. See: https://github.com/zed-industries/zed/pull/28431
+            # This check is intentionally disabled. See: https://github.com/CodeOrbit-industries/CodeOrbit/pull/28431
             # [[ "${{ needs.migration_checks.result }}"     != 'success' ]] && { RET_CODE=1; echo "Migration Checks failed"; }
           fi
           if [[ "$RET_CODE" -eq 0 ]]; then
@@ -591,22 +591,22 @@ jobs:
       - name: Rename binaries
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         run: |
-          mv target/aarch64-apple-darwin/release/Zed.dmg target/aarch64-apple-darwin/release/Zed-aarch64.dmg
-          mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
+          mv target/aarch64-apple-darwin/release/CodeOrbit.dmg target/aarch64-apple-darwin/release/CodeOrbit-aarch64.dmg
+          mv target/x86_64-apple-darwin/release/CodeOrbit.dmg target/x86_64-apple-darwin/release/CodeOrbit-x86_64.dmg
 
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
-          path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+          path: target/aarch64-apple-darwin/release/CodeOrbit-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
-          path: target/x86_64-apple-darwin/release/Zed-x86_64.dmg
+          path: target/x86_64-apple-darwin/release/CodeOrbit-x86_64.dmg
 
       - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
         name: Upload app bundle to release
@@ -615,10 +615,10 @@ jobs:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: |
-            target/zed-remote-server-macos-x86_64.gz
-            target/zed-remote-server-macos-aarch64.gz
-            target/aarch64-apple-darwin/release/Zed-aarch64.dmg
-            target/x86_64-apple-darwin/release/Zed-x86_64.dmg
+            target/CodeOrbit-remote-server-macos-x86_64.gz
+            target/CodeOrbit-remote-server-macos-aarch64.gz
+            target/aarch64-apple-darwin/release/CodeOrbit-aarch64.dmg
+            target/x86_64-apple-darwin/release/CodeOrbit-x86_64.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -653,19 +653,19 @@ jobs:
       - name: Create Linux .tar.gz bundle
         run: script/bundle-linux
 
-      - name: Upload Artifact to Workflow - zed (run-bundling)
+      - name: Upload Artifact to Workflow - CodeOrbit (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
-          name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
-          path: target/release/zed-*.tar.gz
+          name: CodeOrbit-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
+          path: target/release/CodeOrbit-*.tar.gz
 
-      - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
+      - name: Upload Artifact to Workflow - CodeOrbit-remote-server (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
-          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.gz
-          path: target/zed-remote-server-linux-x86_64.gz
+          name: CodeOrbit-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.gz
+          path: target/CodeOrbit-remote-server-linux-x86_64.gz
 
       - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -674,8 +674,8 @@ jobs:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: |
-            target/zed-remote-server-linux-x86_64.gz
-            target/release/zed-linux-x86_64.tar.gz
+            target/CodeOrbit-remote-server-linux-x86_64.gz
+            target/release/CodeOrbit-linux-x86_64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -710,19 +710,19 @@ jobs:
       - name: Create and upload Linux .tar.gz bundles
         run: script/bundle-linux
 
-      - name: Upload Artifact to Workflow - zed (run-bundling)
+      - name: Upload Artifact to Workflow - CodeOrbit (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
-          name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
-          path: target/release/zed-*.tar.gz
+          name: CodeOrbit-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
+          path: target/release/CodeOrbit-*.tar.gz
 
-      - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
+      - name: Upload Artifact to Workflow - CodeOrbit-remote-server (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
-          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.gz
-          path: target/zed-remote-server-linux-aarch64.gz
+          name: CodeOrbit-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.gz
+          path: target/CodeOrbit-remote-server-linux-aarch64.gz
 
       - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -731,8 +731,8 @@ jobs:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: |
-            target/zed-remote-server-linux-aarch64.gz
-            target/release/zed-linux-aarch64.tar.gz
+            target/CodeOrbit-remote-server-linux-aarch64.gz
+            target/release/CodeOrbit-linux-aarch64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -743,7 +743,7 @@ jobs:
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
-    name: Build Zed on FreeBSD
+    name: Build CodeOrbit on FreeBSD
     # env:
     #   MYTOKEN : ${{ secrets.MYTOKEN }}
     #   MYTOKEN2: "value2"
@@ -767,21 +767,21 @@ jobs:
             sysctl hw.ncpu
             sysctl hw.physmem
             sysctl hw.usermem
-            git config --global --add safe.directory /home/runner/work/zed/zed
+            git config --global --add safe.directory /home/runner/work/CodeOrbit/CodeOrbit
             rustup-init --profile minimal --default-toolchain none -y
             . "$HOME/.cargo/env"
             ./script/bundle-freebsd
             mkdir -p out/
-            mv "target/zed-remote-server-freebsd-x86_64.gz" out/
+            mv "target/CodeOrbit-remote-server-freebsd-x86_64.gz" out/
             rm -rf target/
             cargo clean
 
-      - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
+      - name: Upload Artifact to Workflow - CodeOrbit-remote-server (run-bundling)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
-          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-freebsd.gz
-          path: out/zed-remote-server-freebsd-x86_64.gz
+          name: CodeOrbit-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-freebsd.gz
+          path: out/CodeOrbit-remote-server-freebsd-x86_64.gz
 
       - name: Upload Artifacts to release
         uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
@@ -790,18 +790,18 @@ jobs:
           draft: true
           prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
           files: |
-            out/zed-remote-server-freebsd-x86_64.gz
+            out/CodeOrbit-remote-server-freebsd-x86_64.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   nix-build:
     name: Build with Nix
     uses: ./.github/workflows/nix.yml
-    if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    if: github.repository_owner == 'CodeOrbit-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
     with:
       flake-output: debug
       # excludes the final package to only cache dependencies
-      cachix-filter: "-zed-editor-[0-9.]*-nightly"
+      cachix-filter: "-CodeOrbit-editor-[0-9.]*-nightly"
 
   auto-release-preview:
     name: Auto release preview

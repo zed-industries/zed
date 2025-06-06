@@ -1,4 +1,4 @@
-mod connection_pool;
+﻿mod connection_pool;
 
 use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
@@ -35,7 +35,7 @@ use axum::{
 };
 use chrono::Utc;
 use collections::{HashMap, HashSet};
-pub use connection_pool::{ConnectionPool, ZedVersion};
+pub use connection_pool::{ConnectionPool, CodeOrbitVersion};
 use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
 use rpc::proto::split_repository_update;
@@ -442,7 +442,7 @@ impl Server {
                 app_state
                     .db
                     .delete_stale_channel_chat_participants(
-                        &app_state.config.zed_environment,
+                        &app_state.config.codeorbit_environment,
                         server_id,
                     )
                     .await
@@ -450,7 +450,7 @@ impl Server {
 
                 if let Some((room_ids, channel_ids)) = app_state
                     .db
-                    .stale_server_resource_ids(&app_state.config.zed_environment, server_id)
+                    .stale_server_resource_ids(&app_state.config.codeorbit_environment, server_id)
                     .await
                     .trace_err()
                 {
@@ -572,7 +572,7 @@ impl Server {
                 app_state
                     .db
                     .delete_stale_channel_chat_participants(
-                        &app_state.config.zed_environment,
+                        &app_state.config.codeorbit_environment,
                         server_id,
                     )
                     .await
@@ -586,7 +586,7 @@ impl Server {
 
                 app_state
                     .db
-                    .delete_stale_servers(&app_state.config.zed_environment, server_id)
+                    .delete_stale_servers(&app_state.config.codeorbit_environment, server_id)
                     .await
                     .trace_err();
             }
@@ -717,7 +717,7 @@ impl Server {
         connection: Connection,
         address: String,
         principal: Principal,
-        zed_version: ZedVersion,
+        codeorbit_version: CodeOrbitVersion,
         geoip_country_code: Option<String>,
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
@@ -752,7 +752,7 @@ impl Server {
 
             tracing::info!("connection opened");
 
-            let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
+            let user_agent = format!("CodeOrbit Server/{}", env!("CARGO_PKG_VERSION"));
             let http_client = match ReqwestClient::user_agent(&user_agent) {
                 Ok(http_client) => Arc::new(http_client),
                 Err(error) => {
@@ -779,7 +779,7 @@ impl Server {
                 supermaven_client,
             };
 
-            if let Err(error) = this.send_initial_client_update(connection_id, zed_version, send_connection_id, &session).await {
+            if let Err(error) = this.send_initial_client_update(connection_id, codeorbit_version, send_connection_id, &session).await {
                 tracing::error!(?error, "failed to send initial client update");
                 return;
             }
@@ -863,7 +863,7 @@ impl Server {
     async fn send_initial_client_update(
         &self,
         connection_id: ConnectionId,
-        zed_version: ZedVersion,
+        codeorbit_version: CodeOrbitVersion,
         mut send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         session: &Session,
     ) -> Result<()> {
@@ -894,14 +894,14 @@ impl Server {
 
                 {
                     let mut pool = self.connection_pool.lock();
-                    pool.add_connection(connection_id, user.id, user.admin, zed_version);
+                    pool.add_connection(connection_id, user.id, user.admin, codeorbit_version);
                     self.peer.send(
                         connection_id,
                         build_initial_contacts_update(contacts, &pool),
                     )?;
                 }
 
-                if should_auto_subscribe_to_channels(zed_version) {
+                if should_auto_subscribe_to_channels(codeorbit_version) {
                     subscribe_user_to_channels(user.id, session).await?;
                 }
 
@@ -1056,13 +1056,13 @@ pub struct ProtocolVersion(u32);
 
 impl Header for ProtocolVersion {
     fn name() -> &'static HeaderName {
-        static ZED_PROTOCOL_VERSION: OnceLock<HeaderName> = OnceLock::new();
-        ZED_PROTOCOL_VERSION.get_or_init(|| HeaderName::from_static("x-zed-protocol-version"))
+        static codeorbit_PROTOCOL_VERSION: OnceLock<HeaderName> = OnceLock::new();
+        codeorbit_PROTOCOL_VERSION.get_or_init(|| HeaderName::from_static("x-CodeOrbit-protocol-version"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let version = values
@@ -1083,13 +1083,13 @@ impl Header for ProtocolVersion {
 pub struct AppVersionHeader(SemanticVersion);
 impl Header for AppVersionHeader {
     fn name() -> &'static HeaderName {
-        static ZED_APP_VERSION: OnceLock<HeaderName> = OnceLock::new();
-        ZED_APP_VERSION.get_or_init(|| HeaderName::from_static("x-zed-app-version"))
+        static codeorbit_APP_VERSION: OnceLock<HeaderName> = OnceLock::new();
+        codeorbit_APP_VERSION.get_or_init(|| HeaderName::from_static("x-CodeOrbit-app-version"))
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
     where
-        Self: Sized,
+        Self: SiCodeOrbit,
         I: Iterator<Item = &'i axum::http::HeaderValue>,
     {
         let version = values
@@ -1137,7 +1137,7 @@ pub async fn handle_websocket_request(
             .into_response();
     }
 
-    let Some(version) = app_version_header.map(|header| ZedVersion(header.0.0)) else {
+    let Some(version) = app_version_header.map(|header| CodeOrbitVersion(header.0.0)) else {
         return (
             StatusCode::UPGRADE_REQUIRED,
             "no version header found".to_string(),
@@ -2718,13 +2718,13 @@ async fn remove_contact(
     Ok(())
 }
 
-fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
+fn should_auto_subscribe_to_channels(version: CodeOrbitVersion) -> bool {
     version.0.minor() < 139
 }
 
 async fn current_plan(db: &Arc<Database>, user_id: UserId, is_staff: bool) -> Result<proto::Plan> {
     if is_staff {
-        return Ok(proto::Plan::ZedPro);
+        return Ok(proto::Plan::CodeOrbitPro);
     }
 
     let subscription = db.get_active_billing_subscription(user_id).await?;
@@ -2732,9 +2732,9 @@ async fn current_plan(db: &Arc<Database>, user_id: UserId, is_staff: bool) -> Re
 
     let plan = if let Some(subscription_kind) = subscription_kind {
         match subscription_kind {
-            SubscriptionKind::ZedPro => proto::Plan::ZedPro,
-            SubscriptionKind::ZedProTrial => proto::Plan::ZedProTrial,
-            SubscriptionKind::ZedFree => proto::Plan::Free,
+            SubscriptionKind::CodeOrbitPro => proto::Plan::CodeOrbitPro,
+            SubscriptionKind::CodeOrbitProTrial => proto::Plan::CodeOrbitProTrial,
+            SubscriptionKind::CodeOrbitFree => proto::Plan::Free,
         }
     } else {
         proto::Plan::Free
@@ -2774,7 +2774,7 @@ async fn make_update_user_plan_message(
     };
 
     let account_too_young =
-        !matches!(plan, proto::Plan::ZedPro) && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
+        !matches!(plan, proto::Plan::CodeOrbitPro) && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
 
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
@@ -2798,14 +2798,14 @@ async fn make_update_user_plan_message(
             .map(|billing_customer| billing_customer.has_overdue_invoices),
         usage: usage.map(|usage| {
             let plan = match plan {
-                proto::Plan::Free => zed_llm_client::Plan::ZedFree,
-                proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+                proto::Plan::Free => codeorbit_llm_client::Plan::CodeOrbitFree,
+                proto::Plan::CodeOrbitPro => codeorbit_llm_client::Plan::CodeOrbitPro,
+                proto::Plan::CodeOrbitProTrial => codeorbit_llm_client::Plan::CodeOrbitProTrial,
             };
 
             let model_requests_limit = match plan.model_requests_limit() {
-                zed_llm_client::UsageLimit::Limited(limit) => {
-                    let limit = if plan == zed_llm_client::Plan::ZedProTrial
+                codeorbit_llm_client::UsageLimit::Limited(limit) => {
+                    let limit = if plan == codeorbit_llm_client::Plan::CodeOrbitProTrial
                         && feature_flags
                             .iter()
                             .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
@@ -2815,21 +2815,21 @@ async fn make_update_user_plan_message(
                         limit
                     };
 
-                    zed_llm_client::UsageLimit::Limited(limit)
+                    codeorbit_llm_client::UsageLimit::Limited(limit)
                 }
-                zed_llm_client::UsageLimit::Unlimited => zed_llm_client::UsageLimit::Unlimited,
+                codeorbit_llm_client::UsageLimit::Unlimited => codeorbit_llm_client::UsageLimit::Unlimited,
             };
 
             proto::SubscriptionUsage {
                 model_requests_usage_amount: usage.model_requests as u32,
                 model_requests_usage_limit: Some(proto::UsageLimit {
                     variant: Some(match model_requests_limit {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
+                        codeorbit_llm_client::UsageLimit::Limited(limit) => {
                             proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                                 limit: limit as u32,
                             })
                         }
-                        zed_llm_client::UsageLimit::Unlimited => {
+                        codeorbit_llm_client::UsageLimit::Unlimited => {
                             proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                         }
                     }),
@@ -2837,12 +2837,12 @@ async fn make_update_user_plan_message(
                 edit_predictions_usage_amount: usage.edit_predictions as u32,
                 edit_predictions_usage_limit: Some(proto::UsageLimit {
                     variant: Some(match plan.edit_predictions_limit() {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
+                        codeorbit_llm_client::UsageLimit::Limited(limit) => {
                             proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                                 limit: limit as u32,
                             })
                         }
-                        zed_llm_client::UsageLimit::Unlimited => {
+                        codeorbit_llm_client::UsageLimit::Unlimited => {
                             proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                         }
                     }),
@@ -3362,7 +3362,7 @@ async fn join_channel_internal(
 ) -> Result<()> {
     let joined_room = {
         let mut db = session.db().await;
-        // If zed quits without leaving the room, and the user re-opens zed before the
+        // If CodeOrbit quits without leaving the room, and the user re-opens CodeOrbit before the
         // RECONNECT_TIMEOUT, we need to make sure that we kick the user out of the previous
         // room they were in.
         if let Some(connection) = db.stale_room_connection(session.user_id()).await? {
@@ -4131,12 +4131,12 @@ async fn get_llm_api_token(
                 StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
 
             let stripe_subscription = stripe_billing
-                .subscribe_to_zed_free(stripe_customer_id)
+                .subscribe_to_CodeOrbit_free(stripe_customer_id)
                 .await?;
 
             db.create_billing_subscription(&db::CreateBillingSubscriptionParams {
                 billing_customer_id: billing_customer.id,
-                kind: Some(SubscriptionKind::ZedFree),
+                kind: Some(SubscriptionKind::CodeOrbitFree),
                 stripe_subscription_id: stripe_subscription.id.to_string(),
                 stripe_subscription_status: stripe_subscription.status.into(),
                 stripe_cancellation_reason: None,
@@ -4179,7 +4179,7 @@ fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
         // > can be used when you want to send the raw frames (e.g. you want to
         // > send the frames to the WebSocket without composing the full message first).
         // >
-        // > — https://github.com/snapview/tungstenite-rs/issues/268
+        // > â€” https://github.com/snapview/tungstenite-rs/issues/268
         TungsteniteMessage::Frame(_) => {
             bail!("received an unexpected frame while reading the message")
         }

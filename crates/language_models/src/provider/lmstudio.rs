@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+﻿use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
@@ -307,7 +307,7 @@ impl LmStudioLanguageModel {
             stop: Some(request.stop),
             // In LM Studio you can configure specific settings you'd like to use for your model.
             // For example Qwen3 is recommended to be used with 0.7 temperature.
-            // It would be a bad UX to silently override these settings from Zed, so we pass no temperature as a default.
+            // It would be a bad UX to silently override these settings from CodeOrbit, so we pass no temperature as a default.
             temperature: request.temperature.or(None),
             tools: request
                 .tools

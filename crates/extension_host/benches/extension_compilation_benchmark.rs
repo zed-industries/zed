@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
+﻿use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use extension::{
@@ -79,7 +79,7 @@ fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> 
 
 fn extension_builder() -> ExtensionBuilder {
     let user_agent = format!(
-        "Zed Extension CLI/{} ({}; {})",
+        "CodeOrbit Extension CLI/{} ({}; {})",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH

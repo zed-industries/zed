@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     fs,
     io::{self, Write},
     path::PathBuf,
@@ -121,11 +121,11 @@ pub fn submit(record: Record) {
         handle.into_inner()
     });
     if let Some(file) = file.as_mut() {
-        struct SizedWriter<'a> {
+        struct SiCodeOrbitWriter<'a> {
             file: &'a mut std::fs::File,
             written: u64,
         }
-        impl io::Write for SizedWriter<'_> {
+        impl io::Write for SiCodeOrbitWriter<'_> {
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
                 self.file.write(buf)?;
                 self.written += buf.len() as u64;
@@ -137,7 +137,7 @@ pub fn submit(record: Record) {
             }
         }
         let file_size_bytes = {
-            let mut writer = SizedWriter { file, written: 0 };
+            let mut writer = SiCodeOrbitWriter { file, written: 0 };
             _ = writeln!(
                 &mut writer,
                 "{} {} {} {}",

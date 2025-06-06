@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, ClipboardItem, DrawPhase, Drawable, Element,
     Empty, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Modifiers,
@@ -205,7 +205,7 @@ impl TestAppContext {
         let mut cx = self.app.borrow_mut();
 
         // Some tests rely on the window size matching the bounds of the test display
-        let bounds = Bounds::maximized(None, &mut cx);
+        let bounds = Bounds::maximiCodeOrbit(None, &mut cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -219,7 +219,7 @@ impl TestAppContext {
     /// Adds a new window with no content.
     pub fn add_empty_window(&mut self) -> &mut VisualTestContext {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(None, &mut cx);
+        let bounds = Bounds::maximiCodeOrbit(None, &mut cx);
         let window = cx
             .open_window(
                 WindowOptions {
@@ -247,7 +247,7 @@ impl TestAppContext {
         V: 'static + Render,
     {
         let mut cx = self.app.borrow_mut();
-        let bounds = Bounds::maximized(None, &mut cx);
+        let bounds = Bounds::maximiCodeOrbit(None, &mut cx);
         let window = cx
             .open_window(
                 WindowOptions {
@@ -399,7 +399,7 @@ impl TestAppContext {
 
     /// simulate_keystrokes takes a space-separated list of keys to type.
     /// cx.simulate_keystrokes("cmd-shift-p b k s p enter")
-    /// in Zed, this will run backspace on the current editor through the command palette.
+    /// in CodeOrbit, this will run backspace on the current editor through the command palette.
     /// This will also run the background executor until it's parked.
     pub fn simulate_keystrokes(&mut self, window: AnyWindowHandle, keystrokes: &str) {
         for keystroke in keystrokes

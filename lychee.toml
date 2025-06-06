@@ -1,4 +1,4 @@
-retry_wait_time = 5
+﻿retry_wait_time = 5
 
 accept = ["200..=204", "429"]
 
@@ -8,8 +8,8 @@ timeout = 45
 
 exclude = [
     # Don't fail CI check if collab is down
-    'https://staging-collab.zed.dev/',
-    "https://collab.zed.dev",
+    'https://staging-collab.CodeOrbit.dev/',
+    "https://collab.CodeOrbit.dev",
 
     # Slow and unreliable server.
     'https://repology.org',

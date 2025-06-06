@@ -1,5 +1,5 @@
-[package]
-description = "Shared protocol for communication between the Zed app and the zed.dev server"
+﻿[package]
+description = "Shared protocol for communication between the CodeOrbit app and the CodeOrbit.dev server"
 edition.workspace = true
 name = "proto"
 version = "0.1.0"

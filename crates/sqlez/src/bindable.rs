@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -20,7 +20,7 @@ pub trait Bind {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32>;
 }
 
-pub trait Column: Sized {
+pub trait Column: SiCodeOrbit {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)>;
 }
 

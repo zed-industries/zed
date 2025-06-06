@@ -1,4 +1,4 @@
-use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
+﻿use crate::{Client, Connection, Credentials, EstablishConnectionError, UserStore};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::Duration;
 use futures::{StreamExt, stream::BoxStream};
@@ -78,7 +78,7 @@ impl FakeServer {
                                 access_token: state.lock().access_token.to_string(),
                             })
                         {
-                            Err(EstablishConnectionError::Unauthorized)?
+                            Err(EstablishConnectionError::UnauthoriCodeOrbit)?
                         }
 
                         let (client_conn, server_conn, _) =

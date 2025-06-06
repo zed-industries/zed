@@ -1,6 +1,6 @@
-# Erlang
+﻿# Erlang
 
-Erlang support is available through the [Erlang extension](https://github.com/zed-extensions/erlang).
+Erlang support is available through the [Erlang extension](https://github.com/CodeOrbit-extensions/erlang).
 
 - Tree-sitter: [WhatsApp/tree-sitter-erlang](https://github.com/WhatsApp/tree-sitter-erlang)
 - Language Servers:

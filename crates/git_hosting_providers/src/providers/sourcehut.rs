@@ -1,4 +1,4 @@
-use std::str::FromStr;
+﻿use std::str::FromStr;
 
 use url::Url;
 
@@ -96,14 +96,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
         let parsed_remote = Sourcehut
-            .parse_remote_url("git@git.sr.ht:~zed-industries/zed")
+            .parse_remote_url("git@git.sr.ht:~CodeOrbit-industries/CodeOrbit")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             }
         );
     }
@@ -111,14 +111,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_ssh_url_with_git_suffix() {
         let parsed_remote = Sourcehut
-            .parse_remote_url("git@git.sr.ht:~zed-industries/zed.git")
+            .parse_remote_url("git@git.sr.ht:~CodeOrbit-industries/CodeOrbit.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed.git".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit.git".into(),
             }
         );
     }
@@ -126,14 +126,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_https_url() {
         let parsed_remote = Sourcehut
-            .parse_remote_url("https://git.sr.ht/~zed-industries/zed")
+            .parse_remote_url("https://git.sr.ht/~CodeOrbit-industries/CodeOrbit")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             }
         );
     }
@@ -142,8 +142,8 @@ mod tests {
     fn test_build_sourcehut_permalink() {
         let permalink = Sourcehut.build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
@@ -152,7 +152,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
+        let expected_url = "https://git.sr.ht/~CodeOrbit-industries/CodeOrbit/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -160,8 +160,8 @@ mod tests {
     fn test_build_sourcehut_permalink_with_git_suffix() {
         let permalink = Sourcehut.build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed.git".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit.git".into(),
             },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
@@ -170,7 +170,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://git.sr.ht/~zed-industries/zed.git/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
+        let expected_url = "https://git.sr.ht/~CodeOrbit-industries/CodeOrbit.git/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -178,8 +178,8 @@ mod tests {
     fn test_build_sourcehut_permalink_with_single_line_selection() {
         let permalink = Sourcehut.build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
@@ -188,7 +188,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L7";
+        let expected_url = "https://git.sr.ht/~CodeOrbit-industries/CodeOrbit/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -196,8 +196,8 @@ mod tests {
     fn test_build_sourcehut_permalink_with_multi_line_selection() {
         let permalink = Sourcehut.build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
@@ -206,7 +206,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://git.sr.ht/~zed-industries/zed/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L24-48";
+        let expected_url = "https://git.sr.ht/~CodeOrbit-industries/CodeOrbit/tree/faa6f979be417239b2e070dbbf6392b909224e0b/item/crates/editor/src/git/permalink.rs#L24-48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

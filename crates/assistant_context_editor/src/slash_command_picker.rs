@@ -1,4 +1,4 @@
-use std::sync::Arc;
+﻿use std::sync::Arc;
 
 use assistant_slash_command::SlashCommandWorkingSet;
 use gpui::{AnyElement, AnyView, DismissEvent, SharedString, Task, WeakEntity};
@@ -319,7 +319,7 @@ where
                         )
                         .into_any_element()
                 },
-                on_confirm: |_, cx| cx.open_url("https://zed.dev/docs/extensions/slash-commands"),
+                on_confirm: |_, cx| cx.open_url("https://CodeOrbit.dev/docs/extensions/slash-commands"),
             }])
             .collect::<Vec<_>>();
 

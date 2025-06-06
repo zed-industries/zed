@@ -1,4 +1,4 @@
-use crate::context::ContextLoadResult;
+﻿use crate::context::ContextLoadResult;
 use crate::inline_prompt_editor::CodegenStatus;
 use crate::{context::load_context, context_store::ContextStore};
 use agent_settings::AgentSettings;
@@ -34,7 +34,7 @@ use std::{
 };
 use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};
-use zed_llm_client::CompletionIntent;
+use codeorbit_llm_client::CompletionIntent;
 
 pub struct BufferCodegen {
     alternatives: Vec<Entity<CodegenAlternative>>,
@@ -289,7 +289,7 @@ impl CodegenAlternative {
                 .read(cx)
                 .language_registry();
 
-            let mut buffer = Buffer::local_normalized(text, line_ending, cx);
+            let mut buffer = Buffer::local_normaliCodeOrbit(text, line_ending, cx);
             buffer.set_language(language, cx);
             if let Some(language_registry) = language_registry {
                 buffer.set_language_registry(language_registry)

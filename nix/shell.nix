@@ -1,8 +1,8 @@
-{
+﻿{
   mkShell,
   makeFontsConf,
 
-  zed-editor,
+  CodeOrbit-editor,
 
   rust-analyzer,
   cargo-nextest,
@@ -12,18 +12,18 @@
   protobuf,
   nodejs_22,
 }:
-(mkShell.override { inherit (zed-editor) stdenv; }) {
-  inputsFrom = [ zed-editor ];
+(mkShell.override { inherit (CodeOrbit-editor) stdenv; }) {
+  inputsFrom = [ CodeOrbit-editor ];
   packages = [
     rust-analyzer
     cargo-nextest
     cargo-hakari
     cargo-machete
     nixfmt-rfc-style
-    # TODO: package protobuf-language-server for editing zed.proto
+    # TODO: package protobuf-language-server for editing CodeOrbit.proto
     # TODO: add other tools used in our scripts
 
-    # `build.nix` adds this to the `zed-editor` wrapper (see `postFixup`)
+    # `build.nix` adds this to the `CodeOrbit-editor` wrapper (see `postFixup`)
     # we'll just put it on `$PATH`:
     nodejs_22
   ];
@@ -31,7 +31,7 @@
   env =
     let
       baseEnvs =
-        (zed-editor.overrideAttrs (attrs: {
+        (CodeOrbit-editor.overrideAttrs (attrs: {
           passthru = { inherit (attrs) env; };
         })).env; # exfil `env`; it's not in drvAttrs
     in
@@ -42,7 +42,7 @@
       "TARGET_DIR"
     ])
     // {
-      # note: different than `$FONTCONFIG_FILE` in `build.nix` – this refers to relative paths
+      # note: different than `$FONTCONFIG_FILE` in `build.nix` â€“ this refers to relative paths
       # outside the nix store instead of to `$src`
       FONTCONFIG_FILE = makeFontsConf {
         fontDirectories = [

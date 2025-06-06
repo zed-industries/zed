@@ -1,4 +1,4 @@
-pub mod api;
+﻿pub mod api;
 pub mod auth;
 mod cents;
 pub mod db;
@@ -169,7 +169,7 @@ pub struct Config {
     pub kinesis_stream: Option<String>,
     pub kinesis_access_key: Option<String>,
     pub kinesis_secret_key: Option<String>,
-    pub zed_environment: Arc<str>,
+    pub codeorbit_environment: Arc<str>,
     pub openai_api_key: Option<Arc<str>>,
     pub google_ai_api_key: Option<Arc<str>>,
     pub anthropic_api_key: Option<Arc<str>>,
@@ -178,7 +178,7 @@ pub struct Config {
     pub prediction_api_url: Option<Arc<str>>,
     pub prediction_api_key: Option<Arc<str>>,
     pub prediction_model: Option<Arc<str>>,
-    pub zed_client_checksum_seed: Option<String>,
+    pub codeorbit_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
     pub stripe_api_key: Option<String>,
@@ -188,15 +188,15 @@ pub struct Config {
 
 impl Config {
     pub fn is_development(&self) -> bool {
-        self.zed_environment == "development".into()
+        self.codeorbit_environment == "development".into()
     }
 
-    /// Returns the base `zed.dev` URL.
-    pub fn zed_dot_dev_url(&self) -> &str {
-        match self.zed_environment.as_ref() {
+    /// Returns the base `CodeOrbit.dev` URL.
+    pub fn codeorbit_dot_dev_url(&self) -> &str {
+        match self.codeorbit_environment.as_ref() {
             "development" => "http://localhost:3000",
-            "staging" => "https://staging.zed.dev",
-            _ => "https://zed.dev",
+            "staging" => "https://staging.CodeOrbit.dev",
+            _ => "https://CodeOrbit.dev",
         }
     }
 
@@ -217,7 +217,7 @@ impl Config {
             llm_api_secret: None,
             rust_log: None,
             log_json: None,
-            zed_environment: "test".into(),
+            codeorbit_environment: "test".into(),
             blob_store_url: None,
             blob_store_region: None,
             blob_store_access_key: None,
@@ -231,7 +231,7 @@ impl Config {
             prediction_api_url: None,
             prediction_api_key: None,
             prediction_model: None,
-            zed_client_checksum_seed: None,
+            codeorbit_client_checksum_seed: None,
             slack_panics_webhook: None,
             auto_join_channel_id: None,
             migrations_path: None,

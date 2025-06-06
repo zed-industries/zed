@@ -1,4 +1,4 @@
-use crate::HeadlessProject;
+﻿use crate::HeadlessProject;
 use crate::headless_project::HeadlessAppState;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::Utc;
@@ -149,9 +149,9 @@ fn init_panic_hook() {
 
         let release_channel = *RELEASE_CHANNEL;
         let version = match release_channel {
-            ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
+            ReleaseChannel::Stable | ReleaseChannel::Preview => env!("codeorbit_PKG_VERSION"),
             ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                option_env!("ZED_COMMIT_SHA").unwrap_or("missing-zed-commit-sha")
+                option_env!("codeorbit_COMMIT_SHA").unwrap_or("missing-CodeOrbit-commit-sha")
             }
         };
 
@@ -163,7 +163,7 @@ fn init_panic_hook() {
                 line: location.line(),
             }),
             app_version: format!("remote-server-{version}"),
-            app_commit_sha: option_env!("ZED_COMMIT_SHA").map(|sha| sha.into()),
+            app_commit_sha: option_env!("codeorbit_COMMIT_SHA").map(|sha| sha.into()),
             release_channel: release_channel.display_name().into(),
             target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
@@ -178,7 +178,7 @@ fn init_panic_hook() {
 
         if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
             let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
-            let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
+            let panic_file_path = paths::logs_dir().join(format!("CodeOrbit-{timestamp}.panic"));
             let panic_file = std::fs::OpenOptions::new()
                 .append(true)
                 .create(true)
@@ -214,7 +214,7 @@ fn handle_panic_requests(project: &Entity<HeadlessProject>, client: &Arc<Channel
                     continue;
                 };
 
-                if !filename.starts_with("zed") {
+                if !filename.starts_with("CodeOrbit") {
                     continue;
                 }
 
@@ -427,7 +427,7 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::Application::headless().run(move |cx| {
         settings::init(cx);
-        let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
+        let app_version = AppVersion::load(env!("codeorbit_PKG_VERSION"));
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
 
@@ -457,7 +457,7 @@ pub fn execute_run(
                     ReqwestClient::proxy_and_user_agent(
                         proxy_url,
                         &format!(
-                            "Zed-Server/{} ({}; {})",
+                            "CodeOrbit-Server/{} ({}; {})",
                             env!("CARGO_PKG_VERSION"),
                             std::env::consts::OS,
                             std::env::consts::ARCH
@@ -910,7 +910,7 @@ unsafe fn redirect_standard_streams() -> Result<()> {
 fn cleanup_old_binaries() -> Result<()> {
     let server_dir = paths::remote_server_dir_relative();
     let release_channel = release_channel::RELEASE_CHANNEL.dev_name();
-    let prefix = format!("zed-remote-server-{}-", release_channel);
+    let prefix = format!("CodeOrbit-remote-server-{}-", release_channel);
 
     for entry in std::fs::read_dir(server_dir)? {
         let path = entry?.path();
@@ -931,7 +931,7 @@ fn cleanup_old_binaries() -> Result<()> {
 fn is_new_version(version: &str) -> bool {
     SemanticVersion::from_str(version)
         .ok()
-        .zip(SemanticVersion::from_str(env!("ZED_PKG_VERSION")).ok())
+        .zip(SemanticVersion::from_str(env!("codeorbit_PKG_VERSION")).ok())
         .is_some_and(|(version, current_version)| version >= current_version)
 }
 

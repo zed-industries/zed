@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use async_trait::async_trait;
 use dap::{
     DebugRequest, StartDebuggingRequestArguments,
@@ -11,7 +11,7 @@ use language::LanguageName;
 use serde_json::json;
 use std::path::PathBuf;
 use std::sync::Arc;
-use task::{DebugScenario, ZedDebugConfig};
+use task::{DebugScenario, CodeOrbitDebugConfig};
 use util::command::new_smol_command;
 
 #[derive(Default)]
@@ -63,7 +63,7 @@ impl DebugAdapter for RubyDebugAdapter {
                                 "cwd": {
                                     "type": "string",
                                     "description": "Directory to execute the program in",
-                                    "default": "${ZED_WORKTREE_ROOT}"
+                                    "default": "${codeorbit_WORKTREE_ROOT}"
                                 },
                                 "args": {
                                     "type": "array",
@@ -173,10 +173,10 @@ impl DebugAdapter for RubyDebugAdapter {
         })
     }
 
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    fn config_from_CodeOrbit_format(&self, codeorbit_scenario: CodeOrbitDebugConfig) -> Result<DebugScenario> {
         let mut config = serde_json::Map::new();
 
-        match &zed_scenario.request {
+        match &codeorbit_scenario.request {
             DebugRequest::Launch(launch) => {
                 config.insert("request".to_string(), json!("launch"));
                 config.insert("script".to_string(), json!(launch.program));
@@ -204,8 +204,8 @@ impl DebugAdapter for RubyDebugAdapter {
         }
 
         Ok(DebugScenario {
-            adapter: zed_scenario.adapter,
-            label: zed_scenario.label,
+            adapter: codeorbit_scenario.adapter,
+            label: codeorbit_scenario.label,
             config: serde_json::Value::Object(config),
             tcp_connection: None,
             build: None,

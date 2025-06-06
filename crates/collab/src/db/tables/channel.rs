@@ -1,4 +1,4 @@
-use crate::db::{ChannelId, ChannelVisibility};
+﻿use crate::db::{ChannelId, ChannelVisibility};
 use sea_orm::entity::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, DeriveEntityModel)]
@@ -9,7 +9,7 @@ pub struct Model {
     pub name: String,
     pub visibility: ChannelVisibility,
     pub parent_path: String,
-    pub requires_zed_cla: bool,
+    pub requires_CodeOrbit_cla: bool,
     /// The order of this channel relative to its siblings within the same parent.
     /// Lower values appear first. Channels are sorted by parent_path first, then by channel_order.
     pub channel_order: i32,

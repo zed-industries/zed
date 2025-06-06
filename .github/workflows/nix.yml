@@ -1,4 +1,4 @@
-name: "Nix build"
+﻿name: "Nix build"
 
 on:
   workflow_call:
@@ -25,7 +25,7 @@ jobs:
           - os: arm Mac
             runner: [macOS, ARM64, test]
             install_nix: false
-    if: github.repository_owner == 'zed-industries'
+    if: github.repository_owner == 'CodeOrbit-industries'
     runs-on: ${{ matrix.system.runner }}
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
@@ -53,7 +53,7 @@ jobs:
 
       - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
         with:
-          name: zed
+          name: CodeOrbit
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
           pushFilter: "${{ inputs.cachix-filter }}"
           cachixArgs: '-v'

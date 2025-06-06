@@ -1,9 +1,9 @@
-id = "perplexity"
+﻿id = "perplexity"
 name = "Perplexity"
 version = "0.1.0"
-description = "Ask questions to Perplexity AI directly from Zed"
-authors = ["Zed Industries <support@zed.dev>"]
-repository = "https://github.com/zed-industries/zed"
+description = "Ask questions to Perplexity AI directly from CodeOrbit"
+authors = ["CodeOrbit Industries <support@CodeOrbit.dev>"]
+repository = "https://github.com/CodeOrbit-industries/CodeOrbit"
 schema_version = 1
 
 [slash_commands.perplexity]

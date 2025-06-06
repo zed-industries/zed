@@ -1,5 +1,5 @@
-interface nodejs {
-    /// Returns the path to the Node binary used by Zed.
+﻿interface nodejs {
+    /// Returns the path to the Node binary used by CodeOrbit.
     node-binary-path: func() -> result<string, string>;
 
     /// Returns the latest version of the given NPM package.

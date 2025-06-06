@@ -1,13 +1,13 @@
-use std::process::Command;
+﻿use std::process::Command;
 
-const ZED_MANIFEST: &str = include_str!("../zed/Cargo.toml");
+const codeorbit_MANIFEST: &str = include_str!("../CodeOrbit/Cargo.toml");
 
 fn main() {
-    let zed_cargo_toml: cargo_toml::Manifest =
-        toml::from_str(ZED_MANIFEST).expect("failed to parse zed Cargo.toml");
+    let codeorbit_cargo_toml: cargo_toml::Manifest =
+        toml::from_str(codeorbit_MANIFEST).expect("failed to parse CodeOrbit Cargo.toml");
     println!(
-        "cargo:rustc-env=ZED_PKG_VERSION={}",
-        zed_cargo_toml.package.unwrap().version.unwrap()
+        "cargo:rustc-env=codeorbit_PKG_VERSION={}",
+        codeorbit_cargo_toml.package.unwrap().version.unwrap()
     );
     println!(
         "cargo:rustc-env=TARGET={}",
@@ -25,6 +25,6 @@ fn main() {
         let git_sha = String::from_utf8_lossy(&output.stdout);
         let git_sha = git_sha.trim();
 
-        println!("cargo:rustc-env=ZED_COMMIT_SHA={git_sha}");
+        println!("cargo:rustc-env=codeorbit_COMMIT_SHA={git_sha}");
     }
 }

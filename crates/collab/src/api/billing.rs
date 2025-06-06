@@ -1,4 +1,4 @@
-use anyhow::{Context as _, bail};
+﻿use anyhow::{Context as _, bail};
 use axum::{
     Extension, Json, Router,
     extract::{self, Query},
@@ -255,10 +255,10 @@ async fn list_billing_subscriptions(
             .map(|subscription| BillingSubscriptionJson {
                 id: subscription.id,
                 name: match subscription.kind {
-                    Some(SubscriptionKind::ZedPro) => "Zed Pro".to_string(),
-                    Some(SubscriptionKind::ZedProTrial) => "Zed Pro (Trial)".to_string(),
-                    Some(SubscriptionKind::ZedFree) => "Zed Free".to_string(),
-                    None => "Zed LLM Usage".to_string(),
+                    Some(SubscriptionKind::CodeOrbitPro) => "CodeOrbit Pro".to_string(),
+                    Some(SubscriptionKind::CodeOrbitProTrial) => "CodeOrbit Pro (Trial)".to_string(),
+                    Some(SubscriptionKind::CodeOrbitFree) => "CodeOrbit Free".to_string(),
+                    None => "CodeOrbit LLM Usage".to_string(),
                 },
                 status: subscription.stripe_subscription_status,
                 period: maybe!({
@@ -270,7 +270,7 @@ async fn list_billing_subscriptions(
                         end_at: end_at.to_rfc3339_opts(SecondsFormat::Millis, true),
                     })
                 }),
-                trial_end_at: if subscription.kind == Some(SubscriptionKind::ZedProTrial) {
+                trial_end_at: if subscription.kind == Some(SubscriptionKind::CodeOrbitProTrial) {
                     maybe!({
                         let end_at = subscription.stripe_current_period_end?;
                         let end_at = DateTime::from_timestamp(end_at, 0)?;
@@ -285,7 +285,7 @@ async fn list_billing_subscriptions(
                         .and_utc()
                         .to_rfc3339_opts(SecondsFormat::Millis, true)
                 }),
-                is_cancelable: subscription.kind != Some(SubscriptionKind::ZedFree)
+                is_cancelable: subscription.kind != Some(SubscriptionKind::CodeOrbitFree)
                     && subscription.stripe_subscription_status.is_cancelable()
                     && subscription.stripe_cancel_at.is_none(),
             })
@@ -296,8 +296,8 @@ async fn list_billing_subscriptions(
 #[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ProductCode {
-    ZedPro,
-    ZedProTrial,
+    CodeOrbitPro,
+    CodeOrbitProTrial,
 }
 
 #[derive(Debug, Deserialize)]
@@ -331,8 +331,8 @@ async fn create_billing_subscription(
     };
 
     if let Some(existing_subscription) = app.db.get_active_billing_subscription(user.id).await? {
-        let is_checkout_allowed = body.product == ProductCode::ZedProTrial
-            && existing_subscription.kind == Some(SubscriptionKind::ZedFree);
+        let is_checkout_allowed = body.product == ProductCode::CodeOrbitProTrial
+            && existing_subscription.kind == Some(SubscriptionKind::CodeOrbitFree);
 
         if !is_checkout_allowed {
             return Err(Error::http(
@@ -362,16 +362,16 @@ async fn create_billing_subscription(
 
     let success_url = format!(
         "{}/account?checkout_complete=1",
-        app.config.zed_dot_dev_url()
+        app.config.codeorbit_dot_dev_url()
     );
 
     let checkout_session_url = match body.product {
-        ProductCode::ZedPro => {
+        ProductCode::CodeOrbitPro => {
             stripe_billing
-                .checkout_with_zed_pro(&customer_id, &user.github_login, &success_url)
+                .checkout_with_CodeOrbit_pro(&customer_id, &user.github_login, &success_url)
                 .await?
         }
-        ProductCode::ZedProTrial => {
+        ProductCode::CodeOrbitProTrial => {
             if let Some(existing_billing_customer) = &existing_billing_customer {
                 if existing_billing_customer.trial_started_at.is_some() {
                     return Err(Error::http(
@@ -384,7 +384,7 @@ async fn create_billing_subscription(
             let feature_flags = app.db.get_user_flags(user.id).await?;
 
             stripe_billing
-                .checkout_with_zed_pro_trial(
+                .checkout_with_CodeOrbit_pro_trial(
                     &customer_id,
                     &user.github_login,
                     feature_flags,
@@ -408,7 +408,7 @@ enum ManageSubscriptionIntent {
     ManageSubscription,
     /// The user intends to update their payment method.
     UpdatePaymentMethod,
-    /// The user intends to upgrade to Zed Pro.
+    /// The user intends to upgrade to CodeOrbit Pro.
     UpgradeToPro,
     /// The user intends to cancel their subscription.
     Cancel,
@@ -507,21 +507,21 @@ async fn manage_billing_subscription(
     let flow = match body.intent {
         ManageSubscriptionIntent::ManageSubscription => None,
         ManageSubscriptionIntent::UpgradeToPro => {
-            let zed_pro_price_id: stripe::PriceId =
-                stripe_billing.zed_pro_price_id().await?.try_into()?;
-            let zed_free_price_id: stripe::PriceId =
-                stripe_billing.zed_free_price_id().await?.try_into()?;
+            let codeorbit_pro_price_id: stripe::PriceId =
+                stripe_billing.codeorbit_pro_price_id().await?.try_into()?;
+            let codeorbit_free_price_id: stripe::PriceId =
+                stripe_billing.codeorbit_free_price_id().await?.try_into()?;
 
             let stripe_subscription =
                 Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
 
-            let is_on_zed_pro_trial = stripe_subscription.status == SubscriptionStatus::Trialing
+            let is_on_CodeOrbit_pro_trial = stripe_subscription.status == SubscriptionStatus::Trialing
                 && stripe_subscription.items.data.iter().any(|item| {
                     item.price
                         .as_ref()
-                        .map_or(false, |price| price.id == zed_pro_price_id)
+                        .map_or(false, |price| price.id == codeorbit_pro_price_id)
                 });
-            if is_on_zed_pro_trial {
+            if is_on_CodeOrbit_pro_trial {
                 let payment_methods = PaymentMethod::list(
                     &stripe_client,
                     &stripe::ListPaymentMethods {
@@ -539,7 +539,7 @@ async fn manage_billing_subscription(
                     ));
                 }
 
-                // If the user is already on a Zed Pro trial and wants to upgrade to Pro, we just need to end their trial early.
+                // If the user is already on a CodeOrbit Pro trial and wants to upgrade to Pro, we just need to end their trial early.
                 Subscription::update(
                     &stripe_client,
                     &stripe_subscription.id,
@@ -562,7 +562,7 @@ async fn manage_billing_subscription(
                 .find_map(|item| {
                     let price = item.price.as_ref()?;
 
-                    if price.id == zed_free_price_id {
+                    if price.id == codeorbit_free_price_id {
                         Some(item.id.clone())
                     } else {
                         None
@@ -578,7 +578,7 @@ async fn manage_billing_subscription(
                         items: vec![
                             CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirmItems {
                                 id: subscription_item_to_update.to_string(),
-                                price: Some(zed_pro_price_id.to_string()),
+                                price: Some(codeorbit_pro_price_id.to_string()),
                                 quantity: Some(1),
                             },
                         ],
@@ -595,7 +595,7 @@ async fn manage_billing_subscription(
                 redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
                     return_url: format!(
                         "{}{path}",
-                        app.config.zed_dot_dev_url(),
+                        app.config.codeorbit_dot_dev_url(),
                         path = body.redirect_to.unwrap_or_else(|| "/account".to_string())
                     ),
                 }),
@@ -604,7 +604,7 @@ async fn manage_billing_subscription(
             ..Default::default()
         }),
         ManageSubscriptionIntent::Cancel => {
-            if subscription.kind == Some(SubscriptionKind::ZedFree) {
+            if subscription.kind == Some(SubscriptionKind::CodeOrbitFree) {
                 return Err(Error::http(
                     StatusCode::BAD_REQUEST,
                     "free subscription cannot be canceled".into(),
@@ -616,7 +616,7 @@ async fn manage_billing_subscription(
                 after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
                     type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
                     redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
-                        return_url: format!("{}/account", app.config.zed_dot_dev_url()),
+                        return_url: format!("{}/account", app.config.codeorbit_dot_dev_url()),
                     }),
                     ..Default::default()
                 }),
@@ -634,7 +634,7 @@ async fn manage_billing_subscription(
 
     let mut params = CreateBillingPortalSession::new(customer_id);
     params.flow_data = flow;
-    let return_url = format!("{}/account", app.config.zed_dot_dev_url());
+    let return_url = format!("{}/account", app.config.codeorbit_dot_dev_url());
     params.return_url = Some(&return_url);
 
     let session = BillingPortalSession::create(&stripe_client, params).await?;
@@ -711,7 +711,7 @@ async fn sync_billing_subscription(
 ///
 /// > We poll the Stripe /events endpoint every 500ms per account
 /// >
-/// > — https://blog.sequinstream.com/events-not-webhooks/
+/// > â€” https://blog.sequinstream.com/events-not-webhooks/
 const POLL_EVENTS_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The maximum number of events to return per page.
@@ -966,7 +966,7 @@ async fn sync_subscription(
             .await?
             .context("billing customer not found")?;
 
-    if let Some(SubscriptionKind::ZedProTrial) = subscription_kind {
+    if let Some(SubscriptionKind::CodeOrbitProTrial) = subscription_kind {
         if subscription.status == SubscriptionStatus::Trialing {
             let current_period_start =
                 DateTime::from_timestamp(subscription.current_period_start, 0)
@@ -1045,8 +1045,8 @@ async fn sync_subscription(
             .get_active_billing_subscription(billing_customer.user_id)
             .await?
         {
-            if existing_subscription.kind == Some(SubscriptionKind::ZedFree)
-                && subscription_kind == Some(SubscriptionKind::ZedProTrial)
+            if existing_subscription.kind == Some(SubscriptionKind::CodeOrbitFree)
+                && subscription_kind == Some(SubscriptionKind::CodeOrbitProTrial)
             {
                 let stripe_subscription_id = StripeSubscriptionId(
                     existing_subscription.stripe_subscription_id.clone().into(),
@@ -1109,7 +1109,7 @@ async fn sync_subscription(
                     StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
 
                 stripe_billing
-                    .subscribe_to_zed_free(stripe_customer_id)
+                    .subscribe_to_CodeOrbit_free(stripe_customer_id)
                     .await?;
             }
         }
@@ -1223,11 +1223,11 @@ async fn get_current_usage(
     let plan = subscription
         .kind
         .map(Into::into)
-        .unwrap_or(zed_llm_client::Plan::ZedFree);
+        .unwrap_or(codeorbit_llm_client::Plan::CodeOrbitFree);
 
     let model_requests_limit = match plan.model_requests_limit() {
-        zed_llm_client::UsageLimit::Limited(limit) => {
-            let limit = if plan == zed_llm_client::Plan::ZedProTrial && has_extended_trial {
+        codeorbit_llm_client::UsageLimit::Limited(limit) => {
+            let limit = if plan == codeorbit_llm_client::Plan::CodeOrbitProTrial && has_extended_trial {
                 1_000
             } else {
                 limit
@@ -1235,12 +1235,12 @@ async fn get_current_usage(
 
             Some(limit)
         }
-        zed_llm_client::UsageLimit::Unlimited => None,
+        codeorbit_llm_client::UsageLimit::Unlimited => None,
     };
 
     let edit_predictions_limit = match plan.edit_predictions_limit() {
-        zed_llm_client::UsageLimit::Limited(limit) => Some(limit),
-        zed_llm_client::UsageLimit::Unlimited => None,
+        codeorbit_llm_client::UsageLimit::Limited(limit) => Some(limit),
+        codeorbit_llm_client::UsageLimit::Unlimited => None,
     };
 
     let Some(usage) = usage else {
@@ -1413,7 +1413,7 @@ async fn sync_model_request_usage_with_stripe(
         .collect::<HashSet<UserId>>();
     let billing_subscriptions = app
         .db
-        .get_active_zed_pro_billing_subscriptions(user_ids)
+        .get_active_CodeOrbit_pro_billing_subscriptions(user_ids)
         .await?;
 
     let claude_sonnet_4 = stripe_billing

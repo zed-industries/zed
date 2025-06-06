@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, PLAIN_TEXT, ToolchainLister,
     language_settings::{
@@ -1111,7 +1111,7 @@ impl LanguageRegistry {
         let tx = fake_entry.tx.clone();
         cx.background_spawn(async move {
             if fake_server
-                .try_receive_notification::<lsp::notification::Initialized>()
+                .try_receive_notification::<lsp::notification::InitialiCodeOrbit>()
                 .await
                 .is_some()
             {

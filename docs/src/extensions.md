@@ -1,6 +1,6 @@
-# Extensions
+﻿# Extensions
 
-Zed lets you add new functionality using user-defined extensions.
+CodeOrbit lets you add new functionality using user-defined extensions.
 
 - [Installing Extensions](./extensions/installing-extensions.md)
 - [Developing Extensions](./extensions/developing-extensions.md)

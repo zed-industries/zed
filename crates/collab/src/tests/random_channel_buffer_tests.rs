@@ -1,6 +1,6 @@
-use crate::db::ChannelRole;
+﻿use crate::db::ChannelRole;
 
-use super::{RandomizedTest, TestClient, TestError, TestServer, UserTestPlan, run_randomized_test};
+use super::{RandomiCodeOrbitTest, TestClient, TestError, TestServer, UserTestPlan, run_randomiCodeOrbit_test};
 use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{BackgroundExecutor, SharedString, TestAppContext};
@@ -15,14 +15,14 @@ use text::Bias;
 
 #[gpui::test(
     iterations = 100,
-    on_failure = "crate::tests::save_randomized_test_plan"
+    on_failure = "crate::tests::save_randomiCodeOrbit_test_plan"
 )]
 async fn test_random_channel_buffers(
     cx: &mut TestAppContext,
     executor: BackgroundExecutor,
     rng: StdRng,
 ) {
-    run_randomized_test::<RandomChannelBufferTest>(cx, executor, rng).await;
+    run_randomiCodeOrbit_test::<RandomChannelBufferTest>(cx, executor, rng).await;
 }
 
 struct RandomChannelBufferTest;
@@ -45,7 +45,7 @@ enum ChannelBufferOperation {
 const CHANNEL_COUNT: usize = 3;
 
 #[async_trait(?Send)]
-impl RandomizedTest for RandomChannelBufferTest {
+impl RandomiCodeOrbitTest for RandomChannelBufferTest {
     type Operation = ChannelBufferOperation;
 
     async fn initialize(server: &mut TestServer, users: &[UserTestPlan]) {

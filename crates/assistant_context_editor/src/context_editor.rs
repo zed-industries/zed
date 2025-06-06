@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     language_model_selector::{
         LanguageModelSelector, ToggleModelSelector, language_model_selector,
     },
@@ -11,7 +11,7 @@ use assistant_slash_commands::{
     DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs, FileSlashCommand,
     selections_creases,
 };
-use client::{proto, zed_urls};
+use client::{proto, codeorbit_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
     Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, MultiBuffer, MultiBufferSnapshot,
@@ -1881,7 +1881,7 @@ impl ContextEditor {
     }
 
     fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        // This was previously gated behind the `zed-pro` feature flag. Since we
+        // This was previously gated behind the `CodeOrbit-pro` feature flag. Since we
         // aren't planning to ship that right now, we're just hard-coding this
         // value to not show the nudge.
         let nudge = Some(false);
@@ -1897,8 +1897,8 @@ impl ContextEditor {
                     .child(
                         h_flex()
                             .gap_3()
-                            .child(Icon::new(IconName::ZedAssistant).color(Color::Accent))
-                            .child(Label::new("Zed AI is here! Get started by signing in →")),
+                            .child(Icon::new(IconName::CodeOrbitAssistant).color(Color::Accent))
+                            .child(Label::new("CodeOrbit AI is here! Get started by signing in â†’")),
                     )
                     .child(
                         Button::new("sign-in", "Sign in")
@@ -1971,7 +1971,7 @@ impl ContextEditor {
                                 let focus_handle = self.focus_handle(cx).clone();
                                 move |_event, window, cx| {
                                     focus_handle.dispatch_action(
-                                        &zed_actions::agent::OpenConfiguration,
+                                        &codeorbit_actions::agent::OpenConfiguration,
                                         window,
                                         cx,
                                     );
@@ -2074,9 +2074,9 @@ impl ContextEditor {
         let active_completion_mode = context.completion_mode();
         let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
         let icon = if burn_mode_enabled {
-            IconName::ZedBurnModeOn
+            IconName::CodeOrbitBurnModeOn
         } else {
-            IconName::ZedBurnMode
+            IconName::CodeOrbitBurnMode
         };
 
         Some(
@@ -2173,7 +2173,7 @@ impl ContextEditor {
     }
 
     fn render_payment_required_error(&self, cx: &mut Context<Self>) -> AnyElement {
-        const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
+        const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using CodeOrbit LLMs. You'll be billed at cost for tokens used.";
 
         v_flex()
             .gap_0p5()
@@ -2198,7 +2198,7 @@ impl ContextEditor {
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, _window, cx| {
                             this.last_error = None;
-                            cx.open_url(&zed_urls::account_url(cx));
+                            cx.open_url(&codeorbit_urls::account_url(cx));
                             cx.notify();
                         },
                     )))
@@ -2309,7 +2309,7 @@ fn render_thought_process_fold_icon_button(
                         .color(Color::Muted),
                 )
                 .child(
-                    Label::new("Thinking…").color(Color::Muted).with_animation(
+                    Label::new("Thinkingâ€¦").color(Color::Muted).with_animation(
                         "pulsating-label",
                         Animation::new(Duration::from_secs(2))
                             .repeat()
@@ -2503,7 +2503,7 @@ fn render_docs_slash_command_trailer(
                 ))
                 .tooltip({
                     let package = package.clone();
-                    Tooltip::text(format!("Indexing {package}…"))
+                    Tooltip::text(format!("Indexing {package}â€¦"))
                 })
                 .into_any_element(),
         );
@@ -3276,10 +3276,10 @@ mod tests {
     #[gpui::test]
     async fn test_copy_paste_whole_message(cx: &mut TestAppContext) {
         let (context, context_editor, mut cx) = setup_context_editor_text(vec![
-            (Role::User, "What is the Zed editor?"),
+            (Role::User, "What is the CodeOrbit editor?"),
             (
                 Role::Assistant,
-                "Zed is a modern, high-performance code editor designed from the ground up for speed and collaboration.",
+                "CodeOrbit is a modern, high-performance code editor designed from the ground up for speed and collaboration.",
             ),
             (Role::User, ""),
         ],cx).await;
@@ -3289,9 +3289,9 @@ mod tests {
             &context_editor,
             message_range(&context, 0, &mut cx),
             indoc! {"
-                What is the Zed editor?
-                Zed is a modern, high-performance code editor designed from the ground up for speed and collaboration.
-                What is the Zed editor?
+                What is the CodeOrbit editor?
+                CodeOrbit is a modern, high-performance code editor designed from the ground up for speed and collaboration.
+                What is the CodeOrbit editor?
             "},
             &mut cx,
         );
@@ -3301,10 +3301,10 @@ mod tests {
             &context_editor,
             message_range(&context, 1, &mut cx),
             indoc! {"
-                What is the Zed editor?
-                Zed is a modern, high-performance code editor designed from the ground up for speed and collaboration.
-                What is the Zed editor?
-                Zed is a modern, high-performance code editor designed from the ground up for speed and collaboration.
+                What is the CodeOrbit editor?
+                CodeOrbit is a modern, high-performance code editor designed from the ground up for speed and collaboration.
+                What is the CodeOrbit editor?
+                CodeOrbit is a modern, high-performance code editor designed from the ground up for speed and collaboration.
             "},
             &mut cx,
         );

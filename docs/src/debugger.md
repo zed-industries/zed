@@ -1,14 +1,14 @@
-# Debugger (Beta)
+﻿# Debugger (Beta)
 
-Zed uses the Debug Adapter Protocol (DAP) to provide debugging functionality across multiple programming languages.
-DAP is a standardized protocol that defines how debuggers, editors, and IDEs communicate with each other.
-It allows Zed to support various debuggers without needing to implement language-specific debugging logic.
+CodeOrbit uses the Debug Adapter Protocol (DAP) to provide debugging functionality across multiple programming languages.
+DAP is a standardiCodeOrbit protocol that defines how debuggers, editors, and IDEs communicate with each other.
+It allows CodeOrbit to support various debuggers without needing to implement language-specific debugging logic.
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
 
 ## Supported Debug Adapters
 
-Zed supports a variety of debug adapters for different programming languages:
+CodeOrbit supports a variety of debug adapters for different programming languages:
 
 - JavaScript (node): Enables debugging of Node.js applications, including setting breakpoints, stepping through code, and inspecting variables in JavaScript.
 
@@ -22,7 +22,7 @@ Zed supports a variety of debug adapters for different programming languages:
 
 - PHP (xdebug): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
 
-These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
+These adapters enable CodeOrbit to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
 
 Additionally, Ruby support (via rdbg) is being actively worked on.
 
@@ -30,16 +30,16 @@ Additionally, Ruby support (via rdbg) is being actively worked on.
 
 For basic debugging, you can set up a new configuration by opening the `New Session Modal` either via the `debugger: start` (default: f4) or by clicking the plus icon at the top right of the debug panel.
 
-For more advanced use cases, you can create debug configurations by directly editing the `.zed/debug.json` file in your project root directory.
+For more advanced use cases, you can create debug configurations by directly editing the `.CodeOrbit/debug.json` file in your project root directory.
 
 You can then use the `New Session Modal` to select a configuration and start debugging.
 
 ### Launching & Attaching
 
-Zed debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
+CodeOrbit debugger offers two ways to debug your program; you can either _launch_ a new instance of your program or _attach_ to an existing process.
 Which one you choose depends on what you are trying to achieve.
 
-When launching a new instance, Zed (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program. Running unit tests or a debug build of your application is a good use case for launching.
+When launching a new instance, CodeOrbit (and the underlying debug adapter) can often do a better job at picking up the debug information compared to attaching to an existing process, since it controls the lifetime of a whole program. Running unit tests or a debug build of your application is a good use case for launching.
 
 Compared to launching, attaching to an existing process might seem inferior, but that's far from truth; there are cases where you cannot afford to restart your program, because e.g. the bug is not reproducible outside of a production environment or some other circumstances.
 
@@ -52,17 +52,17 @@ While configuration fields are debug adapter-dependent, most adapters support th
   {
     // The label for the debug configuration and used to identify the debug session inside the debug panel & new session modal
     "label": "Example Start debugger config",
-    // The debug adapter that Zed should use to debug the program
+    // The debug adapter that CodeOrbit should use to debug the program
     "adapter": "Example adapter name",
     // Request:
-    //  - launch: Zed will launch the program if specified or shows a debug terminal with the right configuration
-    //  - attach: Zed will attach to a running program to debug it or when the process_id is not specified we will show a process picker (only supported for node currently)
+    //  - launch: CodeOrbit will launch the program if specified or shows a debug terminal with the right configuration
+    //  - attach: CodeOrbit will attach to a running program to debug it or when the process_id is not specified we will show a process picker (only supported for node currently)
     "request": "launch",
     // program: The program that you want to debug
     // This field supports path resolution with ~ or . symbols
     "program": "path_to_program",
-    // cwd: defaults to the current working directory of your project ($ZED_WORKTREE_ROOT)
-    "cwd": "$ZED_WORKTREE_ROOT"
+    // cwd: defaults to the current working directory of your project ($codeorbit_WORKTREE_ROOT)
+    "cwd": "$codeorbit_WORKTREE_ROOT"
   }
 ]
 ```
@@ -71,7 +71,7 @@ All configuration fields support task variables. See [Tasks Variables](./tasks.m
 
 ### Build tasks
 
-Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
+CodeOrbit also allows embedding a CodeOrbit task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
 ```json
 [
@@ -97,14 +97,14 @@ Build tasks can also refer to the existing tasks by unsubstituted label:
     "adapter": "CodeLLDB",
     "program": "path_to_program",
     "request": "launch",
-    "build": "my build task" // Or "my build task for $ZED_FILE"
+    "build": "my build task" // Or "my build task for $codeorbit_FILE"
   }
 ]
 ```
 
 ### Automatic scenario creation
 
-Given a Zed task, Zed can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
+Given a CodeOrbit task, CodeOrbit can automatically create a scenario for you. Automatic scenario creation also powers our scenario creation from gutter.
 Automatic scenario creation is currently supported for Rust, Go and Python. Javascript/TypeScript support being worked on.
 
 ### Example Configurations
@@ -118,7 +118,7 @@ Automatic scenario creation is currently supported for Rust, Go and Python. Java
   {
     "label": "Debug with node",
     "adapter": "JavaScript",
-    "program": "$ZED_FILE",
+    "program": "$codeorbit_FILE",
     "request": "launch",
     "console": "integratedTerminal",
     "type": "pwa-node"
@@ -138,8 +138,8 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
     "type": "pwa-chrome",
     "request": "launch",
     "url": "http://localhost:5500", // Fill your URL here.
-    "program": "$ZED_FILE",
-    "webRoot": "${ZED_WORKTREE_ROOT}"
+    "program": "$codeorbit_FILE",
+    "webRoot": "${codeorbit_WORKTREE_ROOT}"
   }
 ]
 ```
@@ -153,7 +153,7 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
   {
     "label": "Python Active File",
     "adapter": "Debugpy",
-    "program": "$ZED_FILE",
+    "program": "$codeorbit_FILE",
     "request": "launch"
   }
 ]
@@ -185,7 +185,7 @@ the following configuration can be used:
     "adapter": "Debugpy",
     "request": "launch",
     "module": "app",
-    "cwd": "$ZED_WORKTREE_ROOT",
+    "cwd": "$codeorbit_WORKTREE_ROOT",
     "env": {
       "FLASK_APP": "app",
       "FLASK_DEBUG": "1"
@@ -212,7 +212,7 @@ the following configuration can be used:
 [
   {
     "label": "Debug native binary",
-    "program": "$ZED_WORKTREE_ROOT/build/binary",
+    "program": "$codeorbit_WORKTREE_ROOT/build/binary",
     "request": "launch",
     "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
   }
@@ -229,7 +229,7 @@ the following configuration can be used:
       "command": "cargo",
       "args": ["build"]
     },
-    "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
+    "program": "$codeorbit_WORKTREE_ROOT/target/debug/binary",
     "request": "launch",
     "adapter": "CodeLLDB" // GDB is available on non arm macs as well as linux
   }
@@ -250,8 +250,8 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
     "type": "pwa-chrome",
     "request": "launch",
     "url": "http://localhost:5500",
-    "program": "$ZED_FILE",
-    "webRoot": "${ZED_WORKTREE_ROOT}",
+    "program": "$codeorbit_FILE",
+    "webRoot": "${codeorbit_WORKTREE_ROOT}",
     "sourceMaps": true,
     "build": {
       "command": "npx",
@@ -281,10 +281,10 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 - `dock`: Determines the position of the debug panel in the UI.
 - `stepping_granularity`: Determines the stepping granularity.
-- `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
+- `save_breakpoints`: Whether the breakpoints should be reused across CodeOrbit sessions.
 - `button`: Whether to show the debug button in the status bar.
 - `timeout`: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
-- `log_dap_communications`: Whether to log messages between active debug adapters and Zed.
+- `log_dap_communications`: Whether to log messages between active debug adapters and CodeOrbit.
 - `format_dap_log_messages`: Whether to format DAP messages when adding them to the debug adapter logger.
 
 ### Dock
@@ -347,7 +347,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ### Save Breakpoints
 
-- Description: Whether the breakpoints should be saved across Zed sessions.
+- Description: Whether the breakpoints should be saved across CodeOrbit sessions.
 - Default: true
 - Setting: debugger.save_breakpoints
 
@@ -401,7 +401,7 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ### Log Dap Communications
 
-- Description: Whether to log messages between active debug adapters and Zed. (Used for DAP development)
+- Description: Whether to log messages between active debug adapters and CodeOrbit. (Used for DAP development)
 - Default: false
 - Setting: debugger.log_dap_communications
 

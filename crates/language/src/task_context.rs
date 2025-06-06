@@ -1,4 +1,4 @@
-use std::{ops::Range, path::PathBuf, sync::Arc};
+﻿use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{LanguageToolchainStore, Location, Runnable};
 
@@ -18,8 +18,8 @@ pub struct RunnableRange {
     pub extra_captures: HashMap<String, String>,
 }
 
-/// Language Contexts are used by Zed tasks to extract information about the source file where the tasks are supposed to be scheduled from.
-/// Multiple context providers may be used together: by default, Zed provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
+/// Language Contexts are used by CodeOrbit tasks to extract information about the source file where the tasks are supposed to be scheduled from.
+/// Multiple context providers may be used together: by default, CodeOrbit provides a base [`BasicContextProvider`] context that fills all non-custom [`VariableName`] variants.
 ///
 /// The context will be used to fill data for the tasks, and filter out the ones that do not have the variables required.
 pub trait ContextProvider: Send + Sync {

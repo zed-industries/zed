@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
 pub struct ExtensionSettings {
-    /// The extensions that should be automatically installed by Zed.
+    /// The extensions that should be automatically installed by CodeOrbit.
     ///
     /// This is used to make functionality provided by extensions (e.g., language support)
     /// available out-of-the-box.
@@ -53,7 +53,7 @@ impl Settings for ExtensionSettings {
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
         // settingsSync.ignoredExtensions controls autoupdate for vscode extensions, but we
-        // don't have a mapping to zed-extensions. there's also extensions.autoCheckUpdates
+        // don't have a mapping to CodeOrbit-extensions. there's also extensions.autoCheckUpdates
         // and extensions.autoUpdate which are global switches, we don't support those yet
     }
 }

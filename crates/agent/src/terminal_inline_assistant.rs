@@ -1,4 +1,4 @@
-use crate::context::load_context;
+﻿use crate::context::load_context;
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
@@ -25,7 +25,7 @@ use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{Toast, Workspace, notifications::NotificationId};
-use zed_llm_client::CompletionIntent;
+use codeorbit_llm_client::CompletionIntent;
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -170,7 +170,7 @@ impl TerminalInlineAssistant {
             PromptEditorEvent::DismissRequested => {
                 self.dismiss_assist(assist_id, window, cx);
             }
-            PromptEditorEvent::Resized { height_in_lines } => {
+            PromptEditorEvent::ResiCodeOrbit { height_in_lines } => {
                 self.insert_prompt_editor_into_terminal(assist_id, *height_in_lines, window, cx);
             }
         }

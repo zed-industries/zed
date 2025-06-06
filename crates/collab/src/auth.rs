@@ -1,4 +1,4 @@
-use crate::{
+﻿use crate::{
     AppState, Error, Result,
     db::{self, AccessTokenId, Database, UserId},
     rpc::Principal,
@@ -34,7 +34,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
         .and_then(|header| header.to_str().ok())
         .ok_or_else(|| {
             Error::http(
-                StatusCode::UNAUTHORIZED,
+                StatusCode::UNAUTHORICodeOrbit,
                 "missing authorization header".to_string(),
             )
         })?
@@ -45,8 +45,8 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
     let first = auth_header.next().unwrap_or("");
     if first == "dev-server-token" {
         Err(Error::http(
-            StatusCode::UNAUTHORIZED,
-            "Dev servers were removed in Zed 0.157 please upgrade to SSH remoting".to_string(),
+            StatusCode::UNAUTHORICodeOrbit,
+            "Dev servers were removed in CodeOrbit 0.157 please upgrade to SSH remoting".to_string(),
         ))?;
     }
 
@@ -103,7 +103,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
     }
 
     Err(Error::http(
-        StatusCode::UNAUTHORIZED,
+        StatusCode::UNAUTHORICodeOrbit,
         "invalid credentials".to_string(),
     ))
 }
@@ -353,7 +353,7 @@ mod test {
         };
 
         Ok(Scrypt
-            .hash_password_customized(
+            .hash_password_customiCodeOrbit(
                 token.as_bytes(),
                 None,
                 None,

@@ -1,4 +1,4 @@
-mod event_coalescer;
+﻿mod event_coalescer;
 
 use crate::TelemetrySettings;
 use anyhow::Result;
@@ -81,11 +81,11 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
 
 #[cfg(not(debug_assertions))]
 const FLUSH_INTERVAL: Duration = Duration::from_secs(60 * 5);
-static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
-    option_env!("ZED_CLIENT_CHECKSUM_SEED")
+static codeorbit_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
+    option_env!("codeorbit_CLIENT_CHECKSUM_SEED")
         .map(|s| s.as_bytes().into())
         .or_else(|| {
-            env::var("ZED_CLIENT_CHECKSUM_SEED")
+            env::var("codeorbit_CLIENT_CHECKSUM_SEED")
                 .ok()
                 .map(|s| s.as_bytes().into())
         })
@@ -287,7 +287,7 @@ impl Telemetry {
     }
 
     pub fn has_checksum_seed(&self) -> bool {
-        ZED_CLIENT_CHECKSUM_SEED.is_some()
+        codeorbit_CLIENT_CHECKSUM_SEED.is_some()
     }
 
     pub fn start(
@@ -490,11 +490,11 @@ impl Telemetry {
             .method(Method::POST)
             .uri(
                 self.http_client
-                    .build_zed_api_url("/telemetry/events", &[])?
+                    .build_CodeOrbit_api_url("/telemetry/events", &[])?
                     .as_ref(),
             )
             .header("Content-Type", "application/json")
-            .header("x-zed-checksum", checksum)
+            .header("x-CodeOrbit-checksum", checksum)
             .body(json_bytes.into())?)
     }
 
@@ -555,7 +555,7 @@ impl Telemetry {
 }
 
 pub fn calculate_json_checksum(json: &impl AsRef<[u8]>) -> Option<String> {
-    let Some(checksum_seed) = &*ZED_CLIENT_CHECKSUM_SEED else {
+    let Some(checksum_seed) = &*codeorbit_CLIENT_CHECKSUM_SEED else {
         return None;
     };
 

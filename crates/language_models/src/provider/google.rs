@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+﻿use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
@@ -854,7 +854,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use CodeOrbit's assistant with Google AI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
@@ -880,7 +880,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {GOOGLE_AI_API_KEY_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {GOOGLE_AI_API_KEY_VAR} environment variable and restart CodeOrbit."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )

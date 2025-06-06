@@ -1,4 +1,4 @@
-use editor::Editor;
+﻿use editor::Editor;
 use gpui::{
     Context, Element, EventEmitter, Focusable, FontWeight, IntoElement, ParentElement, Render,
     StyledText, Subscription, Window,
@@ -65,7 +65,7 @@ impl Render for Breadcrumbs {
             segments.splice(
                 prefix_end_ix..suffix_start_ix,
                 Some(BreadcrumbText {
-                    text: "⋯".into(),
+                    text: "â‹¯".into(),
                     highlights: None,
                     font: None,
                 }),
@@ -89,12 +89,12 @@ impl Render for Breadcrumbs {
                 }
             }
 
-            StyledText::new(segment.text.replace('\n', "⏎"))
+            StyledText::new(segment.text.replace('\n', "âŽ"))
                 .with_default_highlights(&text_style, segment.highlights.unwrap_or_default())
                 .into_any()
         });
         let breadcrumbs = Itertools::intersperse_with(highlighted_segments, || {
-            Label::new("›").color(Color::Placeholder).into_any_element()
+            Label::new("â€º").color(Color::Placeholder).into_any_element()
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
@@ -112,7 +112,7 @@ impl Render for Breadcrumbs {
                         move |_, window, cx| {
                             if let Some((editor, callback)) = editor
                                 .upgrade()
-                                .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                                .zip(codeorbit_actions::outline::TOGGLE_OUTLINE.get())
                             {
                                 callback(editor.to_any(), window, cx);
                             }
@@ -123,7 +123,7 @@ impl Render for Breadcrumbs {
                             let focus_handle = editor.read(cx).focus_handle(cx);
                             Tooltip::for_action_in(
                                 "Show Symbol Outline",
-                                &zed_actions::outline::ToggleOutline,
+                                &codeorbit_actions::outline::ToggleOutline,
                                 &focus_handle,
                                 window,
                                 cx,
@@ -131,7 +131,7 @@ impl Render for Breadcrumbs {
                         } else {
                             Tooltip::for_action(
                                 "Show Symbol Outline",
-                                &zed_actions::outline::ToggleOutline,
+                                &codeorbit_actions::outline::ToggleOutline,
                                 window,
                                 cx,
                             )
@@ -198,7 +198,7 @@ fn apply_dirty_filename_style(
     text_style: &gpui::TextStyle,
     cx: &mut Context<Breadcrumbs>,
 ) -> Option<gpui::AnyElement> {
-    let text = segment.text.replace('\n', "⏎");
+    let text = segment.text.replace('\n', "âŽ");
 
     let filename_position = std::path::Path::new(&segment.text)
         .file_name()

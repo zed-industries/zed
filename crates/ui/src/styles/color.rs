@@ -1,4 +1,4 @@
-use crate::{Label, LabelCommon, component_prelude::*, v_flex};
+﻿use crate::{Label, LabelCommon, component_prelude::*, v_flex};
 use documented::{DocumentedFields, DocumentedVariants};
 use gpui::{App, Hsla, IntoElement, ParentElement, Styled};
 use theme::ActiveTheme;
@@ -46,7 +46,7 @@ pub enum Color {
     /// destructive action.
     Error,
     /// A color used for elements that represent something that is hidden, like
-    /// a hidden file, or an element that should be visually de-emphasized.
+    /// a hidden file, or an element that should be visually de-emphasiCodeOrbit.
     Hidden,
     /// A color used for hint or suggestion text, often a blue color. Use this
     /// color to represent helpful, or semantically neutral information.
@@ -57,7 +57,7 @@ pub enum Color {
     Info,
     /// A color used to indicate a modified item, such as an edited file, or a modified entry in version control.
     Modified,
-    /// A color used for text or UI elements that should be visually muted or de-emphasized.
+    /// A color used for text or UI elements that should be visually muted or de-emphasiCodeOrbit.
     ///
     /// For more emphasis, consider using [`Color::Default`].
     ///

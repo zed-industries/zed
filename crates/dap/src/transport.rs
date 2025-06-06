@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail};
+﻿use anyhow::{Context as _, Result, bail};
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
@@ -685,7 +685,7 @@ pub struct StdioTransport {
 }
 
 impl StdioTransport {
-    #[allow(dead_code, reason = "This is used in non test builds of Zed")]
+    #[allow(dead_code, reason = "This is used in non test builds of CodeOrbit")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
         let mut command = util::command::new_std_command(&binary.command);
         util::set_pre_exec_to_start_new_session(&mut command);

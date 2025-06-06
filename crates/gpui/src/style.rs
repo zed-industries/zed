@@ -1,4 +1,4 @@
-use std::{
+﻿use std::{
     hash::{Hash, Hasher},
     iter, mem,
     ops::Range,
@@ -479,7 +479,7 @@ impl TextStyle {
 }
 
 /// A highlight style to apply, similar to a `TextStyle` except
-/// for a single font, uniformly sized and spaced text.
+/// for a single font, uniformly siCodeOrbit and spaced text.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct HighlightStyle {
     /// The color of the text

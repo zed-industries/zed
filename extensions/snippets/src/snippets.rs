@@ -1,7 +1,7 @@
-use serde_json::json;
+﻿use serde_json::json;
 use std::fs;
-use zed::LanguageServerId;
-use zed_extension_api::{self as zed, Result, settings::LspSettings};
+use CodeOrbit::LanguageServerId;
+use codeorbit_extension_api::{self as CodeOrbit, Result, settings::LspSettings};
 
 struct SnippetExtension {
     cached_binary_path: Option<String>,
@@ -11,7 +11,7 @@ impl SnippetExtension {
     fn language_server_binary_path(
         &mut self,
         language_server_id: &LanguageServerId,
-        worktree: &zed::Worktree,
+        worktree: &CodeOrbit::Worktree,
     ) -> Result<String> {
         if let Some(path) = worktree.which("simple-completion-language-server") {
             return Ok(path);
@@ -23,30 +23,30 @@ impl SnippetExtension {
             }
         }
 
-        zed::set_language_server_installation_status(
+        CodeOrbit::set_language_server_installation_status(
             language_server_id,
-            &zed::LanguageServerInstallationStatus::CheckingForUpdate,
+            &CodeOrbit::LanguageServerInstallationStatus::CheckingForUpdate,
         );
-        let release = zed::latest_github_release(
-            "zed-industries/simple-completion-language-server",
-            zed::GithubReleaseOptions {
+        let release = CodeOrbit::latest_github_release(
+            "CodeOrbit-industries/simple-completion-language-server",
+            CodeOrbit::GithubReleaseOptions {
                 require_assets: true,
                 pre_release: false,
             },
         )?;
 
-        let (platform, arch) = zed::current_platform();
+        let (platform, arch) = CodeOrbit::current_platform();
         let asset_name = format!(
             "simple-completion-language-server-{arch}-{os}.tar.gz",
             arch = match arch {
-                zed::Architecture::Aarch64 => "aarch64",
-                zed::Architecture::X86 => "x86",
-                zed::Architecture::X8664 => "x86_64",
+                CodeOrbit::Architecture::Aarch64 => "aarch64",
+                CodeOrbit::Architecture::X86 => "x86",
+                CodeOrbit::Architecture::X8664 => "x86_64",
             },
             os = match platform {
-                zed::Os::Mac => "apple-darwin",
-                zed::Os::Linux => "unknown-linux-gnu",
-                zed::Os::Windows => "pc-windows-msvc",
+                CodeOrbit::Os::Mac => "apple-darwin",
+                CodeOrbit::Os::Linux => "unknown-linux-gnu",
+                CodeOrbit::Os::Windows => "pc-windows-msvc",
             },
         );
 
@@ -60,15 +60,15 @@ impl SnippetExtension {
         let binary_path = format!("{version_dir}/simple-completion-language-server");
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
-            zed::set_language_server_installation_status(
+            CodeOrbit::set_language_server_installation_status(
                 language_server_id,
-                &zed::LanguageServerInstallationStatus::Downloading,
+                &CodeOrbit::LanguageServerInstallationStatus::Downloading,
             );
 
-            zed::download_file(
+            CodeOrbit::download_file(
                 &asset.download_url,
                 &version_dir,
-                zed::DownloadedFileType::GzipTar,
+                CodeOrbit::DownloadedFileType::GzipTar,
             )
             .map_err(|e| format!("failed to download file: {e}"))?;
 
@@ -87,7 +87,7 @@ impl SnippetExtension {
     }
 }
 
-impl zed::Extension for SnippetExtension {
+impl CodeOrbit::Extension for SnippetExtension {
     fn new() -> Self {
         Self {
             cached_binary_path: None,
@@ -97,20 +97,20 @@ impl zed::Extension for SnippetExtension {
     fn language_server_command(
         &mut self,
         language_server_id: &LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<zed::Command> {
-        Ok(zed::Command {
+        worktree: &CodeOrbit::Worktree,
+    ) -> Result<CodeOrbit::Command> {
+        Ok(CodeOrbit::Command {
             command: self.language_server_binary_path(language_server_id, worktree)?,
             args: vec![],
-            env: vec![("SCLS_CONFIG_SUBDIRECTORY".to_owned(), "zed".to_owned())],
+            env: vec![("SCLS_CONFIG_SUBDIRECTORY".to_owned(), "CodeOrbit".to_owned())],
         })
     }
 
     fn language_server_workspace_configuration(
         &mut self,
         server_id: &LanguageServerId,
-        worktree: &zed_extension_api::Worktree,
-    ) -> Result<Option<zed_extension_api::serde_json::Value>> {
+        worktree: &codeorbit_extension_api::Worktree,
+    ) -> Result<Option<codeorbit_extension_api::serde_json::Value>> {
         let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
             .ok()
             .and_then(|lsp_settings| lsp_settings.settings.clone())
@@ -127,4 +127,4 @@ impl zed::Extension for SnippetExtension {
     }
 }
 
-zed::register_extension!(SnippetExtension);
+CodeOrbit::register_extension!(SnippetExtension);

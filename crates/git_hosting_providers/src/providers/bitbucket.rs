@@ -1,4 +1,4 @@
-use std::str::FromStr;
+﻿use std::str::FromStr;
 
 use url::Url;
 
@@ -107,14 +107,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_ssh_url() {
         let parsed_remote = Bitbucket::public_instance()
-            .parse_remote_url("git@bitbucket.org:zed-industries/zed.git")
+            .parse_remote_url("git@bitbucket.org:CodeOrbit-industries/CodeOrbit.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             }
         );
     }
@@ -122,14 +122,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_https_url() {
         let parsed_remote = Bitbucket::public_instance()
-            .parse_remote_url("https://bitbucket.org/zed-industries/zed.git")
+            .parse_remote_url("https://bitbucket.org/CodeOrbit-industries/CodeOrbit.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             }
         );
     }
@@ -137,14 +137,14 @@ mod tests {
     #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
         let parsed_remote = Bitbucket::public_instance()
-            .parse_remote_url("https://thorstenballzed@bitbucket.org/zed-industries/zed.git")
+            .parse_remote_url("https://thorstenballCodeOrbit@bitbucket.org/CodeOrbit-industries/CodeOrbit.git")
             .unwrap();
 
         assert_eq!(
             parsed_remote,
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             }
         );
     }
@@ -153,8 +153,8 @@ mod tests {
     fn test_build_bitbucket_permalink() {
         let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "f00b4r",
@@ -163,7 +163,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs";
+        let expected_url = "https://bitbucket.org/CodeOrbit-industries/CodeOrbit/src/f00b4r/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -171,8 +171,8 @@ mod tests {
     fn test_build_bitbucket_permalink_with_single_line_selection() {
         let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "f00b4r",
@@ -181,7 +181,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-7";
+        let expected_url = "https://bitbucket.org/CodeOrbit-industries/CodeOrbit/src/f00b4r/main.rs#lines-7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -189,8 +189,8 @@ mod tests {
     fn test_build_bitbucket_permalink_with_multi_line_selection() {
         let permalink = Bitbucket::public_instance().build_permalink(
             ParsedGitRemote {
-                owner: "zed-industries".into(),
-                repo: "zed".into(),
+                owner: "CodeOrbit-industries".into(),
+                repo: "CodeOrbit".into(),
             },
             BuildPermalinkParams {
                 sha: "f00b4r",
@@ -200,7 +200,7 @@ mod tests {
         );
 
         let expected_url =
-            "https://bitbucket.org/zed-industries/zed/src/f00b4r/main.rs#lines-24:48";
+            "https://bitbucket.org/CodeOrbit-industries/CodeOrbit/src/f00b4r/main.rs#lines-24:48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }

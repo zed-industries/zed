@@ -1,4 +1,4 @@
-//! A list element that can be used to render a large number of differently sized elements
+﻿//! A list element that can be used to render a large number of differently siCodeOrbit elements
 //! efficiently. Clients of this API need to ensure that elements outside of the scrolled
 //! area do not change their height for this element to function correctly. If your elements
 //! do change height, notify the list element via [`ListState::splice`] or [`ListState::reset`].

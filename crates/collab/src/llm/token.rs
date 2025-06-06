@@ -1,4 +1,4 @@
-use crate::db::billing_subscription::SubscriptionKind;
+﻿use crate::db::billing_subscription::SubscriptionKind;
 use crate::db::{billing_customer, billing_subscription, user};
 use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::{Config, db::billing_preference};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
-use zed_llm_client::Plan;
+use codeorbit_llm_client::Plan;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -55,18 +55,18 @@ impl LlmTokenClaims {
             .context("no LLM API secret")?;
 
         let plan = if is_staff {
-            Plan::ZedPro
+            Plan::CodeOrbitPro
         } else {
-            subscription.kind.map_or(Plan::ZedFree, |kind| match kind {
-                SubscriptionKind::ZedFree => Plan::ZedFree,
-                SubscriptionKind::ZedPro => Plan::ZedPro,
-                SubscriptionKind::ZedProTrial => Plan::ZedProTrial,
+            subscription.kind.map_or(Plan::CodeOrbitFree, |kind| match kind {
+                SubscriptionKind::CodeOrbitFree => Plan::CodeOrbitFree,
+                SubscriptionKind::CodeOrbitPro => Plan::CodeOrbitPro,
+                SubscriptionKind::CodeOrbitProTrial => Plan::CodeOrbitProTrial,
             })
         };
         let subscription_period =
             billing_subscription::Model::current_period(Some(subscription), is_staff)
                 .map(|(start, end)| (start.naive_utc(), end.naive_utc()))
-                .context("A plan is required to use Zed's hosted models or edit predictions. Visit https://zed.dev/account to get started.")?;
+                .context("A plan is required to use CodeOrbit's hosted models or edit predictions. Visit https://CodeOrbit.dev/account to get started.")?;
 
         let now = Utc::now();
         let claims = Self {

@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "debugger_ui"
 version = "0.1.0"
 edition.workspace = true
@@ -65,7 +65,7 @@ workspace.workspace = true
 workspace-hack.workspace = true
 debugger_tools = { workspace = true, optional = true }
 unindent = { workspace = true, optional = true }
-zed_actions.workspace = true
+codeorbit_actions.workspace = true
 
 [dev-dependencies]
 dap = { workspace = true, features = ["test-support"] }

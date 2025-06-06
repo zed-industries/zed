@@ -1,4 +1,4 @@
-use crate::{Copilot, Status, request::PromptUserDeviceFlow};
+﻿use crate::{Copilot, Status, request::PromptUserDeviceFlow};
 use gpui::{
     Animation, AnimationExt, App, ClipboardItem, Context, DismissEvent, Element, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, MouseDownEvent,
@@ -80,7 +80,7 @@ pub fn initiate_sign_in_within_workspace(
                     workspace
                         .update_in(cx, |workspace, window, cx| {
                             match copilot.read(cx).status() {
-                                Status::Authorized => workspace.show_toast(
+                                Status::AuthoriCodeOrbit => workspace.show_toast(
                                     Toast::new(
                                         NotificationId::unique::<CopilotStatusToast>(),
                                         "Copilot has started.",
@@ -196,7 +196,7 @@ impl CopilotCodeVerification {
             _subscription: cx.observe(copilot, |this, copilot, cx| {
                 let status = copilot.read(cx).status();
                 match status {
-                    Status::Authorized | Status::Unauthorized | Status::SigningIn { .. } => {
+                    Status::AuthoriCodeOrbit | Status::UnauthoriCodeOrbit | Status::SigningIn { .. } => {
                         this.set_status(status, cx)
                     }
                     _ => cx.emit(DismissEvent),
@@ -253,7 +253,7 @@ impl CopilotCodeVerification {
             .flex_1()
             .gap_2()
             .items_center()
-            .child(Headline::new("Use GitHub Copilot in Zed.").size(HeadlineSize::Large))
+            .child(Headline::new("Use GitHub Copilot in CodeOrbit.").size(HeadlineSize::Large))
             .child(
                 Label::new("Using Copilot requires an active subscription on GitHub.")
                     .color(Color::Muted),
@@ -298,7 +298,7 @@ impl CopilotCodeVerification {
             )
     }
 
-    fn render_unauthorized_modal(cx: &mut Context<Self>) -> impl Element {
+    fn render_unauthoriCodeOrbit_modal(cx: &mut Context<Self>) -> impl Element {
         v_flex()
             .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
 
@@ -341,11 +341,11 @@ impl Render for CopilotCodeVerification {
             Status::SigningIn {
                 prompt: Some(prompt),
             } => Self::render_prompting_modal(self.connect_clicked, prompt, cx).into_any_element(),
-            Status::Unauthorized => {
+            Status::UnauthoriCodeOrbit => {
                 self.connect_clicked = false;
-                Self::render_unauthorized_modal(cx).into_any_element()
+                Self::render_unauthoriCodeOrbit_modal(cx).into_any_element()
             }
-            Status::Authorized => {
+            Status::AuthoriCodeOrbit => {
                 self.connect_clicked = false;
                 Self::render_enabled_modal(cx).into_any_element()
             }
@@ -367,7 +367,7 @@ impl Render for CopilotCodeVerification {
                 window.focus(&this.focus_handle);
             }))
             .child(
-                Vector::new(VectorName::ZedXCopilot, rems(8.), rems(4.))
+                Vector::new(VectorName::CodeOrbitXCopilot, rems(8.), rems(4.))
                     .color(Color::Custom(cx.theme().colors().icon)),
             )
             .child(prompt)

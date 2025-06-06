@@ -1,4 +1,4 @@
-use super::latest;
+﻿use super::latest;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use extension::WorktreeDelegate;
@@ -14,8 +14,8 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.0.4",
     with: {
          "worktree": ExtensionWorktree,
-         "zed:extension/github": latest::zed::extension::github,
-         "zed:extension/platform": latest::zed::extension::platform,
+         "CodeOrbit:extension/github": latest::CodeOrbit::extension::github,
+         "CodeOrbit:extension/platform": latest::CodeOrbit::extension::platform,
     },
 });
 
@@ -128,11 +128,11 @@ impl ExtensionImports for WasmState {
         repo: String,
         options: GithubReleaseOptions,
     ) -> wasmtime::Result<Result<GithubRelease, String>> {
-        latest::zed::extension::github::Host::latest_github_release(self, repo, options).await
+        latest::CodeOrbit::extension::github::Host::latest_github_release(self, repo, options).await
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        latest::zed::extension::platform::Host::current_platform(self).await
+        latest::CodeOrbit::extension::platform::Host::current_platform(self).await
     }
 
     async fn set_language_server_installation_status(

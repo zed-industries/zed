@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+﻿use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -30,7 +30,7 @@ use gpui::{
 use language::{Buffer, Language, Point};
 use language_model::{
     ConfiguredModel, LanguageModelRequestMessage, MessageContent, RequestUsage,
-    ZED_CLOUD_PROVIDER_ID,
+    codeorbit_CLOUD_PROVIDER_ID,
 };
 use multi_buffer;
 use project::Project;
@@ -42,7 +42,7 @@ use theme::ThemeSettings;
 use ui::{Disclosure, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use util::{ResultExt as _, maybe};
 use workspace::{CollaboratorId, Workspace};
-use zed_llm_client::CompletionIntent;
+use codeorbit_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_store::ContextStore;
@@ -109,7 +109,7 @@ pub(crate) fn create_editor(
             window,
             cx,
         );
-        editor.set_placeholder_text("Message the agent – @ to include context", cx);
+        editor.set_placeholder_text("Message the agent â€“ @ to include context", cx);
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
         editor.set_use_modal_editing(true);
@@ -257,7 +257,7 @@ impl MessageEditor {
                 editor.set_mode(EditorMode::Full {
                     scale_ui_elements_with_buffer_font_size: false,
                     show_active_line_background: false,
-                    sized_by_content: false,
+                    siCodeOrbit_by_content: false,
                 })
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
@@ -524,9 +524,9 @@ impl MessageEditor {
         let active_completion_mode = thread.completion_mode();
         let burn_mode_enabled = active_completion_mode == CompletionMode::Burn;
         let icon = if burn_mode_enabled {
-            IconName::ZedBurnModeOn
+            IconName::CodeOrbitBurnModeOn
         } else {
-            IconName::ZedBurnMode
+            IconName::CodeOrbitBurnMode
         };
 
         Some(
@@ -938,7 +938,7 @@ impl MessageEditor {
                                 if pending_edits {
                                     this.child(
                                         Label::new(format!(
-                                            "Editing {} {}…",
+                                            "Editing {} {}â€¦",
                                             changed_buffers.len(),
                                             if changed_buffers.len() == 1 {
                                                 "file"
@@ -963,7 +963,7 @@ impl MessageEditor {
                                             .color(Color::Muted),
                                     )
                                     .child(
-                                        Label::new("•").size(LabelSize::XSmall).color(Color::Muted),
+                                        Label::new("â€¢").size(LabelSize::XSmall).color(Color::Muted),
                                     )
                                     .child(
                                         Label::new(format!(
@@ -1184,14 +1184,14 @@ impl MessageEditor {
     }
 
     fn render_usage_callout(&self, line_height: Pixels, cx: &mut Context<Self>) -> Option<Div> {
-        let is_using_zed_provider = self
+        let is_using_CodeOrbit_provider = self
             .thread
             .read(cx)
             .configured_model()
             .map_or(false, |model| {
-                model.provider.id().0 == ZED_CLOUD_PROVIDER_ID
+                model.provider.id().0 == codeorbit_CLOUD_PROVIDER_ID
             });
-        if !is_using_zed_provider {
+        if !is_using_CodeOrbit_provider {
             return None;
         }
 
@@ -1208,11 +1208,11 @@ impl MessageEditor {
         let plan = user_store
             .current_plan()
             .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::ZedFree,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+                Plan::Free => codeorbit_llm_client::Plan::CodeOrbitFree,
+                Plan::CodeOrbitPro => codeorbit_llm_client::Plan::CodeOrbitPro,
+                Plan::CodeOrbitProTrial => codeorbit_llm_client::Plan::CodeOrbitProTrial,
             })
-            .unwrap_or(zed_llm_client::Plan::ZedFree);
+            .unwrap_or(codeorbit_llm_client::Plan::CodeOrbitFree);
         let usage = self.thread.read(cx).last_usage().or_else(|| {
             maybe!({
                 let amount = user_store.model_request_usage_amount()?;
@@ -1222,10 +1222,10 @@ impl MessageEditor {
                     amount: amount as i32,
                     limit: match limit {
                         proto::usage_limit::Variant::Limited(limited) => {
-                            zed_llm_client::UsageLimit::Limited(limited.limit as i32)
+                            codeorbit_llm_client::UsageLimit::Limited(limited.limit as i32)
                         }
                         proto::usage_limit::Variant::Unlimited(_) => {
-                            zed_llm_client::UsageLimit::Unlimited
+                            codeorbit_llm_client::UsageLimit::Unlimited
                         }
                     },
                 })

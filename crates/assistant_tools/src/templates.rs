@@ -1,4 +1,4 @@
-use anyhow::Result;
+﻿use anyhow::Result;
 use handlebars::Handlebars;
 use rust_embed::RustEmbed;
 use serde::Serialize;
@@ -20,12 +20,12 @@ impl Templates {
     }
 }
 
-pub trait Template: Sized {
+pub trait Template: SiCodeOrbit {
     const TEMPLATE_NAME: &'static str;
 
     fn render(&self, templates: &Templates) -> Result<String>
     where
-        Self: Serialize + Sized,
+        Self: Serialize + SiCodeOrbit,
     {
         Ok(templates.0.render(Self::TEMPLATE_NAME, self)?)
     }
