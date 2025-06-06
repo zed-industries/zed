@@ -42,7 +42,7 @@ impl ModelContextProtocol {
 
         let response: types::InitializeResponse = self
             .inner
-            .request(types::Initialize::METHOD, params)
+            .request(types::request::Initialize::METHOD, params)
             .await?;
 
         anyhow::ensure!(

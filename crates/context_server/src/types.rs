@@ -5,78 +5,82 @@ use url::Url;
 
 pub const LATEST_PROTOCOL_VERSION: &str = "2024-11-05";
 
+pub mod request {
+    use super::*;
+
+    macro_rules! request {
+        ($method:expr, $name:ident, $params:ty, $response:ty) => {
+            pub struct $name;
+
+            impl Request for $name {
+                type Params = $params;
+                type Response = $response;
+                const METHOD: &'static str = $method;
+            }
+        };
+    }
+
+    request!(
+        "initialize",
+        Initialize,
+        InitializeParams,
+        InitializeResponse
+    );
+    request!("tools/call", CallTool, CallToolParams, CallToolResponse);
+    request!(
+        "resources/unsubscribe",
+        ResourcesUnsubscribe,
+        ResourcesUnsubscribeParams,
+        ()
+    );
+    request!(
+        "resources/subscribe",
+        ResourcesSubscribe,
+        ResourcesSubscribeParams,
+        ()
+    );
+    request!(
+        "resources/read",
+        ResourcesRead,
+        ResourcesReadParams,
+        ResourcesReadResponse
+    );
+    request!("resources/list", ResourcesList, (), ResourcesListResponse);
+    request!(
+        "logging/setLevel",
+        LoggingSetLevel,
+        LoggingSetLevelParams,
+        ()
+    );
+    request!(
+        "prompts/get",
+        PromptsGet,
+        PromptsGetParams,
+        PromptsGetResponse
+    );
+    request!("prompts/list", PromptsList, (), PromptsListResponse);
+    request!(
+        "completion/complete",
+        CompletionComplete,
+        CompletionCompleteParams,
+        CompletionCompleteResponse
+    );
+    request!("ping", Ping, (), ());
+    request!("tools/list", ListTools, (), ListToolsResponse);
+    request!(
+        "resources/templates/list",
+        ListResourceTemplates,
+        (),
+        ListResourceTemplatesResponse
+    );
+    request!("roots/list", ListRoots, (), ListRootsResponse);
+}
+
 pub trait Request {
     type Params: DeserializeOwned + Serialize + Send + Sync + 'static;
     type Response: DeserializeOwned + Serialize + Send + Sync + 'static;
     const METHOD: &'static str;
 }
-
-macro_rules! request {
-    ($method:expr, $name:ident, $params:ty, $response:ty) => {
-        pub struct $name;
-
-        impl Request for $name {
-            type Params = $params;
-            type Response = $response;
-            const METHOD: &'static str = $method;
-        }
-    };
-}
-
-request!(
-    "initialize",
-    Initialize,
-    InitializeParams,
-    InitializeResponse
-);
-request!("tools/call", CallTool, CallToolParams, CallToolResponse);
-request!(
-    "resources/unsubscribe",
-    ResourcesUnsubscribe,
-    ResourcesUnsubscribeParams,
-    ()
-);
-request!(
-    "resources/subscribe",
-    ResourcesSubscribe,
-    ResourcesSubscribeParams,
-    ()
-);
-request!(
-    "resources/read",
-    ResourcesRead,
-    ResourcesReadParams,
-    ResourcesReadResponse
-);
-request!("resources/list", ResourcesList, (), ResourcesListResponse);
-request!(
-    "logging/setLevel",
-    LoggingSetLevel,
-    LoggingSetLevelParams,
-    ()
-);
-request!(
-    "prompts/get",
-    PromptsGet,
-    PromptsGetParams,
-    PromptsGetResponse
-);
-request!("prompts/list", PromptsList, (), PromptsListResponse);
-request!(
-    "completion/complete",
-    CompletionComplete,
-    CompletionCompleteParams,
-    CompletionCompleteResponse
-);
-request!("ping", Ping, (), ());
-request!("tools/list", ListTools, (), ListToolsResponse);
-request!(
-    "resources/templates/list",
-    ListResourceTemplates,
-    (),
-    ListResourceTemplatesResponse
-);
-request!("roots/list", ListRoots, (), ListRootsResponse);
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]

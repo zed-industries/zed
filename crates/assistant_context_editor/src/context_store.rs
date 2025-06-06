@@ -865,7 +865,7 @@ impl ContextStore {
 
             if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
                 if let Some(response) = protocol
-                    .request::<context_server::types::PromptsList>(())
+                    .request::<context_server::types::request::PromptsList>(())
                     .await
                     .log_err()
                 {
