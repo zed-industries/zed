@@ -94,7 +94,7 @@ impl WindowsWindowState {
         };
         let origin = logical_point(cs.x as f32, cs.y as f32, scale_factor);
         let logical_size = {
-            let physical_size = size(DevicePixels(cs.cx), DevicePixels(cs.cy));
+            let physical_size = size(phypx(cs.cx), phypx(cs.cy));
             physical_size.to_pixels(scale_factor)
         };
         let fullscreen_restore_bounds = Bounds {
@@ -1234,7 +1234,7 @@ fn calculate_client_rect(
     let top = rect.top + top_offset;
     let right = rect.right - right_offset;
     let bottom = rect.bottom - bottom_offset;
-    let physical_size = size(DevicePixels(right - left), DevicePixels(bottom - top));
+    let physical_size = size(phypx(right - left), phypx(bottom - top));
     Bounds {
         origin: logical_point(left as f32, top as f32, scale_factor),
         size: physical_size.to_pixels(scale_factor),
@@ -1362,24 +1362,24 @@ mod tests {
     fn test_double_click_interval() {
         let mut state = ClickState::new();
         assert_eq!(
-            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            state.update(MouseButton::Left, point(phypx(0), phypx(0))),
             1
         );
         assert_eq!(
-            state.update(MouseButton::Right, point(DevicePixels(0), DevicePixels(0))),
+            state.update(MouseButton::Right, point(phypx(0), phypx(0))),
             1
         );
         assert_eq!(
-            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            state.update(MouseButton::Left, point(phypx(0), phypx(0))),
             1
         );
         assert_eq!(
-            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            state.update(MouseButton::Left, point(phypx(0), phypx(0))),
             2
         );
         state.last_click -= Duration::from_millis(700);
         assert_eq!(
-            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(0))),
+            state.update(MouseButton::Left, point(phypx(0), phypx(0))),
             1
         );
     }
@@ -1388,19 +1388,19 @@ mod tests {
     fn test_double_click_spatial_tolerance() {
         let mut state = ClickState::new();
         assert_eq!(
-            state.update(MouseButton::Left, point(DevicePixels(-3), DevicePixels(0))),
+            state.update(MouseButton::Left, point(phypx(-3), phypx(0))),
             1
         );
         assert_eq!(
-            state.update(MouseButton::Left, point(DevicePixels(0), DevicePixels(3))),
+            state.update(MouseButton::Left, point(phypx(0), phypx(3))),
             2
         );
         assert_eq!(
-            state.update(MouseButton::Right, point(DevicePixels(3), DevicePixels(2))),
+            state.update(MouseButton::Right, point(phypx(3), phypx(2))),
             1
         );
         assert_eq!(
-            state.update(MouseButton::Right, point(DevicePixels(10), DevicePixels(0))),
+            state.update(MouseButton::Right, point(phypx(10), phypx(0))),
             1
         );
     }
