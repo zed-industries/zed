@@ -278,7 +278,7 @@ To debug a specific package, you can do so by setting the Delve mode to "debug".
     "adapter": "Delve",
     "mode": "debug",
     // For Delve, the program is the package name
-    "program": "./cmd/server",
+    "program": "./cmd/server"
     // "args": [],
     // "buildFlags": [],
   }
@@ -288,6 +288,7 @@ To debug a specific package, you can do so by setting the Delve mode to "debug".
 ##### Debug Go Tests
 
 To debug the tests for a package, set the Delve mode to "test". The "program" is still the package name, and you can use the "buildFlags" to do things like set tags, and the "args" to set args on the test binary. (See `go help testflags` for more information on doing that).
+
 ```json
 [
   {
@@ -296,13 +297,12 @@ To debug the tests for a package, set the Delve mode to "test". The "program" is
     "adapter": "Delve",
     "mode": "test",
     "program": ".",
-    "buildFlags": ["-tags", "integration"],
+    "buildFlags": ["-tags", "integration"]
     // To filter down to just the test your cursor is in:
     // "args": ["-test.run", "$ZED_SYMBOL"]
   }
 ]
 ```
-
 
 ##### Build and debug separately
 
@@ -310,25 +310,25 @@ If you need to build your application with a specific command, you can use the "
 and the "build" command should build that.
 
 ```json
-  {
-    "label": "Debug Prebuilt Unit Tests",
-    "adapter": "Delve",
-    "build": {
-      "command": "go",
-      "args": [
-        "test",
-        "-c",
-        "-tags",
-        "unit",
-        "-gcflags\"all=-N -l\"",
-        "-o",
-        "__debug_unit",
-        "./pkg/..."
-      ]
-    },
-    "program": "${ZED_WORKTREE_ROOT}/__debug_unit",
-    "args": ["-test.v", "-test.run=${ZED_SYMBOL}"]
-  }
+{
+  "label": "Debug Prebuilt Unit Tests",
+  "adapter": "Delve",
+  "build": {
+    "command": "go",
+    "args": [
+      "test",
+      "-c",
+      "-tags",
+      "unit",
+      "-gcflags\"all=-N -l\"",
+      "-o",
+      "__debug_unit",
+      "./pkg/..."
+    ]
+  },
+  "program": "${ZED_WORKTREE_ROOT}/__debug_unit",
+  "args": ["-test.v", "-test.run=${ZED_SYMBOL}"]
+}
 ```
 
 ## Breakpoints
