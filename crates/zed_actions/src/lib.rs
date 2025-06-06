@@ -154,6 +154,12 @@ pub mod jj {
     actions!(jj, [BookmarkList]);
 }
 
+pub mod toast {
+    use gpui::actions;
+
+    actions!(toast, [RunAction]);
+}
+
 pub mod command_palette {
     use gpui::actions;
 

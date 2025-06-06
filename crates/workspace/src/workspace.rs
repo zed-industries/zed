@@ -15,7 +15,7 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
+pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
 use call::{ActiveCall, call_settings::CallSettings};
@@ -2401,7 +2401,7 @@ impl Workspace {
                                 })
                             }
                         })
-                        .log_err()?;
+                        .ok()?;
                         None
                     } else {
                         Some(
@@ -2414,7 +2414,7 @@ impl Workspace {
                                     cx,
                                 )
                             })
-                            .log_err()?
+                            .ok()?
                             .await,
                         )
                     }
@@ -3111,7 +3111,7 @@ impl Workspace {
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
-                let result = pane.open_item(
+                pane.open_item(
                     project_entry_id,
                     project_path,
                     focus_item,
@@ -3121,9 +3121,7 @@ impl Workspace {
                     window,
                     cx,
                     build_item,
-                );
-
-                result
+                )
             });
             result
         })

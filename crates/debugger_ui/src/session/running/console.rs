@@ -282,16 +282,6 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
         }
     }
 
-    fn resolve_completions(
-        &self,
-        _buffer: Entity<Buffer>,
-        _completion_indices: Vec<usize>,
-        _completions: Rc<RefCell<Box<[Completion]>>>,
-        _cx: &mut Context<Editor>,
-    ) -> gpui::Task<anyhow::Result<bool>> {
-        Task::ready(Ok(false))
-    }
-
     fn apply_additional_edits_for_completion(
         &self,
         _buffer: Entity<Buffer>,
