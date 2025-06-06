@@ -7658,6 +7658,10 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
         .await;
     cx.executor().run_until_parked();
 
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
     let repository = project.read_with(cx, |project, cx| {
         project.repositories(cx).values().next().unwrap().clone()
     });
