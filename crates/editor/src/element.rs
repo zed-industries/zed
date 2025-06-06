@@ -5133,7 +5133,7 @@ impl EditorElement {
         let is_singleton = self.editor.read(cx).is_singleton(cx);
 
         let line_height = layout.position_map.line_height;
-        window.set_cursor_style(CursorStyle::Arrow, Some(&layout.gutter_hitbox));
+        window.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
         for LineNumberLayout {
             shaped_line,
@@ -5160,9 +5160,9 @@ impl EditorElement {
             // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
             // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
             if is_singleton {
-                window.set_cursor_style(CursorStyle::IBeam, Some(&hitbox));
+                window.set_cursor_style(CursorStyle::IBeam, &hitbox);
             } else {
-                window.set_cursor_style(CursorStyle::PointingHand, Some(&hitbox));
+                window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
             }
         }
     }
@@ -5380,7 +5380,7 @@ impl EditorElement {
                     .read(cx)
                     .all_diff_hunks_expanded()
                 {
-                    window.set_cursor_style(CursorStyle::PointingHand, Some(hunk_hitbox));
+                    window.set_cursor_style(CursorStyle::PointingHand, hunk_hitbox);
                 }
             }
         }
@@ -5454,7 +5454,7 @@ impl EditorElement {
             |window| {
                 let editor = self.editor.read(cx);
                 if editor.mouse_cursor_hidden {
-                    window.set_cursor_style(CursorStyle::None, None);
+                    window.set_window_cursor_style(CursorStyle::None);
                 } else if editor
                     .hovered_link_state
                     .as_ref()
@@ -5462,13 +5462,10 @@ impl EditorElement {
                 {
                     window.set_cursor_style(
                         CursorStyle::PointingHand,
-                        Some(&layout.position_map.text_hitbox),
+                        &layout.position_map.text_hitbox,
                     );
                 } else {
-                    window.set_cursor_style(
-                        CursorStyle::IBeam,
-                        Some(&layout.position_map.text_hitbox),
-                    );
+                    window.set_cursor_style(CursorStyle::IBeam, &layout.position_map.text_hitbox);
                 };
 
                 self.paint_lines_background(layout, window, cx);
@@ -5609,6 +5606,7 @@ impl EditorElement {
         let Some(scrollbars_layout) = layout.scrollbars_layout.take() else {
             return;
         };
+        let any_scrollbar_dragged = self.editor.read(cx).scroll_manager.any_scrollbar_dragged();
 
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
             let hitbox = &scrollbar_layout.hitbox;
@@ -5674,7 +5672,11 @@ impl EditorElement {
                             BorderStyle::Solid,
                         ));
 
-                        window.set_cursor_style(CursorStyle::Arrow, Some(&hitbox));
+                        if any_scrollbar_dragged {
+                            window.set_window_cursor_style(CursorStyle::Arrow);
+                        } else {
+                            window.set_cursor_style(CursorStyle::Arrow, &hitbox);
+                        }
                     }
                 })
             }
@@ -5742,7 +5744,7 @@ impl EditorElement {
             }
         });
 
-        if self.editor.read(cx).scroll_manager.any_scrollbar_dragged() {
+        if any_scrollbar_dragged {
             window.on_mouse_event({
                 let editor = self.editor.clone();
                 move |_: &MouseUpEvent, phase, window, cx| {
@@ -6128,6 +6130,7 @@ impl EditorElement {
     fn paint_minimap(&self, layout: &mut EditorLayout, window: &mut Window, cx: &mut App) {
         if let Some(mut layout) = layout.minimap.take() {
             let minimap_hitbox = layout.thumb_layout.hitbox.clone();
+            let dragging_minimap = self.editor.read(cx).scroll_manager.is_dragging_minimap();
 
             window.paint_layer(layout.thumb_layout.hitbox.bounds, |window| {
                 window.with_element_namespace("minimap", |window| {
@@ -6179,7 +6182,11 @@ impl EditorElement {
                 });
             });
 
-            window.set_cursor_style(CursorStyle::Arrow, Some(&minimap_hitbox));
+            if dragging_minimap {
+                window.set_window_cursor_style(CursorStyle::Arrow);
+            } else {
+                window.set_cursor_style(CursorStyle::Arrow, &minimap_hitbox);
+            }
 
             let minimap_axis = ScrollbarAxis::Vertical;
             let pixels_per_line = (minimap_hitbox.size.height / layout.max_scroll_top)
@@ -6240,7 +6247,7 @@ impl EditorElement {
                 }
             });
 
-            if self.editor.read(cx).scroll_manager.is_dragging_minimap() {
+            if dragging_minimap {
                 window.on_mouse_event({
                     let editor = self.editor.clone();
                     move |event: &MouseUpEvent, phase, window, cx| {
