@@ -441,17 +441,17 @@ impl settings::Settings for AllLanguageModelSettings {
 
             settings.copilot_chat.api_url = copilot_chat.api_url.map_or_else(
                 || Arc::from("https://api.githubcopilot.com/chat/completions"),
-                |s| Arc::from(s),
+                Arc::from,
             );
 
             settings.copilot_chat.auth_url = copilot_chat.auth_url.map_or_else(
                 || Arc::from("https://api.github.com/copilot_internal/v2/token"),
-                |s| Arc::from(s),
+                Arc::from,
             );
 
             settings.copilot_chat.models_url = copilot_chat.models_url.map_or_else(
                 || Arc::from("https://api.githubcopilot.com/models"),
-                |s| Arc::from(s),
+                Arc::from,
             );
         }
 
