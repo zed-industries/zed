@@ -2248,15 +2248,21 @@ impl Editor {
 
     pub fn accept_edit_prediction_keybind(
         &self,
+        accept_partial: bool,
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
 
+        let bindings = if accept_partial {
+            window.bindings_for_action_in_context(&AcceptPartialEditPrediction, key_context)
+        } else {
+            window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
+        };
+
         AcceptEditPredictionBinding(
-            window
-                .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
+            bindings
                 .into_iter()
                 .filter(|binding| {
                     !in_conflict
@@ -7119,12 +7125,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let accept_keybind = self.accept_edit_prediction_keybind(window, cx);
-        let Some(accept_keystroke) = accept_keybind.keystroke() else {
-            return;
+        let mut modifiers_held = false;
+        if let Some(accept_keystroke) = self
+            .accept_edit_prediction_keybind(false, window, cx)
+            .keystroke()
+        {
+            modifiers_held = modifiers_held
+                || (&accept_keystroke.modifiers == modifiers
+                    && accept_keystroke.modifiers.modified());
         };
+        if let Some(accept_partial_keystroke) = self
+            .accept_edit_prediction_keybind(true, window, cx)
+            .keystroke()
+        {
+            modifiers_held = modifiers_held
+                || (&accept_partial_keystroke.modifiers == modifiers
+                    && accept_partial_keystroke.modifiers.modified());
+        }
 
-        if &accept_keystroke.modifiers == modifiers && accept_keystroke.modifiers.modified() {
+        if modifiers_held {
             if matches!(
                 self.edit_prediction_preview,
                 EditPredictionPreview::Inactive { .. }
@@ -8441,7 +8460,7 @@ impl Editor {
         window: &mut Window,
         cx: &App,
     ) -> Option<AnyElement> {
-        let accept_binding = self.accept_edit_prediction_keybind(window, cx);
+        let accept_binding = self.accept_edit_prediction_keybind(false, window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
