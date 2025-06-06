@@ -4891,7 +4891,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_drag_pinned_tab_to_start_of_pinned_region(cx: &mut TestAppContext) {
+    async fn test_drag_pinned_tab_throughout_entire_range_of_pinned_tabs_both_directions(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
 
@@ -4900,10 +4902,11 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        // Add A, B and pin both
+        // Add A, B, C and pin all
         let item_a = add_labeled_item(&pane_a, "A", false, cx);
         let item_b = add_labeled_item(&pane_a, "B", false, cx);
-        assert_item_labels(&pane_a, ["A", "B*"], cx);
+        let item_c = add_labeled_item(&pane_a, "C", false, cx);
+        assert_item_labels(&pane_a, ["A", "B", "C*"], cx);
 
         pane_a.update_in(cx, |pane, window, cx| {
             let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
@@ -4911,14 +4914,62 @@ mod tests {
 
             let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
             pane.pin_tab_at(ix, window, cx);
-        });
-        assert_item_labels(&pane_a, ["A!", "B*!"], cx);
 
-        // Move B to left of A
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane_a, ["A!", "B!", "C*!"], cx);
+
+        // Move A to right of B
         pane_a.update_in(cx, |pane, window, cx| {
             let dragged_tab = DraggedTab {
                 pane: pane_a.clone(),
-                item: item_b.boxed_clone(),
+                item: item_a.boxed_clone(),
+                ix: 0,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 1, window, cx);
+        });
+
+        // A should be after B and all are pinned
+        assert_item_labels(&pane_a, ["B!", "A*!", "C!"], cx);
+
+        // Move A to right of C
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 1,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 2, window, cx);
+        });
+
+        // A should be after C and all are pinned
+        assert_item_labels(&pane_a, ["B!", "C!", "A*!"], cx);
+
+        // Move A to left of C
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 2,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 1, window, cx);
+        });
+
+        // A should be before C and all are pinned
+        assert_item_labels(&pane_a, ["B!", "A*!", "C!"], cx);
+
+        // Move A to left of B
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
                 ix: 1,
                 detail: 0,
                 is_active: true,
@@ -4926,8 +4977,8 @@ mod tests {
             pane.handle_tab_drop(&dragged_tab, 0, window, cx);
         });
 
-        // Pinned B should be in front of pinned A
-        assert_item_labels(&pane_a, ["B*!", "A!"], cx);
+        // A should be before B and all are pinned
+        assert_item_labels(&pane_a, ["A*!", "B!", "C!"], cx);
     }
 
     #[gpui::test]
