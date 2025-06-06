@@ -367,6 +367,7 @@ impl LanguageModel for OpenRouterLanguageModel {
                 'static,
                 Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
             >,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_open_router(request, &self.model, self.max_output_tokens());

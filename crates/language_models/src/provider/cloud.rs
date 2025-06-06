@@ -807,6 +807,7 @@ impl LanguageModel for CloudLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let thread_id = request.thread_id.clone();
@@ -884,7 +885,7 @@ impl LanguageModel for CloudLanguageModel {
                 let client = self.client.clone();
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,
-                    Err(err) => return async move { Err(anyhow!(err)) }.boxed(),
+                    Err(err) => return async move { Err(anyhow!(err).into()) }.boxed(),
                 };
                 let request = into_open_ai(request, &model, None);
                 let llm_api_token = self.llm_api_token.clone();

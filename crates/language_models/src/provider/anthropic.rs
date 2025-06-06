@@ -485,6 +485,7 @@ impl LanguageModel for AnthropicModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_anthropic(

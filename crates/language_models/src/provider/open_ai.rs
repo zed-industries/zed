@@ -339,6 +339,7 @@ impl LanguageModel for OpenAiLanguageModel {
                 'static,
                 Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
             >,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_open_ai(request, &self.model, self.max_output_tokens());

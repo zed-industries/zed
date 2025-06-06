@@ -273,6 +273,7 @@ pub trait LanguageModel: Send + Sync {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     >;
 
@@ -280,7 +281,7 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
+    ) -> BoxFuture<'static, Result<LanguageModelTextStream, LanguageModelCompletionError>> {
         let future = self.stream_completion(request, cx);
 
         async move {

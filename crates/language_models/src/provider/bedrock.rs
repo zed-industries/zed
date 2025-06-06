@@ -527,6 +527,7 @@ impl LanguageModel for BedrockModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
@@ -539,16 +540,13 @@ impl LanguageModel for BedrockModel {
                 .or(settings_region)
                 .unwrap_or(String::from("us-east-1"))
         }) else {
-            return async move {
-                anyhow::bail!("App State Dropped");
-            }
-            .boxed();
+            return async move { Err(anyhow::anyhow!("App State Dropped").into()) }.boxed();
         };
 
         let model_id = match self.model.cross_region_inference_id(&region) {
             Ok(s) => s,
             Err(e) => {
-                return async move { Err(e) }.boxed();
+                return async move { Err(e.into()) }.boxed();
             }
         };
 
@@ -560,7 +558,7 @@ impl LanguageModel for BedrockModel {
             self.model.mode(),
         ) {
             Ok(request) => request,
-            Err(err) => return futures::future::ready(Err(err)).boxed(),
+            Err(err) => return futures::future::ready(Err(err.into())).boxed(),
         };
 
         let owned_handle = self.handler.clone();

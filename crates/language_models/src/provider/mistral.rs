@@ -363,6 +363,7 @@ impl LanguageModel for MistralLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_mistral(

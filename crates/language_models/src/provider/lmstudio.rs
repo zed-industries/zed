@@ -418,6 +418,7 @@ impl LanguageModel for LmStudioLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = self.to_lmstudio_request(request);
