@@ -2025,7 +2025,7 @@ impl GitPanel {
         };
         telemetry::event!("Git Pulled");
         let branch = branch.clone();
-        let remote = self.get_current_remote(window, cx);
+        let remote = self.get_remote(false, window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
@@ -2070,7 +2070,13 @@ impl GitPanel {
         .detach_and_log_err(cx);
     }
 
-    pub(crate) fn push(&mut self, force_push: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn push(
+        &mut self,
+        force_push: bool,
+        select_remote: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.can_push_and_pull(cx) {
             return;
         }
@@ -2095,7 +2101,7 @@ impl GitPanel {
                 _ => None,
             }
         };
-        let remote = self.get_current_remote(window, cx);
+        let remote = self.get_remote(select_remote, window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             let remote = match remote.await {
@@ -2169,8 +2175,9 @@ impl GitPanel {
         !self.project.read(cx).is_via_collab()
     }
 
-    fn get_current_remote(
+    fn get_remote(
         &mut self,
+        always_select: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl Future<Output = anyhow::Result<Option<Remote>>> + use<> {
@@ -2182,8 +2189,13 @@ impl GitPanel {
             let repo = repo.context("No active repository")?;
             let current_remotes: Vec<Remote> = repo
                 .update(&mut cx, |repo, _| {
-                    let current_branch = repo.branch.as_ref().context("No active branch")?;
-                    anyhow::Ok(repo.get_remotes(Some(current_branch.name().to_string())))
+                    let current_branch = if always_select {
+                        None
+                    } else {
+                        let current_branch = repo.branch.as_ref().context("No active branch")?;
+                        Some(current_branch.name().to_string())
+                    };
+                    anyhow::Ok(repo.get_remotes(current_branch))
                 })??
                 .await??;
 
