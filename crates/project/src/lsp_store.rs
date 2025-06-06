@@ -872,9 +872,9 @@ impl LocalLspStore {
                     let mut cx = cx.clone();
                     async move {
                         this.update(&mut cx, |this, cx| {
-                            cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
+                            cx.emit(LspStoreEvent::PullWorkspaceDiagnostics);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
-                                client.send(proto::RefreshDocumentsDiagnostics {
+                                client.send(proto::PullWorkspaceDiagnostics {
                                     project_id: *project_id,
                                 })
                             })
@@ -3497,7 +3497,7 @@ pub enum LspStoreEvent {
         edits: Vec<(lsp::Range, Snippet)>,
         most_recent_edit: clock::Lamport,
     },
-    RefreshDocumentsDiagnostics,
+    PullWorkspaceDiagnostics,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -3545,7 +3545,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_entity_request_handler(Self::handle_rename_project_entry);
         client.add_entity_request_handler(Self::handle_language_server_id_for_name);
-        client.add_entity_request_handler(Self::handle_refresh_documents_diagnostics);
+        client.add_entity_request_handler(Self::handle_pull_workspace_diagnostics);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetHover>);
@@ -8171,13 +8171,13 @@ impl LspStore {
         Ok(proto::Ack {})
     }
 
-    async fn handle_refresh_documents_diagnostics(
+    async fn handle_pull_workspace_diagnostics(
         this: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshDocumentsDiagnostics>,
+        _: TypedEnvelope<proto::PullWorkspaceDiagnostics>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |_, cx| {
-            cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
+            cx.emit(LspStoreEvent::PullWorkspaceDiagnostics);
         })?;
         Ok(proto::Ack {})
     }

@@ -1700,7 +1700,7 @@ impl Editor {
                             }
                             editor.pull_diagnostics(window, cx);
                         }
-                        project::Event::RefreshDocumentsDiagnostics => {
+                        project::Event::PullWorkspaceDiagnostics => {
                             editor.pull_diagnostics(window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
@@ -18741,7 +18741,7 @@ impl Editor {
                             .as_ref()
                             .is_some_and(|buffer| buffer.read(cx).file().is_some())
                         {
-                            cx.emit(project::Event::RefreshDocumentsDiagnostics);
+                            cx.emit(project::Event::PullWorkspaceDiagnostics);
                         }
 
                         if let Some(buffer) = edited_buffer {
