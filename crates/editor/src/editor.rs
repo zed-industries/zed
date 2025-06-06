@@ -125,7 +125,7 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath,
+    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath, PulledDiagnostics,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -1700,7 +1700,7 @@ impl Editor {
                             }
                             editor.pull_diagnostics(window, cx);
                         }
-                        project::Event::RefreshDocumentsDiagnostics => {
+                        project::Event::PullWorkspaceDiagnostics => {
                             editor.pull_diagnostics(window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
@@ -2261,6 +2261,8 @@ impl Editor {
             window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
         };
 
+        // TODO: if the binding contains multiple keystrokes, display all of them, not
+        // just the first one.
         AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
             !in_conflict
                 || binding
@@ -15964,11 +15966,13 @@ impl Editor {
 
     fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
         let project = self.project.as_ref()?.downgrade();
-        let debounce = Duration::from_millis(
-            ProjectSettings::get_global(cx)
-                .diagnostics
-                .lsp_pull_diagnostics_debounce_ms?,
-        );
+        let pull_diagnostics_settings = ProjectSettings::get_global(cx)
+            .diagnostics
+            .lsp_pull_diagnostics;
+        if !pull_diagnostics_settings.enabled {
+            return None;
+        }
+        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
         let buffers = self.buffer.read(cx).all_buffers();
 
         self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
@@ -18731,13 +18735,16 @@ impl Editor {
                 }
                 if let Some(project) = self.project.as_ref() {
                     project.update(cx, |project, cx| {
-                        // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
-                        // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
                         if edited_buffer
                             .as_ref()
                             .is_some_and(|buffer| buffer.read(cx).file().is_some())
                         {
-                            cx.emit(project::Event::RefreshDocumentsDiagnostics);
+                            // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
+                            // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
+                            // TODO: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic_refresh explains the flow how
+                            // diagnostics should be pulled: instead of pulling every open editor's buffer's diagnostics (which happens effectively due to emitting this event),
+                            // we should only pull for the current buffer's diagnostics and get the rest via the workspace diagnostics LSP request — this is not implemented yet.
+                            cx.emit(project::Event::PullWorkspaceDiagnostics);
                         }
 
                         if let Some(buffer) = edited_buffer {
@@ -20988,7 +20995,7 @@ impl SemanticsProvider for Entity<Project> {
                         let LspPullDiagnostics::Response {
                             server_id,
                             uri,
-                            diagnostics: project::PulledDiagnostics::Changed { diagnostics, .. },
+                            diagnostics,
                         } = diagnostics_set
                         else {
                             continue;
@@ -20999,25 +21006,49 @@ impl SemanticsProvider for Entity<Project> {
                             .as_ref()
                             .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
                             .unwrap_or(&[]);
-                        lsp_store
-                            .merge_diagnostics(
-                                server_id,
-                                lsp::PublishDiagnosticsParams {
-                                    uri: uri.clone(),
-                                    diagnostics,
-                                    version: None,
-                                },
-                                DiagnosticSourceKind::Pulled,
-                                disk_based_sources,
-                                |old_diagnostic, _| match old_diagnostic.source_kind {
-                                    DiagnosticSourceKind::Pulled => false,
-                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
-                                        true
-                                    }
-                                },
-                                cx,
-                            )
-                            .log_err();
+                        match diagnostics {
+                            PulledDiagnostics::Unchanged { result_id } => {
+                                lsp_store
+                                    .merge_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: uri.clone(),
+                                            diagnostics: Vec::new(),
+                                            version: None,
+                                        },
+                                        Some(result_id),
+                                        DiagnosticSourceKind::Pulled,
+                                        disk_based_sources,
+                                        |_, _| true,
+                                        cx,
+                                    )
+                                    .log_err();
+                            }
+                            PulledDiagnostics::Changed {
+                                diagnostics,
+                                result_id,
+                            } => {
+                                lsp_store
+                                    .merge_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: uri.clone(),
+                                            diagnostics,
+                                            version: None,
+                                        },
+                                        result_id,
+                                        DiagnosticSourceKind::Pulled,
+                                        disk_based_sources,
+                                        |old_diagnostic, _| match old_diagnostic.source_kind {
+                                            DiagnosticSourceKind::Pulled => false,
+                                            DiagnosticSourceKind::Other
+                                            | DiagnosticSourceKind::Pushed => true,
+                                        },
+                                        cx,
+                                    )
+                                    .log_err();
+                            }
+                        }
                     }
                 })
             })

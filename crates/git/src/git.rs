@@ -49,6 +49,7 @@ actions!(
         ForcePush,
         Pull,
         Fetch,
+        FetchFrom,
         Commit,
         Amend,
         Cancel,
