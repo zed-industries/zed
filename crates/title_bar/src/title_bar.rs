@@ -22,7 +22,8 @@ use client::{Client, UserStore};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Decorations, Element, Entity, InteractiveElement,
     Interactivity, IntoElement, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, actions, div, px,
+    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, WindowControlArea,
+    actions, div, px,
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
@@ -38,7 +39,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt};
-use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zed_actions::{OpenRecent, OpenRemote};
 
 pub use onboarding_banner::restore_banner;
 
@@ -48,8 +49,6 @@ pub use stories::*;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 const MAX_SHORT_SHA_LENGTH: usize = 8;
-
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 actions!(collab, [ToggleUserMenu, ToggleProjectMenu, SwitchBranch]);
 
@@ -145,6 +144,7 @@ impl Render for TitleBar {
 
         h_flex()
             .id("titlebar")
+            .window_control_area(WindowControlArea::Drag)
             .w_full()
             .h(height)
             .map(|this| {
@@ -181,7 +181,14 @@ impl Render for TitleBar {
                     .justify_between()
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
-                    .when(self.platform_style != PlatformStyle::Windows, |this| {
+                    .when(self.platform_style == PlatformStyle::Mac, |this| {
+                        this.on_click(|event, window, _| {
+                            if event.up.click_count == 2 {
+                                window.titlebar_double_click();
+                            }
+                        })
+                    })
+                    .when(self.platform_style == PlatformStyle::Linux, |this| {
                         this.on_click(|event, window, _| {
                             if event.up.click_count == 2 {
                                 window.zoom_window();
@@ -434,6 +441,7 @@ impl TitleBar {
                         "Remote Project",
                         Some(&OpenRemote {
                             from_existing_connection: false,
+                            create_new_window: false,
                         }),
                         meta.clone(),
                         window,
@@ -444,6 +452,7 @@ impl TitleBar {
                     window.dispatch_action(
                         OpenRemote {
                             from_existing_connection: false,
+                            create_new_window: false,
                         }
                         .boxed_clone(),
                         cx,
@@ -649,8 +658,8 @@ impl TitleBar {
                 let auto_updater = auto_update::AutoUpdater::get(cx);
                 let label = match auto_updater.map(|auto_update| auto_update.read(cx).status()) {
                     Some(AutoUpdateStatus::Updated { .. }) => "Please restart Zed to Collaborate",
-                    Some(AutoUpdateStatus::Installing)
-                    | Some(AutoUpdateStatus::Downloading)
+                    Some(AutoUpdateStatus::Installing { .. })
+                    | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
                     Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
                         "Please update Zed to Collaborate"
@@ -734,13 +743,6 @@ impl TitleBar {
                             zed_actions::Extensions::default().boxed_clone(),
                         )
                         .separator()
-                        .link(
-                            "Book Onboarding",
-                            OpenBrowser {
-                                url: BOOK_ONBOARDING.to_string(),
-                            }
-                            .boxed_clone(),
-                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -783,14 +785,6 @@ impl TitleBar {
                             .action(
                                 "Extensions",
                                 zed_actions::Extensions::default().boxed_clone(),
-                            )
-                            .separator()
-                            .link(
-                                "Book Onboarding",
-                                OpenBrowser {
-                                    url: BOOK_ONBOARDING.to_string(),
-                                }
-                                .boxed_clone(),
                             )
                     })
                     .into()

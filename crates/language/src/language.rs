@@ -34,7 +34,7 @@ pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, InitializeParams, LanguageServerBinary, LanguageServerBinaryOptions};
-pub use manifest::{ManifestName, ManifestProvider, ManifestQuery};
+pub use manifest::{ManifestDelegate, ManifestName, ManifestProvider, ManifestQuery};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -64,7 +64,7 @@ use std::{
 use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
-pub use task_context::{ContextProvider, RunnableRange};
+pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
 pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
 };
@@ -245,6 +245,10 @@ impl CachedLspAdapter {
         self.adapter.retain_old_diagnostic(previous_diagnostic, cx)
     }
 
+    pub fn underline_diagnostic(&self, diagnostic: &lsp::Diagnostic) -> bool {
+        self.adapter.underline_diagnostic(diagnostic)
+    }
+
     pub fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
         self.adapter.diagnostic_message_to_markdown(message)
     }
@@ -319,7 +323,6 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn http_client(&self) -> Arc<dyn HttpClient>;
     fn worktree_id(&self) -> WorktreeId;
     fn worktree_root_path(&self) -> &Path;
-    fn exists(&self, path: &Path, is_dir: Option<bool>) -> bool;
     fn update_status(&self, language: LanguageServerName, status: BinaryStatus);
     fn registered_lsp_adapters(&self) -> Vec<Arc<dyn LspAdapter>>;
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
@@ -468,6 +471,16 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// When processing new `lsp::PublishDiagnosticsParams` diagnostics, whether to retain previous one(s) or not.
     fn retain_old_diagnostic(&self, _previous_diagnostic: &Diagnostic, _cx: &App) -> bool {
         false
+    }
+
+    /// Whether to underline a given diagnostic or not, when rendering in the editor.
+    ///
+    /// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnosticTag
+    /// states that
+    /// > Clients are allowed to render diagnostics with this tag faded out instead of having an error squiggle.
+    /// for the unnecessary diagnostics, so do not underline them.
+    fn underline_diagnostic(&self, _diagnostic: &lsp::Diagnostic) -> bool {
+        true
     }
 
     /// Post-processes completions provided by the language server.

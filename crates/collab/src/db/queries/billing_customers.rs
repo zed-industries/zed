@@ -20,7 +20,7 @@ impl Database {
         &self,
         params: &CreateBillingCustomerParams,
     ) -> Result<billing_customer::Model> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let customer = billing_customer::Entity::insert(billing_customer::ActiveModel {
                 user_id: ActiveValue::set(params.user_id),
                 stripe_customer_id: ActiveValue::set(params.stripe_customer_id.clone()),
@@ -40,7 +40,7 @@ impl Database {
         id: BillingCustomerId,
         params: &UpdateBillingCustomerParams,
     ) -> Result<()> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             billing_customer::Entity::update(billing_customer::ActiveModel {
                 id: ActiveValue::set(id),
                 user_id: params.user_id.clone(),
@@ -61,7 +61,7 @@ impl Database {
         &self,
         id: BillingCustomerId,
     ) -> Result<Option<billing_customer::Model>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             Ok(billing_customer::Entity::find()
                 .filter(billing_customer::Column::Id.eq(id))
                 .one(&*tx)
@@ -75,7 +75,7 @@ impl Database {
         &self,
         user_id: UserId,
     ) -> Result<Option<billing_customer::Model>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             Ok(billing_customer::Entity::find()
                 .filter(billing_customer::Column::UserId.eq(user_id))
                 .one(&*tx)
@@ -89,7 +89,7 @@ impl Database {
         &self,
         stripe_customer_id: &str,
     ) -> Result<Option<billing_customer::Model>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             Ok(billing_customer::Entity::find()
                 .filter(billing_customer::Column::StripeCustomerId.eq(stripe_customer_id))
                 .one(&*tx)

@@ -285,6 +285,10 @@ impl super::LspAdapter for CLspAdapter {
     fn retain_old_diagnostic(&self, previous_diagnostic: &Diagnostic, _: &App) -> bool {
         clangd_ext::is_inactive_region(previous_diagnostic)
     }
+
+    fn underline_diagnostic(&self, diagnostic: &lsp::Diagnostic) -> bool {
+        !clangd_ext::is_lsp_inactive_region(diagnostic)
+    }
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {

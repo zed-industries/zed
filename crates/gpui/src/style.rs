@@ -140,7 +140,7 @@ impl ObjectFit {
 
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Style {
     /// What layout strategy should be used?
     pub display: Display,
@@ -286,7 +286,7 @@ pub enum Visibility {
 }
 
 /// The possible values of the box-shadow property
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BoxShadow {
     /// What color should the shadow have?
     pub color: Hsla,
@@ -332,7 +332,7 @@ pub enum TextAlign {
 
 /// The properties that can be used to style text in GPUI
 #[derive(Refineable, Clone, Debug, PartialEq)]
-#[refineable(Debug, Serialize, Deserialize, JsonSchema)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct TextStyle {
     /// The color of the text
     pub color: Hsla,
@@ -794,7 +794,7 @@ pub struct StrikethroughStyle {
 }
 
 /// The kinds of fill that can be applied to a shape.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub enum Fill {
     /// A solid color fill.
     Color(Background),

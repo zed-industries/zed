@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ::serde::{Deserialize, Serialize};
 use gpui::WeakEntity;
-use language::{CachedLspAdapter, Diagnostic};
+use language::{CachedLspAdapter, Diagnostic, DiagnosticSourceKind};
 use lsp::LanguageServer;
 use util::ResultExt as _;
 
@@ -30,6 +30,15 @@ impl lsp::notification::Notification for InactiveRegions {
 pub fn is_inactive_region(diag: &Diagnostic) -> bool {
     diag.is_unnecessary
         && diag.severity == INACTIVE_DIAGNOSTIC_SEVERITY
+        && diag.message == INACTIVE_REGION_MESSAGE
+        && diag
+            .source
+            .as_ref()
+            .is_some_and(|v| v == CLANGD_SERVER_NAME)
+}
+
+pub fn is_lsp_inactive_region(diag: &lsp::Diagnostic) -> bool {
+    diag.severity == Some(INACTIVE_DIAGNOSTIC_SEVERITY)
         && diag.message == INACTIVE_REGION_MESSAGE
         && diag
             .source
@@ -75,6 +84,8 @@ pub fn register_notifications(
                     this.merge_diagnostics(
                         server_id,
                         mapped_diagnostics,
+                        None,
+                        DiagnosticSourceKind::Pushed,
                         &adapter.disk_based_diagnostic_sources,
                         |diag, _| !is_inactive_region(diag),
                         cx,

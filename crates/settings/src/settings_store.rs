@@ -250,6 +250,7 @@ trait AnySettingValue: 'static + Send + Sync {
         cx: &mut App,
     ) -> Result<Box<dyn Any>>;
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
     fn json_schema(
@@ -374,6 +375,24 @@ impl SettingsStore {
             .value_for_path(path)
             .downcast_ref::<T>()
             .expect("no default value for setting type")
+    }
+
+    /// Get all values from project specific settings
+    pub fn get_all_locals<T: Settings>(&self) -> Vec<(WorktreeId, Arc<Path>, &T)> {
+        self.setting_values
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("unregistered setting type {}", type_name::<T>()))
+            .all_local_values()
+            .into_iter()
+            .map(|(id, path, any)| {
+                (
+                    id,
+                    path,
+                    any.downcast_ref::<T>()
+                        .expect("wrong value type for setting"),
+                )
+            })
+            .collect()
     }
 
     /// Override the global value for a setting.
@@ -1235,6 +1254,13 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         (key, value)
     }
 
+    fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)> {
+        self.local_values
+            .iter()
+            .map(|(id, path, value)| (*id, path.clone(), value as _))
+            .collect()
+    }
+
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any {
         if let Some(SettingsLocation { worktree_id, path }) = path {
             for (settings_root_id, settings_path, value) in self.local_values.iter().rev() {
@@ -1522,6 +1548,8 @@ pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T>
 
 #[cfg(test)]
 mod tests {
+    use crate::VsCodeSettingsSource;
+
     use super::*;
     use serde_derive::Deserialize;
     use unindent::Unindent;
@@ -2004,7 +2032,10 @@ mod tests {
         cx: &mut App,
     ) {
         store.set_user_settings(&old, cx).ok();
-        let new = store.get_vscode_edits(old, &VsCodeSettings::from_str(&vscode).unwrap());
+        let new = store.get_vscode_edits(
+            old,
+            &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
+        );
         pretty_assertions::assert_eq!(new, expected);
     }
 

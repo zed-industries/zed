@@ -603,7 +603,7 @@ impl LanguageServer {
         Ok(())
     }
 
-    pub fn default_initialize_params(&self, cx: &App) -> InitializeParams {
+    pub fn default_initialize_params(&self, pull_diagnostics: bool, cx: &App) -> InitializeParams {
         let workspace_folders = self
             .workspace_folders
             .lock()
@@ -643,8 +643,9 @@ impl LanguageServer {
                         refresh_support: Some(true),
                     }),
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
-                        refresh_support: None,
-                    }),
+                        refresh_support: Some(true),
+                    })
+                    .filter(|_| pull_diagnostics),
                     code_lens: Some(CodeLensWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
@@ -793,6 +794,11 @@ impl LanguageServer {
                         hierarchical_document_symbol_support: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
                     }),
+                    diagnostic: Some(DiagnosticClientCapabilities {
+                        dynamic_registration: Some(false),
+                        related_document_support: Some(true),
+                    })
+                    .filter(|_| pull_diagnostics),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
@@ -1668,9 +1674,7 @@ mod tests {
 
     #[ctor::ctor]
     fn init_logger() {
-        if std::env::var("RUST_LOG").is_ok() {
-            env_logger::init();
-        }
+        zlog::init_test();
     }
 
     #[gpui::test]
@@ -1705,7 +1709,7 @@ mod tests {
 
         let server = cx
             .update(|cx| {
-                let params = server.default_initialize_params(cx);
+                let params = server.default_initialize_params(false, cx);
                 let configuration = DidChangeConfigurationParams {
                     settings: Default::default(),
                 };
