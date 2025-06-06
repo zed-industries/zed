@@ -418,8 +418,6 @@ async fn open_local_workspace(
     app_state: &Arc<AppState>,
     cx: &mut AsyncApp,
 ) -> bool {
-    let mut errored = false;
-
     let paths_with_position =
         derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
     match open_paths_with_positions(
@@ -435,13 +433,23 @@ async fn open_local_workspace(
     .await
     {
         Ok((workspace, items)) => {
-            errored = handle_opened_items(workspace, items, &paths_with_position, wait, responses, cx).await;
+            return handle_opened_items(
+                workspace,
+                items,
+                &paths_with_position,
+                wait,
+                responses,
+                cx,
+            )
+            .await;
         }
         Err(error) => {
             #[cfg(target_os = "macos")]
             if paths_with_position.len() == 1 && is_macos_permission_error(&error) {
                 // Try to trigger permission prompt and retry
-                if let Ok(()) = try_prompt_for_permission_and_open(&paths_with_position[0].path, cx).await {
+                if let Ok(()) =
+                    try_prompt_for_permission_and_open(&paths_with_position[0].path, cx).await
+                {
                     // Permission granted, retry the original operation
                     match open_paths_with_positions(
                         &paths_with_position,
@@ -457,7 +465,15 @@ async fn open_local_workspace(
                     {
                         Ok((workspace, items)) => {
                             // Success after permission prompt - handle normally
-                            return handle_opened_items(workspace, items, &paths_with_position, wait, responses, cx).await;
+                            return handle_opened_items(
+                                workspace,
+                                items,
+                                &paths_with_position,
+                                wait,
+                                responses,
+                                cx,
+                            )
+                            .await;
                         }
                         Err(_) => {
                             // Still failed after permission prompt, fall through to error handling
@@ -466,7 +482,6 @@ async fn open_local_workspace(
                 }
             }
 
-            errored = true;
             let error_message = if paths_with_position.len() == 1 {
                 format_error_message(&error, &paths_with_position[0].path)
             } else {
@@ -479,7 +494,7 @@ async fn open_local_workspace(
                 .log_err();
         }
     }
-    errored
+    true
 }
 
 pub async fn derive_paths_with_position(
@@ -504,7 +519,8 @@ fn format_error_message(error: &anyhow::Error, path: &std::path::Path) -> String
     {
         if let Some(io_error) = error.downcast_ref::<std::io::Error>() {
             if io_error.kind() == std::io::ErrorKind::PermissionDenied
-                || (io_error.raw_os_error() == Some(1) && error.to_string().contains("Operation not permitted"))
+                || (io_error.raw_os_error() == Some(1)
+                    && error.to_string().contains("Operation not permitted"))
             {
                 if let Some(path_str) = path.to_str() {
                     return format!(
@@ -522,7 +538,8 @@ fn format_error_message(error: &anyhow::Error, path: &std::path::Path) -> String
 fn is_macos_permission_error(error: &anyhow::Error) -> bool {
     if let Some(io_error) = error.downcast_ref::<std::io::Error>() {
         io_error.kind() == std::io::ErrorKind::PermissionDenied
-            || (io_error.raw_os_error() == Some(1) && error.to_string().contains("Operation not permitted"))
+            || (io_error.raw_os_error() == Some(1)
+                && error.to_string().contains("Operation not permitted"))
     } else {
         false
     }
