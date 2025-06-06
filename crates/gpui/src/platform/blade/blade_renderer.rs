@@ -105,7 +105,7 @@ struct ShaderSurfacesData {
     s_surface: gpu::Sampler,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,

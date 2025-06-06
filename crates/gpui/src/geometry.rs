@@ -2808,11 +2808,18 @@ impl From<usize> for Pixels {
 
 /// Represents physical pixels on the display.
 ///
-/// `DevicePixels` is a unit of measurement that refers to the actual pixels on a device's screen.
+/// `PhysicalPixels` is a unit of measurement that refers to the actual pixels on a device's screen.
 /// This type is used when precise pixel manipulation is required, such as rendering graphics or
-/// interfacing with hardware that operates on the pixel level. Unlike logical pixels that may be
-/// affected by the device's scale factor, `DevicePixels` always correspond to real pixels on the
+/// interfacing with hardware that operates on the pixel level. Unlike [logical pixels] that may be
+/// affected by the device's scale factor, `PhysicalPixels` always correspond to real pixels on the
 /// display.
+///
+/// For example, with a scale factor of 2, each [logical pixel] corresponds to 2 physical pixels.
+/// So, if you set the size of an UI element to 100 logical pixels, it will be the same as setting
+/// its size to 200 physical pixels.
+///
+/// [logical pixels]: Pixels
+/// [logical pixel]: Pixels
 #[derive(
     Add,
     AddAssign,
@@ -2831,7 +2838,24 @@ impl From<usize> for Pixels {
     Deserialize,
 )]
 #[repr(transparent)]
-pub struct DevicePixels(pub i32);
+pub struct PhysicalPixels<T>(T);
+
+/// Deprecated alias to physical pixels.
+pub type DevicePixels = PhysicalPixels<i32>;
+/// Deprecated alias to physical pixels.
+pub type ScaledPixels = PhysicalPixels<f32>;
+
+/// Deprecated alias for creating `PhysicalPixels`.
+#[expect(non_snake_case)]
+pub const fn DevicePixels(x: i32) -> DevicePixels {
+    PhysicalPixels(x)
+}
+
+/// Deprecated alias for creating `PhysicalPixels`.
+#[expect(non_snake_case)]
+pub const fn ScaledPixels(x: f32) -> ScaledPixels {
+    PhysicalPixels(x)
+}
 
 impl DevicePixels {
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
@@ -2915,17 +2939,6 @@ impl From<usize> for DevicePixels {
     }
 }
 
-/// Represents scaled pixels that take into account the device's scale factor.
-///
-/// `ScaledPixels` are used to ensure that UI elements appear at the correct size on devices
-/// with different pixel densities. When a device has a higher scale factor (such as Retina displays),
-/// a single logical pixel may correspond to multiple physical pixels. By using `ScaledPixels`,
-/// dimensions and positions can be specified in a way that scales appropriately across different
-/// display resolutions.
-#[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
-#[repr(transparent)]
-pub struct ScaledPixels(pub(crate) f32);
-
 impl ScaledPixels {
     /// Floors the `ScaledPixels` value to the nearest whole number.
     ///
@@ -2943,20 +2956,6 @@ impl ScaledPixels {
     /// Returns a new `ScaledPixels` instance with the rounded value.
     pub fn ceil(&self) -> Self {
         Self(self.0.ceil())
-    }
-}
-
-impl Eq for ScaledPixels {}
-
-impl PartialOrd for ScaledPixels {
-    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for ScaledPixels {
-    fn cmp(&self, other: &Self) -> cmp::Ordering {
-        self.0.total_cmp(&other.0)
     }
 }
 
