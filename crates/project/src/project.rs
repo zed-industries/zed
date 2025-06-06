@@ -2857,6 +2857,21 @@ impl Project {
                     cx.emit(Event::SnippetEdit(*buffer_id, edits.clone()))
                 }
             }
+            LspStoreEvent::ShowDocument {
+                uri,
+                take_focus: _,
+                selection: _,
+            } => {
+                if let Ok(path) = uri.to_file_path() {
+                    if let Some((worktree, relative_path)) = self.find_worktree(&path, cx) {
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: relative_path.into(),
+                        };
+                        self.open_buffer(project_path, cx).detach();
+                    }
+                }
+            }
         }
     }
 

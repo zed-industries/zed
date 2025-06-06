@@ -12089,6 +12089,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "open",
  "parking_lot",
  "pathdiff",
  "paths",

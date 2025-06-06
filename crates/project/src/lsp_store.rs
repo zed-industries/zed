@@ -1011,6 +1011,35 @@ impl LocalLspStore {
             })
             .detach();
 
+        language_server
+            .on_request::<lsp::request::ShowDocument, _, _>({
+                let this = this.clone();
+                move |params, cx| {
+                    let this = this.clone();
+                    let mut cx = cx.clone();
+                    async move {
+                        if params.external.unwrap_or(false) || params.uri.scheme() != "file" {
+                            let success = open::that(params.uri.as_str()).is_ok();
+                            return Ok(lsp::ShowDocumentResult { success });
+                        }
+
+                        let success = this
+                            .update(&mut cx, |_this, cx| {
+                                cx.emit(LspStoreEvent::ShowDocument {
+                                    uri: params.uri.clone(),
+                                    take_focus: params.take_focus.unwrap_or(true),
+                                    selection: params.selection,
+                                });
+                                true
+                            })
+                            .unwrap_or(false);
+
+                        Ok(lsp::ShowDocumentResult { success })
+                    }
+                }
+            })
+            .detach();
+
         rust_analyzer_ext::register_notifications(this.clone(), language_server);
         clangd_ext::register_notifications(this, language_server, adapter);
     }
@@ -3480,6 +3509,11 @@ pub enum LspStoreEvent {
         most_recent_edit: clock::Lamport,
     },
     RefreshDocumentsDiagnostics,
+    ShowDocument {
+        uri: lsp::Url,
+        take_focus: bool,
+        selection: Option<lsp::Range>,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
