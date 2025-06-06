@@ -151,6 +151,12 @@
   "}" @punctuation.special) @embedded
 
 ; Docstrings.
+([
+  (expression_statement (assignment))
+  (type_alias_statement)
+]
+. (expression_statement (string) @string.doc)+)
+
 (module
   .(expression_statement (string) @string.doc)+)
 
@@ -171,13 +177,6 @@
 
 (module
   . (comment) @comment*
-  . (expression_statement (string) @string.doc)+)
-
-(module
-  [
-    (expression_statement (assignment))
-    (type_alias_statement)
-  ]
   . (expression_statement (string) @string.doc)+)
 
 (class_definition

@@ -22,7 +22,7 @@ pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
     SettingsStore, parse_json_with_comments,
 };
-pub use vscode_import::VsCodeSettings;
+pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -114,4 +114,8 @@ pub fn initial_tasks_content() -> Cow<'static, str> {
 
 pub fn initial_debug_tasks_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_debug_tasks.json")
+}
+
+pub fn initial_local_debug_tasks_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_local_debug_tasks.json")
 }

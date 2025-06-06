@@ -9,7 +9,7 @@ use handlebars::Handlebars;
 use language::{Buffer, DiagnosticSeverity, OffsetRangeExt as _};
 use language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelToolResultContent, MessageContent, Role, TokenUsage, WrappedTextContent,
+    LanguageModelToolResultContent, MessageContent, Role, TokenUsage,
 };
 use project::lsp_store::OpenLspBufferHandle;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -306,17 +306,19 @@ impl ExampleInstance {
 
             let thread_store = thread_store.await?;
 
-            let profile_id = meta.profile_id.clone();
-            thread_store.update(cx, |thread_store, cx| thread_store.load_profile_by_id(profile_id, cx)).expect("Failed to load profile");
 
             let thread =
                 thread_store.update(cx, |thread_store, cx| {
-                    if let Some(json) = &meta.existing_thread_json {
+                    let thread = if let Some(json) = &meta.existing_thread_json {
                         let serialized = SerializedThread::from_json(json.as_bytes()).expect("Can't read serialized thread");
                         thread_store.create_thread_from_serialized(serialized, cx)
                     } else {
                         thread_store.create_thread(cx)
-                    }
+                    };
+                    thread.update(cx, |thread, cx| {
+                        thread.set_profile(meta.profile_id.clone(), cx);
+                    });
+                    thread
                 })?;
 
 
@@ -576,6 +578,7 @@ impl ExampleInstance {
                 thread_id: None,
                 prompt_id: None,
                 mode: None,
+                intent: None,
                 messages: vec![LanguageModelRequestMessage {
                     role: Role::User,
                     content: vec![MessageContent::Text(to_prompt(assertion.description))],
@@ -644,7 +647,7 @@ pub fn wait_for_lang_server(
     let (mut tx, mut rx) = mpsc::channel(1);
 
     let lsp_store = project
-        .update(cx, |project, _| project.lsp_store())
+        .read_with(cx, |project, _| project.lsp_store())
         .unwrap();
 
     let has_lang_server = buffer
@@ -967,11 +970,7 @@ impl RequestMarkdown {
                         }
 
                         match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text)
-                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                                text,
-                                ..
-                            }) => {
+                            LanguageModelToolResultContent::Text(text) => {
                                 writeln!(messages, "{text}\n").ok();
                             }
                             LanguageModelToolResultContent::Image(image) => {

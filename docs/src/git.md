@@ -120,7 +120,7 @@ or by simply right clicking and selecting `Copy Permalink` with line(s) selected
 | {#action git::Branch}                  | {#kb git::Branch}                  |
 | {#action git::Switch}                  | {#kb git::Switch}                  |
 | {#action git::CheckoutBranch}          | {#kb git::CheckoutBranch}          |
-| {#action editor::ToggleGitBlame}       | {#kb editor::ToggleGitBlame}       |
+| {#action git::Blame}                   | {#kb git::Blame}                   |
 | {#action editor::ToggleGitBlameInline} | {#kb editor::ToggleGitBlameInline} |
 
 > Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).

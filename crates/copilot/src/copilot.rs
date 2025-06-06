@@ -232,7 +232,7 @@ impl RegisteredBuffer {
                         Some(buffer.snapshot.version.clone())
                     })
                     .ok()??;
-                let new_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
+                let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
                     .background_spawn({
@@ -520,7 +520,7 @@ impl Copilot {
 
             let server = cx
                 .update(|cx| {
-                    let mut params = server.default_initialize_params(cx);
+                    let mut params = server.default_initialize_params(false, cx);
                     params.initialization_options = Some(editor_info_json);
                     server.initialize(params, configuration.into(), cx)
                 })?

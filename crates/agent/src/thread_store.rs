@@ -1,12 +1,11 @@
-use std::borrow::Cow;
 use std::cell::{Ref, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_settings::{AgentProfile, AgentProfileId, AssistantSettings, CompletionMode};
-use assistant_tool::{ToolId, ToolSource, ToolWorkingSet};
+use assistant_tool::{ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
@@ -17,8 +16,7 @@ use gpui::{
     App, BackgroundExecutor, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString,
     Subscription, Task, prelude::*,
 };
-use heed::Database;
-use heed::types::SerdeBincode;
+
 use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Role, TokenUsage};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -27,7 +25,6 @@ use prompt_store::{
     UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsStore};
 use ui::Window;
 use util::ResultExt as _;
 
@@ -35,14 +32,52 @@ use crate::context_server_tool::ContextServerTool;
 use crate::thread::{
     DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
 };
+use indoc::indoc;
+use sqlez::{
+    bindable::{Bind, Column},
+    connection::Connection,
+    statement::Statement,
+};
 
-const RULES_FILE_NAMES: [&'static str; 6] = [
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DataType {
+    #[serde(rename = "json")]
+    Json,
+    #[serde(rename = "zstd")]
+    Zstd,
+}
+
+impl Bind for DataType {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        let value = match self {
+            DataType::Json => "json",
+            DataType::Zstd => "zstd",
+        };
+        value.bind(statement, start_index)
+    }
+}
+
+impl Column for DataType {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (value, next_index) = String::column(statement, start_index)?;
+        let data_type = match value.as_str() {
+            "json" => DataType::Json,
+            "zstd" => DataType::Zstd,
+            _ => anyhow::bail!("Unknown data type: {}", value),
+        };
+        Ok((data_type, next_index))
+    }
+}
+
+const RULES_FILE_NAMES: [&'static str; 8] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
     ".clinerules",
     ".github/copilot-instructions.md",
     "CLAUDE.md",
+    "AGENT.md",
+    "AGENTS.md",
 ];
 
 pub fn init(cx: &mut App) {
@@ -111,12 +146,7 @@ impl ThreadStore {
         prompt_store: Option<Entity<PromptStore>>,
         cx: &mut Context<Self>,
     ) -> (Self, oneshot::Receiver<()>) {
-        let mut subscriptions = vec![
-            cx.observe_global::<SettingsStore>(move |this: &mut Self, cx| {
-                this.load_default_profile(cx);
-            }),
-            cx.subscribe(&project, Self::handle_project_event),
-        ];
+        let mut subscriptions = vec![cx.subscribe(&project, Self::handle_project_event)];
 
         if let Some(prompt_store) = prompt_store.as_ref() {
             subscriptions.push(cx.subscribe(
@@ -164,7 +194,6 @@ impl ThreadStore {
             _reload_system_prompt_task: reload_system_prompt_task,
             _subscriptions: subscriptions,
         };
-        this.load_default_profile(cx);
         this.register_context_server_handlers(cx);
         this.reload(cx).detach_and_log_err(cx);
         (this, ready_rx)
@@ -484,92 +513,15 @@ impl ThreadStore {
         })
     }
 
-    fn load_default_profile(&self, cx: &mut Context<Self>) {
-        let assistant_settings = AssistantSettings::get_global(cx);
-
-        self.load_profile_by_id(assistant_settings.default_profile.clone(), cx);
-    }
-
-    pub fn load_profile_by_id(&self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
-        let assistant_settings = AssistantSettings::get_global(cx);
-
-        if let Some(profile) = assistant_settings.profiles.get(&profile_id) {
-            self.load_profile(profile.clone(), cx);
-        }
-    }
-
-    pub fn load_profile(&self, profile: AgentProfile, cx: &mut Context<Self>) {
-        self.tools.update(cx, |tools, cx| {
-            tools.disable_all_tools(cx);
-            tools.enable(
-                ToolSource::Native,
-                &profile
-                    .tools
-                    .into_iter()
-                    .filter_map(|(tool, enabled)| enabled.then(|| tool))
-                    .collect::<Vec<_>>(),
-                cx,
-            );
-        });
-
-        if profile.enable_all_context_servers {
-            for context_server_id in self
-                .project
-                .read(cx)
-                .context_server_store()
-                .read(cx)
-                .all_server_ids()
-            {
-                self.tools.update(cx, |tools, cx| {
-                    tools.enable_source(
-                        ToolSource::ContextServer {
-                            id: context_server_id.0.into(),
-                        },
-                        cx,
-                    );
-                });
-            }
-            // Enable all the tools from all context servers, but disable the ones that are explicitly disabled
-            for (context_server_id, preset) in profile.context_servers {
-                self.tools.update(cx, |tools, cx| {
-                    tools.disable(
-                        ToolSource::ContextServer {
-                            id: context_server_id.into(),
-                        },
-                        &preset
-                            .tools
-                            .into_iter()
-                            .filter_map(|(tool, enabled)| (!enabled).then(|| tool))
-                            .collect::<Vec<_>>(),
-                        cx,
-                    )
-                })
-            }
-        } else {
-            for (context_server_id, preset) in profile.context_servers {
-                self.tools.update(cx, |tools, cx| {
-                    tools.enable(
-                        ToolSource::ContextServer {
-                            id: context_server_id.into(),
-                        },
-                        &preset
-                            .tools
-                            .into_iter()
-                            .filter_map(|(tool, enabled)| enabled.then(|| tool))
-                            .collect::<Vec<_>>(),
-                        cx,
-                    )
-                })
-            }
-        }
-    }
-
     fn register_context_server_handlers(&self, cx: &mut Context<Self>) {
-        cx.subscribe(
-            &self.project.read(cx).context_server_store(),
-            Self::handle_context_server_event,
-        )
-        .detach();
+        let context_server_store = self.project.read(cx).context_server_store();
+        cx.subscribe(&context_server_store, Self::handle_context_server_event)
+            .detach();
+
+        // Check for any servers that were already running before the handler was registered
+        for server in context_server_store.read(cx).running_servers() {
+            self.load_context_server_tools(server.id(), context_server_store.clone(), cx);
+        }
     }
 
     fn handle_context_server_event(
@@ -582,70 +534,66 @@ impl ThreadStore {
         match event {
             project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
                 match status {
+                    ContextServerStatus::Starting => {}
                     ContextServerStatus::Running => {
-                        if let Some(server) =
-                            context_server_store.read(cx).get_running_server(server_id)
-                        {
-                            let context_server_manager = context_server_store.clone();
-                            cx.spawn({
-                                let server = server.clone();
-                                let server_id = server_id.clone();
-                                async move |this, cx| {
-                                    let Some(protocol) = server.client() else {
-                                        return;
-                                    };
-
-                                    if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                                        if let Some(tools) = protocol.list_tools().await.log_err() {
-                                            let tool_ids = tool_working_set
-                                                .update(cx, |tool_working_set, _| {
-                                                    tools
-                                                        .tools
-                                                        .into_iter()
-                                                        .map(|tool| {
-                                                            log::info!(
-                                                                "registering context server tool: {:?}",
-                                                                tool.name
-                                                            );
-                                                            tool_working_set.insert(Arc::new(
-                                                                ContextServerTool::new(
-                                                                    context_server_manager.clone(),
-                                                                    server.id(),
-                                                                    tool,
-                                                                ),
-                                                            ))
-                                                        })
-                                                        .collect::<Vec<_>>()
-                                                })
-                                                .log_err();
-
-                                            if let Some(tool_ids) = tool_ids {
-                                                this.update(cx, |this, cx| {
-                                                    this.context_server_tool_ids
-                                                        .insert(server_id, tool_ids);
-                                                    this.load_default_profile(cx);
-                                                })
-                                                .log_err();
-                                            }
-                                        }
-                                    }
-                                }
-                            })
-                            .detach();
-                        }
+                        self.load_context_server_tools(server_id.clone(), context_server_store, cx);
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
                         if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
                             tool_working_set.update(cx, |tool_working_set, _| {
                                 tool_working_set.remove(&tool_ids);
                             });
-                            self.load_default_profile(cx);
                         }
                     }
-                    _ => {}
                 }
             }
         }
+    }
+
+    fn load_context_server_tools(
+        &self,
+        server_id: ContextServerId,
+        context_server_store: Entity<ContextServerStore>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(server) = context_server_store.read(cx).get_running_server(&server_id) else {
+            return;
+        };
+        let tool_working_set = self.tools.clone();
+        cx.spawn(async move |this, cx| {
+            let Some(protocol) = server.client() else {
+                return;
+            };
+
+            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
+                if let Some(tools) = protocol.list_tools().await.log_err() {
+                    let tool_ids = tool_working_set
+                        .update(cx, |tool_working_set, _| {
+                            tools
+                                .tools
+                                .into_iter()
+                                .map(|tool| {
+                                    log::info!("registering context server tool: {:?}", tool.name);
+                                    tool_working_set.insert(Arc::new(ContextServerTool::new(
+                                        context_server_store.clone(),
+                                        server.id(),
+                                        tool,
+                                    )))
+                                })
+                                .collect::<Vec<_>>()
+                        })
+                        .log_err();
+
+                    if let Some(tool_ids) = tool_ids {
+                        this.update(cx, |this, _| {
+                            this.context_server_tool_ids.insert(server_id, tool_ids);
+                        })
+                        .log_err();
+                    }
+                }
+            }
+        })
+        .detach();
     }
 }
 
@@ -676,6 +624,10 @@ pub struct SerializedThread {
     pub model: Option<SerializedLanguageModel>,
     #[serde(default)]
     pub completion_mode: Option<CompletionMode>,
+    #[serde(default)]
+    pub tool_use_limit_reached: bool,
+    #[serde(default)]
+    pub profile: Option<AgentProfileId>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -757,6 +709,8 @@ pub struct SerializedMessage {
     pub context: String,
     #[serde(default)]
     pub creases: Vec<SerializedCrease>,
+    #[serde(default)]
+    pub is_hidden: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -815,6 +769,8 @@ impl LegacySerializedThread {
             exceeded_window_error: None,
             model: None,
             completion_mode: None,
+            tool_use_limit_reached: false,
+            profile: None,
         }
     }
 }
@@ -840,6 +796,7 @@ impl LegacySerializedMessage {
             tool_results: self.tool_results,
             context: String::new(),
             creases: Vec::new(),
+            is_hidden: false,
         }
     }
 }
@@ -860,25 +817,27 @@ impl Global for GlobalThreadsDatabase {}
 
 pub(crate) struct ThreadsDatabase {
     executor: BackgroundExecutor,
-    env: heed::Env,
-    threads: Database<SerdeBincode<ThreadId>, SerializedThread>,
+    connection: Arc<Mutex<Connection>>,
 }
 
-impl heed::BytesEncode<'_> for SerializedThread {
-    type EItem = SerializedThread;
+impl ThreadsDatabase {
+    fn connection(&self) -> Arc<Mutex<Connection>> {
+        self.connection.clone()
+    }
 
-    fn bytes_encode(item: &Self::EItem) -> Result<Cow<[u8]>, heed::BoxedError> {
-        serde_json::to_vec(item).map(Cow::Owned).map_err(Into::into)
+    const COMPRESSION_LEVEL: i32 = 3;
+}
+
+impl Bind for ThreadId {
+    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
+        self.to_string().bind(statement, start_index)
     }
 }
 
-impl<'a> heed::BytesDecode<'a> for SerializedThread {
-    type DItem = SerializedThread;
-
-    fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
-        // We implement this type manually because we want to call `SerializedThread::from_json`,
-        // instead of the Deserialize trait implementation for `SerializedThread`.
-        SerializedThread::from_json(bytes).map_err(Into::into)
+impl Column for ThreadId {
+    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
+        let (id_str, next_index) = String::column(statement, start_index)?;
+        Ok((ThreadId::from(id_str.as_str()), next_index))
     }
 }
 
@@ -894,8 +853,8 @@ impl ThreadsDatabase {
         let database_future = executor
             .spawn({
                 let executor = executor.clone();
-                let database_path = paths::data_dir().join("threads/threads-db.1.mdb");
-                async move { ThreadsDatabase::new(database_path, executor) }
+                let threads_dir = paths::data_dir().join("threads");
+                async move { ThreadsDatabase::new(threads_dir, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
             .boxed()
@@ -904,41 +863,144 @@ impl ThreadsDatabase {
         cx.set_global(GlobalThreadsDatabase(database_future));
     }
 
-    pub fn new(path: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
-        std::fs::create_dir_all(&path)?;
+    pub fn new(threads_dir: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
+        std::fs::create_dir_all(&threads_dir)?;
+
+        let sqlite_path = threads_dir.join("threads.db");
+        let mdb_path = threads_dir.join("threads-db.1.mdb");
+
+        let needs_migration_from_heed = mdb_path.exists();
+
+        let connection = Connection::open_file(&sqlite_path.to_string_lossy());
+
+        connection.exec(indoc! {"
+                CREATE TABLE IF NOT EXISTS threads (
+                    id TEXT PRIMARY KEY,
+                    summary TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    data_type TEXT NOT NULL,
+                    data BLOB NOT NULL
+                )
+            "})?()
+        .map_err(|e| anyhow!("Failed to create threads table: {}", e))?;
+
+        let db = Self {
+            executor: executor.clone(),
+            connection: Arc::new(Mutex::new(connection)),
+        };
+
+        if needs_migration_from_heed {
+            let db_connection = db.connection();
+            let executor_clone = executor.clone();
+            executor
+                .spawn(async move {
+                    log::info!("Starting threads.db migration");
+                    Self::migrate_from_heed(&mdb_path, db_connection, executor_clone)?;
+                    std::fs::remove_dir_all(mdb_path)?;
+                    log::info!("threads.db migrated to sqlite");
+                    Ok::<(), anyhow::Error>(())
+                })
+                .detach();
+        }
+
+        Ok(db)
+    }
+
+    // Remove this migration after 2025-09-01
+    fn migrate_from_heed(
+        mdb_path: &Path,
+        connection: Arc<Mutex<Connection>>,
+        _executor: BackgroundExecutor,
+    ) -> Result<()> {
+        use heed::types::SerdeBincode;
+        struct SerializedThreadHeed(SerializedThread);
+
+        impl heed::BytesEncode<'_> for SerializedThreadHeed {
+            type EItem = SerializedThreadHeed;
+
+            fn bytes_encode(
+                item: &Self::EItem,
+            ) -> Result<std::borrow::Cow<[u8]>, heed::BoxedError> {
+                serde_json::to_vec(&item.0)
+                    .map(std::borrow::Cow::Owned)
+                    .map_err(Into::into)
+            }
+        }
+
+        impl<'a> heed::BytesDecode<'a> for SerializedThreadHeed {
+            type DItem = SerializedThreadHeed;
+
+            fn bytes_decode(bytes: &'a [u8]) -> Result<Self::DItem, heed::BoxedError> {
+                SerializedThread::from_json(bytes)
+                    .map(SerializedThreadHeed)
+                    .map_err(Into::into)
+            }
+        }
 
         const ONE_GB_IN_BYTES: usize = 1024 * 1024 * 1024;
+
         let env = unsafe {
             heed::EnvOpenOptions::new()
                 .map_size(ONE_GB_IN_BYTES)
                 .max_dbs(1)
-                .open(path)?
+                .open(mdb_path)?
         };
 
-        let mut txn = env.write_txn()?;
-        let threads = env.create_database(&mut txn, Some("threads"))?;
-        txn.commit()?;
+        let txn = env.write_txn()?;
+        let threads: heed::Database<SerdeBincode<ThreadId>, SerializedThreadHeed> = env
+            .open_database(&txn, Some("threads"))?
+            .ok_or_else(|| anyhow!("threads database not found"))?;
 
-        Ok(Self {
-            executor,
-            env,
-            threads,
-        })
+        for result in threads.iter(&txn)? {
+            let (thread_id, thread_heed) = result?;
+            Self::save_thread_sync(&connection, thread_id, thread_heed.0)?;
+        }
+
+        Ok(())
+    }
+
+    fn save_thread_sync(
+        connection: &Arc<Mutex<Connection>>,
+        id: ThreadId,
+        thread: SerializedThread,
+    ) -> Result<()> {
+        let json_data = serde_json::to_string(&thread)?;
+        let summary = thread.summary.to_string();
+        let updated_at = thread.updated_at.to_rfc3339();
+
+        let connection = connection.lock().unwrap();
+
+        let compressed = zstd::encode_all(json_data.as_bytes(), Self::COMPRESSION_LEVEL)?;
+        let data_type = DataType::Zstd;
+        let data = compressed;
+
+        let mut insert = connection.exec_bound::<(ThreadId, String, String, DataType, Vec<u8>)>(indoc! {"
+            INSERT OR REPLACE INTO threads (id, summary, updated_at, data_type, data) VALUES (?, ?, ?, ?, ?)
+        "})?;
+
+        insert((id, summary, updated_at, data_type, data))?;
+
+        Ok(())
     }
 
     pub fn list_threads(&self) -> Task<Result<Vec<SerializedThreadMetadata>>> {
-        let env = self.env.clone();
-        let threads = self.threads;
+        let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let txn = env.read_txn()?;
-            let mut iter = threads.iter(&txn)?;
+            let connection = connection.lock().unwrap();
+            let mut select =
+                connection.select_bound::<(), (ThreadId, String, String)>(indoc! {"
+                SELECT id, summary, updated_at FROM threads ORDER BY updated_at DESC
+            "})?;
+
+            let rows = select(())?;
             let mut threads = Vec::new();
-            while let Some((key, value)) = iter.next().transpose()? {
+
+            for (id, summary, updated_at) in rows {
                 threads.push(SerializedThreadMetadata {
-                    id: key,
-                    summary: value.summary,
-                    updated_at: value.updated_at,
+                    id,
+                    summary: summary.into(),
+                    updated_at: DateTime::parse_from_rfc3339(&updated_at)?.with_timezone(&Utc),
                 });
             }
 
@@ -947,36 +1009,51 @@ impl ThreadsDatabase {
     }
 
     pub fn try_find_thread(&self, id: ThreadId) -> Task<Result<Option<SerializedThread>>> {
-        let env = self.env.clone();
-        let threads = self.threads;
+        let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let txn = env.read_txn()?;
-            let thread = threads.get(&txn, &id)?;
-            Ok(thread)
+            let connection = connection.lock().unwrap();
+            let mut select = connection.select_bound::<ThreadId, (DataType, Vec<u8>)>(indoc! {"
+                SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
+            "})?;
+
+            let rows = select(id)?;
+            if let Some((data_type, data)) = rows.into_iter().next() {
+                let json_data = match data_type {
+                    DataType::Zstd => {
+                        let decompressed = zstd::decode_all(&data[..])?;
+                        String::from_utf8(decompressed)?
+                    }
+                    DataType::Json => String::from_utf8(data)?,
+                };
+
+                let thread = SerializedThread::from_json(json_data.as_bytes())?;
+                Ok(Some(thread))
+            } else {
+                Ok(None)
+            }
         })
     }
 
     pub fn save_thread(&self, id: ThreadId, thread: SerializedThread) -> Task<Result<()>> {
-        let env = self.env.clone();
-        let threads = self.threads;
+        let connection = self.connection.clone();
 
-        self.executor.spawn(async move {
-            let mut txn = env.write_txn()?;
-            threads.put(&mut txn, &id, &thread)?;
-            txn.commit()?;
-            Ok(())
-        })
+        self.executor
+            .spawn(async move { Self::save_thread_sync(&connection, id, thread) })
     }
 
     pub fn delete_thread(&self, id: ThreadId) -> Task<Result<()>> {
-        let env = self.env.clone();
-        let threads = self.threads;
+        let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let mut txn = env.write_txn()?;
-            threads.delete(&mut txn, &id)?;
-            txn.commit()?;
+            let connection = connection.lock().unwrap();
+
+            let mut delete = connection.exec_bound::<ThreadId>(indoc! {"
+                DELETE FROM threads WHERE id = ?
+            "})?;
+
+            delete(id)?;
+
             Ok(())
         })
     }
