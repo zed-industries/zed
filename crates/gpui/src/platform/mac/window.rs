@@ -1,11 +1,11 @@
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
-    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ScaledPixels, Size,
-    Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowKind, WindowParams,
-    platform::PlatformInputHandler, point, px, size,
+    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowKind, WindowParams, platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
