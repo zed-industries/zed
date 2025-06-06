@@ -21855,7 +21855,7 @@ fn assert_hunk_revert(
     assert_eq!(actual_hunk_statuses_before, expected_hunk_statuses_before);
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -21913,7 +21913,8 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
     let mut first_request = fake_server
         .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
-            counter.fetch_add(1, atomic::Ordering::Release);
+            let new_result_id = counter.fetch_add(1, atomic::Ordering::Release) + 1;
+            let result_id = Some(new_result_id.to_string());
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
@@ -21924,13 +21925,27 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                         related_documents: None,
                         full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
                             items: Vec::new(),
-                            result_id: None,
+                            result_id,
                         },
                     }),
                 ))
             }
         });
 
+    let ensure_result_id = |expected: Option<String>, cx: &mut TestAppContext| {
+        editor.update(cx, |editor, cx| {
+            let buffer_result_id = editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("created a singleton buffer")
+                .read(cx)
+                .result_id();
+            assert_eq!(expected, buffer_result_id);
+        });
+    };
+
+    ensure_result_id(None, cx);
     cx.executor().advance_clock(Duration::from_millis(60));
     cx.executor().run_until_parked();
     assert_eq!(
@@ -21942,6 +21957,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         .next()
         .await
         .expect("should have sent the first diagnostics pull request");
+    ensure_result_id(Some("1".to_string()), cx);
 
     // Editing should trigger diagnostics
     editor.update_in(cx, |editor, window, cx| {
@@ -21954,6 +21970,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         2,
         "Editing should trigger diagnostic request"
     );
+    ensure_result_id(Some("2".to_string()), cx);
 
     // Moving cursor should not trigger diagnostic request
     editor.update_in(cx, |editor, window, cx| {
@@ -21968,6 +21985,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         2,
         "Cursor movement should not trigger diagnostic request"
     );
+    ensure_result_id(Some("2".to_string()), cx);
 
     // Multiple rapid edits should be debounced
     for _ in 0..5 {
@@ -21981,7 +21999,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     let final_requests = diagnostic_requests.load(atomic::Ordering::Acquire);
     assert!(
         final_requests <= 4,
-        "Multiple rapid edits should be debounced (got {} requests)",
-        final_requests
+        "Multiple rapid edits should be debounced (got {final_requests} requests)",
     );
+    ensure_result_id(Some(final_requests.to_string()), cx);
 }
