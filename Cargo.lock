@@ -59,7 +59,7 @@ dependencies = [
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
- "async-watch",
+ "assistant_tools",
  "audio",
  "buffer_diff",
  "chrono",
@@ -130,6 +130,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "watch",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -147,7 +148,6 @@ dependencies = [
  "deepseek",
  "fs",
  "gpui",
- "indexmap",
  "language_model",
  "lmstudio",
  "log",
@@ -652,6 +652,7 @@ dependencies = [
  "settings",
  "text",
  "util",
+ "watch",
  "workspace",
  "workspace-hack",
  "zlog",
@@ -664,7 +665,6 @@ dependencies = [
  "agent_settings",
  "anyhow",
  "assistant_tool",
- "async-watch",
  "buffer_diff",
  "chrono",
  "client",
@@ -715,6 +715,7 @@ dependencies = [
  "ui",
  "unindent",
  "util",
+ "watch",
  "web_search",
  "which 6.0.3",
  "workspace",
@@ -1071,15 +1072,6 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.2",
  "tungstenite 0.26.2",
-]
-
-[[package]]
-name = "async-watch"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a078faf4e27c0c6cc0efb20e5da59dcccc04968ebf2801d8e0b2195124cdcdb2"
-dependencies = [
- "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -2986,7 +2978,6 @@ dependencies = [
  "anyhow",
  "assistant_context_editor",
  "assistant_slash_command",
- "assistant_tool",
  "async-stripe",
  "async-trait",
  "async-tungstenite",
@@ -4233,6 +4224,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "itertools 0.14.0",
  "language",
  "log",
  "menu",
@@ -4542,6 +4534,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "command_palette",
+ "gpui",
  "mdbook",
  "regex",
  "serde",
@@ -4549,6 +4543,7 @@ dependencies = [
  "settings",
  "util",
  "workspace-hack",
+ "zed",
 ]
 
 [[package]]
@@ -5009,7 +5004,6 @@ dependencies = [
  "assistant_tool",
  "assistant_tools",
  "async-trait",
- "async-watch",
  "buffer_diff",
  "chrono",
  "clap",
@@ -5051,6 +5045,7 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
+ "watch",
  "workspace-hack",
  "zed_llm_client",
 ]
@@ -8735,7 +8730,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "async-watch",
  "clock",
  "collections",
  "ctor",
@@ -8785,6 +8779,7 @@ dependencies = [
  "unicase",
  "unindent",
  "util",
+ "watch",
  "workspace-hack",
  "zlog",
 ]
@@ -8864,6 +8859,7 @@ dependencies = [
  "mistral",
  "ollama",
  "open_ai",
+ "open_router",
  "partial-json-fixer",
  "project",
  "proto",
@@ -10142,7 +10138,6 @@ dependencies = [
  "async-std",
  "async-tar",
  "async-trait",
- "async-watch",
  "futures 0.3.31",
  "http_client",
  "log",
@@ -10152,6 +10147,7 @@ dependencies = [
  "serde_json",
  "smol",
  "util",
+ "watch",
  "which 6.0.3",
  "workspace-hack",
 ]
@@ -10200,6 +10196,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]
@@ -10705,6 +10702,19 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.27.1",
+ "workspace-hack",
+]
+
+[[package]]
+name = "open_router"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
  "workspace-hack",
 ]
 
@@ -12099,6 +12109,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "uuid",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
@@ -12987,7 +12998,6 @@ dependencies = [
  "askpass",
  "assistant_tool",
  "assistant_tools",
- "async-watch",
  "backtrace",
  "cargo_toml",
  "chrono",
@@ -13034,6 +13044,7 @@ dependencies = [
  "toml 0.8.20",
  "unindent",
  "util",
+ "watch",
  "worktree",
  "zlog",
 ]
@@ -15713,6 +15724,7 @@ dependencies = [
  "task",
  "theme",
  "thiserror 2.0.12",
+ "url",
  "util",
  "windows 0.61.1",
  "workspace-hack",
@@ -16494,9 +16506,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.25.5"
+version = "0.25.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac5fff5c47490dfdf473b5228039bfacad9d765d9b6939d26bf7cc064c1c7822"
+checksum = "a7cf18d43cbf0bfca51f657132cc616a5097edc4424d538bae6fa60142eaf9f0"
 dependencies = [
  "cc",
  "regex",
@@ -16509,9 +16521,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-bash"
-version = "0.23.3"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "329a4d48623ac337d42b1df84e81a1c9dbb2946907c102ca72db158c1964a52e"
+checksum = "871b0606e667e98a1237ebdc1b0d7056e0aebfdc3141d12b399865d4cb6ed8a6"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -17115,6 +17127,7 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
+ "indoc",
  "itertools 0.14.0",
  "libc",
  "log",
@@ -17891,6 +17904,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ef140f1b49946586078353a453a1d28ba90adfc54dde75710bc1931de204d68"
 dependencies = [
  "leb128",
+]
+
+[[package]]
+name = "watch"
+version = "0.1.0"
+dependencies = [
+ "ctor",
+ "futures 0.3.31",
+ "gpui",
+ "parking_lot",
+ "rand 0.8.5",
+ "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -19692,7 +19718,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.190.0"
+version = "0.191.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -19704,7 +19730,6 @@ dependencies = [
  "assistant_context_editor",
  "assistant_tool",
  "assistant_tools",
- "async-watch",
  "audio",
  "auto_update",
  "auto_update_ui",
@@ -19821,6 +19846,7 @@ dependencies = [
  "uuid",
  "vim",
  "vim_mode_setting",
+ "watch",
  "web_search",
  "web_search_providers",
  "welcome",

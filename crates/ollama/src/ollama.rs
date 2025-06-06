@@ -3,7 +3,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
@@ -355,36 +355,6 @@ pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> 
     );
     let details: ModelShow = serde_json::from_str(body.as_str())?;
     Ok(details)
-}
-
-/// Sends an empty request to Ollama to trigger loading the model
-pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &str) -> Result<()> {
-    let uri = format!("{api_url}/api/generate");
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .body(AsyncBody::from(
-            serde_json::json!({
-                "model": model,
-                "keep_alive": "15m",
-            })
-            .to_string(),
-        ))?;
-
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        anyhow::bail!(
-            "Failed to connect to Ollama API: {} {}",
-            response.status(),
-            body,
-        );
-    }
 }
 
 #[cfg(test)]

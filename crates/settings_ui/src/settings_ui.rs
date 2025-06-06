@@ -15,8 +15,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use ui::prelude::*;
-use workspace::Workspace;
 use workspace::item::{Item, ItemEvent};
+use workspace::{Workspace, with_active_or_new_workspace};
 
 use crate::appearance_settings_controls::AppearanceSettingsControls;
 
@@ -42,12 +42,8 @@ impl_actions!(zed, [ImportVsCodeSettings, ImportCursorSettings]);
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-
-        workspace.register_action(|workspace, _: &OpenSettingsEditor, window, cx| {
+    cx.on_action(|_: &OpenSettingsEditor, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
             let existing = workspace
                 .active_pane()
                 .read(cx)
@@ -61,6 +57,12 @@ pub fn init(cx: &mut App) {
                 workspace.add_item_to_active_pane(Box::new(settings_page), None, true, window, cx)
             }
         });
+    });
+
+    cx.observe_new(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
 
         workspace.register_action(|_workspace, action: &ImportVsCodeSettings, window, cx| {
             let fs = <dyn Fs>::global(cx);

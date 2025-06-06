@@ -100,6 +100,7 @@ members = [
     "crates/notifications",
     "crates/ollama",
     "crates/open_ai",
+    "crates/open_router",
     "crates/outline",
     "crates/outline_panel",
     "crates/panel",
@@ -164,6 +165,7 @@ members = [
     "crates/util_macros",
     "crates/vim",
     "crates/vim_mode_setting",
+    "crates/watch",
     "crates/web_search",
     "crates/web_search_providers",
     "crates/welcome",
@@ -307,6 +309,7 @@ node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
+open_router = { path = "crates/open_router", features = ["schemars"] }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 panel = { path = "crates/panel" }
@@ -371,6 +374,7 @@ util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
+watch = { path = "crates/watch" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
@@ -401,7 +405,6 @@ async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
 async-tungstenite = "0.29.1"
-async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.2", features = [
@@ -572,8 +575,8 @@ tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
-tree-sitter = { version = "0.25.5", features = ["wasm"] }
-tree-sitter-bash = "0.23"
+tree-sitter = { version = "0.25.6", features = ["wasm"] }
+tree-sitter-bash = "0.25.0"
 tree-sitter-c = "0.23"
 tree-sitter-cpp = "0.23"
 tree-sitter-css = "0.23"

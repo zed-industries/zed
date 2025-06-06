@@ -5098,6 +5098,205 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir1": {
+                "file1.txt": "",
+                "dir2": {
+                    "file2.txt": ""
+                }
+            },
+            "file3.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+
+        // Test 1: Target is a directory, should highlight the directory itself
+        let dir_entry = worktree.entry_for_path("dir1").unwrap();
+        let result = panel.highlight_entry_for_external_drag(dir_entry, worktree);
+        assert_eq!(
+            result,
+            Some(dir_entry.id),
+            "Should highlight directory itself"
+        );
+
+        // Test 2: Target is nested file, should highlight immediate parent
+        let nested_file = worktree.entry_for_path("dir1/dir2/file2.txt").unwrap();
+        let nested_parent = worktree.entry_for_path("dir1/dir2").unwrap();
+        let result = panel.highlight_entry_for_external_drag(nested_file, worktree);
+        assert_eq!(
+            result,
+            Some(nested_parent.id),
+            "Should highlight immediate parent"
+        );
+
+        // Test 3: Target is root level file, should highlight root
+        let root_file = worktree.entry_for_path("file3.txt").unwrap();
+        let result = panel.highlight_entry_for_external_drag(root_file, worktree);
+        assert_eq!(
+            result,
+            Some(worktree.root_entry().unwrap().id),
+            "Root level file should return None"
+        );
+
+        // Test 4: Target is root itself, should highlight root
+        let root_entry = worktree.root_entry().unwrap();
+        let result = panel.highlight_entry_for_external_drag(root_entry, worktree);
+        assert_eq!(
+            result,
+            Some(root_entry.id),
+            "Root level file should return None"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "parent_dir": {
+                "child_file.txt": "",
+                "sibling_file.txt": "",
+                "child_dir": {
+                    "nested_file.txt": ""
+                }
+            },
+            "other_dir": {
+                "other_file.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let worktree_id = worktree.read(cx).id();
+        let worktree = worktree.read(cx);
+
+        let parent_dir = worktree.entry_for_path("parent_dir").unwrap();
+        let child_file = worktree
+            .entry_for_path("parent_dir/child_file.txt")
+            .unwrap();
+        let sibling_file = worktree
+            .entry_for_path("parent_dir/sibling_file.txt")
+            .unwrap();
+        let child_dir = worktree.entry_for_path("parent_dir/child_dir").unwrap();
+        let other_dir = worktree.entry_for_path("other_dir").unwrap();
+        let other_file = worktree.entry_for_path("other_dir/other_file.txt").unwrap();
+
+        // Test 1: Single item drag, don't highlight parent directory
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new(BTreeSet::from([SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            }])),
+        };
+        let result =
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+        assert_eq!(result, None, "Should not highlight parent of dragged item");
+
+        // Test 2: Single item drag, don't highlight sibling files
+        let result = panel.highlight_entry_for_selection_drag(
+            sibling_file,
+            worktree,
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(result, None, "Should not highlight sibling files");
+
+        // Test 3: Single item drag, highlight unrelated directory
+        let result =
+            panel.highlight_entry_for_selection_drag(other_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(other_dir.id),
+            "Should highlight unrelated directory"
+        );
+
+        // Test 4: Single item drag, highlight sibling directory
+        let result =
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(child_dir.id),
+            "Should highlight sibling directory"
+        );
+
+        // Test 5: Multiple items drag, highlight parent directory
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new(BTreeSet::from([
+                SelectedEntry {
+                    worktree_id,
+                    entry_id: child_file.id,
+                },
+                SelectedEntry {
+                    worktree_id,
+                    entry_id: sibling_file.id,
+                },
+            ])),
+        };
+        let result =
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(parent_dir.id),
+            "Should highlight parent with multiple items"
+        );
+
+        // Test 6: Target is file in different directory, highlight parent
+        let result =
+            panel.highlight_entry_for_selection_drag(other_file, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(other_dir.id),
+            "Should highlight parent of target file"
+        );
+
+        // Test 7: Target is directory, always highlight
+        let result =
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(child_dir.id),
+            "Should always highlight directories"
+        );
+    });
+}
+
 fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
     let path = path.as_ref();
     panel.update(cx, |panel, cx| {

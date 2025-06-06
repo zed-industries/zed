@@ -11,6 +11,7 @@ use buffer_diff::{
 use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
+    GitHostingProviderRegistry,
     repository::RepoPath,
     status::{StatusCode, TrackedStatus},
 };
@@ -213,6 +214,71 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
+    });
+}
+
+#[gpui::test]
+async fn test_git_provider_project_setting(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.update(|cx| {
+        GitHostingProviderRegistry::default_global(cx);
+        git_hosting_providers::init(cx);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    let str_path = path!("/dir");
+    let path = Path::new(str_path);
+
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".zed": {
+                "settings.json": r#"{
+                    "git_hosting_providers": [
+                        {
+                            "provider": "gitlab",
+                            "base_url": "https://google.com",
+                            "name": "foo"
+                        }
+                    ]
+                }"#
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let (_worktree, _) =
+        project.read_with(cx, |project, cx| project.find_worktree(path, cx).unwrap());
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let provider = GitHostingProviderRegistry::global(cx);
+        assert!(
+            provider
+                .list_hosting_providers()
+                .into_iter()
+                .any(|provider| provider.name() == "foo")
+        );
+    });
+
+    fs.atomic_write(
+        Path::new(path!("/dir/.zed/settings.json")).to_owned(),
+        "{}".into(),
+    )
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        let provider = GitHostingProviderRegistry::global(cx);
+        assert!(
+            !provider
+                .list_hosting_providers()
+                .into_iter()
+                .any(|provider| provider.name() == "foo")
+        );
     });
 }
 
@@ -1266,6 +1332,8 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1283,6 +1351,8 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1373,6 +1443,8 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1390,6 +1462,8 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1567,7 +1641,8 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
                     message: "undefined variable 'A'".to_string(),
                     group_id: 0,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             }]
         )
@@ -2083,7 +2158,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 1,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 },
                 DiagnosticEntry {
@@ -2095,7 +2171,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 2,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 }
             ]
@@ -2161,7 +2238,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 4,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 },
                 DiagnosticEntry {
@@ -2173,7 +2251,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 3,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 }
             ]
@@ -2253,7 +2332,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 6,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 },
                 DiagnosticEntry {
@@ -2265,7 +2345,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 5,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 }
             ]
@@ -2299,6 +2380,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                     LanguageServerId(0),
                     PathBuf::from("/dir/a.rs"),
                     None,
+                    None,
                     vec![
                         DiagnosticEntry {
                             range: Unclipped(PointUtf16::new(0, 10))
@@ -2306,7 +2388,8 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                             diagnostic: Diagnostic {
                                 severity: DiagnosticSeverity::ERROR,
                                 message: "syntax error 1".to_string(),
-                                ..Default::default()
+                                source_kind: DiagnosticSourceKind::Pushed,
+                                ..Diagnostic::default()
                             },
                         },
                         DiagnosticEntry {
@@ -2315,7 +2398,8 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                             diagnostic: Diagnostic {
                                 severity: DiagnosticSeverity::ERROR,
                                 message: "syntax error 2".to_string(),
-                                ..Default::default()
+                                source_kind: DiagnosticSourceKind::Pushed,
+                                ..Diagnostic::default()
                             },
                         },
                     ],
@@ -2363,13 +2447,15 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                 LanguageServerId(0),
                 Path::new("/dir/a.rs").to_owned(),
                 None,
+                None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
                         message: "syntax error a1".to_string(),
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 }],
                 cx,
@@ -2380,13 +2466,15 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                 LanguageServerId(1),
                 Path::new("/dir/a.rs").to_owned(),
                 None,
+                None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
                         message: "syntax error b1".to_string(),
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 }],
                 cx,
@@ -3518,6 +3606,86 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
     assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
+    // Issue: #24349
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    language_registry.add(rust_lang());
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-rust-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
+                    ..Default::default()
+                }),
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |this, cx| this.create_buffer(cx))
+        .unwrap()
+        .await;
+    project.update(cx, |this, cx| {
+        this.register_buffer_with_language_servers(&buffer, cx);
+        buffer.update(cx, |buffer, cx| {
+            assert!(!this.has_language_servers_for(buffer, cx));
+        })
+    });
+
+    project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.save_buffer_as(
+                buffer.clone(),
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from("file.rs".as_ref()),
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    // A server is started up, and it is notified about Rust files.
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Url::from_file_path(path!("/dir/file.rs")).unwrap(),
+            version: 0,
+            text: "".to_string(),
+            language_id: "rust".to_string(),
+        }
+    );
+
+    project.update(cx, |this, cx| {
+        buffer.update(cx, |buffer, cx| {
+            assert!(this.has_language_servers_for(buffer, cx));
+        })
+    });
+}
+
 #[gpui::test(iterations = 30)]
 async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -4432,7 +4600,14 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
     lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostics(LanguageServerId(0), message, &[], cx)
+            lsp_store.update_diagnostics(
+                LanguageServerId(0),
+                message,
+                None,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
         })
         .unwrap();
     let buffer = buffer.update(cx, |buffer, _| buffer.snapshot());
@@ -4449,7 +4624,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 1".to_string(),
                     group_id: 1,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4459,7 +4635,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 1 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4469,7 +4646,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2 hint 1".to_string(),
                     group_id: 0,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4479,7 +4657,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2 hint 2".to_string(),
                     group_id: 0,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4489,7 +4668,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2".to_string(),
                     group_id: 0,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             }
         ]
@@ -4505,7 +4685,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2 hint 1".to_string(),
                     group_id: 0,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4515,7 +4696,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2 hint 2".to_string(),
                     group_id: 0,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4525,7 +4707,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2".to_string(),
                     group_id: 0,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             }
         ]
@@ -4541,7 +4724,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 1".to_string(),
                     group_id: 1,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4551,7 +4735,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 1 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
         ]
@@ -6433,6 +6618,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
             ("src/modification.rs".into(), committed_contents),
             ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
         ],
+        "deadbeef",
     );
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
@@ -6499,6 +6685,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
             ("src/modification.rs".into(), committed_contents.clone()),
             ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
         ],
+        "deadbeef",
     );
 
     // Buffer now has an unstaged hunk.
@@ -6945,6 +7132,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     fs.set_head_for_repo(
         "/dir/.git".as_ref(),
         &[("file.txt".into(), committed_contents.clone())],
+        "deadbeef",
     );
     fs.set_index_for_repo(
         "/dir/.git".as_ref(),
@@ -7141,6 +7329,7 @@ async fn test_staging_random_hunks(
     fs.set_head_for_repo(
         path!("/dir/.git").as_ref(),
         &[("file.txt".into(), committed_text.clone())],
+        "deadbeef",
     );
     fs.set_index_for_repo(
         path!("/dir/.git").as_ref(),
@@ -7252,6 +7441,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
         &[("src/main.rs".into(), committed_contents.clone())],
+        "deadbeef",
     );
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
@@ -7325,7 +7515,8 @@ async fn test_repository_and_path_for_project_path(
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
-    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.run_until_parked();
 
@@ -7403,7 +7594,9 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), [path!("/root/home/project").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
-    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     tree.flush_fs_events(cx).await;
 
@@ -7418,7 +7611,8 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), [path!("/root/home").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
-    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     tree.flush_fs_events(cx).await;
 
@@ -7472,7 +7666,8 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7505,7 +7700,8 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
 
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7539,14 +7735,16 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     git_remove_index(Path::new("d.txt"), &repo);
     git_commit("Another commit", &repo);
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
     std::fs::remove_file(work_dir.join("a.txt")).unwrap();
     std::fs::remove_file(work_dir.join("b.txt")).unwrap();
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7595,7 +7793,8 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7726,7 +7925,8 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7756,7 +7956,8 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
         collections::HashMap::from_iter([("a.txt".to_owned(), git2::Status::CONFLICTED)])
     );
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
     let conflicts = repository.update(cx, |repository, _| {
@@ -7812,7 +8013,8 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7882,7 +8084,8 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7982,7 +8185,8 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8010,7 +8214,8 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     // Modify a file in the working copy.
     std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8027,6 +8232,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     git_add(B_TXT, &repo);
     git_commit("Committing modified and added", &repo);
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     // The worktree detects that the files' git status have changed.
@@ -8046,6 +8254,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
     std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     // Check that more complex repo changes are tracked
@@ -8086,6 +8297,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _cx| {
@@ -8107,6 +8321,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _cx| {
@@ -8145,10 +8362,10 @@ async fn test_repos_in_invisible_worktrees(
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root/dir1/dep1").as_ref()], cx).await;
-    let visible_worktree =
+    let _visible_worktree =
         project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    visible_worktree
-        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
 
     let repos = project.read_with(cx, |project, cx| {
@@ -8160,7 +8377,7 @@ async fn test_repos_in_invisible_worktrees(
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/dir1/dep1")).into()]);
 
-    let (invisible_worktree, _) = project
+    let (_invisible_worktree, _) = project
         .update(cx, |project, cx| {
             project.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.find_or_create_worktree(path!("/root/dir1/b.txt"), false, cx)
@@ -8168,8 +8385,8 @@ async fn test_repos_in_invisible_worktrees(
         })
         .await
         .expect("failed to create worktree");
-    invisible_worktree
-        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
 
     let repos = project.read_with(cx, |project, cx| {
@@ -8223,7 +8440,8 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8364,16 +8582,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let scan_complete = project.update(cx, |project, cx| {
-        project
-            .worktrees(cx)
-            .next()
-            .unwrap()
-            .read(cx)
-            .as_local()
-            .unwrap()
-            .scan_complete()
-    });
+    let scan_complete = project.update(cx, |project, cx| project.git_scans_complete(cx));
     scan_complete.await;
 
     let mut repositories = project.update(cx, |project, cx| {
@@ -8508,7 +8717,8 @@ async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8833,11 +9043,9 @@ async fn test_find_project_path_abs(
     .await;
 
     // Make sure the worktrees are fully initialized
-    for worktree in project.read_with(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>()) {
-        worktree
-            .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-            .await;
-    }
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.run_until_parked();
 
     let (project1_abs_path, project1_id, project2_abs_path, project2_id) =

@@ -1,7 +1,5 @@
-use std::cell::RefCell;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
@@ -767,7 +765,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
         let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
-            ..snapshot.anchor_before(state.source_range.end);
+            ..snapshot.anchor_after(state.source_range.end);
 
         let thread_store = self.thread_store.clone();
         let text_thread_store = self.text_thread_store.clone();
@@ -912,22 +910,13 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         })
     }
 
-    fn resolve_completions(
-        &self,
-        _buffer: Entity<Buffer>,
-        _completion_indices: Vec<usize>,
-        _completions: Rc<RefCell<Box<[Completion]>>>,
-        _cx: &mut Context<Editor>,
-    ) -> Task<Result<bool>> {
-        Task::ready(Ok(true))
-    }
-
     fn is_completion_trigger(
         &self,
         buffer: &Entity<language::Buffer>,
         position: language::Anchor,
-        _: &str,
-        _: bool,
+        _text: &str,
+        _trigger_in_words: bool,
+        _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);
@@ -1076,7 +1065,7 @@ mod tests {
     use project::{Project, ProjectPath};
     use serde_json::json;
     use settings::SettingsStore;
-    use std::ops::Deref;
+    use std::{ops::Deref, rc::Rc};
     use util::{path, separator};
     use workspace::{AppState, Item};
 

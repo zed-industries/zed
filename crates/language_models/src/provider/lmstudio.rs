@@ -15,7 +15,7 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{
-    ChatCompletionRequest, ChatMessage, ModelType, ResponseStreamEvent, get_models, preload_model,
+    ChatCompletionRequest, ChatMessage, ModelType, ResponseStreamEvent, get_models,
     stream_chat_completion,
 };
 use schemars::JsonSchema;
@@ -84,7 +84,9 @@ impl State {
                     lmstudio::Model::new(
                         &model.id,
                         None,
-                        None,
+                        model
+                            .loaded_context_length
+                            .or_else(|| model.max_context_length),
                         model.capabilities.supports_tool_calls(),
                     )
                 })
@@ -214,15 +216,6 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
-    }
-
-    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
-        let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
-        let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
-        let id = model.id().0.to_string();
-        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
-            .detach_and_log_err(cx);
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {

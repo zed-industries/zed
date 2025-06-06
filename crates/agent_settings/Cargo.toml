@@ -16,7 +16,6 @@ anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 collections.workspace = true
 gpui.workspace = true
-indexmap.workspace = true
 language_model.workspace = true
 lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true

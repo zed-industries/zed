@@ -374,7 +374,6 @@ pub trait LanguageModelProvider: 'static {
     fn recommended_models(&self, _cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         Vec::new()
     }
-    fn load_model(&self, _model: Arc<dyn LanguageModel>, _cx: &App) {}
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
     fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView;
