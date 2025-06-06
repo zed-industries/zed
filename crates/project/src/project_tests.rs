@@ -7475,7 +7475,7 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_repository_and_path_for_project_path(
     background_executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
@@ -7565,7 +7565,7 @@ async fn test_repository_and_path_for_project_path(
     });
 }
 
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -7624,7 +7624,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 10)]
+#[gpui::test]
 async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -7754,7 +7754,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -7896,7 +7896,7 @@ async fn test_repository_subfolder_git_status(
 
 // TODO: this test is flaky (especially on Windows but at least sometimes on all platforms).
 #[cfg(any())]
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -7977,7 +7977,7 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     pretty_assertions::assert_eq!(conflicts, []);
 }
 
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -8050,7 +8050,7 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 // a directory which some program has already open.
 // This is a limitation of the Windows.
 // See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -8130,7 +8130,7 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
 // you can't rename a directory which some program has already open. This is a
 // limitation of the Windows. See:
 // https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 #[cfg_attr(target_os = "windows", ignore)]
 async fn test_file_status(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -8328,7 +8328,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_repos_in_invisible_worktrees(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
@@ -8526,7 +8526,7 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -8676,7 +8676,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
@@ -8998,7 +8998,7 @@ fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Sta
         .collect()
 }
 
-#[gpui::test(iterations = 13)]
+#[gpui::test]
 async fn test_find_project_path_abs(
     background_executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
