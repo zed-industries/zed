@@ -2910,7 +2910,7 @@ impl Project {
                     self.enqueue_buffer_ordered_message(BufferOrderedMessage::ShowDocument {
                         uri: uri.clone(),
                         take_focus: *take_focus,
-                        selection: selection.clone(),
+                        selection: *selection,
                     })
                     .log_err();
                 } else {
