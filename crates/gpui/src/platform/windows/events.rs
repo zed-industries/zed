@@ -699,23 +699,14 @@ fn handle_ime_composition_inner(
         })?;
         Some(0)
     } else {
-        let mut ime_input = None;
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
             let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
+            let caret_pos = (lparam.0 as u32 & GCS_CURSORPOS.0 > 0).then(|| {
+                let pos = retrieve_composition_cursor_position(ctx);
+                pos..pos
+            });
             with_input_handler(&state_ptr, |input_handler| {
-                input_handler.replace_and_mark_text_in_range(None, &comp_string, None);
-            })?;
-            ime_input = Some(comp_string);
-        }
-        if lparam.0 as u32 & GCS_CURSORPOS.0 > 0 {
-            let comp_string = &ime_input?;
-            let caret_pos = retrieve_composition_cursor_position(ctx);
-            with_input_handler(&state_ptr, |input_handler| {
-                input_handler.replace_and_mark_text_in_range(
-                    None,
-                    comp_string,
-                    Some(caret_pos..caret_pos),
-                );
+                input_handler.replace_and_mark_text_in_range(None, &comp_string, caret_pos);
             })?;
         }
         if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
