@@ -34,7 +34,7 @@ struct NodeRuntimeState {
     http: Arc<dyn HttpClient>,
     instance: Option<Box<dyn NodeRuntimeTrait>>,
     last_options: Option<NodeBinaryOptions>,
-    options: async_watch::Receiver<Option<NodeBinaryOptions>>,
+    options: watch::Receiver<Option<NodeBinaryOptions>>,
     shell_env_loaded: Shared<oneshot::Receiver<()>>,
 }
 
@@ -42,7 +42,7 @@ impl NodeRuntime {
     pub fn new(
         http: Arc<dyn HttpClient>,
         shell_env_loaded: Option<oneshot::Receiver<()>>,
-        options: async_watch::Receiver<Option<NodeBinaryOptions>>,
+        options: watch::Receiver<Option<NodeBinaryOptions>>,
     ) -> Self {
         NodeRuntime(Arc::new(Mutex::new(NodeRuntimeState {
             http,
@@ -58,7 +58,7 @@ impl NodeRuntime {
             http: Arc::new(http_client::BlockedHttpClient),
             instance: None,
             last_options: None,
-            options: async_watch::channel(Some(NodeBinaryOptions::default())).1,
+            options: watch::channel(Some(NodeBinaryOptions::default())).1,
             shell_env_loaded: oneshot::channel().1.shared(),
         })))
     }

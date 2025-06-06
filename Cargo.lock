@@ -59,7 +59,6 @@ dependencies = [
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
- "async-watch",
  "audio",
  "buffer_diff",
  "chrono",
@@ -130,6 +129,7 @@ dependencies = [
  "urlencoding",
  "util",
  "uuid",
+ "watch",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -631,7 +631,6 @@ name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-watch",
  "buffer_diff",
  "clock",
  "collections",
@@ -653,6 +652,7 @@ dependencies = [
  "settings",
  "text",
  "util",
+ "watch",
  "workspace",
  "workspace-hack",
  "zlog",
@@ -665,7 +665,6 @@ dependencies = [
  "agent_settings",
  "anyhow",
  "assistant_tool",
- "async-watch",
  "buffer_diff",
  "chrono",
  "client",
@@ -716,6 +715,7 @@ dependencies = [
  "ui",
  "unindent",
  "util",
+ "watch",
  "web_search",
  "which 6.0.3",
  "workspace",
@@ -1072,15 +1072,6 @@ dependencies = [
  "tokio",
  "tokio-rustls 0.26.2",
  "tungstenite 0.26.2",
-]
-
-[[package]]
-name = "async-watch"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a078faf4e27c0c6cc0efb20e5da59dcccc04968ebf2801d8e0b2195124cdcdb2"
-dependencies = [
- "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -5010,7 +5001,6 @@ dependencies = [
  "assistant_tool",
  "assistant_tools",
  "async-trait",
- "async-watch",
  "buffer_diff",
  "chrono",
  "clap",
@@ -5052,6 +5042,7 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
+ "watch",
  "workspace-hack",
  "zed_llm_client",
 ]
@@ -8736,7 +8727,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "async-watch",
  "clock",
  "collections",
  "ctor",
@@ -8786,6 +8776,7 @@ dependencies = [
  "unicase",
  "unindent",
  "util",
+ "watch",
  "workspace-hack",
  "zlog",
 ]
@@ -10144,7 +10135,6 @@ dependencies = [
  "async-std",
  "async-tar",
  "async-trait",
- "async-watch",
  "futures 0.3.31",
  "http_client",
  "log",
@@ -10154,6 +10144,7 @@ dependencies = [
  "serde_json",
  "smol",
  "util",
+ "watch",
  "which 6.0.3",
  "workspace-hack",
 ]
@@ -13003,7 +12994,6 @@ dependencies = [
  "askpass",
  "assistant_tool",
  "assistant_tools",
- "async-watch",
  "backtrace",
  "cargo_toml",
  "chrono",
@@ -13050,6 +13040,7 @@ dependencies = [
  "toml 0.8.20",
  "unindent",
  "util",
+ "watch",
  "worktree",
  "zlog",
 ]
@@ -17915,8 +17906,10 @@ name = "watch"
 version = "0.1.0"
 dependencies = [
  "ctor",
+ "futures 0.3.31",
  "gpui",
  "parking_lot",
+ "rand 0.8.5",
  "zlog",
 ]
 
@@ -19731,7 +19724,6 @@ dependencies = [
  "assistant_context_editor",
  "assistant_tool",
  "assistant_tools",
- "async-watch",
  "audio",
  "auto_update",
  "auto_update_ui",
@@ -19848,6 +19840,7 @@ dependencies = [
  "uuid",
  "vim",
  "vim_mode_setting",
+ "watch",
  "web_search",
  "web_search_providers",
  "welcome",
