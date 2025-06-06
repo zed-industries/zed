@@ -243,6 +243,9 @@ impl Inventory {
     pub fn list_debug_scenarios(
         &self,
         task_contexts: &TaskContexts,
+        lsp_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
+        add_current_language_tasks: bool,
         cx: &mut App,
     ) -> (Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>) {
         let mut scenarios = Vec::new();
@@ -258,7 +261,6 @@ impl Inventory {
         }
         scenarios.extend(self.global_debug_scenarios_from_settings());
 
-        let (_, new) = self.used_and_current_resolved_tasks(task_contexts, cx);
         if let Some(location) = task_contexts.location() {
             let file = location.buffer.read(cx).file();
             let language = location.buffer.read(cx).language();
@@ -271,7 +273,14 @@ impl Inventory {
                     language.and_then(|l| l.config().debuggers.first().map(SharedString::from))
                 });
             if let Some(adapter) = adapter {
-                for (kind, task) in new {
+                for (kind, task) in
+                    lsp_tasks
+                        .into_iter()
+                        .chain(current_resolved_tasks.into_iter().filter(|(kind, _)| {
+                            add_current_language_tasks
+                                || !matches!(kind, TaskSourceKind::Language { .. })
+                        }))
+                {
                     if let Some(scenario) =
                         DapRegistry::global(cx)
                             .locators()

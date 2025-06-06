@@ -1332,6 +1332,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1349,6 +1350,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1439,6 +1441,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1456,6 +1459,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1633,7 +1637,8 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
                     message: "undefined variable 'A'".to_string(),
                     group_id: 0,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             }]
         )
@@ -2149,7 +2154,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 1,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 },
                 DiagnosticEntry {
@@ -2161,7 +2167,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 2,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 }
             ]
@@ -2227,7 +2234,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 4,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 },
                 DiagnosticEntry {
@@ -2239,7 +2247,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 3,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 }
             ]
@@ -2319,7 +2328,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 6,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 },
                 DiagnosticEntry {
@@ -2331,7 +2341,8 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         is_disk_based: true,
                         group_id: 5,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 }
             ]
@@ -2372,7 +2383,8 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                             diagnostic: Diagnostic {
                                 severity: DiagnosticSeverity::ERROR,
                                 message: "syntax error 1".to_string(),
-                                ..Default::default()
+                                source_kind: DiagnosticSourceKind::Pushed,
+                                ..Diagnostic::default()
                             },
                         },
                         DiagnosticEntry {
@@ -2381,7 +2393,8 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                             diagnostic: Diagnostic {
                                 severity: DiagnosticSeverity::ERROR,
                                 message: "syntax error 2".to_string(),
-                                ..Default::default()
+                                source_kind: DiagnosticSourceKind::Pushed,
+                                ..Diagnostic::default()
                             },
                         },
                     ],
@@ -2435,7 +2448,8 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
                         message: "syntax error a1".to_string(),
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 }],
                 cx,
@@ -2452,7 +2466,8 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
                         message: "syntax error b1".to_string(),
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     },
                 }],
                 cx,
@@ -3584,6 +3599,86 @@ async fn test_save_file(cx: &mut gpui::TestAppContext) {
     assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
 }
 
+#[gpui::test(iterations = 10)]
+async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
+    // Issue: #24349
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+
+    language_registry.add(rust_lang());
+    let mut fake_rust_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-rust-language-server",
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), "::".to_string()]),
+                    ..Default::default()
+                }),
+                text_document_sync: Some(lsp::TextDocumentSyncCapability::Options(
+                    lsp::TextDocumentSyncOptions {
+                        save: Some(lsp::TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |this, cx| this.create_buffer(cx))
+        .unwrap()
+        .await;
+    project.update(cx, |this, cx| {
+        this.register_buffer_with_language_servers(&buffer, cx);
+        buffer.update(cx, |buffer, cx| {
+            assert!(!this.has_language_servers_for(buffer, cx));
+        })
+    });
+
+    project
+        .update(cx, |this, cx| {
+            let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
+            this.save_buffer_as(
+                buffer.clone(),
+                ProjectPath {
+                    worktree_id,
+                    path: Arc::from("file.rs".as_ref()),
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    // A server is started up, and it is notified about Rust files.
+    let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
+    assert_eq!(
+        fake_rust_server
+            .receive_notification::<lsp::notification::DidOpenTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentItem {
+            uri: lsp::Url::from_file_path(path!("/dir/file.rs")).unwrap(),
+            version: 0,
+            text: "".to_string(),
+            language_id: "rust".to_string(),
+        }
+    );
+
+    project.update(cx, |this, cx| {
+        buffer.update(cx, |buffer, cx| {
+            assert!(this.has_language_servers_for(buffer, cx));
+        })
+    });
+}
+
 #[gpui::test(iterations = 30)]
 async fn test_file_changes_multiple_times_on_disk(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -4498,7 +4593,13 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
     lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostics(LanguageServerId(0), message, &[], cx)
+            lsp_store.update_diagnostics(
+                LanguageServerId(0),
+                message,
+                DiagnosticSourceKind::Pushed,
+                &[],
+                cx,
+            )
         })
         .unwrap();
     let buffer = buffer.update(cx, |buffer, _| buffer.snapshot());
@@ -4515,7 +4616,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 1".to_string(),
                     group_id: 1,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4525,7 +4627,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 1 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4535,7 +4638,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2 hint 1".to_string(),
                     group_id: 0,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4545,7 +4649,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2 hint 2".to_string(),
                     group_id: 0,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4555,7 +4660,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2".to_string(),
                     group_id: 0,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             }
         ]
@@ -4571,7 +4677,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2 hint 1".to_string(),
                     group_id: 0,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4581,7 +4688,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2 hint 2".to_string(),
                     group_id: 0,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4591,7 +4699,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 2".to_string(),
                     group_id: 0,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             }
         ]
@@ -4607,7 +4716,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 1".to_string(),
                     group_id: 1,
                     is_primary: true,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
             DiagnosticEntry {
@@ -4617,7 +4727,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                     message: "error 1 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
-                    ..Default::default()
+                    source_kind: DiagnosticSourceKind::Pushed,
+                    ..Diagnostic::default()
                 }
             },
         ]

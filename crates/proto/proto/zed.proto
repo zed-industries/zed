@@ -389,10 +389,14 @@ message Envelope {
 
         LogToDebugConsole log_to_debug_console = 348;
 
-        SemanticTokensFullRequest semantic_tokens_full_request = 349;
-        SemanticTokensResponse semantic_tokens_response = 350;
-        RefreshSemanticTokens refresh_semantic_tokens = 351;
-        SemanticTokensRangeRequest semantic_tokens_range_request = 352;  // current max
+        GetDocumentDiagnostics get_document_diagnostics = 349;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 350;
+        RefreshDocumentsDiagnostics refresh_documents_diagnostics = 351;
+
+        SemanticTokensFullRequest semantic_tokens_full_request = 352;
+        SemanticTokensResponse semantic_tokens_response = 353;
+        RefreshSemanticTokens refresh_semantic_tokens = 354;
+        SemanticTokensRangeRequest semantic_tokens_range_request = 355;  // current max
     }
 
     reserved 87 to 88;

@@ -4182,6 +4182,20 @@ impl MultiBufferSnapshot {
         (start..end, word_kind)
     }
 
+    pub fn char_kind_before<T: ToOffset>(
+        &self,
+        start: T,
+        for_completion: bool,
+    ) -> Option<CharKind> {
+        let start = start.to_offset(self);
+        let classifier = self
+            .char_classifier_at(start)
+            .for_completion(for_completion);
+        self.reversed_chars_at(start)
+            .next()
+            .map(|ch| classifier.kind(ch))
+    }
+
     pub fn is_singleton(&self) -> bool {
         self.singleton
     }
@@ -6213,7 +6227,7 @@ impl MultiBufferSnapshot {
         cursor.seek_to_start_of_current_excerpt();
         let region = cursor.region()?;
         let offset = region.range.start;
-        let buffer_offset = region.buffer_range.start;
+        let buffer_offset = start_excerpt.buffer_start_offset();
         let excerpt_offset = cursor.excerpts.start().clone();
         Some(MultiBufferExcerpt {
             diff_transforms: cursor.diff_transforms,
