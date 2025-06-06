@@ -144,7 +144,7 @@ impl Vim {
             editor.set_clip_at_line_ends(false, cx);
             let mut selection = editor
                 .selections
-                .newest_display(&editor.selections.display_map(cx));
+                .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
             object.expand_selection(&snapshot, &mut selection, around);
             let start = snapshot
@@ -192,7 +192,7 @@ impl Vim {
             let text_layout_details = editor.text_layout_details(window);
             let mut selection = editor
                 .selections
-                .newest_display(&editor.selections.display_map(cx));
+                .newest_display(&editor.display_snapshot(cx));
             let snapshot = editor.snapshot(window, cx);
             motion.expand_selection(
                 &snapshot,

@@ -157,7 +157,7 @@ pub fn deploy_context_menu(
         return;
     }
 
-    let display_map = editor.selections.display_map(cx);
+    let display_map = editor.display_snapshot(cx);
     let source_anchor = display_map.display_point_to_anchor(point, text::Bias::Right);
     let context_menu = if let Some(custom) = editor.custom_context_menu.take() {
         let menu = custom(editor, point, window, cx);

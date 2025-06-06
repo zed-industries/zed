@@ -3028,7 +3028,7 @@ impl OutlinePanel {
         let selection = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .newest::<language::Point>(&editor.selections.display_map(cx))
+                .newest::<language::Point>(&editor.display_snapshot(cx))
                 .head()
         });
         let editor_snapshot = editor.update(cx, |editor, cx| editor.snapshot(window, cx));
@@ -6906,7 +6906,7 @@ outline: struct OutlineEntryExcerpt
 
     fn selected_row_text(editor: &Entity<Editor>, cx: &mut App) -> String {
         editor.update(cx, |editor, cx| {
-            let selections = editor.selections.all::<language::Point>(&editor.selections.display_map(cx));
+            let selections = editor.selections.all::<language::Point>(&editor.display_snapshot(cx));
             assert_eq!(selections.len(), 1, "Active editor should have exactly one selection after any outline panel interactions");
             let selection = selections.first().unwrap();
             let multi_buffer_snapshot = editor.buffer().read(cx).snapshot(cx);

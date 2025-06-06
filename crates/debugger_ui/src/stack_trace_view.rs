@@ -57,7 +57,7 @@ impl StackTraceView {
                 let excerpt_id = editor.update(cx, |editor, cx| {
                     let position: Point = editor
                         .selections
-                        .newest(&editor.selections.display_map(cx))
+                        .newest(&editor.display_snapshot(cx))
                         .head();
 
                     editor

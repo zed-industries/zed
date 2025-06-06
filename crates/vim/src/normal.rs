@@ -464,9 +464,7 @@ impl Vim {
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor
-                    .selections
-                    .all::<Point>(&editor.selections.display_map(cx));
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_start_rows: BTreeSet<u32> = selections
@@ -508,9 +506,7 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
             editor.transact(window, cx, |editor, window, cx| {
-                let selections = editor
-                    .selections
-                    .all::<Point>(&editor.selections.display_map(cx));
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
 
                 let selection_end_rows: BTreeSet<u32> = selections
@@ -556,9 +552,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, _, cx| {
-                let selections = editor
-                    .selections
-                    .all::<Point>(&editor.selections.display_map(cx));
+                let selections = editor.selections.all::<Point>(&editor.display_snapshot(cx));
 
                 let selection_start_rows: BTreeSet<u32> = selections
                     .into_iter()
@@ -587,7 +581,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let display_map = editor.selections.display_map(cx);
+                let display_map = editor.display_snapshot(cx);
                 let selections = editor.selections.all::<Point>(&display_map);
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 let display_selections = editor.selections.all_display(&display_map);
@@ -728,7 +722,7 @@ impl Vim {
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
-                let display_map = editor.selections.display_map(cx);
+                let display_map = editor.display_snapshot(cx);
                 let display_selections = editor.selections.all_display(&display_map);
 
                 let mut edits = Vec::with_capacity(display_selections.len());
@@ -770,7 +764,7 @@ impl Vim {
         editor: &Editor,
         cx: &mut Context<Editor>,
     ) -> HashMap<usize, Anchor> {
-        let display_map = editor.selections.display_map(cx);
+        let display_map = editor.display_snapshot(cx);
         let selections = editor.selections.all_display(&display_map);
         selections
             .iter()

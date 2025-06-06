@@ -74,7 +74,7 @@ impl Editor {
         let scroll_margin_rows = self.vertical_scroll_margin() as u32;
         let new_screen_top = self
             .selections
-            .newest_display(&self.selections.display_map(cx))
+            .newest_display(&self.display_snapshot(cx))
             .head()
             .row()
             .0;
@@ -93,7 +93,7 @@ impl Editor {
         };
         let new_screen_top = self
             .selections
-            .newest_display(&self.selections.display_map(cx))
+            .newest_display(&self.display_snapshot(cx))
             .head()
             .row()
             .0;
@@ -113,7 +113,7 @@ impl Editor {
         };
         let new_screen_top = self
             .selections
-            .newest_display(&self.selections.display_map(cx))
+            .newest_display(&self.display_snapshot(cx))
             .head()
             .row()
             .0;

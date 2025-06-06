@@ -427,9 +427,7 @@ impl ContextEditor {
 
     fn cursors(&self, cx: &mut App) -> Vec<usize> {
         let selections = self.editor.update(cx, |editor, cx| {
-            editor
-                .selections
-                .all::<usize>(&editor.selections.display_map(cx))
+            editor.selections.all::<usize>(&editor.display_snapshot(cx))
         });
         selections
             .into_iter()
@@ -446,7 +444,7 @@ impl ContextEditor {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     let newest_cursor = editor
                         .selections
-                        .newest::<Point>(&editor.selections.display_map(cx))
+                        .newest::<Point>(&editor.display_snapshot(cx))
                         .head();
                     if newest_cursor.column > 0
                         || snapshot
@@ -1291,7 +1289,7 @@ impl ContextEditor {
 
         let context_editor = context_editor_view.read(cx).editor.clone();
         context_editor.update(cx, |context_editor, cx| {
-            let display_map = context_editor.selections.display_map(cx);
+            let display_map = context_editor.display_snapshot(cx);
             if context_editor
                 .selections
                 .newest::<Point>(&display_map)
@@ -1538,7 +1536,7 @@ impl ContextEditor {
             for (text, crease_title) in creases {
                 let point = editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx))
+                    .newest::<Point>(&editor.display_snapshot(cx))
                     .head();
                 let start_row = MultiBufferRow(point.row);
 
@@ -1732,7 +1730,7 @@ impl ContextEditor {
             self.editor.update(cx, |editor, cx| {
                 let paste_position = editor
                     .selections
-                    .newest::<usize>(&editor.selections.display_map(cx))
+                    .newest::<usize>(&editor.display_snapshot(cx))
                     .head();
                 editor.paste(action, window, cx);
 
@@ -1780,16 +1778,13 @@ impl ContextEditor {
                 editor.transact(window, cx, |editor, _window, cx| {
                     let edits = editor
                         .selections
-                        .all::<usize>(&editor.selections.display_map(cx))
+                        .all::<usize>(&editor.display_snapshot(cx))
                         .into_iter()
                         .map(|selection| (selection.start..selection.end, "\n"));
                     editor.edit(edits, cx);
 
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    for selection in editor
-                        .selections
-                        .all::<usize>(&editor.selections.display_map(cx))
-                    {
+                    for selection in editor.selections.all::<usize>(&editor.display_snapshot(cx)) {
                         image_positions.push(snapshot.anchor_before(selection.end));
                     }
                 });

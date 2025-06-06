@@ -732,7 +732,7 @@ mod tests {
         let selections = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .all::<rope::Point>(&editor.selections.display_map(cx))
+                .all::<rope::Point>(&editor.display_snapshot(cx))
                 .into_iter()
                 .map(|s| s.start..s.end)
                 .collect::<Vec<_>>()

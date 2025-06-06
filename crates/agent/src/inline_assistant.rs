@@ -790,7 +790,7 @@ impl InlineAssistant {
                 (
                     editor
                         .selections
-                        .newest::<usize>(&editor.selections.display_map(cx)),
+                        .newest::<usize>(&editor.display_snapshot(cx)),
                     editor.buffer().read(cx).snapshot(cx),
                 )
             });
@@ -823,7 +823,7 @@ impl InlineAssistant {
                 (
                     editor
                         .selections
-                        .newest::<usize>(&editor.selections.display_map(cx)),
+                        .newest::<usize>(&editor.display_snapshot(cx)),
                     editor.buffer().read(cx).snapshot(cx),
                 )
             });

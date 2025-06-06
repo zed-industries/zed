@@ -591,9 +591,7 @@ impl Item for Editor {
         cx: &mut Context<Self>,
     ) -> bool {
         if let Ok(data) = data.downcast::<NavigationData>() {
-            let newest_selection = self
-                .selections
-                .newest::<Point>(&self.selections.display_map(cx));
+            let newest_selection = self.selections.newest::<Point>(&self.display_snapshot(cx));
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
                 data.cursor_anchor.to_point(&buffer)

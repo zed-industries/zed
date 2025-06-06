@@ -382,7 +382,7 @@ fn update_editor_selection(
 ) {
     let newest_cursor = editor
         .selections
-        .newest::<Point>(&editor.selections.display_map(cx))
+        .newest::<Point>(&editor.display_snapshot(cx))
         .head();
 
     if !diff_hunks.iter().any(|hunk| {
@@ -1848,7 +1848,7 @@ mod tests {
             editor
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(1, 0)..Point::new(1, 0)
         );
@@ -1864,7 +1864,7 @@ mod tests {
             editor
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -1887,7 +1887,7 @@ mod tests {
             editor
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -1921,7 +1921,7 @@ mod tests {
             editor
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2085,7 +2085,7 @@ mod tests {
             editor1
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(1, 0)..Point::new(1, 0)
         );
@@ -2128,7 +2128,7 @@ mod tests {
             editor1
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2151,7 +2151,7 @@ mod tests {
             editor1
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2179,7 +2179,7 @@ mod tests {
             editor1
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2214,7 +2214,7 @@ mod tests {
             editor2
                 .update(cx, |editor, cx| editor
                     .selections
-                    .newest::<Point>(&editor.selections.display_map(cx)))
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(0, 0)..Point::new(0, 0)
         );

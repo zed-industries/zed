@@ -13,7 +13,7 @@ pub fn refresh_matching_bracket_highlights(
 
     let newest_selection = editor
         .selections
-        .newest::<usize>(&editor.selections.display_map(cx));
+        .newest::<usize>(&editor.display_snapshot(cx));
     // Don't highlight brackets if the selection isn't empty
     if !newest_selection.is_empty() {
         return;

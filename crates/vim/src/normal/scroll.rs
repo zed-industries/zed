@@ -265,7 +265,7 @@ mod test {
             assert_eq!(
                 editor
                     .selections
-                    .newest(&editor.selections.display_map(cx))
+                    .newest(&editor.display_snapshot(cx))
                     .range(),
                 Point::new(6, 0)..Point::new(6, 0)
             )
@@ -285,7 +285,7 @@ mod test {
             assert_eq!(
                 editor
                     .selections
-                    .newest(&editor.selections.display_map(cx))
+                    .newest(&editor.display_snapshot(cx))
                     .range(),
                 Point::new(0, 0)..Point::new(6, 1)
             )

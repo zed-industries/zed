@@ -166,7 +166,7 @@ impl DiagnosticIndicator {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let cursor_position = editor
                 .selections
-                .newest::<usize>(&editor.selections.display_map(cx))
+                .newest::<usize>(&editor.display_snapshot(cx))
                 .head();
             (buffer, cursor_position)
         });

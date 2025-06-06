@@ -643,7 +643,7 @@ impl LspLogView {
                             let last_point = editor.buffer().read(cx).len(cx);
                             let newest_cursor_is_at_end = editor
                                 .selections
-                                .newest::<usize>(&editor.selections.display_map(cx))
+                                .newest::<usize>(&editor.display_snapshot(cx))
                                 .start
                                 >= last_point;
                             editor.edit(vec![(last_point..last_point, entry.as_str())], cx);

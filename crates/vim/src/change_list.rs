@@ -42,7 +42,7 @@ impl Vim {
 
     pub(crate) fn push_to_change_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((new_positions, buffer)) = self.update_editor(window, cx, |vim, editor, _, cx| {
-            let display_map = editor.selections.display_map(cx);
+            let display_map = editor.display_snapshot(cx);
             let selections = editor.selections.all_adjusted_display(&display_map);
             let buffer = editor.buffer().clone();
 

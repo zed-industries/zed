@@ -268,7 +268,7 @@ impl Editor {
         layouts: &[LineWithInvisibles],
         cx: &mut Context<Self>,
     ) -> bool {
-        let display_map = self.selections.display_map(cx);
+        let display_map = self.display_snapshot(cx);
         let selections = self.selections.all::<Point>(&display_map);
 
         let mut target_left;

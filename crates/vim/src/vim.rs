@@ -1142,7 +1142,7 @@ impl Vim {
         let newest_selection_empty = editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .newest::<usize>(&editor.selections.display_map(cx))
+                .newest::<usize>(&editor.display_snapshot(cx))
                 .is_empty()
         });
         let editor = editor.read(cx);
@@ -1275,7 +1275,7 @@ impl Vim {
 
                 let selections = self.editor().map(|editor| {
                     editor.update(cx, |editor, cx| {
-                        let snapshot = editor.selections.display_map(cx);
+                        let snapshot = editor.display_snapshot(cx);
 
                         (
                             editor.selections.oldest::<Point>(&snapshot),

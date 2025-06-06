@@ -8588,7 +8588,7 @@ async fn test_snippets(cx: &mut TestAppContext) {
         let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
         let insertion_ranges = editor
             .selections
-            .all(&editor.selections.display_map(cx))
+            .all(&editor.display_snapshot(cx))
             .iter()
             .map(|s| s.range().clone())
             .collect::<Vec<_>>();
@@ -8668,7 +8668,7 @@ async fn test_snippet_indentation(cx: &mut TestAppContext) {
         .unwrap();
         let insertion_ranges = editor
             .selections
-            .all(&editor.selections.display_map(cx))
+            .all(&editor.display_snapshot(cx))
             .iter()
             .map(|s| s.range().clone())
             .collect::<Vec<_>>();
@@ -20252,7 +20252,7 @@ println!("5");
             assert_eq!(
                 editor
                     .selections
-                    .all::<Point>(&editor.selections.display_map(cx))
+                    .all::<Point>(&editor.display_snapshot(cx))
                     .into_iter()
                     .map(|s| s.range())
                     .collect::<Vec<_>>(),
@@ -20295,7 +20295,7 @@ println!("5");
             assert_eq!(
                 editor
                     .selections
-                    .all::<Point>(&editor.selections.display_map(cx))
+                    .all::<Point>(&editor.display_snapshot(cx))
                     .into_iter()
                     .map(|s| s.range())
                     .collect::<Vec<_>>(),
@@ -20421,7 +20421,7 @@ println!("5");
             assert_eq!(
                 editor
                     .selections
-                    .all::<Point>(&editor.selections.display_map(cx))
+                    .all::<Point>(&editor.display_snapshot(cx))
                     .into_iter()
                     .map(|s| s.range())
                     .collect::<Vec<_>>(),
@@ -20447,7 +20447,7 @@ println!("5");
             assert_eq!(
                 editor
                     .selections
-                    .all::<Point>(&editor.selections.display_map(cx))
+                    .all::<Point>(&editor.display_snapshot(cx))
                     .into_iter()
                     .map(|s| s.range())
                     .collect::<Vec<_>>(),

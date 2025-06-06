@@ -293,7 +293,7 @@ impl ChannelView {
         let position = self.editor.update(cx, |editor, cx| {
             editor
                 .selections
-                .newest_display(&editor.selections.display_map(cx))
+                .newest_display(&editor.display_snapshot(cx))
                 .start
         });
         self.copy_link_for_position(position, window, cx)

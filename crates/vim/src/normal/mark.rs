@@ -51,7 +51,7 @@ impl Vim {
         let mut reversed = vec![];
 
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            let display_map = editor.selections.display_map(cx);
+            let display_map = editor.display_snapshot(cx);
             let selections = editor.selections.all_display(&display_map);
             for selection in selections {
                 let end = movement::saturating_left(&display_map, selection.end);
@@ -308,7 +308,7 @@ impl Vim {
             name = "'";
         }
         if matches!(name, "{" | "}" | "(" | ")") {
-            let display_map = editor.selections.display_map(cx);
+            let display_map = editor.display_snapshot(cx);
             let selections = editor.selections.all_display(&display_map);
             let anchors = selections
                 .into_iter()
