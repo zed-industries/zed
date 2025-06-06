@@ -361,15 +361,13 @@ impl HeadlessProject {
                         project_id: SSH_PROJECT_ID,
                         uri: uri.to_string(),
                         take_focus: *take_focus,
-                        selection: selection.as_ref().map(|range| proto::LspRange {
-                            start: Some(proto::LspPosition {
-                                line: range.start.line,
-                                character: range.start.character,
-                            }),
-                            end: Some(proto::LspPosition {
-                                line: range.end.line,
-                                character: range.end.character,
-                            }),
+                        selection_start: selection.as_ref().map(|range| proto::PointUtf16 {
+                            row: range.start.line,
+                            column: range.start.character,
+                        }),
+                        selection_end: selection.as_ref().map(|range| proto::PointUtf16 {
+                            row: range.end.line,
+                            column: range.end.character,
                         }),
                     })
                     .log_err();
