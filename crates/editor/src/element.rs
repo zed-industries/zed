@@ -509,6 +509,13 @@ impl EditorElement {
             }
         });
         register_action(editor, window, |editor, action, window, cx| {
+            if let Some(task) = editor.preferred_code_action(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(editor, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_code_action(action, window, cx) {
                 task.detach_and_notify_err(window, cx);
             } else {

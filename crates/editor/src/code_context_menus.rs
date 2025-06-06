@@ -9,9 +9,9 @@ use language::{Buffer, LanguageName, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use project::CompletionSource;
 use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
+use project::{CompletionSource, LspAction};
 use task::DebugScenario;
 use task::TaskContext;
 
@@ -1292,7 +1292,19 @@ impl CodeActionContents {
                     .map(CodeActionsItem::DebugScenario),
             )
     }
-
+    // todo: this should probably be cached at a higher level but im unsure how these structures get updated
+    pub fn preferred_index(&self) -> Option<usize> {
+        self.iter().position(|action_item| {
+            if let Some(code_action) = action_item.as_code_action() {
+                if let LspAction::Action(lsp_action) = &code_action.lsp_action {
+                    if lsp_action.is_preferred.unwrap_or_default() {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+    }
     pub fn get(&self, mut index: usize) -> Option<CodeActionsItem> {
         if let Some(tasks) = &self.tasks {
             if let Some((kind, task)) = tasks.templates.get(index) {
