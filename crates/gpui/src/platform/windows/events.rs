@@ -701,7 +701,7 @@ fn handle_ime_composition_inner(
     } else {
         let mut ime_input = None;
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
-            let comp_string = parse_ime_composition_string(ctx)?;
+            let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
             with_input_handler(&state_ptr, |input_handler| {
                 input_handler.replace_and_mark_text_in_range(None, &comp_string, None);
             })?;
@@ -719,7 +719,7 @@ fn handle_ime_composition_inner(
             })?;
         }
         if lparam.0 as u32 & GCS_RESULTSTR.0 > 0 {
-            let comp_result = parse_ime_composition_result(ctx)?;
+            let comp_result = parse_ime_composition_string(ctx, GCS_RESULTSTR)?;
             with_input_handler(&state_ptr, |input_handler| {
                 input_handler.replace_text_in_range(None, &comp_result);
             })?;
@@ -1355,14 +1355,14 @@ fn parse_normal_key(
     })
 }
 
-fn parse_ime_composition_string(ctx: HIMC) -> Option<String> {
+fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) -> Option<String> {
     unsafe {
-        let string_len = ImmGetCompositionStringW(ctx, GCS_COMPSTR, None, 0);
+        let string_len = ImmGetCompositionStringW(ctx, comp_type, None, 0);
         if string_len >= 0 {
             let mut buffer = vec![0u8; string_len as usize + 2];
             ImmGetCompositionStringW(
                 ctx,
-                GCS_COMPSTR,
+                comp_type,
                 Some(buffer.as_mut_ptr() as _),
                 string_len as _,
             );
@@ -1380,29 +1380,6 @@ fn parse_ime_composition_string(ctx: HIMC) -> Option<String> {
 #[inline]
 fn retrieve_composition_cursor_position(ctx: HIMC) -> usize {
     unsafe { ImmGetCompositionStringW(ctx, GCS_CURSORPOS, None, 0) as usize }
-}
-
-fn parse_ime_composition_result(ctx: HIMC) -> Option<String> {
-    unsafe {
-        let string_len = ImmGetCompositionStringW(ctx, GCS_RESULTSTR, None, 0);
-        if string_len >= 0 {
-            let mut buffer = vec![0u8; string_len as usize + 2];
-            ImmGetCompositionStringW(
-                ctx,
-                GCS_RESULTSTR,
-                Some(buffer.as_mut_ptr() as _),
-                string_len as _,
-            );
-            let wstring = std::slice::from_raw_parts::<u16>(
-                buffer.as_mut_ptr().cast::<u16>(),
-                string_len as usize / 2,
-            );
-            let string = String::from_utf16_lossy(wstring);
-            Some(string)
-        } else {
-            None
-        }
-    }
 }
 
 #[inline]
