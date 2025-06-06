@@ -266,15 +266,8 @@ pub enum MessagePart {
     },
     #[serde(rename = "image_url")]
     Image {
-        image_url: ImageUrl,
+        image_url: String,
     },
-}
-
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct ImageUrl {
-    pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

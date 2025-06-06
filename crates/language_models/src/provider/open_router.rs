@@ -14,7 +14,7 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason,
 };
-use open_router::{ImageUrl, Model, ResponseStreamEvent, list_models, stream_completion};
+use open_router::{Model, ResponseStreamEvent, list_models, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -402,10 +402,7 @@ pub fn into_open_router(
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         open_router::MessagePart::Image {
-                            image_url: ImageUrl {
-                                url: image.to_base64_url(),
-                                detail: None,
-                            },
+                            image_url: image.to_base64_url(),
                         },
                         message.role,
                         &mut messages,
@@ -443,10 +440,7 @@ pub fn into_open_router(
                         }
                         LanguageModelToolResultContent::Image(image) => {
                             vec![open_router::MessagePart::Image {
-                                image_url: ImageUrl {
-                                    url: image.to_base64_url(),
-                                    detail: None,
-                                },
+                                image_url: image.to_base64_url(),
                             }]
                         }
                     };
