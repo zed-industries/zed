@@ -7507,7 +7507,8 @@ async fn test_repository_and_path_for_project_path(
     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
-    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.run_until_parked();
 
@@ -7585,7 +7586,9 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), [path!("/root/home/project").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
-    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     tree.flush_fs_events(cx).await;
 
@@ -7600,7 +7603,8 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs.clone(), [path!("/root/home").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
-    tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     tree.flush_fs_events(cx).await;
 
@@ -7654,7 +7658,8 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7687,7 +7692,8 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
 
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7721,14 +7727,16 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     git_remove_index(Path::new("d.txt"), &repo);
     git_commit("Another commit", &repo);
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
     std::fs::remove_file(work_dir.join("a.txt")).unwrap();
     std::fs::remove_file(work_dir.join("b.txt")).unwrap();
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7777,7 +7785,8 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7908,7 +7917,8 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -7938,7 +7948,8 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
         collections::HashMap::from_iter([("a.txt".to_owned(), git2::Status::CONFLICTED)])
     );
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
     let conflicts = repository.update(cx, |repository, _| {
@@ -7994,7 +8005,8 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8064,7 +8076,8 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8164,7 +8177,8 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8192,7 +8206,8 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     // Modify a file in the working copy.
     std::fs::write(work_dir.join(A_TXT), "aa").unwrap();
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8209,6 +8224,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     git_add(B_TXT, &repo);
     git_commit("Committing modified and added", &repo);
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     // The worktree detects that the files' git status have changed.
@@ -8228,6 +8246,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
     std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     // Check that more complex repo changes are tracked
@@ -8268,6 +8289,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _cx| {
@@ -8289,6 +8313,9 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     .unwrap();
 
     tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.executor().run_until_parked();
 
     repository.read_with(cx, |repository, _cx| {
@@ -8327,10 +8354,10 @@ async fn test_repos_in_invisible_worktrees(
     .await;
 
     let project = Project::test(fs.clone(), [path!("/root/dir1/dep1").as_ref()], cx).await;
-    let visible_worktree =
+    let _visible_worktree =
         project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
-    visible_worktree
-        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
 
     let repos = project.read_with(cx, |project, cx| {
@@ -8342,7 +8369,7 @@ async fn test_repos_in_invisible_worktrees(
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root/dir1/dep1")).into()]);
 
-    let (invisible_worktree, _) = project
+    let (_invisible_worktree, _) = project
         .update(cx, |project, cx| {
             project.worktree_store.update(cx, |worktree_store, cx| {
                 worktree_store.find_or_create_worktree(path!("/root/dir1/b.txt"), false, cx)
@@ -8350,8 +8377,8 @@ async fn test_repos_in_invisible_worktrees(
         })
         .await
         .expect("failed to create worktree");
-    invisible_worktree
-        .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
 
     let repos = project.read_with(cx, |project, cx| {
@@ -8405,7 +8432,8 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -8546,16 +8574,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-    let scan_complete = project.update(cx, |project, cx| {
-        project
-            .worktrees(cx)
-            .next()
-            .unwrap()
-            .read(cx)
-            .as_local()
-            .unwrap()
-            .scan_complete()
-    });
+    let scan_complete = project.update(cx, |project, cx| project.git_scans_complete(cx));
     scan_complete.await;
 
     let mut repositories = project.update(cx, |project, cx| {
@@ -8690,7 +8709,8 @@ async fn test_repository_deduplication(cx: &mut gpui::TestAppContext) {
 
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     tree.flush_fs_events(cx).await;
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
         .await;
     cx.executor().run_until_parked();
 
@@ -9015,11 +9035,9 @@ async fn test_find_project_path_abs(
     .await;
 
     // Make sure the worktrees are fully initialized
-    for worktree in project.read_with(cx, |project, cx| project.worktrees(cx).collect::<Vec<_>>()) {
-        worktree
-            .read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
-            .await;
-    }
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
     cx.run_until_parked();
 
     let (project1_abs_path, project1_id, project2_abs_path, project2_id) =
