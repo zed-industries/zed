@@ -1,0 +1,43 @@
+# CodeOrbit Configuration
+
+[core]
+# Enable or disable the extension
+enabled = true
+# Log level: trace, debug, info, warn, error
+log_level = "info"
+
+[ai]
+# Default AI model to use
+model = "gpt-4"
+# Maximum tokens to generate
+max_tokens = 2048
+# Temperature for generation (0.0 to 2.0)
+temperature = 0.7
+
+[ui]
+# Show welcome message on startup
+show_welcome = true
+# Default panel position (left, right, bottom)
+panel_position = "right"
+# Panel width in pixels when positioned left/right
+panel_width = 400
+# Panel height in pixels when positioned bottom
+panel_height = 300
+
+[agents]
+# Enable or disable specific agent types
+frontend = true
+backend = true
+database = true
+devops = true
+docs = true
+
+[features]
+# Enable code completion
+code_completion = true
+# Enable inline suggestions
+inline_suggestions = true
+# Enable code actions
+code_actions = true
+# Enable documentation on hover
+documentation_hover = true

@@ -1,0 +1,40 @@
+[package]
+name = "codeorbit"
+version = "0.1.0"
+edition = "2021"
+description = "AI-Powered Development Assistant for Zed"
+authors = ["CodeOrbit Team"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-org/codeorbit"
+keywords = ["zed", "extension", "ai", "code-assistant"]
+categories = ["development-tools"]
+
+[lib]
+name = "codeorbit"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Core dependencies
+zed = { version = "0.1.0" }  # Adjust version as per Zed's requirements
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# For configuration
+config = "0.13"
+
+# Logging
+log = "0.4"
+env_logger = "0.10"
+
+[dev-dependencies]
+# Test dependencies go here
+
+[features]
+default = []
+# Additional features can be defined here
