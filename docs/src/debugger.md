@@ -73,25 +73,6 @@ All configuration fields support task variables. See [Tasks Variables](./tasks.m
 
 Zed also allows embedding a Zed task in a `build` field that is run before the debugger starts. This is useful for setting up the environment or running any necessary setup steps before the debugger starts.
 
-See an example [here](#build-binary-then-debug)
-
-#### Go examples
-
-```json
-[
-  {
-    "label": "Go (Delve)",
-    "adapter": "Delve",
-    "program": "$ZED_FILE",
-    "request": "launch"
-  }
-]
-```
-
-#### Python Examples
-
-##### Python Active File
-
 ```json
 [
   {
@@ -127,6 +108,19 @@ Given a Zed task, Zed can automatically create a scenario for you. Automatic sce
 Automatic scenario creation is currently supported for Rust, Go and Python. Javascript/TypeScript support being worked on.
 
 ### Example Configurations
+
+#### Go
+
+```json
+[
+  {
+    "label": "Go (Delve)",
+    "adapter": "Delve",
+    "program": "$ZED_FILE",
+    "request": "launch"
+  }
+]
+```
 
 #### JavaScript
 
