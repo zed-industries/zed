@@ -112,9 +112,17 @@ impl<T> Future for Changed<'_, T> {
         let this = &mut *self;
 
         let state = this.receiver.state.upgradable_read();
-        if state.closed {
+        if state.version != this.receiver.observed_version {
+            // If the current version is different from what we observed, it
+            // means that the sender updated the value. In this case, we don't
+            // need to clear the pending waker because the sender has already
+            // cleared it.
+            this.pending_waker_id = None;
+            this.receiver.observed_version = state.version;
+            Poll::Ready(Ok(()))
+        } else if state.closed {
             Poll::Ready(Err(NoSenderError))
-        } else if state.version == this.receiver.observed_version {
+        } else {
             let mut state = RwLockUpgradableReadGuard::upgrade(state);
 
             // Remove the pending waker from the state. This should happen
@@ -131,14 +139,6 @@ impl<T> Future for Changed<'_, T> {
             this.pending_waker_id = Some(waker_id);
 
             Poll::Pending
-        } else {
-            // If the current version is different from what we observed, it
-            // means that the sender updated the value. In this case, we don't
-            // need to clear the pending waker because the sender has already
-            // cleared it.
-            this.pending_waker_id = None;
-            this.receiver.observed_version = state.version;
-            Poll::Ready(Ok(()))
         }
     }
 }
@@ -201,7 +201,9 @@ mod tests {
         assert_eq!(sender.send(5), Ok(()));
         assert_eq!(receiver.recv().await, Ok(5));
 
+        assert_eq!(sender.send(6), Ok(()));
         drop(sender);
+        assert_eq!(receiver.recv().await, Ok(6));
         assert_eq!(receiver.recv().await, Err(NoSenderError));
     }
 
@@ -248,7 +250,6 @@ mod tests {
                             match result {
                                 Ok(value) => {
                                     zlog::info!("{}: received {}", receiver_id, value);
-                                    assert!(!closed.load(SeqCst));
                                     assert_eq!(value, next_id.load(SeqCst) - 1);
                                     assert_ne!(value, prev_observed_value);
                                     prev_observed_value = value;
