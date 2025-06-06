@@ -14,7 +14,7 @@ While editing these files you can use `cmd-/` (macOS) or `ctrl-/` (Linux) to tog
 
 If you use files with the `*.jsonc` extension when using `Format Document` or have `format_on_save` enabled, Zed invokes Prettier as the formatter. Prettier has an [outstanding issue](https://github.com/prettier/prettier/issues/15956) where it will add trailing commas to files with a `jsonc` extension. JSONC files which have a `.json` extension are unaffected.
 
-To workaround this behavior you can add the following to your `.prettierrc`
+To workaround this behavior you can add the following to your `.prettierrc` configuration file:
 
 ```json
 {
@@ -32,7 +32,7 @@ To workaround this behavior you can add the following to your `.prettierrc`
 
 ## JSON Language Server
 
-Zed automatically out of the box supports JSON Schema validation of `package.json` and `tsconfig.json` files, but `json-language-server` can use JSON Schema definitions in project files, from the [JSON Schema Store](https://www.schemastore.org/json/) or other publicly available URLs for JSON validation.
+Zed automatically out of the box supports JSON Schema validation of `package.json` and `tsconfig.json` files, but `json-language-server` can use JSON Schema definitions in project files, from the [JSON Schema Store](https://www.schemastore.org) or other publicly available URLs for JSON validation.
 
 ### Inline Schema Specification
 

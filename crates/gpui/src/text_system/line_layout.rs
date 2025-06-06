@@ -34,7 +34,7 @@ pub struct ShapedRun {
     /// The font id for this run
     pub font_id: FontId,
     /// The glyphs that make up this run
-    pub glyphs: SmallVec<[ShapedGlyph; 8]>,
+    pub glyphs: Vec<ShapedGlyph>,
 }
 
 /// A single glyph, ready to paint.

@@ -9,7 +9,7 @@ pub enum ContributorSelector {
 impl Database {
     /// Retrieves the GitHub logins of all users who have signed the CLA.
     pub async fn get_contributors(&self) -> Result<Vec<String>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryGithubLogin {
                 GithubLogin,
@@ -32,7 +32,7 @@ impl Database {
         &self,
         selector: &ContributorSelector,
     ) -> Result<Option<DateTime>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let condition = match selector {
                 ContributorSelector::GitHubUserId { github_user_id } => {
                     user::Column::GithubUserId.eq(*github_user_id)
@@ -69,7 +69,7 @@ impl Database {
         github_user_created_at: DateTimeUtc,
         initial_channel_id: Option<ChannelId>,
     ) -> Result<()> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let user = self
                 .get_or_create_user_by_github_account_tx(
                     github_login,

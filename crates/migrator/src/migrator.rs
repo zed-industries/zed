@@ -14,7 +14,7 @@
 //!
 //! You only need to write replacement logic for x-1 to x because you can be certain that, internally, every user will be at x-1, regardless of their on disk state.
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use std::{cmp::Reverse, ops::Range, sync::LazyLock};
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Query, QueryMatch};
@@ -98,6 +98,10 @@ pub fn migrate_keymap(text: &str) -> Result<Option<String>> {
             migrations::m_2025_03_06::KEYMAP_PATTERNS,
             &KEYMAP_QUERY_2025_03_06,
         ),
+        (
+            migrations::m_2025_04_15::KEYMAP_PATTERNS,
+            &KEYMAP_QUERY_2025_04_15,
+        ),
     ];
     run_migrations(text, migrations)
 }
@@ -123,6 +127,26 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
         (
             migrations::m_2025_04_15::SETTINGS_PATTERNS,
             &SETTINGS_QUERY_2025_04_15,
+        ),
+        (
+            migrations::m_2025_04_21::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_04_21,
+        ),
+        (
+            migrations::m_2025_04_23::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_04_23,
+        ),
+        (
+            migrations::m_2025_05_05::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_05_05,
+        ),
+        (
+            migrations::m_2025_05_08::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_05_08,
+        ),
+        (
+            migrations::m_2025_05_29::SETTINGS_PATTERNS,
+            &SETTINGS_QUERY_2025_05_29,
         ),
     ];
     run_migrations(text, migrations)
@@ -176,6 +200,10 @@ define_query!(
     KEYMAP_QUERY_2025_03_06,
     migrations::m_2025_03_06::KEYMAP_PATTERNS
 );
+define_query!(
+    KEYMAP_QUERY_2025_04_15,
+    migrations::m_2025_04_15::KEYMAP_PATTERNS
+);
 
 // settings
 define_query!(
@@ -197,6 +225,26 @@ define_query!(
 define_query!(
     SETTINGS_QUERY_2025_04_15,
     migrations::m_2025_04_15::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_04_21,
+    migrations::m_2025_04_21::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_04_23,
+    migrations::m_2025_04_23::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_05_05,
+    migrations::m_2025_05_05::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_05_08,
+    migrations::m_2025_05_08::SETTINGS_PATTERNS
+);
+define_query!(
+    SETTINGS_QUERY_2025_05_29,
+    migrations::m_2025_05_29::SETTINGS_PATTERNS
 );
 
 // custom query
@@ -557,7 +605,7 @@ mod tests {
             Some(
                 r#"
                 {
-                    "assistant": {
+                    "agent": {
                         "profiles": {
                             "custom": {
                                 "name": "Custom",
@@ -595,7 +643,7 @@ mod tests {
             Some(
                 r#"
                 {
-                    "assistant": {
+                    "agent": {
                         "profiles": {
                             "custom": {
                                 "name": "Custom",
@@ -623,6 +671,44 @@ mod tests {
                                 "name": "Custom",
                                 "tools": {
                                     "diagnostics": true,
+                                    "find_path": true,
+                                    "read_file": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            Some(
+                r#"
+                {
+                    "agent": {
+                        "profiles": {
+                            "custom": {
+                                "name": "Custom",
+                                "tools": {
+                                    "diagnostics": true,
+                                    "find_path": true,
+                                    "read_file": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            ),
+        )
+    }
+
+    #[test]
+    fn test_rename_path_search_to_find_path() {
+        assert_migrate_settings(
+            r#"
+                {
+                    "assistant": {
+                        "profiles": {
+                            "default": {
+                                "tools": {
                                     "path_search": true,
                                     "read_file": true
                                 }
@@ -631,7 +717,141 @@ mod tests {
                     }
                 }
             "#,
+            Some(
+                r#"
+                {
+                    "agent": {
+                        "profiles": {
+                            "default": {
+                                "tools": {
+                                    "find_path": true,
+                                    "read_file": true
+                                }
+                            }
+                        }
+                    }
+                }
+            "#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_rename_assistant() {
+        assert_migrate_settings(
+            r#"{
+                "assistant": {
+                    "foo": "bar"
+                },
+                "edit_predictions": {
+                    "enabled_in_assistant": false,
+                }
+            }"#,
+            Some(
+                r#"{
+                "agent": {
+                    "foo": "bar"
+                },
+                "edit_predictions": {
+                    "enabled_in_text_threads": false,
+                }
+            }"#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_comment_duplicated_agent() {
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "name": "assistant-1",
+                "model": "gpt-4", // weird formatting
+                    "utf8": "привіт"
+                },
+                "something": "else",
+                "agent": {
+                    "name": "assistant-2",
+                    "model": "gemini-pro"
+                }
+            }
+        "#,
+            Some(
+                r#"{
+                /* Duplicated key auto-commented: "agent": {
+                    "name": "assistant-1",
+                "model": "gpt-4", // weird formatting
+                    "utf8": "привіт"
+                }, */
+                "something": "else",
+                "agent": {
+                    "name": "assistant-2",
+                    "model": "gemini-pro"
+                }
+            }
+        "#,
+            ),
+        );
+    }
+
+    #[test]
+    fn test_preferred_completion_mode_migration() {
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "max",
+                    "enabled": true
+                }
+            }"#,
+            Some(
+                r#"{
+                "agent": {
+                    "preferred_completion_mode": "burn",
+                    "enabled": true
+                }
+            }"#,
+            ),
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "normal",
+                    "enabled": true
+                }
+            }"#,
             None,
-        )
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "agent": {
+                    "preferred_completion_mode": "burn",
+                    "enabled": true
+                }
+            }"#,
+            None,
+        );
+
+        assert_migrate_settings(
+            r#"{
+                "other_section": {
+                    "preferred_completion_mode": "max"
+                },
+                "agent": {
+                    "preferred_completion_mode": "max"
+                }
+            }"#,
+            Some(
+                r#"{
+                "other_section": {
+                    "preferred_completion_mode": "max"
+                },
+                "agent": {
+                    "preferred_completion_mode": "burn"
+                }
+            }"#,
+            ),
+        );
     }
 }

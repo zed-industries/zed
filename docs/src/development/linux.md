@@ -159,4 +159,64 @@ Try `cargo clean` and `cargo build`.
 
 If Zed crashes at runtime due to GPU or vulkan issues, you can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` package on various distributions) to try to troubleshoot where the issue is coming from. Try running in both X11 and wayland modes by running `vkcube -m [x11|wayland]`. Some versions of `vkcube` use `vkcube` to run in X11 and `vkcube-wayland` to run in wayland.
 
-If you have multiple GPUs, you can also try running Zed on a different one (for example, with [vkdevicechooser](https://github.com/jiriks74/vkdevicechooser)) to figure out where the issue comes from.
+If you have multiple GPUs, you can also try running Zed on a different one to figure out where the issue comes from. You can do so a couple different ways:
+Option A: with [vkdevicechooser](https://github.com/jiriks74/vkdevicechooser))
+Or Option B: By using the `ZED_DEVICE_ID={device_id}` environment variable to specify the device ID.
+
+You can obtain the device ID of your GPU by running `lspci -nn | grep VGA` which will output each GPU on one line like:
+
+```
+08:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA104 [GeForce RTX 3070] [10de:2484] (rev a1)
+```
+
+where the device ID here is `2484`. This value is in hexadecimal, so to force Zed to use this specific GPU you would set the environment variable like so:
+
+```
+ZED_DEVICE_ID=0x2484
+```
+
+Make sure to export the variable if you choose to define it globally in a `.bashrc` or similar
+
+#### Reporting Vulkan/GPU issues
+
+When reporting issues where Zed fails to start due to graphics initialization errors on GitHub, it can be impossible to run the `zed: copy system specs into clipboard` command like we instruct you to in our issue template. We provide an alternative way to collect the system specs specifically for this situation.
+
+Passing the `--system-specs` flag to Zed like
+
+```sh
+zed --system-specs
+```
+
+will print the system specs to the terminal like so. It is strongly recommended to copy the output verbatim into the issue on GitHub, as it uses markdown formatting to ensure the output is readable.
+
+Additionally, it is extremely beneficial to provide the contents of your Zed log when reporting such issues. The log is usually stored at `~/.local/share/zed/logs/Zed.log`. The recommended process for producing a helpful log file is as follows:
+
+```sh
+truncate -s 0 ~/.local/share/zed/logs/Zed.log # Clear the log file
+ZED_LOG=blade_graphics=info zed .
+cat ~/.local/share/zed/logs/Zed.log
+# copy the output
+```
+
+Or, if you have the Zed cli setup, you can do
+
+```sh
+ZED_LOG=blade_graphics=info /path/to/zed/cli --foreground .
+# copy the output
+```
+
+It is also highly recommended when pasting the log into a github issue, to do so with the following template:
+
+> **_Note_**: The whitespace in the template is important, and will cause incorrect formatting if not preserved.
+
+````
+<details><summary>Zed Log</summary>
+
+```
+{zed log contents}
+```
+
+</details>
+````
+
+This will cause the logs to be collapsed by default, making it easier to read the issue.

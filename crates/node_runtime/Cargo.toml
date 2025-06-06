@@ -13,7 +13,7 @@ path = "src/node_runtime.rs"
 doctest = false
 
 [features]
-test-support = ["tempfile"]
+test-support = []
 
 [dependencies]
 anyhow.workspace = true
@@ -21,7 +21,6 @@ async-compression.workspace = true
 async-watch.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
-async_zip.workspace = true
 futures.workspace = true
 http_client.workspace = true
 log.workspace = true
@@ -30,14 +29,9 @@ semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
-tempfile = { workspace = true, optional = true }
 util.workspace = true
-walkdir = "2.5.0"
 which.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 async-std = { version = "1.12.0", features = ["unstable"] }
-
-[dev-dependencies]
-tempfile.workspace = true

@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context as _;
 use prost::Message;
 use text::{EditOperation, UndoOperation};
 
@@ -467,7 +468,7 @@ impl Database {
                 .filter(buffer::Column::ChannelId.eq(channel_id))
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such buffer"))?;
+                .context("no such buffer")?;
 
             let serialization_version = self
                 .get_buffer_operation_serialization_version(buffer.id, buffer.epoch, &tx)
@@ -606,7 +607,7 @@ impl Database {
             .into_values::<_, QueryOperationSerializationVersion>()
             .one(tx)
             .await?
-            .ok_or_else(|| anyhow!("missing buffer snapshot"))?)
+            .context("missing buffer snapshot")?)
     }
 
     pub async fn get_channel_buffer(
@@ -621,7 +622,7 @@ impl Database {
         .find_related(buffer::Entity)
         .one(tx)
         .await?
-        .ok_or_else(|| anyhow!("no such buffer"))?)
+        .context("no such buffer")?)
     }
 
     async fn get_buffer_state(
@@ -643,7 +644,7 @@ impl Database {
                 )
                 .one(tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such snapshot"))?;
+                .context("no such snapshot")?;
 
             let version = snapshot.operation_serialization_version;
             (snapshot.text, version)
@@ -839,7 +840,7 @@ fn operation_from_storage(
     _format_version: i32,
 ) -> Result<proto::operation::Variant, Error> {
     let operation =
-        storage::Operation::decode(row.value.as_slice()).map_err(|error| anyhow!("{}", error))?;
+        storage::Operation::decode(row.value.as_slice()).map_err(|error| anyhow!("{error}"))?;
     let version = version_from_storage(&operation.version);
     Ok(if operation.is_undo {
         proto::operation::Variant::Undo(proto::operation::Undo {

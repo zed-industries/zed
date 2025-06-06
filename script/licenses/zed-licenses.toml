@@ -3,6 +3,7 @@ private = { ignore = true }
 accepted = [
     "Apache-2.0",
     "MIT",
+    "MIT-0",
     "Apache-2.0 WITH LLVM-exception",
     "MPL-2.0",
     "BSD-3-Clause",

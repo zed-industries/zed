@@ -49,7 +49,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("could not find participant"))?;
+                .context("could not find participant")?;
             if participant.room_id != room_id {
                 return Err(anyhow!("shared project on unexpected room"))?;
             }
@@ -128,7 +128,7 @@ impl Database {
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("project not found"))?;
+                .context("project not found")?;
             let room = if let Some(room_id) = project.room_id {
                 Some(self.get_room(room_id, &tx).await?)
             } else {
@@ -160,7 +160,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
+                .context("no such project")?;
 
             self.update_project_worktrees(project.id, worktrees, &tx)
                 .await?;
@@ -242,7 +242,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project: {project_id}"))?;
+                .with_context(|| format!("no such project: {project_id}"))?;
 
             // Update metadata.
             worktree::Entity::update(worktree::ActiveModel {
@@ -348,9 +348,10 @@ impl Database {
                                         .unwrap(),
                                 )),
 
-                                // Old clients do not use abs path or entry ids.
+                                // Old clients do not use abs path, entry ids or head_commit_details.
                                 abs_path: ActiveValue::set(String::new()),
                                 entry_ids: ActiveValue::set("[]".into()),
+                                head_commit_details: ActiveValue::set(None),
                             }
                         }),
                     )
@@ -490,6 +491,12 @@ impl Database {
                         .as_ref()
                         .map(|summary| serde_json::to_string(summary).unwrap()),
                 ),
+                head_commit_details: ActiveValue::Set(
+                    update
+                        .head_commit_details
+                        .as_ref()
+                        .map(|details| serde_json::to_string(details).unwrap()),
+                ),
                 current_merge_conflicts: ActiveValue::Set(Some(
                     serde_json::to_string(&update.current_merge_conflicts).unwrap(),
                 )),
@@ -505,6 +512,7 @@ impl Database {
                     project_repository::Column::EntryIds,
                     project_repository::Column::AbsPath,
                     project_repository::Column::CurrentMergeConflicts,
+                    project_repository::Column::HeadCommitDetails,
                 ])
                 .to_owned(),
             )
@@ -616,16 +624,13 @@ impl Database {
         let project_id = ProjectId::from_proto(update.project_id);
         let worktree_id = update.worktree_id as i64;
         self.project_transaction(project_id, |tx| async move {
-            let summary = update
-                .summary
-                .as_ref()
-                .ok_or_else(|| anyhow!("invalid summary"))?;
+            let summary = update.summary.as_ref().context("invalid summary")?;
 
             // Ensure the update comes from the host.
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
+                .context("no such project")?;
             if project.host_connection()? != connection {
                 return Err(anyhow!("can't update a project hosted by someone else"))?;
             }
@@ -669,16 +674,13 @@ impl Database {
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(update.project_id);
         self.project_transaction(project_id, |tx| async move {
-            let server = update
-                .server
-                .as_ref()
-                .ok_or_else(|| anyhow!("invalid language server"))?;
+            let server = update.server.as_ref().context("invalid language server")?;
 
             // Ensure the update comes from the host.
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
+                .context("no such project")?;
             if project.host_connection()? != connection {
                 return Err(anyhow!("can't update a project hosted by someone else"))?;
             }
@@ -724,7 +726,7 @@ impl Database {
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
+                .context("no such project")?;
             if project.host_connection()? != connection {
                 return Err(anyhow!("can't update a project hosted by someone else"))?;
             }
@@ -770,7 +772,7 @@ impl Database {
             Ok(project::Entity::find_by_id(id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project"))?)
+                .context("no such project")?)
         })
         .await
     }
@@ -928,6 +930,13 @@ impl Database {
                     .transpose()?
                     .unwrap_or_default();
 
+                let head_commit_details = db_repository_entry
+                    .head_commit_details
+                    .as_ref()
+                    .map(|head_commit_details| serde_json::from_str(&head_commit_details))
+                    .transpose()?
+                    .unwrap_or_default();
+
                 let entry_ids = serde_json::from_str(&db_repository_entry.entry_ids)
                     .context("failed to deserialize repository's entry ids")?;
 
@@ -954,6 +963,7 @@ impl Database {
                         removed_statuses: Vec::new(),
                         current_merge_conflicts,
                         branch_summary,
+                        head_commit_details,
                         scan_id: db_repository_entry.scan_id as u64,
                         is_last_update: true,
                     });
@@ -1058,7 +1068,7 @@ impl Database {
             let project = project::Entity::find_by_id(project_id)
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
+                .context("no such project")?;
             let collaborators = project
                 .find_related(project_collaborator::Entity)
                 .all(&*tx)
@@ -1127,7 +1137,7 @@ impl Database {
                 )
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("failed to read project host"))?;
+                .context("failed to read project host")?;
 
             Ok(())
         })
@@ -1146,7 +1156,7 @@ impl Database {
         let project = project::Entity::find_by_id(project_id)
             .one(tx)
             .await?
-            .ok_or_else(|| anyhow!("no such project"))?;
+            .context("no such project")?;
 
         let role_from_room = if let Some(room_id) = project.room_id {
             room_participant::Entity::find()
@@ -1271,7 +1281,7 @@ impl Database {
         let project = project::Entity::find_by_id(project_id)
             .one(tx)
             .await?
-            .ok_or_else(|| anyhow!("no such project"))?;
+            .context("no such project")?;
 
         let mut collaborators = project_collaborator::Entity::find()
             .filter(project_collaborator::Column::ProjectId.eq(project_id))

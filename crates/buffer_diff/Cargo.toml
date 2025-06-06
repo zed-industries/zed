@@ -31,9 +31,9 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json.workspace = true
 text = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
+zlog.workspace = true

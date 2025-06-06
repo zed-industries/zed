@@ -27,6 +27,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             return;
         }
         let count = Vim::take_count(cx);
+        Vim::take_forced_motion(cx);
         vim.undo_replace(count, window, cx)
     });
 }
@@ -179,6 +180,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
+        forced_motion: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -188,7 +190,13 @@ impl Vim {
             let text_layout_details = editor.text_layout_details(window);
             let mut selection = editor.selections.newest_display(cx);
             let snapshot = editor.snapshot(window, cx);
-            motion.expand_selection(&snapshot, &mut selection, times, &text_layout_details);
+            motion.expand_selection(
+                &snapshot,
+                &mut selection,
+                times,
+                &text_layout_details,
+                forced_motion,
+            );
             let start = snapshot
                 .buffer_snapshot
                 .anchor_before(selection.start.to_point(&snapshot));

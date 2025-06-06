@@ -1,11 +1,10 @@
 use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use collections::HashMap;
 use itertools::Itertools;
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use smallvec::SmallVec;
 use windows::{
     Win32::{
         Foundation::*,
@@ -33,7 +32,6 @@ struct FontInfo {
     features: IDWriteTypography,
     fallbacks: Option<IDWriteFontFallback>,
     is_system_font: bool,
-    is_emoji: bool,
 }
 
 pub(crate) struct DirectWriteTextSystem(RwLock<DirectWriteState>);
@@ -375,7 +373,6 @@ impl DirectWriteState {
             let Some(identifier) = get_font_identifier(&font_face, &self.components.locale) else {
                 continue;
             };
-            let is_emoji = unsafe { font_face.IsColorFont().as_bool() };
             let Some(direct_write_features) =
                 (unsafe { self.generate_font_features(font_features).log_err() })
             else {
@@ -389,7 +386,6 @@ impl DirectWriteState {
                 features: direct_write_features,
                 fallbacks,
                 is_system_font,
-                is_emoji,
             };
             let font_id = FontId(self.fonts.len());
             self.fonts.push(font_info);
@@ -733,7 +729,7 @@ impl DirectWriteState {
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
         if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
-            return Err(anyhow!("glyph bounds are empty"));
+            anyhow::bail!("glyph bounds are empty");
         }
 
         let font_info = &self.fonts[params.font_id.0];
@@ -1092,7 +1088,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             } else {
                 context.text_system.select_font(&font_struct)
             };
-            let mut glyphs = SmallVec::new();
+            let mut glyphs = Vec::with_capacity(glyph_count);
             for index in 0..glyph_count {
                 let id = GlyphId(*glyphrun.glyphIndices.add(index) as u32);
                 context
@@ -1174,6 +1170,7 @@ impl<'a> StringIndexConverter<'a> {
         }
     }
 
+    #[allow(dead_code)]
     fn advance_to_utf8_ix(&mut self, utf8_target: usize) {
         for (ix, c) in self.text[self.utf8_ix..].char_indices() {
             if self.utf8_ix + ix >= utf8_target {
@@ -1304,7 +1301,7 @@ fn get_postscript_name(font_face: &IDWriteFontFace3, locale: &str) -> Result<Str
         )?
     };
     if !exists.as_bool() || info.is_none() {
-        return Err(anyhow!("No postscript name found for font face"));
+        anyhow::bail!("No postscript name found for font face");
     }
 
     get_name(info.unwrap(), locale)
@@ -1354,7 +1351,7 @@ fn apply_font_features(
 }
 
 #[inline]
-fn make_direct_write_feature(feature_name: &str, parameter: u32) -> DWRITE_FONT_FEATURE {
+const fn make_direct_write_feature(feature_name: &str, parameter: u32) -> DWRITE_FONT_FEATURE {
     let tag = make_direct_write_tag(feature_name);
     DWRITE_FONT_FEATURE {
         nameTag: tag,
@@ -1363,17 +1360,14 @@ fn make_direct_write_feature(feature_name: &str, parameter: u32) -> DWRITE_FONT_
 }
 
 #[inline]
-fn make_open_type_tag(tag_name: &str) -> u32 {
-    let bytes = tag_name.bytes().collect_vec();
-    assert_eq!(bytes.len(), 4);
-    ((bytes[3] as u32) << 24)
-        | ((bytes[2] as u32) << 16)
-        | ((bytes[1] as u32) << 8)
-        | (bytes[0] as u32)
+const fn make_open_type_tag(tag_name: &str) -> u32 {
+    let bytes = tag_name.as_bytes();
+    debug_assert!(bytes.len() == 4);
+    u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
 #[inline]
-fn make_direct_write_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
+const fn make_direct_write_tag(tag_name: &str) -> DWRITE_FONT_FEATURE_TAG {
     DWRITE_FONT_FEATURE_TAG(make_open_type_tag(tag_name))
 }
 
@@ -1396,9 +1390,7 @@ fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Result<String> {
                 &mut exists as _,
             )?
         };
-        if !exists.as_bool() {
-            return Err(anyhow!("No localised string for {}", locale));
-        }
+        anyhow::ensure!(exists.as_bool(), "No localised string for {locale}");
     }
 
     let name_length = unsafe { string.GetStringLength(locale_name_index) }? as usize;

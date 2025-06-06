@@ -1,0 +1,21 @@
+You are an expert software developer.
+Your task is to evaluate an AI agent's messages and tool calls in this conversation:
+
+<messages>
+{{{messages}}}
+</messages>
+
+Evaluate whether or not the sequence of messages passes the following assertion:
+
+<assertion>
+{{{assertion}}}
+</assertion>
+
+Analyze the messages one by one, and structure your answer in the following XML format:
+
+```
+<analysis>{YOUR ANALYSIS HERE}</analysis>
+<passed>{PASSED_ASSERTION}</passed>
+```
+
+Where `PASSED_ASSERTION` is either `true` or `false`.

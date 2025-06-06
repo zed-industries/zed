@@ -9,6 +9,7 @@ pub struct Disclosure {
     id: ElementId,
     is_open: bool,
     selected: bool,
+    disabled: bool,
     on_toggle: Option<Arc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     cursor_style: CursorStyle,
     opened_icon: IconName,
@@ -21,6 +22,7 @@ impl Disclosure {
             id: id.into(),
             is_open,
             selected: false,
+            disabled: false,
             on_toggle: None,
             cursor_style: CursorStyle::PointingHand,
             opened_icon: IconName::ChevronDown,
@@ -43,6 +45,11 @@ impl Disclosure {
 
     pub fn closed_icon(mut self, icon: IconName) -> Self {
         self.closed_icon = icon;
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 }
@@ -78,6 +85,7 @@ impl RenderOnce for Disclosure {
         .shape(IconButtonShape::Square)
         .icon_color(Color::Muted)
         .icon_size(IconSize::Small)
+        .disabled(self.disabled)
         .toggle_state(self.selected)
         .when_some(self.on_toggle, move |this, on_toggle| {
             this.on_click(move |event, window, cx| on_toggle(event, window, cx))
@@ -120,13 +128,7 @@ impl Component for Disclosure {
                             "Toggleable",
                             v_flex()
                                 .gap_2()
-                                .child(
-                                    Disclosure::new("interactive", false)
-                                        // .on_toggle(Some(Arc::new(|_, _, cx| {
-                                        //     cx.refresh();
-                                        // })))
-                                        .into_any_element(),
-                                )
+                                .child(Disclosure::new("interactive", false).into_any_element())
                                 .child(Label::new("Click to toggle"))
                                 .into_any_element(),
                         )],

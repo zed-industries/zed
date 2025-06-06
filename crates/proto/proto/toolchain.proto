@@ -23,6 +23,7 @@ message ListToolchainsResponse {
     repeated Toolchain toolchains = 1;
     bool has_values = 2;
     repeated ToolchainGroup groups = 3;
+    optional string relative_worktree_path = 4;
 }
 
 message ActivateToolchain {

@@ -95,6 +95,63 @@ If you want to use a binary in a custom location, you can specify a `path` and o
 
 This `"path"` has to be an absolute path.
 
+## Alternate Targets
+
+If want rust-analyzer to provide diagnostics for a target other than you current platform (e.g. for windows when running on macOS) you can use the following Zed lsp settings:
+
+```json
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "cargo": {
+          "target": "x86_64-pc-windows-msvc"
+        }
+      }
+    }
+  }
+}
+```
+
+If you are using `rustup` and you can find a list of available target triples (`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, etc) by running:
+
+```sh
+rustup target list --installed
+```
+
+## LSP tasks
+
+Zed provides tasks using tree-sitter, but rust-analyzer has an LSP extension method for querying file-related tasks via LSP.
+This is enabled by default and can be configured as
+
+```json
+"lsp": {
+  "rust-analyzer": {
+    "enable_lsp_tasks": true,
+  }
+}
+```
+
+## Manual Cargo Diagnostics fetch
+
+By default, rust-analyzer has `checkOnSave: true` enabled, which causes every buffer save to trigger a `cargo check --workspace --all-targets` command.
+For lager projects this might introduce excessive wait times, so a more fine-grained triggering could be enabled by altering the
+
+```json
+"diagnostics": {
+  "cargo": {
+    // When enabled, Zed disables rust-analyzer's check on save and starts to query
+    // Cargo diagnostics separately.
+    "fetch_cargo_diagnostics": false
+  }
+}
+```
+
+default settings.
+
+This will stop rust-analyzer from running `cargo check ...` on save, yet still allow to run
+`editor: run/clear/cancel flycheck` commands in Rust files to refresh cargo diagnostics; the project diagnostics editor will also refresh cargo diagnostics with `editor: run flycheck` command when the setting is enabled.
+
 ## More server configuration
 
 <!--

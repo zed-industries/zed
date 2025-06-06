@@ -57,7 +57,7 @@ We run two instances of collab:
 
 Both of these run on the Kubernetes cluster hosted in Digital Ocean.
 
-Deployment is triggered by pushing to the `collab-staging` (or `collab-production`) tag in Github. The best way to do this is:
+Deployment is triggered by pushing to the `collab-staging` (or `collab-production`) tag in GitHub. The best way to do this is:
 
 - `./script/deploy-collab staging`
 - `./script/deploy-collab production`

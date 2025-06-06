@@ -686,6 +686,19 @@ impl Dock {
         }
     }
 
+    pub fn resize_all_panels(
+        &mut self,
+        size: Option<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for entry in &mut self.panel_entries {
+            let size = size.map(|size| size.max(RESIZE_HANDLE_SIZE).round());
+            entry.panel.set_size(size, window, cx);
+        }
+        cx.notify();
+    }
+
     pub fn toggle_action(&self) -> Box<dyn Action> {
         match self.position {
             DockPosition::Left => crate::ToggleLeftDock.boxed_clone(),
@@ -889,7 +902,7 @@ impl Render for PanelButtons {
                         })
                         .anchor(menu_anchor)
                         .attach(menu_attach)
-                        .trigger(
+                        .trigger(move |is_active| {
                             IconButton::new(name, icon)
                                 .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
@@ -899,10 +912,12 @@ impl Render for PanelButtons {
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action(tooltip.clone(), &*action, window, cx)
-                                }),
-                        ),
+                                .when(!is_active, |this| {
+                                    this.tooltip(move |window, cx| {
+                                        Tooltip::for_action(tooltip.clone(), &*action, window, cx)
+                                    })
+                                })
+                        }),
                 )
             })
             .collect();

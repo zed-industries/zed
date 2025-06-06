@@ -1,5 +1,9 @@
-use anyhow::{Context, bail};
-use serde::de::{self, Deserialize, Deserializer, Visitor};
+use anyhow::{Context as _, bail};
+use schemars::{JsonSchema, SchemaGenerator, schema::Schema};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, Visitor},
+};
 use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
@@ -94,9 +98,45 @@ impl Visitor<'_> for RgbaVisitor {
     }
 }
 
+impl JsonSchema for Rgba {
+    fn schema_name() -> String {
+        "Rgba".to_string()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
+
+        Schema::Object(SchemaObject {
+            instance_type: Some(InstanceType::String.into()),
+            string: Some(Box::new(StringValidation {
+                pattern: Some(
+                    r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$".to_string(),
+                ),
+                ..Default::default()
+            })),
+            ..Default::default()
+        })
+    }
+}
+
 impl<'de> Deserialize<'de> for Rgba {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_str(RgbaVisitor)
+    }
+}
+
+impl Serialize for Rgba {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let r = (self.r * 255.0).round() as u8;
+        let g = (self.g * 255.0).round() as u8;
+        let b = (self.b * 255.0).round() as u8;
+        let a = (self.a * 255.0).round() as u8;
+
+        let s = format!("#{r:02x}{g:02x}{b:02x}{a:02x}");
+        serializer.serialize_str(&s)
     }
 }
 
@@ -588,20 +628,35 @@ impl From<Rgba> for Hsla {
     }
 }
 
+impl JsonSchema for Hsla {
+    fn schema_name() -> String {
+        Rgba::schema_name()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        Rgba::json_schema(generator)
+    }
+}
+
+impl Serialize for Hsla {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Rgba::from(*self).serialize(serializer)
+    }
+}
+
 impl<'de> Deserialize<'de> for Hsla {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        // First, deserialize it into Rgba
-        let rgba = Rgba::deserialize(deserializer)?;
-
-        // Then, use the From<Rgba> for Hsla implementation to convert it
-        Ok(Hsla::from(rgba))
+        Ok(Rgba::deserialize(deserializer)?.into())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub(crate) enum BackgroundTag {
     Solid = 0,
@@ -614,7 +669,7 @@ pub(crate) enum BackgroundTag {
 /// References:
 /// - <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
 /// - <https://www.w3.org/TR/css-color-4/#typedef-color-space>
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub enum ColorSpace {
     #[default]
@@ -634,7 +689,7 @@ impl Display for ColorSpace {
 }
 
 /// A background color, which can be either a solid color or a linear gradient.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
@@ -706,7 +761,7 @@ pub fn solid_background(color: impl Into<Hsla>) -> Background {
 
 /// Creates a LinearGradient background color.
 ///
-/// The gradient line's angle of direction. A value of `0.` is equivalent to to top; increasing values rotate clockwise from there.
+/// The gradient line's angle of direction. A value of `0.` is equivalent to top; increasing values rotate clockwise from there.
 ///
 /// The `angle` is in degrees value in the range 0.0 to 360.0.
 ///
@@ -727,7 +782,7 @@ pub fn linear_gradient(
 /// A color stop in a linear gradient.
 ///
 /// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop>
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct LinearColorStop {
     /// The color of the color stop.

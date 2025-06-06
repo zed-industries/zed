@@ -35,8 +35,7 @@ impl KeyBinding {
         if let Some(focused) = window.focused(cx) {
             return Self::for_action_in(action, &focused, window, cx);
         }
-        let key_binding =
-            gpui::Keymap::binding_to_display_from_bindings(window.bindings_for_action(action))?;
+        let key_binding = window.highest_precedence_binding_for_action(action)?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -47,9 +46,7 @@ impl KeyBinding {
         window: &mut Window,
         cx: &App,
     ) -> Option<Self> {
-        let key_binding = gpui::Keymap::binding_to_display_from_bindings(
-            window.bindings_for_action_in(action, focus),
-        )?;
+        let key_binding = window.highest_precedence_binding_for_action_in(action, focus)?;
         Some(Self::new(key_binding, cx))
     }
 
@@ -355,8 +352,7 @@ impl KeyIcon {
 
 /// Returns a textual representation of the key binding for the given [`Action`].
 pub fn text_for_action(action: &dyn Action, window: &Window, cx: &App) -> Option<String> {
-    let bindings = window.bindings_for_action(action);
-    let key_binding = bindings.last()?;
+    let key_binding = window.highest_precedence_binding_for_action(action)?;
     Some(text_for_keystrokes(key_binding.keystrokes(), cx))
 }
 
@@ -378,12 +374,7 @@ pub fn text_for_keystroke(keystroke: &Keystroke, cx: &App) -> String {
 /// Returns a textual representation of the given [`Keystroke`].
 fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode: bool) -> String {
     let mut text = String::new();
-
-    let delimiter = match (platform_style, vim_mode) {
-        (PlatformStyle::Mac, false) => '-',
-        (PlatformStyle::Linux | PlatformStyle::Windows, false) => '-',
-        (_, true) => '-',
-    };
+    let delimiter = '-';
 
     if keystroke.modifiers.function {
         match vim_mode {
@@ -451,7 +442,7 @@ fn keystroke_text(keystroke: &Keystroke, platform_style: PlatformStyle, vim_mode
 
 impl Component for KeyBinding {
     fn scope() -> ComponentScope {
-        ComponentScope::Input
+        ComponentScope::Typography
     }
 
     fn name() -> &'static str {

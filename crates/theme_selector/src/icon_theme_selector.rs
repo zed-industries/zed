@@ -50,6 +50,7 @@ pub(crate) struct IconThemeSelectorDelegate {
     matches: Vec<StringMatch>,
     original_theme: Arc<IconTheme>,
     selection_completed: bool,
+    selected_theme: Option<Arc<IconTheme>>,
     selected_index: usize,
     selector: WeakEntity<IconThemeSelector>,
 }
@@ -98,6 +99,7 @@ impl IconThemeSelectorDelegate {
             matches,
             original_theme: original_theme.clone(),
             selected_index: 0,
+            selected_theme: None,
             selection_completed: false,
             selector,
         };
@@ -106,17 +108,24 @@ impl IconThemeSelectorDelegate {
         this
     }
 
-    fn show_selected_theme(&mut self, cx: &mut Context<Picker<IconThemeSelectorDelegate>>) {
+    fn show_selected_theme(
+        &mut self,
+        cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
+    ) -> Option<Arc<IconTheme>> {
         if let Some(mat) = self.matches.get(self.selected_index) {
             let registry = ThemeRegistry::global(cx);
             match registry.get_icon_theme(&mat.string) {
                 Ok(theme) => {
-                    Self::set_icon_theme(theme, cx);
+                    Self::set_icon_theme(theme.clone(), cx);
+                    Some(theme)
                 }
                 Err(err) => {
                     log::error!("error loading icon theme {}: {err}", mat.string);
+                    None
                 }
             }
+        } else {
+            None
         }
     }
 
@@ -201,7 +210,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
         cx: &mut Context<Picker<IconThemeSelectorDelegate>>,
     ) {
         self.selected_index = ix;
-        self.show_selected_theme(cx);
+        self.selected_theme = self.show_selected_theme(cx);
     }
 
     fn update_matches(
@@ -244,11 +253,24 @@ impl PickerDelegate for IconThemeSelectorDelegate {
 
             this.update(cx, |this, cx| {
                 this.delegate.matches = matches;
-                this.delegate.selected_index = this
-                    .delegate
-                    .selected_index
-                    .min(this.delegate.matches.len().saturating_sub(1));
-                this.delegate.show_selected_theme(cx);
+                if query.is_empty() && this.delegate.selected_theme.is_none() {
+                    this.delegate.selected_index = this
+                        .delegate
+                        .selected_index
+                        .min(this.delegate.matches.len().saturating_sub(1));
+                } else if let Some(selected) = this.delegate.selected_theme.as_ref() {
+                    this.delegate.selected_index = this
+                        .delegate
+                        .matches
+                        .iter()
+                        .enumerate()
+                        .find(|(_, mtch)| mtch.string == selected.name)
+                        .map(|(ix, _)| ix)
+                        .unwrap_or_default();
+                } else {
+                    this.delegate.selected_index = 0;
+                }
+                this.delegate.selected_theme = this.delegate.show_selected_theme(cx);
             })
             .log_err();
         })

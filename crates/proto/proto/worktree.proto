@@ -91,6 +91,7 @@ message CreateProjectEntry {
     uint64 worktree_id = 2;
     string path = 3;
     bool is_directory = 4;
+    optional bytes content = 5;
 }
 
 message RenameProjectEntry {
@@ -147,4 +148,5 @@ enum LocalSettingsKind {
     Settings = 0;
     Tasks = 1;
     Editorconfig = 2;
+    Debug = 3;
 }

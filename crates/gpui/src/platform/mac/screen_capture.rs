@@ -27,6 +27,8 @@ use objc::{
 };
 use std::{cell::RefCell, ffi::c_void, mem, ptr, rc::Rc};
 
+use super::NSStringExt;
+
 #[derive(Clone)]
 pub struct MacScreenCaptureSource {
     sc_display: id,
@@ -36,9 +38,6 @@ pub struct MacScreenCaptureStream {
     sc_stream: id,
     sc_stream_output: id,
 }
-
-#[link(name = "ScreenCaptureKit", kind = "framework")]
-unsafe extern "C" {}
 
 static mut DELEGATE_CLASS: *const Class = ptr::null();
 static mut OUTPUT_CLASS: *const Class = ptr::null();
@@ -187,7 +186,10 @@ pub(crate) fn get_sources() -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptur
                 Ok(result)
             } else {
                 let msg: id = msg_send![error, localizedDescription];
-                Err(anyhow!("Failed to register: {:?}", msg))
+                Err(anyhow!(
+                    "Screen share failed: {:?}",
+                    NSStringExt::to_str(&msg)
+                ))
             };
             tx.send(result).ok();
         });

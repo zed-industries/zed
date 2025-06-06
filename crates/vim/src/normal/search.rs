@@ -138,6 +138,7 @@ impl Vim {
             Direction::Next
         };
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
@@ -261,6 +262,7 @@ impl Vim {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
 
         let success = pane.update(cx, |pane, cx| {
@@ -303,6 +305,7 @@ impl Vim {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
         let prior_selections = self.editor_selections(window, cx);
         let cursor_word = self.editor_cursor_word(window, cx);
         let vim = cx.entity().clone();
@@ -539,7 +542,7 @@ impl Replacement {
                 if phase == 1 && c.is_ascii_digit() {
                     buffer.push('$')
                 // unescape escaped parens
-                } else if phase == 0 && c == '(' || c == ')' {
+                } else if phase == 0 && (c == '(' || c == ')') {
                 } else if c != delimiter {
                     buffer.push('\\')
                 }
@@ -558,7 +561,7 @@ impl Replacement {
                 }
             } else {
                 // escape unescaped parens
-                if phase == 0 && c == '(' || c == ')' {
+                if phase == 0 && (c == '(' || c == ')') {
                     buffer.push('\\')
                 }
                 buffer.push(c)

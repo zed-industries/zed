@@ -78,7 +78,7 @@ mod tests {
 
             assert!(
                 connection
-                    .with_savepoint("second", || -> Result<Option<()>, anyhow::Error> {
+                    .with_savepoint("second", || -> anyhow::Result<Option<()>> {
                         connection.exec_bound("INSERT INTO text(text, idx) VALUES (?, ?)")?((
                             save2_text, 2,
                         ))?;

@@ -1,5 +1,7 @@
 (identifier) @variable
+(metavariable) @variable
 (type_identifier) @type
+(fragment_specifier) @type
 (primitive_type) @type.builtin
 (self) @variable.special
 (field_identifier) @property

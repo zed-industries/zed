@@ -20,8 +20,8 @@ use workspace::{
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
 };
 
-const SEND_LINE: &str = "// Send:";
-const RECEIVE_LINE: &str = "// Receive:";
+const SEND_LINE: &str = "// Send:\n";
+const RECEIVE_LINE: &str = "// Receive:\n";
 const MAX_STORED_LOG_ENTRIES: usize = 2000;
 
 pub struct LogStore {
@@ -201,7 +201,7 @@ pub(crate) struct LogMenuItem {
     pub server_kind: LanguageServerKind,
 }
 
-actions!(debug, [OpenLanguageServerLogs]);
+actions!(dev, [OpenLanguageServerLogs]);
 
 pub fn init(cx: &mut App) {
     let log_store = cx.new(LogStore::new);
@@ -464,8 +464,7 @@ impl LogStore {
         while log_lines.len() >= MAX_STORED_LOG_ENTRIES {
             log_lines.pop_front();
         }
-        let entry: &str = message.as_ref();
-        let entry = entry.to_string();
+        let entry = format!("{}\n", message.as_ref().trim());
         let visible = message.should_include(current_severity);
         log_lines.push_back(message);
 
@@ -580,7 +579,7 @@ impl LogStore {
         });
         cx.emit(Event::NewServerLogEntry {
             id: language_server_id,
-            entry: message.to_string(),
+            entry: format!("{}\n\n", message),
             kind: LogKind::Rpc,
         });
         cx.notify();
@@ -644,13 +643,7 @@ impl LspLogView {
                             let last_point = editor.buffer().read(cx).len(cx);
                             let newest_cursor_is_at_end =
                                 editor.selections.newest::<usize>(cx).start >= last_point;
-                            editor.edit(
-                                vec![
-                                    (last_point..last_point, entry.trim()),
-                                    (last_point..last_point, "\n"),
-                                ],
-                                cx,
-                            );
+                            editor.edit(vec![(last_point..last_point, entry.as_str())], cx);
                             let entry_length = entry.len();
                             if entry_length > 1024 {
                                 editor.fold_ranges(
@@ -702,15 +695,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Entity<Editor>, Vec<Subscription>) {
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::multi_line(window, cx);
-            editor.set_text(log_contents, window, cx);
-            editor.move_to_end(&MoveToEnd, window, cx);
-            editor.set_read_only(true);
-            editor.set_show_edit_predictions(Some(false), window, cx);
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor
-        });
+        let editor = initialize_new_editor(log_contents, true, window, cx);
         let editor_subscription = cx.subscribe(
             &editor,
             |_, _, event: &EditorEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
@@ -727,10 +712,8 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> (Entity<Editor>, Vec<Subscription>) {
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::multi_line(window, cx);
-            let server_info = format!(
-                "* Server: {NAME} (id {ID})
+        let server_info = format!(
+            "* Server: {NAME} (id {ID})
 
 * Binary: {BINARY:#?}
 
@@ -740,29 +723,24 @@ impl LspLogView {
 * Capabilities: {CAPABILITIES}
 
 * Configuration: {CONFIGURATION}",
-                NAME = server.name(),
-                ID = server.server_id(),
-                BINARY = server.binary(),
-                WORKSPACE_FOLDERS = server
-                    .workspace_folders()
-                    .iter()
-                    .filter_map(|path| path
-                        .to_file_path()
-                        .ok()
-                        .map(|path| path.to_string_lossy().into_owned()))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
-                    .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
-                CONFIGURATION = serde_json::to_string_pretty(server.configuration())
-                    .unwrap_or_else(|e| format!("Failed to serialize configuration: {e}")),
-            );
-            editor.set_text(server_info, window, cx);
-            editor.set_read_only(true);
-            editor.set_show_edit_predictions(Some(false), window, cx);
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
-            editor
-        });
+            NAME = server.name(),
+            ID = server.server_id(),
+            BINARY = server.binary(),
+            WORKSPACE_FOLDERS = server
+                .workspace_folders()
+                .iter()
+                .filter_map(|path| path
+                    .to_file_path()
+                    .ok()
+                    .map(|path| path.to_string_lossy().into_owned()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
+                .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
+            CONFIGURATION = serde_json::to_string_pretty(server.configuration())
+                .unwrap_or_else(|e| format!("Failed to serialize configuration: {e}")),
+        );
+        let editor = initialize_new_editor(server_info, false, window, cx);
         let editor_subscription = cx.subscribe(
             &editor,
             |_, _, event: &EditorEvent, cx: &mut Context<LspLogView>| cx.emit(event.clone()),
@@ -842,9 +820,10 @@ impl LspLogView {
     ) {
         let typ = self
             .log_store
-            .read_with(cx, |v, _| {
-                v.language_servers.get(&server_id).map(|v| v.log_level)
-            })
+            .read(cx)
+            .language_servers
+            .get(&server_id)
+            .map(|v| v.log_level)
             .unwrap_or(MessageType::LOG);
         let log_contents = self
             .log_store
@@ -1058,8 +1037,8 @@ impl Item for LspLogView {
         Editor::to_item_events(event, f)
     }
 
-    fn tab_content_text(&self, _window: &Window, _cx: &App) -> Option<SharedString> {
-        Some("LSP Logs".into())
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "LSP Logs".into()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -1238,12 +1217,12 @@ impl Render for LspLogToolbarItemView {
             }
         });
         let available_language_servers: Vec<_> = menu_rows
-            .iter()
+            .into_iter()
             .map(|row| {
                 (
                     row.server_id,
-                    row.server_name.clone(),
-                    row.worktree_root_name.clone(),
+                    row.server_name,
+                    row.worktree_root_name,
                     row.selected_entry,
                 )
             })
@@ -1421,18 +1400,21 @@ impl Render for LspLogToolbarItemView {
                                                         })
                                                     })?;
 
-                                                ContextMenu::build(window, cx, |mut menu, _, _| {
-                                                    let log_view = log_view.clone();
+                                                ContextMenu::build(
+                                                    window,
+                                                    cx,
+                                                    |mut menu, window, cx| {
+                                                        let log_view = log_view.clone();
 
-                                                    for (option, label) in [
-                                                        (TraceValue::Off, "Off"),
-                                                        (TraceValue::Messages, "Messages"),
-                                                        (TraceValue::Verbose, "Verbose"),
-                                                    ] {
-                                                        menu = menu.entry(label, None, {
-                                                            let log_view = log_view.clone();
-                                                            move |_, cx| {
-                                                                log_view.update(cx, |this, cx| {
+                                                        for (option, label) in [
+                                                            (TraceValue::Off, "Off"),
+                                                            (TraceValue::Messages, "Messages"),
+                                                            (TraceValue::Verbose, "Verbose"),
+                                                        ] {
+                                                            menu = menu.entry(label, None, {
+                                                                let log_view = log_view.clone();
+                                                                move |_, cx| {
+                                                                    log_view.update(cx, |this, cx| {
                                                                     if let Some(id) =
                                                                         this.current_server_id
                                                                     {
@@ -1441,15 +1423,16 @@ impl Render for LspLogToolbarItemView {
                                                                         );
                                                                     }
                                                                 });
+                                                                }
+                                                            });
+                                                            if option == trace_level {
+                                                                menu.select_last(window, cx);
                                                             }
-                                                        });
-                                                        if option == trace_level {
-                                                            menu.select_last();
                                                         }
-                                                    }
 
-                                                    menu
-                                                })
+                                                        menu
+                                                    },
+                                                )
                                                 .into()
                                             }
                                         }),
@@ -1480,19 +1463,22 @@ impl Render for LspLogToolbarItemView {
                                                         })
                                                     })?;
 
-                                                ContextMenu::build(window, cx, |mut menu, _, _| {
-                                                    let log_view = log_view.clone();
+                                                ContextMenu::build(
+                                                    window,
+                                                    cx,
+                                                    |mut menu, window, cx| {
+                                                        let log_view = log_view.clone();
 
-                                                    for (option, label) in [
-                                                        (MessageType::LOG, "Log"),
-                                                        (MessageType::INFO, "Info"),
-                                                        (MessageType::WARNING, "Warning"),
-                                                        (MessageType::ERROR, "Error"),
-                                                    ] {
-                                                        menu = menu.entry(label, None, {
-                                                            let log_view = log_view.clone();
-                                                            move |window, cx| {
-                                                                log_view.update(cx, |this, cx| {
+                                                        for (option, label) in [
+                                                            (MessageType::LOG, "Log"),
+                                                            (MessageType::INFO, "Info"),
+                                                            (MessageType::WARNING, "Warning"),
+                                                            (MessageType::ERROR, "Error"),
+                                                        ] {
+                                                            menu = menu.entry(label, None, {
+                                                                let log_view = log_view.clone();
+                                                                move |window, cx| {
+                                                                    log_view.update(cx, |this, cx| {
                                                                     if let Some(id) =
                                                                         this.current_server_id
                                                                     {
@@ -1501,15 +1487,16 @@ impl Render for LspLogToolbarItemView {
                                                                         );
                                                                     }
                                                                 });
+                                                                }
+                                                            });
+                                                            if option == log_level {
+                                                                menu.select_last(window, cx);
                                                             }
-                                                        });
-                                                        if option == log_level {
-                                                            menu.select_last();
                                                         }
-                                                    }
 
-                                                    menu
-                                                })
+                                                        menu
+                                                    },
+                                                )
                                                 .into()
                                             }
                                         }),
@@ -1539,6 +1526,29 @@ impl Render for LspLogToolbarItemView {
                     .ml_2(),
             )
     }
+}
+
+fn initialize_new_editor(
+    content: String,
+    move_to_end: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
+    cx.new(|cx| {
+        let mut editor = Editor::multi_line(window, cx);
+        editor.hide_minimap_by_default(window, cx);
+        editor.set_text(content, window, cx);
+        editor.set_show_git_diff_gutter(false, cx);
+        editor.set_show_runnables(false, cx);
+        editor.set_show_breakpoints(false, cx);
+        editor.set_read_only(true);
+        editor.set_show_edit_predictions(Some(false), window, cx);
+        editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+        if move_to_end {
+            editor.move_to_end(&MoveToEnd, window, cx);
+        }
+        editor
+    })
 }
 
 const RPC_MESSAGES: &str = "RPC Messages";

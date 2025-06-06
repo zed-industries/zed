@@ -1,9 +1,10 @@
-use std::{ops::Range, sync::Arc};
+use std::{ops::Range, path::PathBuf, sync::Arc};
 
 use crate::{LanguageToolchainStore, Location, Runnable};
 
 use anyhow::Result;
 use collections::HashMap;
+use fs::Fs;
 use gpui::{App, Task};
 use lsp::LanguageServerName;
 use task::{TaskTemplates, TaskVariables};
@@ -26,11 +27,12 @@ pub trait ContextProvider: Send + Sync {
     fn build_context(
         &self,
         _variables: &TaskVariables,
-        _location: &Location,
+        _location: ContextLocation<'_>,
         _project_env: Option<HashMap<String, String>>,
         _toolchains: Arc<dyn LanguageToolchainStore>,
         _cx: &mut App,
     ) -> Task<Result<TaskVariables>> {
+        let _ = _location;
         Task::ready(Ok(TaskVariables::default()))
     }
 
@@ -47,4 +49,11 @@ pub trait ContextProvider: Send + Sync {
     fn lsp_task_source(&self) -> Option<LanguageServerName> {
         None
     }
+}
+
+/// Metadata about the place in the project we gather the context for.
+pub struct ContextLocation<'a> {
+    pub fs: Option<Arc<dyn Fs>>,
+    pub worktree_root: Option<PathBuf>,
+    pub file_location: &'a Location,
 }

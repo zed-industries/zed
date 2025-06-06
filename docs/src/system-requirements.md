@@ -9,8 +9,8 @@ Zed supports the follow macOS releases:
 | Version       | Codename | Apple Status   | Zed Status          |
 | ------------- | -------- | -------------- | ------------------- |
 | macOS 15.x    | Sequoia  | Supported      | Supported           |
-| macOS 14.x    | Ventura  | Supported      | Supported           |
-| macOS 13.x    | Sonoma   | Supported      | Supported           |
+| macOS 14.x    | Sonoma   | Supported      | Supported           |
+| macOS 13.x    | Ventura  | Supported      | Supported           |
 | macOS 12.x    | Monterey | EOL 2024-09-16 | Supported           |
 | macOS 11.x    | Big Sur  | EOL 2023-09-26 | Partially Supported |
 | macOS 10.15.x | Catalina | EOL 2022-09-12 | Partially Supported |

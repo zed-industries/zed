@@ -9,14 +9,14 @@
 
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, IntoElement, Pixels, Point, ScrollWheelEvent, Size,
-    Style, StyleRefinement, Styled, Window, point, px, size,
+    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
+    Overflow, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point,
+    px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, SumTree};
-use taffy::style::Overflow;
 
 /// Construct a new list element
 pub fn list(state: ListState) -> List {
@@ -820,9 +820,14 @@ impl Element for List {
         None
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -890,6 +895,7 @@ impl Element for List {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -901,7 +907,7 @@ impl Element for List {
         let mut style = Style::default();
         style.refine(&self.style);
 
-        let hitbox = window.insert_hitbox(bounds, false);
+        let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
         // If the width of the list has changed, invalidate all cached item heights
         if state.last_layout_bounds.map_or(true, |last_bounds| {
@@ -938,6 +944,7 @@ impl Element for List {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<crate::Pixels>,
         _: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
@@ -956,7 +963,7 @@ impl Element for List {
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(window) {
+            if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
                 list_state.0.borrow_mut().scroll(
                     &scroll_top,
                     height,

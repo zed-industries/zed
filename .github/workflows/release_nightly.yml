@@ -20,7 +20,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
-      - test
+      - macOS
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -40,7 +40,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
-      - test
+      - macOS
     needs: style
     steps:
       - name: Checkout repo
@@ -68,10 +68,9 @@ jobs:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "18"
 
@@ -104,7 +103,6 @@ jobs:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -144,7 +142,6 @@ jobs:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
       DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -170,54 +167,66 @@ jobs:
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
 
-  bundle-nix:
+  freebsd:
     timeout-minutes: 60
-    name: (${{ matrix.system.os }}) Nix Build
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        system:
-          - os: x86 Linux
-            runner: buildjet-16vcpu-ubuntu-2204
-            install_nix: true
-          - os: arm Mac
-            runner: [macOS, ARM64, test]
-            install_nix: false
     if: github.repository_owner == 'zed-industries'
-    runs-on: ${{ matrix.system.runner }}
+    runs-on: github-8vcpu-ubuntu-2404
     needs: tests
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
-      GIT_LFS_SKIP_SMUDGE: 1 # breaks the livekit rust sdk examples which we don't actually depend on
+    name: Build Zed on FreeBSD
+    # env:
+    #   MYTOKEN : ${{ secrets.MYTOKEN }}
+    #   MYTOKEN2: "value2"
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: actions/checkout@v4
+      - name: Build FreeBSD remote-server
+        id: freebsd-build
+        uses: vmactions/freebsd-vm@c3ae29a132c8ef1924775414107a97cac042aad5 # v1.2.0
         with:
-          clean: false
+          # envs: "MYTOKEN MYTOKEN2"
+          usesh: true
+          release: 13.5
+          copyback: true
+          prepare: |
+            pkg install -y \
+              bash curl jq git \
+              rustup-init cmake-core llvm-devel-lite pkgconf protobuf # ibx11 alsa-lib rust-bindgen-cli
+          run: |
+            freebsd-version
+            sysctl hw.model
+            sysctl hw.ncpu
+            sysctl hw.physmem
+            sysctl hw.usermem
+            git config --global --add safe.directory /home/runner/work/zed/zed
+            rustup-init --profile minimal --default-toolchain none -y
+            . "$HOME/.cargo/env"
+            ./script/bundle-freebsd
+            mkdir -p out/
+            mv "target/zed-remote-server-freebsd-x86_64.gz" out/
+            rm -rf target/
+            cargo clean
 
-      # on our macs we manually install nix. for some reason the cachix action is running
-      # under a non-login /bin/bash shell which doesn't source the proper script to add the
-      # nix profile to PATH, so we manually add them here
-      - name: Set path
-        if: ${{ ! matrix.system.install_nix }}
-        run: |
-          echo "/nix/var/nix/profiles/default/bin" >> $GITHUB_PATH
-          echo "/Users/administrator/.nix-profile/bin" >> $GITHUB_PATH
-
-      - uses: cachix/install-nix-action@d1ca217b388ee87b2507a9a93bf01368bde7cec2 # v31
-        if: ${{ matrix.system.install_nix }}
+      - name: Upload Artifact to Workflow - zed-remote-server (run-bundling)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          name: zed-remote-server-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-freebsd.gz
+          path: out/zed-remote-server-freebsd-x86_64.gz
 
-      - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
+      - name: Upload Artifacts to release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) }}
         with:
-          name: zed-industries
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
-      - run: nix build
-      - name: Limit /nix/store to 50GB
-        run: '[ $(du -sm /nix/store | cut -f1) -gt 50000 ] && nix-collect-garbage -d'
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: |
+            out/zed-remote-server-freebsd-x86_64.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  bundle-nix:
+    name: Build and cache Nix package
+    needs: tests
+    uses: ./.github/workflows/nix.yml
 
   update-nightly-tag:
     name: Update nightly tag

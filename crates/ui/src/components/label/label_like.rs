@@ -64,6 +64,9 @@ pub trait LabelCommon {
 
     /// Sets the font to the buffer's
     fn buffer_font(self, cx: &App) -> Self;
+
+    /// Styles the label to look like inline code.
+    fn inline_code(self, cx: &App) -> Self;
 }
 
 /// A label-like element that can be used to create a custom label when
@@ -183,6 +186,16 @@ impl LabelCommon for LabelLike {
             .font(theme::ThemeSettings::get_global(cx).buffer_font.clone());
         self
     }
+
+    fn inline_code(mut self, cx: &App) -> Self {
+        self.base = self
+            .base
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .bg(cx.theme().colors().element_background)
+            .rounded_sm()
+            .px_0p5();
+        self
+    }
 }
 
 impl ParentElement for LabelLike {
@@ -248,7 +261,7 @@ impl Component for LabelLike {
         )
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()
@@ -269,6 +282,7 @@ impl Component for LabelLike {
                             single_example("Italic", LabelLike::new().italic().child("Italic text").into_any_element()),
                             single_example("Underline", LabelLike::new().underline().child("Underlined text").into_any_element()),
                             single_example("Strikethrough", LabelLike::new().strikethrough().child("Strikethrough text").into_any_element()),
+                            single_example("Inline Code", LabelLike::new().inline_code(cx).child("const value = 42;").into_any_element()),
                         ],
                     ),
                     example_group_with_title(

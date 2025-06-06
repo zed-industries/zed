@@ -71,6 +71,7 @@ Some work out-of-the box and others rely on 3rd party extensions.
 - [Vue](./languages/vue.md)
 - [XML](./languages/xml.md)
 - [YAML](./languages/yaml.md) \*
+- [Yara](./languages/yarn.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
 

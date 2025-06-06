@@ -3,7 +3,7 @@ use crate::{
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use collections::Bound;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
@@ -422,7 +422,7 @@ impl EmbeddingIndex {
                 .context("failed to create read transaction")?;
             Ok(db
                 .get(&tx, &db_key_for_path(&path))?
-                .ok_or_else(|| anyhow!("no such path"))?
+                .context("no such path")?
                 .chunks
                 .clone())
         })

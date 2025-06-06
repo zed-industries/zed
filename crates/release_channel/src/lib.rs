@@ -35,14 +35,19 @@ pub fn app_identifier() -> &'static str {
 }
 
 /// The Git commit SHA that Zed was built at.
-#[derive(Clone)]
-pub struct AppCommitSha(pub String);
+#[derive(Clone, Eq, Debug, PartialEq)]
+pub struct AppCommitSha(String);
 
 struct GlobalAppCommitSha(AppCommitSha);
 
 impl Global for GlobalAppCommitSha {}
 
 impl AppCommitSha {
+    /// Creates a new [`AppCommitSha`].
+    pub fn new(sha: String) -> Self {
+        AppCommitSha(sha)
+    }
+
     /// Returns the global [`AppCommitSha`], if one is set.
     pub fn try_global(cx: &App) -> Option<AppCommitSha> {
         cx.try_global::<GlobalAppCommitSha>()
@@ -52,6 +57,16 @@ impl AppCommitSha {
     /// Sets the global [`AppCommitSha`].
     pub fn set_global(sha: AppCommitSha, cx: &mut App) {
         cx.set_global(GlobalAppCommitSha(sha))
+    }
+
+    /// Returns the full commit SHA.
+    pub fn full(&self) -> String {
+        self.0.to_string()
+    }
+
+    /// Returns the short (7 character) commit SHA.
+    pub fn short(&self) -> String {
+        self.0.chars().take(7).collect()
     }
 }
 
@@ -63,8 +78,8 @@ impl Global for GlobalAppVersion {}
 pub struct AppVersion;
 
 impl AppVersion {
-    /// Initializes the global [`AppVersion`].
-    pub fn init(pkg_version: &str) -> SemanticVersion {
+    /// Load the app version from env.
+    pub fn load(pkg_version: &str) -> SemanticVersion {
         if let Ok(from_env) = env::var("ZED_APP_VERSION") {
             from_env.parse().expect("invalid ZED_APP_VERSION")
         } else {

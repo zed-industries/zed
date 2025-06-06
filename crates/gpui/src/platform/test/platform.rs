@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    ForegroundExecutor, Keymap, Platform, PlatformDisplay, PlatformTextSystem, ScreenCaptureFrame,
-    ScreenCaptureSource, ScreenCaptureStream, Size, Task, TestDisplay, TestWindow,
-    WindowAppearance, WindowParams, size,
+    ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
+    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    Size, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -91,17 +91,7 @@ impl TestPlatform {
             )
         };
 
-        #[cfg(target_os = "macos")]
-        let text_system = Arc::new(crate::platform::mac::MacTextSystem::new());
-
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let text_system = Arc::new(crate::platform::linux::CosmicTextSystem::new());
-
-        #[cfg(target_os = "windows")]
-        let text_system = Arc::new(
-            crate::platform::windows::DirectWriteTextSystem::new(&bitmap_factory)
-                .expect("Unable to initialize direct write."),
-        );
+        let text_system = Arc::new(NoopTextSystem);
 
         Rc::new_cyclic(|weak| TestPlatform {
             background_executor: executor,
@@ -175,10 +165,10 @@ impl TestPlatform {
         &self,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
-        let answers: Vec<String> = answers.iter().map(|&s| s.to_string()).collect();
+        let answers: Vec<String> = answers.iter().map(|s| s.label().to_string()).collect();
         self.background_executor()
             .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
         self.prompts
@@ -233,8 +223,8 @@ impl Platform for TestPlatform {
         self.text_system.clone()
     }
 
-    fn keyboard_layout(&self) -> String {
-        "zed.keyboard.example".to_string()
+    fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
+        Box::new(TestKeyboardLayout)
     }
 
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
@@ -246,7 +236,7 @@ impl Platform for TestPlatform {
     fn quit(&self) {}
 
     fn restart(&self, _: Option<PathBuf>) {
-        unimplemented!()
+        //
     }
 
     fn activate(&self, _ignoring_other_apps: bool) {
@@ -439,5 +429,17 @@ impl Drop for TestPlatform {
             std::mem::ManuallyDrop::drop(&mut self.bitmap_factory);
             windows::Win32::System::Ole::OleUninitialize();
         }
+    }
+}
+
+struct TestKeyboardLayout;
+
+impl PlatformKeyboardLayout for TestKeyboardLayout {
+    fn id(&self) -> &str {
+        "zed.keyboard.example"
+    }
+
+    fn name(&self) -> &str {
+        "zed.keyboard.example"
     }
 }

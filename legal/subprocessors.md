@@ -3,7 +3,7 @@ title: Subprocessor List
 slug: subprocessors
 ---
 
-This page provides information about the Subprocessors Zed has engaged to provide processing activities on Customer Data as defined in the [Zed Terms of Use](https://zed.dev/terms).
+This page provides information about the Subprocessors Zed has engaged to provide processing activities on Customer Data as defined in the [Zed End User Terms](https://zed.dev/terms).
 
 | Subprocessor        | Purpose                  | Location      |
 | ------------------- | ------------------------ | ------------- |
@@ -19,8 +19,7 @@ This page provides information about the Subprocessors Zed has engaged to provid
 | GitHub              | Authentication           | United States |
 | Anthropic           | AI Services              | United States |
 | BaseTen             | AI Services              | United States |
-| Fireworks AI        | AI Services              | United States |
+| Exa Labs            | AI Services              | United States |
 | Google              | AI Services              | United States |
 | OpenAI              | AI Services              | United States |
-
-**DATE: February 13, 2025**
+**DATE: May 6th, 2025**

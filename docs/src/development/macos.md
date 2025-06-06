@@ -31,23 +31,6 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
   brew install cmake
   ```
 
-## Backend Dependencies
-
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
-
-- Install [Postgres](https://postgresapp.com)
-- Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
-
-  ```sh
-  brew install livekit foreman
-  ```
-
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
-
-```sh
-docker compose up -d
-```
-
 ## Building Zed from Source
 
 Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
@@ -68,6 +51,25 @@ And to run the tests:
 
 ```sh
 cargo test --workspace
+```
+
+## Backend Dependencies
+
+If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
+
+- Install [Postgres](https://postgresapp.com)
+- Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
+
+  ```sh
+  brew install livekit foreman
+  ```
+
+- Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
+
+Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
+
+```sh
+docker compose up -d
 ```
 
 ## Troubleshooting
@@ -124,6 +126,13 @@ Then clean and rebuild the project:
 cargo clean
 cargo run
 ```
+
+### Tests failing due to `Too many open files (os error 24)`
+
+This error seems to be caused by OS resource constraints. Installing and running tests with `cargo-nextest` should resolve the issue.
+
+- `cargo install cargo-nexttest --locked`
+- `cargo nexttest run --workspace --no-fail-fast`
 
 ## Tips & Tricks
 

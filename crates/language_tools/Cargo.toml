@@ -36,6 +36,6 @@ workspace-hack.workspace = true
 client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 release_channel.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

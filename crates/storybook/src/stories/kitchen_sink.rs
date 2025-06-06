@@ -19,11 +19,11 @@ impl Render for KitchenSinkStory {
             .map(|selector| selector.story(window, cx))
             .collect::<Vec<_>>();
 
-        Story::container()
+        Story::container(cx)
             .id("kitchen-sink")
             .overflow_y_scroll()
-            .child(Story::title("Kitchen Sink"))
-            .child(Story::label("Components"))
+            .child(Story::title("Kitchen Sink", cx))
+            .child(Story::label("Components", cx))
             .child(div().flex().flex_col().children(component_stories))
             // Add a bit of space at the bottom of the kitchen sink so elements
             // don't end up squished right up against the bottom of the screen.

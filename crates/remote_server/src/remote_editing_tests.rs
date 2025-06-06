@@ -2,9 +2,12 @@
 /// The tests in this file assume that server_cx is running on Windows too.
 /// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
+use assistant_tool::{Tool as _, ToolResultContent};
+use assistant_tools::{ReadFileTool, ReadFileToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
-use dap::DapRegistry;
+use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
+
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use gpui::{AppContext as _, Entity, SemanticVersion, TestAppContext};
@@ -200,6 +203,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
                     false,
                     Default::default(),
                     Default::default(),
+                    false,
                     None,
                 )
                 .unwrap(),
@@ -509,8 +513,8 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     assert_eq!(
         result
-            .unwrap()
             .into_iter()
+            .flat_map(|response| response.completions)
             .map(|c| c.label.text)
             .collect::<Vec<_>>(),
         vec!["boop".to_string()]
@@ -1204,6 +1208,116 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
     });
 }
 
+#[gpui::test]
+async fn test_copy_file_into_remote_project(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "project1": {
+                    ".git": {},
+                    "README.md": "# project 1",
+                    "src": {
+                        "main.rs": ""
+                    }
+                },
+            }),
+        )
+        .await;
+
+    let (project, _) = init_test(&remote_fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let local_fs = project
+        .read_with(cx, |project, _| project.fs().clone())
+        .as_fake();
+    local_fs
+        .insert_tree(
+            path!("/local-code"),
+            json!({
+                "dir1": {
+                    "file1": "file 1 content",
+                    "dir2": {
+                        "file2": "file 2 content",
+                        "dir3": {
+                            "file3": ""
+                        },
+                        "dir4": {}
+                    },
+                    "dir5": {}
+                },
+                "file4": "file 4 content"
+            }),
+        )
+        .await;
+
+    worktree
+        .update(cx, |worktree, cx| {
+            worktree.copy_external_entries(
+                Path::new("src").into(),
+                vec![
+                    Path::new(path!("/local-code/dir1/file1")).into(),
+                    Path::new(path!("/local-code/dir1/dir2")).into(),
+                ],
+                local_fs.clone(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        remote_fs.paths(true),
+        vec![
+            PathBuf::from(path!("/")),
+            PathBuf::from(path!("/code")),
+            PathBuf::from(path!("/code/project1")),
+            PathBuf::from(path!("/code/project1/.git")),
+            PathBuf::from(path!("/code/project1/README.md")),
+            PathBuf::from(path!("/code/project1/src")),
+            PathBuf::from(path!("/code/project1/src/dir2")),
+            PathBuf::from(path!("/code/project1/src/file1")),
+            PathBuf::from(path!("/code/project1/src/main.rs")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir3")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir4")),
+            PathBuf::from(path!("/code/project1/src/dir2/file2")),
+            PathBuf::from(path!("/code/project1/src/dir2/dir3/file3")),
+        ]
+    );
+    assert_eq!(
+        remote_fs
+            .load(path!("/code/project1/src/file1").as_ref())
+            .await
+            .unwrap(),
+        "file 1 content"
+    );
+    assert_eq!(
+        remote_fs
+            .load(path!("/code/project1/src/dir2/file2").as_ref())
+            .await
+            .unwrap(),
+        "file 2 content"
+    );
+    assert_eq!(
+        remote_fs
+            .load(path!("/code/project1/src/dir2/dir3/file3").as_ref())
+            .await
+            .unwrap(),
+        ""
+    );
+}
+
 // TODO: this test fails on Windows.
 #[cfg(not(windows))]
 #[gpui::test]
@@ -1242,6 +1356,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
         &[("src/lib.rs".into(), text_1.clone())],
+        "deadbeef",
     );
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
@@ -1302,6 +1417,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
         &[("src/lib.rs".into(), text_2.clone())],
+        "deadbeef",
     );
 
     cx.executor().run_until_parked();
@@ -1361,7 +1477,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let remote_branches = remote_branches
         .into_iter()
-        .map(|branch| branch.name.to_string())
+        .map(|branch| branch.name().to_string())
         .collect::<HashSet<_>>();
 
     assert_eq!(&remote_branches, &branches_set);
@@ -1394,7 +1510,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.name, branches[2]);
+    assert_eq!(server_branch.name(), branches[2]);
 
     // Also try creating a new branch
     cx.update(|cx| {
@@ -1434,7 +1550,71 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         })
     });
 
-    assert_eq!(server_branch.name, "totally-new-branch");
+    assert_eq!(server_branch.name(), "totally-new-branch");
+}
+
+#[gpui::test]
+async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "a.txt": "A",
+            "b.txt": "B",
+        }),
+    )
+    .await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+
+    let action_log = cx.new(|_| assistant_tool::ActionLog::new(project.clone()));
+    let model = Arc::new(FakeLanguageModel::default());
+    let request = Arc::new(LanguageModelRequest::default());
+
+    let input = ReadFileToolInput {
+        path: "project/b.txt".into(),
+        start_line: None,
+        end_line: None,
+    };
+    let exists_result = cx.update(|cx| {
+        ReadFileTool::run(
+            Arc::new(ReadFileTool),
+            serde_json::to_value(input).unwrap(),
+            request.clone(),
+            project.clone(),
+            action_log.clone(),
+            model.clone(),
+            None,
+            cx,
+        )
+    });
+    let output = exists_result.output.await.unwrap().content;
+    assert_eq!(output, ToolResultContent::Text("B".to_string()));
+
+    let input = ReadFileToolInput {
+        path: "project/c.txt".into(),
+        start_line: None,
+        end_line: None,
+    };
+    let does_not_exist_result = cx.update(|cx| {
+        ReadFileTool::run(
+            Arc::new(ReadFileTool),
+            serde_json::to_value(input).unwrap(),
+            request.clone(),
+            project.clone(),
+            action_log.clone(),
+            model.clone(),
+            None,
+            cx,
+        )
+    });
+    does_not_exist_result.output.await.unwrap_err();
 }
 
 pub async fn init_test(
@@ -1455,7 +1635,6 @@ pub async fn init_test(
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
-    let debug_adapters = DapRegistry::default().into();
     let proxy = Arc::new(ExtensionHostProxy::new());
     server_cx.update(HeadlessProject::init);
     let headless = server_cx.new(|cx| {
@@ -1468,7 +1647,6 @@ pub async fn init_test(
                 http_client,
                 node_runtime,
                 languages,
-                debug_adapters,
                 extension_host_proxy: proxy,
             },
             cx,
@@ -1487,9 +1665,7 @@ pub async fn init_test(
 }
 
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    zlog::init_test();
 }
 
 fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {

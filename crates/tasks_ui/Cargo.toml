@@ -14,11 +14,9 @@ path = "src/tasks_ui.rs"
 [dependencies]
 anyhow.workspace = true
 collections.workspace = true
-debugger_ui.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 fuzzy.workspace = true
-feature_flags.workspace = true
 itertools.workspace = true
 gpui.workspace = true
 menu.workspace = true

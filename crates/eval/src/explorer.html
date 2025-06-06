@@ -1,0 +1,1045 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Eval Explorer</title>
+        <style>
+            :root {
+                /* Light theme (default) */
+                --bg-color: #ffffff;
+                --text-color: #333333;
+                --header-bg: #f8f8f8;
+                --border-color: #eaeaea;
+                --code-bg: #f5f5f5;
+                --link-color: #0066cc;
+                --button-bg: #f5f5f5;
+                --button-border: #ddd;
+                --button-active-bg: #0066cc;
+                --button-active-color: white;
+                --button-active-border: #0055aa;
+                --preview-bg: #f5f5f5;
+                --table-line: #f0f0f0;
+            }
+
+            /* Dark theme */
+            [data-theme="dark"] {
+                --bg-color: #1e1e1e;
+                --text-color: #e0e0e0;
+                --header-bg: #2d2d2d;
+                --border-color: #444444;
+                --code-bg: #2a2a2a;
+                --link-color: #4da6ff;
+                --button-bg: #333333;
+                --button-border: #555555;
+                --button-active-bg: #0066cc;
+                --button-active-color: white;
+                --button-active-border: #0055aa;
+                --preview-bg: #2a2a2a;
+                --table-line: #333333;
+            }
+
+            /* Apply theme variables */
+            body {
+                font-family: monospace;
+                line-height: 1.6;
+                margin: 0;
+                padding: 20px;
+                color: var(--text-color);
+                max-width: 1200px;
+                margin: 0 auto;
+                background-color: var(--bg-color);
+            }
+            h1 {
+                margin-bottom: 20px;
+                border-bottom: 1px solid var(--border-color);
+                padding-bottom: 10px;
+                font-family: monospace;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-bottom: 20px;
+                table-layout: fixed; /* Ensure fixed width columns */
+            }
+            th,
+            td {
+                padding: 10px;
+                text-align: left;
+                border-bottom: 1px dotted var(--border-color);
+                vertical-align: top;
+                word-wrap: break-word; /* Ensure long content wraps */
+                overflow-wrap: break-word;
+            }
+            th {
+                background-color: var(--header-bg);
+                font-weight: 600;
+            }
+            .collapsible {
+                cursor: pointer;
+                color: var(--link-color);
+                text-decoration: underline;
+            }
+            .hidden {
+                display: none;
+            }
+            .tool-name {
+                font-weight: bold;
+            }
+            .tool-params {
+                padding-left: 20px;
+                color: #666;
+            }
+            pre {
+                background-color: var(--code-bg);
+                padding: 10px;
+                border-radius: 5px;
+                overflow-x: auto;
+                max-height: 200px;
+                margin: 10px 0;
+                font-family: monospace;
+                width: 100%;
+                box-sizing: border-box;
+                white-space: pre-wrap; /* Ensure text wraps */
+                color: var(--text-color);
+            }
+            code {
+                font-family: monospace;
+            }
+
+            /* Column sizing */
+            .turn-column {
+                width: 3%;
+                max-width: 3%;
+            }
+            .text-column {
+                width: 22%;
+                max-width: 22%;
+            }
+            .tool-column {
+                width: 38%;
+                max-width: 38%;
+            }
+            .result-column {
+                width: 37%;
+                max-width: 37%;
+                overflow-x: auto;
+            }
+
+            /* Content formatting */
+            .text-content {
+                font-family:
+                    system-ui,
+                    -apple-system,
+                    BlinkMacSystemFont,
+                    "Segoe UI",
+                    Roboto,
+                    Oxygen,
+                    Ubuntu,
+                    Cantarell,
+                    "Open Sans",
+                    "Helvetica Neue",
+                    sans-serif;
+                font-size: 0.7rem;
+            }
+            .action-container .action-preview,
+            .action-container .action-full {
+                margin-bottom: 5px;
+            }
+            .preview-content {
+                white-space: pre-wrap;
+                margin-bottom: 5px;
+                background-color: var(--preview-bg);
+                padding: 10px;
+                border-radius: 5px;
+                font-family: monospace;
+                width: 100%;
+                box-sizing: border-box;
+                overflow-wrap: break-word;
+                color: var(--text-color);
+            }
+            .show-more {
+                color: var(--link-color);
+                cursor: pointer;
+                text-decoration: none;
+                display: block;
+                margin-top: 5px;
+            }
+            .more-inline {
+                color: var(--link-color);
+                cursor: pointer;
+                text-decoration: none;
+                display: inline;
+                margin-left: 5px;
+            }
+
+            /* Compact mode styles */
+            .compact-mode td {
+                padding: 5px; /* Reduced padding in compact mode */
+            }
+
+            .compact-mode .preview-content {
+                padding: 2px;
+                margin-bottom: 2px;
+            }
+
+            .compact-mode pre {
+                padding: 5px;
+                margin: 5px 0;
+                white-space: pre; /* Don't wrap code in compact mode */
+                overflow-x: auto; /* Add horizontal scrollbar */
+            }
+
+            .compact-mode .result-column pre,
+            .compact-mode .result-column .preview-content {
+                max-width: 100%;
+                overflow-x: auto;
+                white-space: pre;
+            }
+
+            /* Make action containers more compact */
+            .compact-mode .action-container {
+                margin-bottom: 2px;
+            }
+
+            /* Reduce space between turns */
+            .compact-mode tr {
+                border-bottom: 1px solid var(--table-line);
+            }
+
+            /* Tool params more compact */
+            .compact-mode .tool-params {
+                padding-left: 10px;
+                margin-top: 2px;
+            }
+
+            hr {
+                margin: 10px 0;
+                border: 0;
+                height: 1px;
+                background-color: var(--border-color);
+            }
+
+            /* View switcher */
+            .view-switcher {
+                display: flex;
+                gap: 10px;
+                margin-bottom: 20px;
+                align-items: center;
+            }
+
+            .view-button {
+                background-color: var(--button-bg);
+                border: 1px solid var(--button-border);
+                border-radius: 4px;
+                padding: 5px 15px;
+                cursor: pointer;
+                font-family: monospace;
+                font-size: 0.9rem;
+                transition: all 0.2s ease;
+                color: var(--text-color);
+            }
+
+            .view-button:hover {
+                background-color: var(--button-border);
+            }
+
+            .view-button.active {
+                background-color: var(--button-active-bg);
+                color: var(--button-active-color);
+                border-color: var(--button-active-border);
+            }
+
+            /* Navigation bar styles */
+            .thread-navigation {
+                display: flex;
+                align-items: center;
+                margin-bottom: 20px;
+                padding: 10px 0;
+                border-bottom: 1px solid var(--border-color);
+            }
+
+            .nav-button {
+                background-color: var(--button-bg);
+                border: 1px solid var(--button-border);
+                border-radius: 4px;
+                padding: 5px 15px;
+                cursor: pointer;
+                font-family: monospace;
+                font-size: 0.9rem;
+                transition: all 0.2s ease;
+                color: var(--text-color);
+            }
+
+            .nav-button:hover:not(:disabled) {
+                background-color: var(--button-border);
+            }
+
+            .nav-button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+
+            .thread-indicator {
+                margin: 0 15px;
+                font-size: 1rem;
+                flex-grow: 1;
+                text-align: center;
+            }
+
+            #thread-id {
+                font-weight: bold;
+            }
+
+            /* Theme switcher */
+            .theme-switcher {
+                margin-left: auto;
+                display: flex;
+                align-items: center;
+            }
+
+            .theme-button {
+                background-color: var(--button-bg);
+                border: 1px solid var(--button-border);
+                border-radius: 4px;
+                padding: 5px 10px;
+                cursor: pointer;
+                font-size: 0.9rem;
+                transition: all 0.2s ease;
+                color: var(--text-color);
+                display: flex;
+                align-items: center;
+            }
+
+            .theme-button:hover {
+                background-color: var(--button-border);
+            }
+
+            .theme-icon {
+                margin-right: 5px;
+                font-size: 1rem;
+            }
+        </style>
+    </head>
+    <body>
+        <h1 id="current-filename">Thread Explorer</h1>
+        <div class="view-switcher">
+            <button
+                id="full-view"
+                class="view-button active"
+                onclick="switchView('full')"
+            >
+                Full View
+            </button>
+            <button
+                id="compact-view"
+                class="view-button"
+                onclick="switchView('compact')"
+            >
+                Compact View
+            </button>
+            <button
+                id="export-button"
+                class="view-button"
+                onclick="exportThreadAsJson()"
+                title="Export current thread as JSON"
+            >
+                Export
+            </button>
+            <div class="theme-switcher">
+                <button
+                    id="theme-toggle"
+                    class="theme-button"
+                    onclick="toggleTheme()"
+                >
+                    <span id="theme-icon" class="theme-icon">☀️</span>
+                    <span id="theme-text">Light</span>
+                </button>
+            </div>
+        </div>
+        <div class="thread-navigation">
+            <button
+                id="prev-thread"
+                class="nav-button"
+                onclick="previousThread()"
+                title="Previous thread (Ctrl+←, k, or h)"
+                disabled
+            >
+                &larr; Previous
+            </button>
+            <div class="thread-indicator">
+                Thread <span id="current-thread-index">1</span> of
+                <span id="total-threads">1</span>:
+                <span id="thread-id">Default Thread</span>
+            </div>
+            <button
+                id="next-thread"
+                class="nav-button"
+                onclick="nextThread()"
+                title="Next thread (Ctrl+→, j, or l)"
+                disabled
+            >
+                Next &rarr;
+            </button>
+        </div>
+        <table id="thread-table">
+            <thead>
+                <tr>
+                    <th class="turn-column">Turn</th>
+                    <th class="text-column">Text</th>
+                    <th class="tool-column">Tool</th>
+                    <th class="result-column">Result</th>
+                </tr>
+            </thead>
+            <tbody id="thread-body">
+                <!-- Content will be filled dynamically -->
+            </tbody>
+        </table>
+
+        <script>
+            // View mode - 'full' or 'compact'
+            let viewMode = "full";
+
+            // Theme mode - 'light', 'dark', or 'system'
+            let themeMode = localStorage.getItem("theme") || "system";
+
+            // Function to apply theme
+            function applyTheme(theme) {
+                const themeIcon = document.getElementById("theme-icon");
+                const themeText = document.getElementById("theme-text");
+
+                if (theme === "dark") {
+                    document.documentElement.setAttribute("data-theme", "dark");
+                    themeIcon.textContent = "🌙";
+                    themeText.textContent = "Dark";
+                } else {
+                    document.documentElement.removeAttribute("data-theme");
+                    themeIcon.textContent = "☀️";
+                    themeText.textContent = "Light";
+                }
+            }
+
+            // Function to toggle between light and dark themes
+            function toggleTheme() {
+                // If currently system or light, switch to dark
+                if (themeMode === "system") {
+                    const systemDark = window.matchMedia(
+                        "(prefers-color-scheme: dark)",
+                    ).matches;
+                    themeMode = systemDark ? "light" : "dark";
+                } else {
+                    themeMode = themeMode === "light" ? "dark" : "light";
+                }
+
+                // Save preference
+                localStorage.setItem("theme", themeMode);
+
+                // Apply theme
+                applyTheme(themeMode);
+            }
+
+            // Initialize theme based on system or saved preference
+            function initTheme() {
+                if (themeMode === "system") {
+                    // Use system preference
+                    const systemDark = window.matchMedia(
+                        "(prefers-color-scheme: dark)",
+                    ).matches;
+                    applyTheme(systemDark ? "dark" : "light");
+
+                    // Listen for system theme changes
+                    window
+                        .matchMedia("(prefers-color-scheme: dark)")
+                        .addEventListener("change", (e) => {
+                            if (themeMode === "system") {
+                                applyTheme(e.matches ? "dark" : "light");
+                            }
+                        });
+                } else {
+                    // Use saved preference
+                    applyTheme(themeMode);
+                }
+            }
+
+            // Function to switch between view modes
+            function switchView(mode) {
+                viewMode = mode;
+
+                // Update button states
+                document
+                    .getElementById("full-view")
+                    .classList.toggle("active", mode === "full");
+                document
+                    .getElementById("compact-view")
+                    .classList.toggle("active", mode === "compact");
+
+                // Add or remove compact-mode class on the body
+                document.body.classList.toggle(
+                    "compact-mode",
+                    mode === "compact",
+                );
+
+                // Re-render the thread with the new view mode
+                renderThread();
+            }
+            
+            // Function to export the current thread as a JSON file
+            function exportThreadAsJson() {
+                // Clone the thread to avoid modifying the original
+                const threadToExport = JSON.parse(JSON.stringify(thread));
+                
+                // Create a Blob with the JSON data
+                const blob = new Blob(
+                    [JSON.stringify(threadToExport, null, 2)],
+                    { type: "application/json" }
+                );
+                
+                // Create a download link
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                
+                // Generate filename based on thread ID or index
+                const filename = threadToExport.thread_id || 
+                                threadToExport.filename || 
+                                `thread-${currentThreadIndex + 1}.json`;
+                a.download = filename.endsWith(".json") ? filename : `${filename}.json`;
+                
+                // Trigger the download
+                document.body.appendChild(a);
+                a.click();
+                
+                // Clean up
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 0);
+            }
+            // Default dummy thread data for preview purposes
+            let dummyThread = {
+                messages: [
+                    {
+                        role: "system",
+                        content: [{ Text: "System prompt..." }],
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            { Text: "Fix the bug: kwargs not passed..." },
+                        ],
+                    },
+                    {
+                        role: "assistant",
+                        content: [
+                            { Text: "I'll help you fix that bug." },
+                            {
+                                ToolUse: {
+                                    name: "list_directory",
+                                    input: { path: "fastmcp" },
+                                    is_input_complete: true,
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            {
+                                ToolResult: {
+                                    tool_name: "list_directory",
+                                    is_error: false,
+                                    content:
+                                        "fastmcp/src\nfastmcp/tests\nfastmcp/README.md\nfastmcp/pyproject.toml\nfastmcp/.gitignore\nfastmcp/setup.py\nfastmcp/examples\nfastmcp/LICENSE",
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        role: "assistant",
+                        content: [
+                            { Text: "Let's examine the code." },
+                            {
+                                ToolUse: {
+                                    name: "read_file",
+                                    input: {
+                                        path: "fastmcp/main.py",
+                                        start_line: 253,
+                                        end_line: 360,
+                                    },
+                                    is_input_complete: true,
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            {
+                                ToolResult: {
+                                    tool_name: "read_file",
+                                    is_error: false,
+                                    content:
+                                        "def run_application(app, **kwargs):\n    return anyio.run(app, **kwargs)\n\nasync def start_server():\n    # More code...\n    # Multiple lines of code that would be displayed\n    # when clicking on the show more link\n    app = create_app()\n    await run_app(app)\n\ndef main():\n    # Initialize everything\n    anyio.run(start_server)\n    # Even more code here\n    # that would be shown when the user\n    # expands the content",
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        role: "assistant",
+                        content: [
+                            { Text: "I found the issue." },
+                            {
+                                ToolUse: {
+                                    name: "edit_file",
+                                    input: {
+                                        path: "fastmcp/core.py",
+                                        old_string:
+                                            "def start_server(app):\n    anyio.run(app)",
+                                        new_string:
+                                            "def start_server(app, **kwargs):\n    anyio.run(app, **kwargs)",
+                                        display_description:
+                                            "Fix kwargs passing to anyio.run",
+                                    },
+                                    is_input_complete: true,
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            {
+                                ToolResult: {
+                                    tool_name: "edit_file",
+                                    is_error: false,
+                                    content: "Made edit to fastmcp/core.py",
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        role: "assistant",
+                        content: [
+                            { Text: "Let's check if there are any errors." },
+                            {
+                                ToolUse: {
+                                    name: "diagnostics",
+                                    input: {},
+                                    is_input_complete: true,
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        role: "user",
+                        content: [
+                            {
+                                ToolResult: {
+                                    tool_name: "diagnostics",
+                                    is_error: false,
+                                    content: "No errors found",
+                                },
+                            },
+                        ],
+                    },
+                ],
+            };
+
+            // The actual thread data will be injected here when opened by eval
+            let threadsData = window.threadsData || { threads: [dummyThread] };
+
+            // Initialize thread variables
+            let threads = threadsData.threads;
+            let currentThreadIndex = 0;
+            let thread = threads[currentThreadIndex];
+
+            // Function to navigate to the previous thread
+            function previousThread() {
+                if (currentThreadIndex > 0) {
+                    currentThreadIndex--;
+                    switchToThread(currentThreadIndex);
+                }
+            }
+
+            // Function to navigate to the next thread
+            function nextThread() {
+                if (currentThreadIndex < threads.length - 1) {
+                    currentThreadIndex++;
+                    switchToThread(currentThreadIndex);
+                }
+            }
+
+            // Function to switch to a specific thread by index
+            function switchToThread(index) {
+                if (index >= 0 && index < threads.length) {
+                    currentThreadIndex = index;
+                    thread = threads[currentThreadIndex];
+                    updateNavigationButtons();
+                    renderThread();
+                }
+            }
+
+            // Function to update the navigation buttons state
+            function updateNavigationButtons() {
+                document.getElementById("prev-thread").disabled =
+                    currentThreadIndex <= 0;
+                document.getElementById("next-thread").disabled =
+                    currentThreadIndex >= threads.length - 1;
+                document.getElementById("current-thread-index").textContent =
+                    currentThreadIndex + 1;
+                document.getElementById("total-threads").textContent =
+                    threads.length;
+            }
+
+            function renderThread() {
+                const tbody = document.getElementById("thread-body");
+                tbody.innerHTML = ""; // Clear existing content
+
+                // Set thread name if available
+                const threadId =
+                    thread.thread_id || `Thread ${currentThreadIndex + 1}`;
+                document.getElementById("thread-id").textContent = threadId;
+
+                // Set filename in the header if available
+                const filename =
+                    thread.filename || `Thread ${currentThreadIndex + 1}`;
+                document.getElementById("current-filename").textContent =
+                    filename;
+
+                // Skip system message
+                const nonSystemMessages = thread.messages.filter(
+                    (msg) => msg.role !== "system",
+                );
+
+                let turnNumber = 0;
+                processMessages(nonSystemMessages, tbody, turnNumber);
+            }
+
+            function processMessages(messages, tbody) {
+                let turnNumber = 0;
+
+                for (let i = 0; i < messages.length; i++) {
+                    const msg = messages[i];
+
+                    if (isUserQuery(msg)) {
+                        // User message starts a new turn
+                        turnNumber++;
+                        renderUserMessage(msg, turnNumber, tbody);
+                    } else if (msg.role === "assistant") {
+                        // Each assistant message is one turn
+                        turnNumber++;
+
+                        // Collect all text content and tool uses for this turn
+                        let assistantText = "";
+                        let toolUses = [];
+
+                        // First, collect all text content
+                        for (const content of msg.content) {
+                            if (content.hasOwnProperty("Text")) {
+                                if (assistantText) {
+                                    assistantText +=
+                                        "<br><br>" +
+                                        formatContent(content.Text);
+                                } else {
+                                    assistantText = formatContent(content.Text);
+                                }
+                            } else if (content.hasOwnProperty("ToolUse")) {
+                                toolUses.push(content.ToolUse);
+                            }
+                        }
+
+                        // Create a single row for this turn with text and tools
+                        const row = document.createElement("tr");
+                        row.id = `assistant-turn-${turnNumber}`;
+
+                        // Start with the turn number and assistant text
+                        row.innerHTML = `
+                            <td class="text-content">${turnNumber}</td>
+                            <td class="text-content"><!--Assistant: <br/ -->${assistantText}</td>
+                            <td id="tools-${turnNumber}"></td>
+                            <td id="results-${turnNumber}"></td>
+                        `;
+
+                        tbody.appendChild(row);
+
+                        // Add all tool calls to the tools cell
+                        const toolsCell = document.getElementById(
+                            `tools-${turnNumber}`,
+                        );
+                        const resultsCell = document.getElementById(
+                            `results-${turnNumber}`,
+                        );
+
+                        // Process all tools and their results
+                        for (let j = 0; j < toolUses.length; j++) {
+                            const toolUse = toolUses[j];
+                            const toolCall = formatToolCall(
+                                toolUse.name,
+                                toolUse.input,
+                            );
+
+                            // Add the tool call to the tools cell
+                            if (j > 0) toolsCell.innerHTML += "<hr>";
+                            toolsCell.innerHTML += toolCall;
+
+                            // Look for corresponding tool result
+                            if (
+                                hasMatchingToolResult(messages, i, toolUse.name)
+                            ) {
+                                const resultMsg = messages[i + 1];
+                                const toolResult = findToolResult(
+                                    resultMsg,
+                                    toolUse.name,
+                                );
+
+                                if (toolResult) {
+                                    // Add the result to the results cell
+                                    if (j > 0) resultsCell.innerHTML += "<hr>";
+
+                                    // Create a container for the result
+                                    const resultDiv =
+                                        document.createElement("div");
+                                    resultDiv.className = "tool-result";
+
+                                    // Format and display the tool result
+                                    formatToolResultInline(
+                                        toolResult.content,
+                                        resultDiv,
+                                    );
+                                    resultsCell.appendChild(resultDiv);
+
+                                    // Skip the result message in the next iteration
+                                    if (j === toolUses.length - 1) {
+                                        i++;
+                                    }
+                                }
+                            }
+                        }
+                    } else if (
+                        msg.role === "user" &&
+                        msg.content.some((c) => c.hasOwnProperty("ToolResult"))
+                    ) {
+                        // Skip tool result messages as they are handled with their corresponding tool use
+                        continue;
+                    }
+                }
+            }
+
+            function isUserQuery(message) {
+                return (
+                    message.role === "user" &&
+                    !message.content.some((c) => c.hasOwnProperty("ToolResult"))
+                );
+            }
+
+            function renderUserMessage(message, turnNumber, tbody) {
+                const row = document.createElement("tr");
+                row.innerHTML = `
+                    <td>${turnNumber}</td>
+                    <td class="text-content"><b>[User]:</b><br/> ${formatContent(message.content[0].Text)}</td>
+                    <td></td>
+                    <td></td>
+                `;
+                tbody.appendChild(row);
+            }
+
+            function hasMatchingToolResult(messages, currentIndex, toolName) {
+                return (
+                    currentIndex + 1 < messages.length &&
+                    messages[currentIndex + 1].role === "user" &&
+                    messages[currentIndex + 1].content.some(
+                        (c) =>
+                            c.hasOwnProperty("ToolResult") &&
+                            c.ToolResult.tool_name === toolName,
+                    )
+                );
+            }
+
+            function findToolResult(resultMessage, toolName) {
+                const toolResultContent = resultMessage.content.find(
+                    (c) =>
+                        c.hasOwnProperty("ToolResult") &&
+                        c.ToolResult.tool_name === toolName,
+                );
+
+                return toolResultContent ? toolResultContent.ToolResult : null;
+            }
+            function formatToolCall(name, input) {
+                // In compact mode, format tool calls on a single line
+                if (viewMode === "compact") {
+                    const params = [];
+                    const fullParams = [];
+
+                    // Process all parameters
+                    for (const [key, value] of Object.entries(input)) {
+                        if (value !== null && value !== undefined) {
+                            // Store full parameter for expanded view
+                            let fullValue =
+                                typeof value === "string"
+                                    ? `"${value}"`
+                                    : value;
+                            fullParams.push([key, fullValue]);
+
+                            // Abbreviated value for compact view
+                            let displayValue = fullValue;
+                            if (
+                                typeof value === "string" &&
+                                value.length > 30
+                            ) {
+                                displayValue = `"${value.substring(0, 30)}..."`;
+                            }
+                            params.push(`${key}=${displayValue}`);
+                        }
+                    }
+
+                    const paramString = params.join(", ");
+                    const fullLine = `<span class="tool-name">${name}</span>(${paramString})`;
+
+                    // If the line is too long, add a [more] link
+                    if (fullLine.length > 80 || params.length > 1) {
+                        // Create a container with the compact and full views
+                        const compactView = `<span class="tool-name">${name}</span>(${params[0]}, <span class="more-inline" onclick="toggleActionVisibility(this)">[...]</span>)`;
+
+                        // For the full view, use the original untruncated values
+                        let result = `<span class="tool-name">${name}</span>(`;
+                        const formattedParams = fullParams
+                            .map(
+                                (p) =>
+                                    `&nbsp;&nbsp;&nbsp;&nbsp;${p[0]}=${p[1]}`,
+                            )
+                            .join(",<br/>");
+                        const fullView = `${result}<br/>${formattedParams}<br/>)`;
+
+                        return `<div class="action-container">
+                            <div class="action-preview">${compactView}</div>
+                            <div class="action-full hidden">${fullView}</div>
+                        </div>`;
+                    }
+
+                    return fullLine;
+                }
+
+                // Regular (full) view formatting with multiple lines
+                let result = `<span class="tool-name">${name}</span>(`;
+                const params = [];
+                for (const [key, value] of Object.entries(input)) {
+                    if (value !== null && value !== undefined) {
+                        // Format different types of values
+                        let formattedValue =
+                            typeof value === "string" ? `"${value}"` : value;
+                        params.push([key, formattedValue]);
+                    }
+                }
+
+                if (params.length === 0) {
+                    return `${result})`;
+                } else if (params.length === 1) {
+                    // For single parameter, just show the value without the parameter name
+                    return `${result}${params[0][1]})`;
+                } else {
+                    // Format parameters
+                    const formattedParams = params
+                        .map((p) => `&nbsp;&nbsp;&nbsp;&nbsp;${p[0]}=${p[1]}`)
+                        .join(",<br/>");
+                    return `${result}<br/>${formattedParams}<br/>)`;
+                }
+            }
+
+            function toggleActionVisibility(element, remainingLines) {
+                const container = element.closest(".action-container");
+                const preview = container.querySelector(".action-preview");
+                const full = container.querySelector(".action-full");
+
+                // Once expanded, keep it expanded
+                full.classList.remove("hidden");
+                preview.classList.add("hidden");
+            }
+
+            function formatToolResultInline(content, targetElement) {
+                // Count lines
+                const lines = content.split("\n");
+
+                // In compact mode, show only 1 line with [more] link
+                if (viewMode === "compact" && lines.length > 1) {
+                    // Create container
+                    const container = document.createElement("div");
+
+                    // Preview content
+                    const previewDiv = document.createElement("div");
+                    previewDiv.className = "preview-content";
+
+                    // Add the first line of content plus [more] link
+                    const previewContent = lines[0];
+                    previewDiv.innerHTML =
+                        escapeHtml(previewContent) +
+                        ` <span class="more-inline" onclick="toggleResultVisibility(this)">[...]</span>`;
+
+                    // Full content (initially hidden)
+                    const contentDiv = document.createElement("pre");
+                    contentDiv.className = "hidden";
+                    contentDiv.innerHTML = escapeHtml(content);
+
+                    container.appendChild(previewDiv);
+                    container.appendChild(contentDiv);
+                    targetElement.appendChild(container);
+                } else {
+                    // For full view or short results, display everything
+                    const preElement = document.createElement("pre");
+                    preElement.textContent = content;
+                    targetElement.appendChild(preElement);
+                }
+            }
+
+            function toggleResultVisibility(element, remainingLines) {
+                const container = element.parentElement.parentElement;
+                const preview = container.querySelector(".preview-content");
+                const full = container.querySelector("pre");
+
+                // Once expanded, keep it expanded
+                full.classList.remove("hidden");
+                preview.classList.add("hidden");
+            }
+
+            function formatContent(text) {
+                return escapeHtml(text);
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement("div");
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            // Keyboard navigation handler
+            document.addEventListener("keydown", function (event) {
+                // previous thread
+                if (
+                    (event.ctrlKey && event.key === "ArrowLeft") ||
+                    event.key === "h" ||
+                    event.key === "k"
+                ) {
+                    if (!document.getElementById("prev-thread").disabled) {
+                        previousThread();
+                    }
+                }
+                // next thread
+                else if (
+                    (event.ctrlKey && event.key === "ArrowRight") ||
+                    event.key === "j" ||
+                    event.key === "l"
+                ) {
+                    if (!document.getElementById("next-thread").disabled) {
+                        nextThread();
+                    }
+                }
+            });
+
+            // Initialize the page
+            document.addEventListener("DOMContentLoaded", function () {
+                initTheme();
+                updateNavigationButtons();
+                renderThread();
+            });
+        </script>
+    </body>
+</html>

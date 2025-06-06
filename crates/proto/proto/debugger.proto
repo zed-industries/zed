@@ -16,6 +16,12 @@ message Breakpoint {
     optional string message = 4;
     optional string condition = 5;
     optional string hit_condition = 6;
+    map<uint64, BreakpointSessionState> session_state = 7;
+}
+
+message BreakpointSessionState {
+    uint64 id = 1;
+    bool verified = 2;
 }
 
 message BreakpointsForFile {
@@ -30,81 +36,12 @@ message ToggleBreakpoint {
     Breakpoint breakpoint = 3;
 }
 
-enum DebuggerThreadItem {
-    Console = 0;
-    LoadedSource = 1;
-    Modules = 2;
-    Variables = 3;
-}
-
-message DebuggerSetVariableState {
-    string name = 1;
-    DapScope scope = 2;
-    string value = 3;
-    uint64 stack_frame_id = 4;
-    optional string evaluate_name = 5;
-    uint64 parent_variables_reference = 6;
-}
-
-message VariableListOpenEntry {
-    oneof entry {
-        DebuggerOpenEntryScope scope = 1;
-        DebuggerOpenEntryVariable variable = 2;
-    }
-}
-
-message DebuggerOpenEntryScope {
-    string name = 1;
-}
-
-message DebuggerOpenEntryVariable {
-    string scope_name = 1;
-    string name = 2;
-    uint64 depth = 3;
-}
-
-message VariableListEntrySetState {
-    uint64 depth = 1;
-    DebuggerSetVariableState state = 2;
-}
-
-message VariableListEntryVariable {
-    uint64 depth = 1;
-    DapScope scope = 2;
-    DapVariable variable = 3;
-    bool has_children = 4;
-    uint64 container_reference = 5;
-}
-
-message DebuggerScopeVariableIndex {
-    repeated uint64 fetched_ids = 1;
-    repeated DebuggerVariableContainer variables = 2;
-}
-
-message DebuggerVariableContainer {
-    uint64 container_reference = 1;
-    DapVariable variable = 2;
-    uint64 depth = 3;
-}
-
 enum DapThreadStatus {
     Running = 0;
     Stopped = 1;
     Exited = 2;
     Ended = 3;
 }
-
-message VariableListScopes {
-    uint64 stack_frame_id = 1;
-    repeated DapScope scopes = 2;
-}
-
-message VariableListVariables {
-    uint64 stack_frame_id = 1;
-    uint64 scope_id = 2;
-    DebuggerScopeVariableIndex variables = 3;
-}
-
 
 enum VariablesArgumentsFilter {
     Indexed = 0;
@@ -508,7 +445,6 @@ enum DapStackPresentationHint {
     Subtle = 2;
     StackUnknown = 3;
 }
-
 message DapModule {
     DapModuleId id = 1;
     string name = 2;
@@ -522,9 +458,90 @@ message DapModule {
     optional string address_range = 10;
 }
 
+message DebugTaskDefinition {
+    string adapter = 1;
+    string label = 2;
+    string config = 3;
+    optional TcpHost tcp_connection = 4;
+}
+
+message TcpHost {
+    optional uint32 port = 1;
+    optional string host = 2;
+    optional uint64 timeout = 3;
+}
+
+message DebugLaunchRequest {
+    string program = 1;
+    optional string cwd = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+}
+
+message DebugAttachRequest {
+    uint32 process_id = 1;
+}
+
 message DapModuleId {
     oneof id {
         uint32 number = 1;
         string string = 2;
     }
+}
+
+message GetDebugAdapterBinary {
+    uint64 project_id = 1;
+    uint64 session_id = 3;
+    DebugTaskDefinition definition = 2;
+}
+
+message DebugAdapterBinary {
+    string command = 1;
+    repeated string arguments = 2;
+    map<string, string> envs = 3;
+    optional string cwd = 4;
+    optional TcpHost connection = 5;
+    string configuration = 7;
+    LaunchType launch_type = 8;
+    enum LaunchType {
+        Attach = 0;
+        Launch = 1;
+    }
+}
+
+message RunDebugLocators {
+    uint64 project_id = 1;
+    SpawnInTerminal build_command = 2;
+    string locator = 3;
+}
+
+message DebugRequest {
+    oneof request {
+        DebugLaunchRequest debug_launch_request = 1;
+        DebugAttachRequest debug_attach_request = 2;
+    }
+}
+
+message DebugScenario {
+    string label = 1;
+    string adapter = 2;
+    reserved 3;
+    DebugRequest request = 4;
+    optional TcpHost connection = 5;
+    optional bool stop_on_entry = 6;
+    optional string configuration = 7;
+}
+
+message SpawnInTerminal {
+    string label = 1;
+    string command = 2;
+    repeated string args = 3;
+    map<string, string> env = 4;
+    optional string cwd = 5;
+}
+
+message LogToDebugConsole {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+    string message = 3;
 }

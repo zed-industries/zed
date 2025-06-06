@@ -9,6 +9,8 @@ pub struct Model {
     pub created_at: DateTime,
     pub user_id: UserId,
     pub max_monthly_llm_usage_spending_in_cents: i32,
+    pub model_request_overages_enabled: bool,
+    pub model_request_overages_spend_limit_in_cents: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

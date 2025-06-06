@@ -27,7 +27,6 @@ clock.workspace = true
 collections.workspace = true
 ctor.workspace = true
 buffer_diff.workspace = true
-env_logger.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 language.workspace = true
@@ -57,3 +56,4 @@ rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

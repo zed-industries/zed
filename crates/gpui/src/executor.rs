@@ -281,6 +281,9 @@ impl BackgroundExecutor {
                         }
 
                         if !dispatcher.parking_allowed() {
+                            if dispatcher.advance_clock_to_next_delayed() {
+                                continue;
+                            }
                             let mut backtrace_message = String::new();
                             let mut waiting_message = String::new();
                             if let Some(backtrace) = dispatcher.waiting_backtrace() {

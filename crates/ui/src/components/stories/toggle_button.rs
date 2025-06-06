@@ -6,9 +6,9 @@ use crate::{ToggleButton, prelude::*};
 pub struct ToggleButtonStory;
 
 impl Render for ToggleButtonStory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        Story::container()
-            .child(Story::title_for::<ToggleButton>())
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        Story::container(cx)
+            .child(Story::title_for::<ToggleButton>(cx))
             .child(
                 StorySection::new().child(
                     StoryItem::new(

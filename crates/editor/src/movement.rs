@@ -264,7 +264,18 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
+    let mut is_first_iteration = true;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+        // Make alt-left skip punctuation on Mac OS to respect Mac VSCode behaviour. For example: hello.| goes to |hello.
+        if is_first_iteration
+            && classifier.is_punctuation(right)
+            && !classifier.is_punctuation(left)
+        {
+            is_first_iteration = false;
+            return false;
+        }
+        is_first_iteration = false;
+
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
     })
@@ -305,8 +316,18 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
-
+    let mut is_first_iteration = true;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        // Make alt-right skip punctuation on Mac OS to respect the Mac behaviour. For example: |.hello goes to .hello|
+        if is_first_iteration
+            && classifier.is_punctuation(left)
+            && !classifier.is_punctuation(right)
+        {
+            is_first_iteration = false;
+            return false;
+        }
+        is_first_iteration = false;
+
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
             || right == '\n'
     })
@@ -772,7 +793,7 @@ mod tests {
     };
     use gpui::{AppContext as _, font, px};
     use language::Capability;
-    use project::Project;
+    use project::{Project, project_settings::DiagnosticSeverity};
     use settings::SettingsStore;
     use util::post_inc;
 
@@ -782,10 +803,15 @@ mod tests {
 
         fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-            assert_eq!(
-                previous_word_start(&snapshot, display_points[1]),
-                display_points[0]
-            );
+            let actual = previous_word_start(&snapshot, display_points[1]);
+            let expected = display_points[0];
+            if actual != expected {
+                eprintln!(
+                    "previous_word_start mismatch for '{}': actual={:?}, expected={:?}",
+                    marked_text, actual, expected
+                );
+            }
+            assert_eq!(actual, expected);
         }
 
         assert("\nˇ   ˇlorem", cx);
@@ -796,12 +822,17 @@ mod tests {
         assert("\nlorem\nˇ   ˇipsum", cx);
         assert("\n\nˇ\nˇ", cx);
         assert("    ˇlorem  ˇipsum", cx);
-        assert("loremˇ-ˇipsum", cx);
+        assert("ˇlorem-ˇipsum", cx);
         assert("loremˇ-#$@ˇipsum", cx);
         assert("ˇlorem_ˇipsum", cx);
         assert(" ˇdefγˇ", cx);
         assert(" ˇbcΔˇ", cx);
-        assert(" abˇ——ˇcd", cx);
+        // Test punctuation skipping behavior
+        assert("ˇhello.ˇ", cx);
+        assert("helloˇ...ˇ", cx);
+        assert("helloˇ.---..ˇtest", cx);
+        assert("test  ˇ.--ˇtest", cx);
+        assert("oneˇ,;:!?ˇtwo", cx);
     }
 
     #[gpui::test]
@@ -896,6 +927,7 @@ mod tests {
                 1,
                 1,
                 FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
                 cx,
             )
         });
@@ -954,10 +986,15 @@ mod tests {
 
         fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-            assert_eq!(
-                next_word_end(&snapshot, display_points[0]),
-                display_points[1]
-            );
+            let actual = next_word_end(&snapshot, display_points[0]);
+            let expected = display_points[1];
+            if actual != expected {
+                eprintln!(
+                    "next_word_end mismatch for '{}': actual={:?}, expected={:?}",
+                    marked_text, actual, expected
+                );
+            }
+            assert_eq!(actual, expected);
         }
 
         assert("\nˇ   loremˇ", cx);
@@ -966,11 +1003,18 @@ mod tests {
         assert("    loremˇ    ˇ\nipsum\n", cx);
         assert("\nˇ\nˇ\n\n", cx);
         assert("loremˇ    ipsumˇ   ", cx);
-        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ-ipsumˇ", cx);
         assert("loremˇ#$@-ˇipsum", cx);
         assert("loremˇ_ipsumˇ", cx);
         assert(" ˇbcΔˇ", cx);
         assert(" abˇ——ˇcd", cx);
+        // Test punctuation skipping behavior
+        assert("ˇ.helloˇ", cx);
+        assert("display_pointsˇ[0ˇ]", cx);
+        assert("ˇ...ˇhello", cx);
+        assert("helloˇ.---..ˇtest", cx);
+        assert("testˇ.--ˇ test", cx);
+        assert("oneˇ,;:!?ˇtwo", cx);
     }
 
     #[gpui::test]
@@ -1105,6 +1149,7 @@ mod tests {
                     0,
                     1,
                     FoldPlaceholder::test(),
+                    DiagnosticSeverity::Warning,
                     cx,
                 )
             });

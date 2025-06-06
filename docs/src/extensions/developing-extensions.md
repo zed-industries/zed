@@ -70,7 +70,7 @@ crate-type = ["cdylib"]
 zed_extension_api = "0.1.0"
 ```
 
-Make sure to use the latest version of the [`zed_extension_api`](https://crates.io/crates/zed_extension_api) available on crates.io.
+Use the latest version of the [`zed_extension_api`](https://crates.io/crates/zed_extension_api) available on crates.io. Make sure it's still [compatible with Zed versions](https://github.com/zed-industries/zed/blob/main/crates/extension_api#compatible-zed-versions) you want to support.
 
 In the `src/lib.rs` file in your Rust crate you will need to define a struct for your extension and implement the `Extension` trait, as well as use the `register_extension!` macro to register your extension:
 

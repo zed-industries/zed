@@ -1,19 +1,12 @@
 [
   {
-    "label": "Debug Zed with LLDB",
-    "adapter": "LLDB",
-    "program": "$ZED_WORKTREE_ROOT/target/debug/zed",
-    "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT"
+    "label": "Debug Zed (CodeLLDB)",
+    "adapter": "CodeLLDB",
+    "build": { "label": "Build Zed", "command": "cargo", "args": ["build"] }
   },
   {
-    "label": "Debug Zed with GDB",
+    "label": "Debug Zed (GDB)",
     "adapter": "GDB",
-    "program": "$ZED_WORKTREE_ROOT/target/debug/zed",
-    "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT",
-    "initialize_args": {
-      "stopAtBeginningOfMainSubprogram": true
-    }
+    "build": { "label": "Build Zed", "command": "cargo", "args": ["build"] }
   }
 ]

@@ -54,7 +54,6 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
@@ -67,3 +66,4 @@ reqwest_client.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

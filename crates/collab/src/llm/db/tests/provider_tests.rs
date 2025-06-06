@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use rpc::LanguageModelProvider;
+use zed_llm_client::LanguageModelProvider;
 
 use crate::llm::db::LlmDatabase;
 use crate::test_llm_db;

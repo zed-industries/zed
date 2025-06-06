@@ -1,7 +1,8 @@
 use crate::{
-    App, Bounds, Element, GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, Pixels, Point, Radians, SharedString, Size, StyleRefinement, Styled,
-    TransformationMatrix, Window, geometry::Negate as _, point, px, radians, size,
+    App, Bounds, Element, GlobalElementId, Hitbox, InspectorElementId, InteractiveElement,
+    Interactivity, IntoElement, LayoutId, Pixels, Point, Radians, SharedString, Size,
+    StyleRefinement, Styled, TransformationMatrix, Window, geometry::Negate as _, point, px,
+    radians, size,
 };
 use util::ResultExt;
 
@@ -13,9 +14,10 @@ pub struct Svg {
 }
 
 /// Create a new SVG element.
+#[track_caller]
 pub fn svg() -> Svg {
     Svg {
-        interactivity: Interactivity::default(),
+        interactivity: Interactivity::new(),
         transformation: None,
         path: None,
     }
@@ -44,23 +46,31 @@ impl Element for Svg {
         self.interactivity.element_id.clone()
     }
 
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        self.interactivity.source_location()
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let layout_id =
-            self.interactivity
-                .request_layout(global_id, window, cx, |style, window, cx| {
-                    window.request_layout(style, None, cx)
-                });
+        let layout_id = self.interactivity.request_layout(
+            global_id,
+            inspector_id,
+            window,
+            cx,
+            |style, window, cx| window.request_layout(style, None, cx),
+        );
         (layout_id, ())
     }
 
     fn prepaint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -68,6 +78,7 @@ impl Element for Svg {
     ) -> Option<Hitbox> {
         self.interactivity.prepaint(
             global_id,
+            inspector_id,
             bounds,
             bounds.size,
             window,
@@ -79,6 +90,7 @@ impl Element for Svg {
     fn paint(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         hitbox: &mut Option<Hitbox>,
@@ -89,6 +101,7 @@ impl Element for Svg {
     {
         self.interactivity.paint(
             global_id,
+            inspector_id,
             bounds,
             hitbox.as_ref(),
             window,

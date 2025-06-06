@@ -59,6 +59,19 @@ const updateFunction = () => {
 window.addEventListener("load", () => {
   const pagetoc = getPagetoc();
   const headers = [...document.getElementsByClassName("header")];
+
+  const nonH1Headers = headers.filter(
+    (header) => !header.parentElement.tagName.toLowerCase().startsWith("h1"),
+  );
+  const sidetoc = document.querySelector(".sidetoc");
+
+  if (nonH1Headers.length === 0) {
+    if (sidetoc) {
+      sidetoc.style.display = "none";
+    }
+    return;
+  }
+
   headers.forEach((header) => {
     const link = Object.assign(document.createElement("a"), {
       textContent: header.text,

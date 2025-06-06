@@ -37,7 +37,7 @@ impl SnippetRegistry {
     }
 
     pub fn register_snippets(&self, file_path: &Path, contents: &str) -> Result<()> {
-        let snippets_in_file: crate::format::VSSnippetsFile =
+        let snippets_in_file: crate::format::VsSnippetsFile =
             serde_json_lenient::from_str(contents)?;
         let kind = file_path
             .file_stem()

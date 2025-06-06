@@ -49,11 +49,7 @@ messages!(
     (ChannelMessageUpdate, Foreground),
     (CloseBuffer, Foreground),
     (Commit, Background),
-    (ComputeEmbeddings, Background),
-    (ComputeEmbeddingsResponse, Background),
     (CopyProjectEntry, Foreground),
-    (CountLanguageModelTokens, Background),
-    (CountLanguageModelTokensResponse, Background),
     (CreateBufferForPeer, Foreground),
     (CreateChannel, Foreground),
     (CreateChannelResponse, Foreground),
@@ -82,8 +78,6 @@ messages!(
     (FormatBuffers, Foreground),
     (FormatBuffersResponse, Foreground),
     (FuzzySearchUsers, Foreground),
-    (GetCachedEmbeddings, Background),
-    (GetCachedEmbeddingsResponse, Background),
     (GetChannelMembers, Foreground),
     (GetChannelMembersResponse, Foreground),
     (GetChannelMessages, Background),
@@ -175,8 +169,14 @@ messages!(
     (LspExtRunnablesResponse, Background),
     (LspExtSwitchSourceHeader, Background),
     (LspExtSwitchSourceHeaderResponse, Background),
+    (LspExtGoToParentModule, Background),
+    (LspExtGoToParentModuleResponse, Background),
+    (LspExtCancelFlycheck, Background),
+    (LspExtRunFlycheck, Background),
+    (LspExtClearFlycheck, Background),
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
+    (ReorderChannel, Foreground),
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
@@ -302,6 +302,14 @@ messages!(
     (GitDiff, Background),
     (GitDiffResponse, Background),
     (GitInit, Background),
+    (GetDebugAdapterBinary, Background),
+    (DebugAdapterBinary, Background),
+    (RunDebugLocators, Background),
+    (DebugRequest, Background),
+    (LogToDebugConsole, Background),
+    (GetDocumentDiagnostics, Background),
+    (GetDocumentDiagnosticsResponse, Background),
+    (RefreshDocumentsDiagnostics, Background)
 );
 
 request_messages!(
@@ -315,7 +323,6 @@ request_messages!(
     (CancelCall, Ack),
     (Commit, Ack),
     (CopyProjectEntry, ProjectEntryResponse),
-    (ComputeEmbeddings, ComputeEmbeddingsResponse),
     (CreateChannel, CreateChannelResponse),
     (CreateProjectEntry, ProjectEntryResponse),
     (CreateRoom, CreateRoomResponse),
@@ -328,7 +335,6 @@ request_messages!(
     (ApplyCodeActionKind, ApplyCodeActionKindResponse),
     (FormatBuffers, FormatBuffersResponse),
     (FuzzySearchUsers, UsersResponse),
-    (GetCachedEmbeddings, GetCachedEmbeddingsResponse),
     (GetChannelMembers, GetChannelMembersResponse),
     (GetChannelMessages, GetChannelMessagesResponse),
     (GetChannelMessagesById, GetChannelMessagesResponse),
@@ -376,7 +382,6 @@ request_messages!(
     (PerformRename, PerformRenameResponse),
     (Ping, Ack),
     (PrepareRename, PrepareRenameResponse),
-    (CountLanguageModelTokens, CountLanguageModelTokensResponse),
     (RefreshInlayHints, Ack),
     (RefreshCodeLens, Ack),
     (RejoinChannelBuffers, RejoinChannelBuffersResponse),
@@ -388,6 +393,7 @@ request_messages!(
     (RemoveContact, Ack),
     (RenameChannel, RenameChannelResponse),
     (RenameProjectEntry, ProjectEntryResponse),
+    (ReorderChannel, Ack),
     (RequestContact, Ack),
     (
         ResolveCompletionDocumentation,
@@ -427,6 +433,10 @@ request_messages!(
     (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
+    (LspExtGoToParentModule, LspExtGoToParentModuleResponse),
+    (LspExtCancelFlycheck, Ack),
+    (LspExtRunFlycheck, Ack),
+    (LspExtClearFlycheck, Ack),
     (AddWorktree, AddWorktreeResponse),
     (ShutdownRemoteServer, Ack),
     (RemoveWorktree, Ack),
@@ -460,6 +470,10 @@ request_messages!(
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
     (ToggleBreakpoint, Ack),
+    (GetDebugAdapterBinary, DebugAdapterBinary),
+    (RunDebugLocators, DebugRequest),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (RefreshDocumentsDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -547,6 +561,10 @@ entity_messages!(
     UpdateContext,
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
+    LspExtGoToParentModule,
+    LspExtCancelFlycheck,
+    LspExtRunFlycheck,
+    LspExtClearFlycheck,
     LanguageServerLog,
     Toast,
     HideToast,
@@ -579,6 +597,11 @@ entity_messages!(
     GitInit,
     BreakpointsForFile,
     ToggleBreakpoint,
+    RunDebugLocators,
+    GetDebugAdapterBinary,
+    LogToDebugConsole,
+    GetDocumentDiagnostics,
+    RefreshDocumentsDiagnostics
 );
 
 entity_messages!(

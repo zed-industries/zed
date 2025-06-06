@@ -29,3 +29,12 @@
 {"Key":"-"}
 {"Key":""}
 {"Get":{"state":"ˇhello world\n","mode":"Normal"}}
+{"Put":{"state":"  helloˇ world\n"}}
+{"Key":"r"}
+{"Key":"enter"}
+{"Get":{"state":"  hello\n ˇ world\n","mode":"Normal"}}
+{"Put":{"state":"  helloˇ world\n"}}
+{"Key":"2"}
+{"Key":"r"}
+{"Key":"enter"}
+{"Get":{"state":"  hello\n ˇ orld\n","mode":"Normal"}}

@@ -1,13 +1,14 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{StreamExt, io::BufReader};
-use gpui::{App, AsyncApp, SharedString, Task};
+use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary};
+use project::lsp_store::rust_analyzer_ext::CARGO_DIAGNOSTICS_SOURCE_NAME;
 use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
@@ -20,7 +21,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, LazyLock},
 };
-use task::{TaskTemplate, TaskTemplates, TaskType, TaskVariables, VariableName};
+use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::archive::extract_zip;
 use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
 
@@ -129,7 +131,7 @@ impl LspAdapter for RustLspAdapter {
             })
             .await;
         if let Err(err) = result {
-            log::error!(
+            log::debug!(
                 "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
                 path,
                 err
@@ -214,14 +216,11 @@ impl LspAdapter for RustLspAdapter {
                         })?;
                 }
                 AssetKind::Zip => {
-                    node_runtime::extract_zip(
-                        &destination_path,
-                        BufReader::new(response.body_mut()),
-                    )
-                    .await
-                    .with_context(|| {
-                        format!("unzipping {} to {:?}", version.url, destination_path)
-                    })?;
+                    extract_zip(&destination_path, response.body_mut())
+                        .await
+                        .with_context(|| {
+                            format!("unzipping {} to {:?}", version.url, destination_path)
+                        })?;
                 }
             };
 
@@ -252,7 +251,7 @@ impl LspAdapter for RustLspAdapter {
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
-        vec!["rustc".into()]
+        vec![CARGO_DIAGNOSTICS_SOURCE_NAME.to_owned()]
     }
 
     fn disk_based_diagnostics_progress_token(&self) -> Option<String> {
@@ -281,6 +280,12 @@ impl LspAdapter for RustLspAdapter {
                 }
             }
         }
+    }
+
+    fn diagnostic_message_to_markdown(&self, message: &str) -> Option<String> {
+        static REGEX: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"(?m)\n *").expect("Failed to create REGEX"));
+        Some(REGEX.replace_all(message, "\n\n").to_string())
     }
 
     async fn label_for_completion(
@@ -493,12 +498,27 @@ impl LspAdapter for RustLspAdapter {
                     "kinds": [ "cargo", "shell" ],
                 },
             });
-            if let Some(ref mut original_experimental) = original.capabilities.experimental {
+            if let Some(original_experimental) = &mut original.capabilities.experimental {
                 merge_json_value_into(experimental, original_experimental);
             } else {
                 original.capabilities.experimental = Some(experimental);
             }
         }
+
+        let cargo_diagnostics_fetched_separately = ProjectSettings::get_global(cx)
+            .diagnostics
+            .fetch_cargo_diagnostics();
+        if cargo_diagnostics_fetched_separately {
+            let disable_check_on_save = json!({
+                "checkOnSave": false,
+            });
+            if let Some(initialization_options) = &mut original.initialization_options {
+                merge_json_value_into(disable_check_on_save, initialization_options);
+            } else {
+                original.initialization_options = Some(disable_check_on_save);
+            }
+        }
+
         Ok(original)
     }
 }
@@ -537,57 +557,23 @@ impl ContextProvider for RustContextProvider {
     fn build_context(
         &self,
         task_variables: &TaskVariables,
-        location: &Location,
+        location: ContextLocation<'_>,
         project_env: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
+            .file_location
             .buffer
             .read(cx)
             .file()
             .and_then(|file| Some(file.as_local()?.abs_path(cx)));
 
-        let local_abs_path = local_abs_path.as_deref();
-
         let mut variables = TaskVariables::default();
 
-        if let Some(target) =
-            local_abs_path.and_then(|path| target_info_from_abs_path(path, project_env.as_ref()))
+        if let (Some(path), Some(stem)) = (&local_abs_path, task_variables.get(&VariableName::Stem))
         {
-            variables.extend(TaskVariables::from_iter([
-                (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
-                (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
-                (
-                    RUST_BIN_KIND_TASK_VARIABLE.clone(),
-                    target.target_kind.to_string(),
-                ),
-            ]));
-            if target.required_features.is_empty() {
-                variables.insert(RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE, "".into());
-                variables.insert(RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE, "".into());
-            } else {
-                variables.insert(
-                    RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.clone(),
-                    "--features".to_string(),
-                );
-                variables.insert(
-                    RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.clone(),
-                    target.required_features.join(","),
-                );
-            }
-        }
-
-        if let Some(package_name) = local_abs_path
-            .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(|path| human_readable_package_name(path, project_env.as_ref()))
-        {
-            variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
-        }
-
-        if let (Some(path), Some(stem)) = (local_abs_path, task_variables.get(&VariableName::Stem))
-        {
-            let fragment = test_fragment(&variables, path, stem);
+            let fragment = test_fragment(&variables, &path, stem);
             variables.insert(RUST_TEST_FRAGMENT_TASK_VARIABLE, fragment);
         };
         if let Some(test_name) =
@@ -600,8 +586,44 @@ impl ContextProvider for RustContextProvider {
         {
             variables.insert(RUST_DOC_TEST_NAME_TASK_VARIABLE, doc_test_name.into());
         }
-
-        Task::ready(Ok(variables))
+        cx.background_spawn(async move {
+            if let Some(path) = local_abs_path
+                .as_deref()
+                .and_then(|local_abs_path| local_abs_path.parent())
+            {
+                if let Some(package_name) =
+                    human_readable_package_name(path, project_env.as_ref()).await
+                {
+                    variables.insert(RUST_PACKAGE_TASK_VARIABLE.clone(), package_name);
+                }
+            }
+            if let Some(path) = local_abs_path.as_ref() {
+                if let Some(target) = target_info_from_abs_path(&path, project_env.as_ref()).await {
+                    variables.extend(TaskVariables::from_iter([
+                        (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
+                        (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
+                        (
+                            RUST_BIN_KIND_TASK_VARIABLE.clone(),
+                            target.target_kind.to_string(),
+                        ),
+                    ]));
+                    if target.required_features.is_empty() {
+                        variables.insert(RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE, "".into());
+                        variables.insert(RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE, "".into());
+                    } else {
+                        variables.insert(
+                            RUST_BIN_REQUIRED_FEATURES_FLAG_TASK_VARIABLE.clone(),
+                            "--features".to_string(),
+                        );
+                        variables.insert(
+                            RUST_BIN_REQUIRED_FEATURES_TASK_VARIABLE.clone(),
+                            target.required_features.join(","),
+                        );
+                    }
+                }
+            }
+            Ok(variables)
+        })
     }
 
     fn associated_tasks(
@@ -627,11 +649,6 @@ impl ContextProvider for RustContextProvider {
             vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
-        };
-        let debug_task_args = if let Some(package_to_run) = package_to_run {
-            vec!["build".into(), "-p".into(), package_to_run]
-        } else {
-            vec!["build".into()]
         };
         let mut task_templates = vec![
             TaskTemplate {
@@ -666,35 +683,10 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
-                ],
-                tags: vec!["rust-test".to_owned()],
-                cwd: Some("$ZED_DIRNAME".to_owned()),
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "Debug Test '{}' (package: {})",
+                    "--include-ignored".into(),
                     RUST_TEST_NAME_TASK_VARIABLE.template_value(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                ),
-                task_type: TaskType::Debug(task::DebugArgs {
-                    adapter: "LLDB".to_owned(),
-                    request: task::DebugArgsRequest::Launch,
-                    locator: Some("cargo".into()),
-                    tcp_connection: None,
-                    initialize_args: None,
-                    stop_on_entry: None,
-                }),
-                command: "cargo".into(),
-                args: vec![
-                    "test".into(),
-                    "-p".into(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_TEST_NAME_TASK_VARIABLE.template_value(),
-                    "--no-run".into(),
                 ],
                 tags: vec!["rust-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -712,9 +704,10 @@ impl ContextProvider for RustContextProvider {
                     "--doc".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                     "--".into(),
                     "--nocapture".into(),
+                    "--include-ignored".into(),
+                    RUST_DOC_TEST_NAME_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-doc-test".to_owned()],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -731,6 +724,7 @@ impl ContextProvider for RustContextProvider {
                     "test".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    "--".into(),
                     RUST_TEST_FRAGMENT_TASK_VARIABLE.template_value(),
                 ],
                 tags: vec!["rust-mod-test".to_owned()],
@@ -777,27 +771,6 @@ impl ContextProvider for RustContextProvider {
                 command: "cargo".into(),
                 args: run_task_args,
                 cwd: Some("$ZED_DIRNAME".to_owned()),
-                ..TaskTemplate::default()
-            },
-            TaskTemplate {
-                label: format!(
-                    "Debug {} {} (package: {})",
-                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
-                    RUST_BIN_NAME_TASK_VARIABLE.template_value(),
-                    RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                ),
-                cwd: Some("$ZED_DIRNAME".to_owned()),
-                command: "cargo".into(),
-                task_type: TaskType::Debug(task::DebugArgs {
-                    request: task::DebugArgsRequest::Launch,
-                    adapter: "LLDB".to_owned(),
-                    initialize_args: None,
-                    locator: Some("cargo".into()),
-                    tcp_connection: None,
-                    stop_on_entry: None,
-                }),
-                args: debug_task_args,
-                tags: vec!["rust-main".to_owned()],
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -888,11 +861,11 @@ struct TargetInfo {
     required_features: Vec<String>,
 }
 
-fn target_info_from_abs_path(
+async fn target_info_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<TargetInfo> {
-    let mut command = util::command::new_std_command("cargo");
+    let mut command = util::command::new_smol_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -903,6 +876,7 @@ fn target_info_from_abs_path(
         .arg("--format-version")
         .arg("1")
         .output()
+        .await
         .log_err()?
         .stdout;
 
@@ -936,11 +910,11 @@ fn target_info_from_metadata(metadata: CargoMetadata, abs_path: &Path) -> Option
     None
 }
 
-fn human_readable_package_name(
+async fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = util::command::new_std_command("cargo");
+    let mut command = util::command::new_smol_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -949,6 +923,7 @@ fn human_readable_package_name(
             .current_dir(package_directory)
             .arg("pkgid")
             .output()
+            .await
             .log_err()?
             .stdout,
     )
@@ -998,7 +973,7 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         }
 
         anyhow::Ok(LanguageServerBinary {
-            path: last.ok_or_else(|| anyhow!("no cached binary"))?,
+            path: last.context("no cached binary")?,
             env: None,
             arguments: Default::default(),
         })
@@ -1036,7 +1011,7 @@ mod tests {
 
     use super::*;
     use crate::language;
-    use gpui::{AppContext as _, BorrowAppContext, Hsla, TestAppContext};
+    use gpui::{BorrowAppContext, Hsla, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;

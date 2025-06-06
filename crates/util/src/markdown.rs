@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-/// Markdown text.
+/// Indicates that the wrapped `String` is markdown text.
 #[derive(Debug, Clone)]
 pub struct MarkdownString(pub String);
 
@@ -10,31 +10,45 @@ impl Display for MarkdownString {
     }
 }
 
-impl MarkdownString {
-    /// Escapes markdown special characters in markdown text blocks. Markdown code blocks follow
-    /// different rules and `MarkdownString::inline_code` or `MarkdownString::code_block` should be
-    /// used in that case.
-    ///
-    /// Also escapes the following markdown extensions:
-    ///
-    /// * `^` for superscripts
-    /// * `$` for inline math
-    /// * `~` for strikethrough
-    ///
-    /// Escape of some characters is unnecessary, because while they are involved in markdown syntax,
-    /// the other characters involved are escaped:
-    ///
-    /// * `!`, `]`, `(`, and `)` are used in link syntax, but `[` is escaped so these are parsed as
-    /// plaintext.
-    ///
-    /// * `;` is used in HTML entity syntax, but `&` is escaped, so they are parsed as plaintext.
-    ///
-    /// TODO: There is one escape this doesn't do currently. Period after numbers at the start of the
-    /// line (`[0-9]*\.`) should also be escaped to avoid it being interpreted as a list item.
-    pub fn escape(text: &str) -> Self {
-        let mut chunks = Vec::new();
+/// Escapes markdown special characters in markdown text blocks. Markdown code blocks follow
+/// different rules and `MarkdownInlineCode` or `MarkdownCodeBlock` should be used in that case.
+///
+/// Also escapes the following markdown extensions:
+///
+/// * `^` for superscripts
+/// * `$` for inline math
+/// * `~` for strikethrough
+///
+/// Escape of some characters is unnecessary, because while they are involved in markdown syntax,
+/// the other characters involved are escaped:
+///
+/// * `!`, `]`, `(`, and `)` are used in link syntax, but `[` is escaped so these are parsed as
+/// plaintext.
+///
+/// * `;` is used in HTML entity syntax, but `&` is escaped, so they are parsed as plaintext.
+///
+/// TODO: There is one escape this doesn't do currently. Period after numbers at the start of the
+/// line (`[0-9]*\.`) should also be escaped to avoid it being interpreted as a list item.
+pub struct MarkdownEscaped<'a>(pub &'a str);
+
+/// Implements `Display` to format markdown inline code (wrapped in backticks), handling code that
+/// contains backticks and spaces. All whitespace is treated as a single space character. For text
+/// that does not contain whitespace other than ' ', this escaping roundtrips through
+/// pulldown-cmark.
+///
+/// When used in tables, `|` should be escaped like `\|` in the text provided to this function.
+pub struct MarkdownInlineCode<'a>(pub &'a str);
+
+/// Implements `Display` to format markdown code blocks, wrapped in 3 or more backticks as needed.
+pub struct MarkdownCodeBlock<'a> {
+    pub tag: &'a str,
+    pub text: &'a str,
+}
+
+impl Display for MarkdownEscaped<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         let mut start_of_unescaped = None;
-        for (ix, c) in text.char_indices() {
+        for (ix, c) in self.0.char_indices() {
             match c {
                 // Always escaped.
                 '\\' | '`' | '*' | '_' | '[' | '^' | '$' | '~' | '&' |
@@ -45,10 +59,10 @@ impl MarkdownString {
                     match start_of_unescaped {
                         None => {}
                         Some(start_of_unescaped) => {
-                            chunks.push(&text[start_of_unescaped..ix]);
+                            write!(formatter, "{}", &self.0[start_of_unescaped..ix])?;
                         }
                     }
-                    chunks.push("\\");
+                    write!(formatter, "\\")?;
                     // Can include this char in the "unescaped" text since a
                     // backslash was just emitted.
                     start_of_unescaped = Some(ix);
@@ -59,10 +73,10 @@ impl MarkdownString {
                     match start_of_unescaped {
                         None => {}
                         Some(start_of_unescaped) => {
-                            chunks.push(&text[start_of_unescaped..ix]);
+                            write!(formatter, "{}", &self.0[start_of_unescaped..ix])?;
                         }
                     }
-                    chunks.push("&lt;");
+                    write!(formatter, "&lt;")?;
                     start_of_unescaped = None;
                 }
                 // Escaped since `>` is used for blockquotes. `&gt;` is used since Markdown supports
@@ -71,10 +85,10 @@ impl MarkdownString {
                     match start_of_unescaped {
                         None => {}
                         Some(start_of_unescaped) => {
-                            chunks.push(&text[start_of_unescaped..ix]);
+                            write!(formatter, "{}", &self.0[start_of_unescaped..ix])?;
                         }
                     }
-                    chunks.push("gt;");
+                    write!(formatter, "&gt;")?;
                     start_of_unescaped = None;
                 }
                 _ => {
@@ -85,17 +99,14 @@ impl MarkdownString {
             }
         }
         if let Some(start_of_unescaped) = start_of_unescaped {
-            chunks.push(&text[start_of_unescaped..])
+            write!(formatter, "{}", &self.0[start_of_unescaped..])?;
         }
-        Self(chunks.concat())
+        Ok(())
     }
+}
 
-    /// Returns markdown for inline code (wrapped in backticks), handling code that contains backticks
-    /// and spaces. All whitespace is treated as a single space character. For text that does not
-    /// contain whitespace other than ' ', this escaping roundtrips through pulldown-cmark.
-    ///
-    /// When used in tables, `|` should be escaped like `\|` in the text provided to this function.
-    pub fn inline_code(text: &str) -> Self {
+impl Display for MarkdownInlineCode<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         // Apache License 2.0, same as this crate.
         //
         // Copied from `pulldown-cmark-to-cmark-20.0.0` with modifications:
@@ -103,12 +114,11 @@ impl MarkdownString {
         // * Handling of all whitespace. pulldown-cmark-to-cmark is anticipating
         // `Code` events parsed by pulldown-cmark.
         //
-        // * Direct return of string.
-        //
         // https://github.com/Byron/pulldown-cmark-to-cmark/blob/3c850de2d3d1d79f19ca5f375e1089a653cf3ff7/src/lib.rs#L290
 
         let mut all_whitespace = true;
-        let text = text
+        let text = self
+            .0
             .chars()
             .map(|c| {
                 if c.is_whitespace() {
@@ -123,7 +133,7 @@ impl MarkdownString {
         // When inline code has leading and trailing ' ' characters, additional space is needed
         // to escape it, unless all characters are space.
         if all_whitespace {
-            Self(format!("`{text}`"))
+            write!(formatter, "`{text}`")
         } else {
             // More backticks are needed to delimit the inline code than the maximum number of
             // backticks in a consecutive run.
@@ -133,14 +143,17 @@ impl MarkdownString {
                 &[b' ', .., b' '] => " ",         // Space needed to escape inner space.
                 _ => "",                          // No space needed.
             };
-            Self(format!("{backticks}{space}{text}{space}{backticks}"))
+            write!(formatter, "{backticks}{space}{text}{space}{backticks}")
         }
     }
+}
 
-    /// Returns markdown for code blocks, wrapped in 3 or more backticks as needed.
-    pub fn code_block(tag: &str, text: &str) -> Self {
+impl Display for MarkdownCodeBlock<'_> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        let tag = self.tag;
+        let text = self.text;
         let backticks = "`".repeat(3.max(count_max_consecutive_chars(text, '`') + 1));
-        Self(format!("{backticks}{tag}\n{text}\n{backticks}\n"))
+        write!(formatter, "{backticks}{tag}\n{text}\n{backticks}\n")
     }
 }
 
@@ -170,7 +183,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_markdown_string_escape() {
+    fn test_markdown_escaped() {
         let input = r#"
         # Heading
 
@@ -221,20 +234,20 @@ mod tests {
         HTML entity: \&nbsp;
         "#;
 
-        assert_eq!(MarkdownString::escape(input).0, expected);
+        assert_eq!(MarkdownEscaped(input).to_string(), expected);
     }
 
     #[test]
-    fn test_markdown_string_inline_code() {
-        assert_eq!(MarkdownString::inline_code(" ").0, "` `");
-        assert_eq!(MarkdownString::inline_code("text").0, "`text`");
-        assert_eq!(MarkdownString::inline_code("text ").0, "`text `");
-        assert_eq!(MarkdownString::inline_code(" text ").0, "`  text  `");
-        assert_eq!(MarkdownString::inline_code("`").0, "`` ` ``");
-        assert_eq!(MarkdownString::inline_code("``").0, "``` `` ```");
-        assert_eq!(MarkdownString::inline_code("`text`").0, "`` `text` ``");
+    fn test_markdown_inline_code() {
+        assert_eq!(MarkdownInlineCode(" ").to_string(), "` `");
+        assert_eq!(MarkdownInlineCode("text").to_string(), "`text`");
+        assert_eq!(MarkdownInlineCode("text ").to_string(), "`text `");
+        assert_eq!(MarkdownInlineCode(" text ").to_string(), "`  text  `");
+        assert_eq!(MarkdownInlineCode("`").to_string(), "`` ` ``");
+        assert_eq!(MarkdownInlineCode("``").to_string(), "``` `` ```");
+        assert_eq!(MarkdownInlineCode("`text`").to_string(), "`` `text` ``");
         assert_eq!(
-            MarkdownString::inline_code("some `text` no leading or trailing backticks").0,
+            MarkdownInlineCode("some `text` no leading or trailing backticks").to_string(),
             "``some `text` no leading or trailing backticks``"
         );
     }

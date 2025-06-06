@@ -1,6 +1,8 @@
 pub mod disconnected_overlay;
 mod remote_servers;
+mod ssh_config;
 mod ssh_connections;
+
 pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
 
 use disconnected_overlay::DisconnectedOverlay;
@@ -24,15 +26,44 @@ use std::{
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
 use workspace::{
-    CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB, Workspace,
-    WorkspaceId,
+    CloseIntent, HistoryManager, ModalView, OpenOptions, SerializedWorkspaceLocation, WORKSPACE_DB,
+    Workspace, WorkspaceId, with_active_or_new_workspace,
 };
 use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
-    cx.observe_new(RecentProjects::register).detach();
-    cx.observe_new(RemoteServerProjects::register).detach();
+    cx.on_action(|open_recent: &OpenRecent, cx| {
+        let create_new_window = open_recent.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let Some(recent_projects) = workspace.active_modal::<RecentProjects>(cx) else {
+                RecentProjects::open(workspace, create_new_window, window, cx);
+                return;
+            };
+
+            recent_projects.update(cx, |recent_projects, cx| {
+                recent_projects
+                    .picker
+                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
+            });
+        });
+    });
+    cx.on_action(|open_remote: &OpenRemote, cx| {
+        let from_existing_connection = open_remote.from_existing_connection;
+        let create_new_window = open_remote.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            if from_existing_connection {
+                cx.propagate();
+                return;
+            }
+            let handle = cx.entity().downgrade();
+            let fs = workspace.project().read(cx).fs().clone();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::new(create_new_window, fs, window, handle, cx)
+            })
+        });
+    });
+
     cx.observe_new(DisconnectedOverlay::register).detach();
 }
 
@@ -82,25 +113,6 @@ impl RecentProjects {
             rem_width,
             _subscription,
         }
-    }
-
-    fn register(
-        workspace: &mut Workspace,
-        _window: Option<&mut Window>,
-        _cx: &mut Context<Workspace>,
-    ) {
-        workspace.register_action(|workspace, open_recent: &OpenRecent, window, cx| {
-            let Some(recent_projects) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, open_recent.create_new_window, window, cx);
-                return;
-            };
-
-            recent_projects.update(cx, |recent_projects, cx| {
-                recent_projects
-                    .picker
-                    .update(cx, |picker, cx| picker.cycle_selection(window, cx))
-            });
-        });
     }
 
     pub fn open(
@@ -466,9 +478,23 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("remote", "Open Remote Folder")
-                        .key_binding(KeyBinding::for_action(&OpenRemote, window, cx))
+                        .key_binding(KeyBinding::for_action(
+                            &OpenRemote {
+                                from_existing_connection: false,
+                                create_new_window: false,
+                            },
+                            window,
+                            cx,
+                        ))
                         .on_click(|_, window, cx| {
-                            window.dispatch_action(OpenRemote.boxed_clone(), cx)
+                            window.dispatch_action(
+                                OpenRemote {
+                                    from_existing_connection: false,
+                                    create_new_window: false,
+                                }
+                                .boxed_clone(),
+                                cx,
+                            )
                         }),
                 )
                 .child(
@@ -553,7 +579,13 @@ impl RecentProjectsDelegate {
                         .delegate
                         .set_selected_index(ix.saturating_sub(1), window, cx);
                     picker.delegate.reset_selected_match_index = false;
-                    picker.update_matches(picker.query(cx), window, cx)
+                    picker.update_matches(picker.query(cx), window, cx);
+                    // After deleting a project, we want to update the history manager to reflect the change.
+                    // But we do not emit a update event when user opens a project, because it's handled in `workspace::load_workspace`.
+                    if let Some(history_manager) = HistoryManager::global(cx) {
+                        history_manager
+                            .update(cx, |this, cx| this.delete_history(workspace_id, cx));
+                    }
                 })
             })
             .detach();

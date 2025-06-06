@@ -3,9 +3,9 @@ use std::{
     rc::Rc,
 };
 
-use gpui::{Bounds, Point, size};
+use gpui::{Bounds, Point, Size, size};
 use terminal::Terminal;
-use ui::{ContentSize, Pixels, ScrollableHandle, px};
+use ui::{Pixels, ScrollableHandle, px};
 
 #[derive(Debug)]
 struct ScrollHandleState {
@@ -46,12 +46,9 @@ impl TerminalScrollHandle {
 }
 
 impl ScrollableHandle for TerminalScrollHandle {
-    fn content_size(&self) -> Option<ContentSize> {
+    fn content_size(&self) -> Size<Pixels> {
         let state = self.state.borrow();
-        Some(ContentSize {
-            size: size(px(0.), px(state.total_lines as f32 * state.line_height.0)),
-            scroll_adjustment: Some(Point::new(px(0.), px(0.))),
-        })
+        size(Pixels::ZERO, state.total_lines as f32 * state.line_height)
     }
 
     fn offset(&self) -> Point<Pixels> {

@@ -1,6 +1,9 @@
 // todo("windows"): remove
 #![cfg_attr(windows, allow(dead_code))]
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use crate::{
     AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
     Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
@@ -506,7 +509,7 @@ impl From<Shadow> for Primitive {
 }
 
 /// The style of a border.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub enum BorderStyle {
     /// A solid border.
@@ -676,7 +679,7 @@ pub(crate) struct PathId(pub(crate) usize);
 
 /// A line made up of a series of vertices and control points.
 #[derive(Clone, Debug)]
-pub struct Path<P: Clone + Default + Debug> {
+pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub(crate) id: PathId,
     order: DrawOrder,
     pub(crate) bounds: Bounds<P>,
@@ -809,7 +812,7 @@ impl From<Path<ScaledPixels>> for Primitive {
 
 #[derive(Clone, Debug)]
 #[repr(C)]
-pub(crate) struct PathVertex<P: Clone + Default + Debug> {
+pub(crate) struct PathVertex<P: Clone + Debug + Default + PartialEq> {
     pub(crate) xy_position: Point<P>,
     pub(crate) st_position: Point<f32>,
     pub(crate) content_mask: ContentMask<P>,

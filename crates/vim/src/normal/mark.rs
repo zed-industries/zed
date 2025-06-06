@@ -279,6 +279,10 @@ impl Vim {
         if name == "`" {
             name = "'".to_string();
         }
+        if matches!(&name[..], "-" | " ") {
+            // Not allowed marks
+            return;
+        }
         let entity_id = workspace.entity_id();
         Vim::update_globals(cx, |vim_globals, cx| {
             let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
@@ -325,6 +329,30 @@ impl Vim {
                 .get_mut(&workspace_id)?
                 .update(cx, |ms, cx| ms.get_mark(name, editor.buffer(), cx))
         })
+    }
+
+    pub fn delete_mark(
+        &self,
+        name: String,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(workspace) = self.workspace(window) else {
+            return;
+        };
+        if name == "`" || name == "'" {
+            return;
+        }
+        let entity_id = workspace.entity_id();
+        Vim::update_globals(cx, |vim_globals, cx| {
+            let Some(marks_state) = vim_globals.marks.get(&entity_id) else {
+                return;
+            };
+            marks_state.update(cx, |ms, cx| {
+                ms.delete_mark(name.clone(), editor.buffer(), cx);
+            });
+        });
     }
 }
 

@@ -25,22 +25,34 @@ fn init_git_hosting_provider_settings(cx: &mut App) {
 }
 
 fn update_git_hosting_providers_from_settings(cx: &mut App) {
+    let settings_store = cx.global::<SettingsStore>();
     let settings = GitHostingProviderSettings::get_global(cx);
     let provider_registry = GitHostingProviderRegistry::global(cx);
 
-    for provider in settings.git_hosting_providers.iter() {
-        let Some(url) = Url::parse(&provider.base_url).log_err() else {
-            continue;
-        };
+    let local_values: Vec<GitHostingProviderConfig> = settings_store
+        .get_all_locals::<GitHostingProviderSettings>()
+        .into_iter()
+        .flat_map(|(_, _, providers)| providers.git_hosting_providers.clone())
+        .collect();
 
-        let provider = match provider.provider {
-            GitHostingProviderKind::Bitbucket => Arc::new(Bitbucket::new(&provider.name, url)) as _,
-            GitHostingProviderKind::Github => Arc::new(Github::new(&provider.name, url)) as _,
-            GitHostingProviderKind::Gitlab => Arc::new(Gitlab::new(&provider.name, url)) as _,
-        };
+    let iter = settings
+        .git_hosting_providers
+        .clone()
+        .into_iter()
+        .chain(local_values)
+        .filter_map(|provider| {
+            let url = Url::parse(&provider.base_url).log_err()?;
 
-        provider_registry.register_hosting_provider(provider);
-    }
+            Some(match provider.provider {
+                GitHostingProviderKind::Bitbucket => {
+                    Arc::new(Bitbucket::new(&provider.name, url)) as _
+                }
+                GitHostingProviderKind::Github => Arc::new(Github::new(&provider.name, url)) as _,
+                GitHostingProviderKind::Gitlab => Arc::new(Gitlab::new(&provider.name, url)) as _,
+            })
+        });
+
+    provider_registry.set_setting_providers(iter);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -66,7 +78,7 @@ pub struct GitHostingProviderConfig {
     pub name: String,
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GitHostingProviderSettings {
     /// The list of custom Git hosting providers.
     #[serde(default)]
@@ -81,4 +93,6 @@ impl Settings for GitHostingProviderSettings {
     fn load(sources: settings::SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         sources.json_merge()
     }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

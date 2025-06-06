@@ -1,13 +1,15 @@
 use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
-use editor::{Editor, EditorMode};
+use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use settings::SettingsStore;
+use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
+use util::ResultExt;
 use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
@@ -18,7 +20,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
         let client = client.clone();
         let user_store = user_store.clone();
         move |editor: &mut Editor, window, cx: &mut Context<Editor>| {
-            if editor.mode() != EditorMode::Full {
+            if !editor.mode().is_full() {
                 return;
             }
 
@@ -54,24 +56,31 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     })
     .detach();
 
-    let mut provider = all_language_settings(None, cx).edit_predictions.provider;
-    for (editor, window) in editors.borrow().iter() {
-        _ = window.update(cx, |_window, window, cx| {
-            _ = editor.update(cx, |editor, cx| {
-                assign_edit_prediction_provider(
-                    editor,
-                    provider,
-                    &client,
-                    user_store.clone(),
-                    window,
-                    cx,
-                );
-            })
-        });
-    }
-
     cx.on_action(clear_zeta_edit_history);
-    assign_edit_prediction_providers(&editors, provider, &client, user_store.clone(), cx);
+
+    let mut provider = all_language_settings(None, cx).edit_predictions.provider;
+    cx.spawn({
+        let user_store = user_store.clone();
+        let editors = editors.clone();
+        let client = client.clone();
+
+        async move |cx| {
+            let mut status = client.status();
+            while let Some(_status) = status.next().await {
+                cx.update(|cx| {
+                    assign_edit_prediction_providers(
+                        &editors,
+                        provider,
+                        &client,
+                        user_store.clone(),
+                        cx,
+                    );
+                })
+                .log_err();
+            }
+        }
+    })
+    .detach();
 
     cx.observe_global::<SettingsStore>({
         let editors = editors.clone();

@@ -189,6 +189,12 @@ impl LabelCommon for Label {
         self.base = self.base.buffer_font(cx);
         self
     }
+
+    /// Styles the label to look like inline code.
+    fn inline_code(mut self, cx: &App) -> Self {
+        self.base = self.base.inline_code(cx);
+        self
+    }
 }
 
 impl RenderOnce for Label {
@@ -206,7 +212,7 @@ impl Component for Label {
         Some("A text label component that supports various styles, sizes, and formatting options.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()
@@ -235,6 +241,7 @@ impl Component for Label {
                             single_example("Italic", Label::new("Code Comment").italic().into_any_element()),
                             single_example("Strikethrough", Label::new("Deprecated Feature").strikethrough().into_any_element()),
                             single_example("Underline", Label::new("Clickable Link").underline().into_any_element()),
+                            single_example("Inline Code", Label::new("fn main() {}").inline_code(cx).into_any_element()),
                         ],
                     ),
                     example_group_with_title(

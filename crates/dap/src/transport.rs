@@ -1,10 +1,10 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
 };
 use futures::{AsyncRead, AsyncReadExt as _, AsyncWrite, FutureExt as _, channel::oneshot, select};
-use gpui::AsyncApp;
+use gpui::{AppContext as _, AsyncApp, Task};
 use settings::Settings as _;
 use smallvec::SmallVec;
 use smol::{
@@ -21,8 +21,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::TCPHost;
-use util::ResultExt as _;
+use task::TcpArgumentsTemplate;
+use util::{ConnectionResult, ResultExt as _};
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -74,16 +74,14 @@ pub enum Transport {
 }
 
 impl Transport {
-    #[cfg(any(test, feature = "test-support"))]
-    async fn start(_: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        #[cfg(any(test, feature = "test-support"))]
-        return FakeTransport::start(cx)
-            .await
-            .map(|(transports, fake)| (transports, Self::Fake(fake)));
-    }
-
-    #[cfg(not(any(test, feature = "test-support")))]
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
+        #[cfg(any(test, feature = "test-support"))]
+        if cfg!(any(test, feature = "test-support")) {
+            return FakeTransport::start(cx)
+                .await
+                .map(|(transports, fake)| (transports, Self::Fake(fake)));
+        }
+
         if binary.connection.is_some() {
             TcpTransport::start(binary, cx)
                 .await
@@ -128,6 +126,7 @@ pub(crate) struct TransportDelegate {
     pending_requests: Requests,
     transport: Transport,
     server_tx: Arc<Mutex<Option<Sender<Message>>>>,
+    _tasks: Vec<Task<()>>,
 }
 
 impl TransportDelegate {
@@ -142,6 +141,7 @@ impl TransportDelegate {
             log_handlers: Default::default(),
             current_requests: Default::default(),
             pending_requests: Default::default(),
+            _tasks: Vec::new(),
         };
         let messages = this.start_handlers(transport_pipes, cx).await?;
         Ok((messages, this))
@@ -166,37 +166,76 @@ impl TransportDelegate {
             None
         };
 
+        let adapter_log_handler = log_handler.clone();
         cx.update(|cx| {
             if let Some(stdout) = params.stdout.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_adapter_log(stdout, log_handler.clone()))
-                    .detach_and_log_err(cx);
+                self._tasks.push(cx.background_spawn(async move {
+                    match Self::handle_adapter_log(stdout, adapter_log_handler).await {
+                        ConnectionResult::Timeout => {
+                            log::error!("Timed out when handling debugger log");
+                        }
+                        ConnectionResult::ConnectionReset => {
+                            log::info!("Debugger logs connection closed");
+                        }
+                        ConnectionResult::Result(Ok(())) => {}
+                        ConnectionResult::Result(Err(e)) => {
+                            log::error!("Error handling debugger log: {e}");
+                        }
+                    }
+                }));
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_output(
+            let pending_requests = self.pending_requests.clone();
+            let output_log_handler = log_handler.clone();
+            self._tasks.push(cx.background_spawn(async move {
+                match Self::handle_output(
                     params.output,
                     client_tx,
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+                    pending_requests,
+                    output_log_handler,
+                )
+                .await
+                {
+                    Ok(()) => {}
+                    Err(e) => log::error!("Error handling debugger output: {e}"),
+                }
+            }));
 
             if let Some(stderr) = params.stderr.take() {
-                cx.background_executor()
-                    .spawn(Self::handle_error(stderr, self.log_handlers.clone()))
-                    .detach_and_log_err(cx);
+                let log_handlers = self.log_handlers.clone();
+                self._tasks.push(cx.background_spawn(async move {
+                    match Self::handle_error(stderr, log_handlers).await {
+                        ConnectionResult::Timeout => {
+                            log::error!("Timed out reading debugger error stream")
+                        }
+                        ConnectionResult::ConnectionReset => {
+                            log::info!("Debugger closed its error stream")
+                        }
+                        ConnectionResult::Result(Ok(())) => {}
+                        ConnectionResult::Result(Err(e)) => {
+                            log::error!("Error handling debugger error: {e}")
+                        }
+                    }
+                }));
             }
 
-            cx.background_executor()
-                .spawn(Self::handle_input(
+            let current_requests = self.current_requests.clone();
+            let pending_requests = self.pending_requests.clone();
+            let log_handler = log_handler.clone();
+            self._tasks.push(cx.background_spawn(async move {
+                match Self::handle_input(
                     params.input,
                     client_rx,
-                    self.current_requests.clone(),
-                    self.pending_requests.clone(),
-                    log_handler.clone(),
-                ))
-                .detach_and_log_err(cx);
+                    current_requests,
+                    pending_requests,
+                    log_handler,
+                )
+                .await
+                {
+                    Ok(()) => {}
+                    Err(e) => log::error!("Error handling debugger input: {e}"),
+                }
+            }));
         })?;
 
         {
@@ -216,26 +255,18 @@ impl TransportDelegate {
         pending_requests.insert(sequence_id, request);
     }
 
-    pub(crate) async fn cancel_pending_request(&self, sequence_id: &u64) {
-        let mut pending_requests = self.pending_requests.lock().await;
-        pending_requests.remove(sequence_id);
-    }
-
     pub(crate) async fn send_message(&self, message: Message) -> Result<()> {
         if let Some(server_tx) = self.server_tx.lock().await.as_ref() {
-            server_tx
-                .send(message)
-                .await
-                .map_err(|e| anyhow!("Failed to send message: {}", e))
+            server_tx.send(message).await.context("sending message")
         } else {
-            Err(anyhow!("Server tx already dropped"))
+            anyhow::bail!("Server tx already dropped")
         }
     }
 
     async fn handle_adapter_log<Stdout>(
         stdout: Stdout,
         log_handlers: Option<LogHandlers>,
-    ) -> Result<()>
+    ) -> ConnectionResult<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
@@ -245,13 +276,14 @@ impl TransportDelegate {
         let result = loop {
             line.truncate(0);
 
-            let bytes_read = match reader.read_line(&mut line).await {
-                Ok(bytes_read) => bytes_read,
-                Err(e) => break Err(e.into()),
-            };
-
-            if bytes_read == 0 {
-                break Err(anyhow!("Debugger log stream closed"));
+            match reader
+                .read_line(&mut line)
+                .await
+                .context("reading adapter log line")
+            {
+                Ok(0) => break ConnectionResult::ConnectionReset,
+                Ok(_) => {}
+                Err(e) => break ConnectionResult::Result(Err(e)),
             }
 
             if let Some(log_handlers) = log_handlers.as_ref() {
@@ -337,45 +369,50 @@ impl TransportDelegate {
         let mut reader = BufReader::new(server_stdout);
 
         let result = loop {
-            let message =
-                Self::receive_server_message(&mut reader, &mut recv_buffer, log_handlers.as_ref())
-                    .await;
-
-            match message {
-                Ok(Message::Response(res)) => {
+            match Self::receive_server_message(&mut reader, &mut recv_buffer, log_handlers.as_ref())
+                .await
+            {
+                ConnectionResult::Timeout => anyhow::bail!("Timed out when connecting to debugger"),
+                ConnectionResult::ConnectionReset => {
+                    log::info!("Debugger closed the connection");
+                    return Ok(());
+                }
+                ConnectionResult::Result(Ok(Message::Response(res))) => {
                     if let Some(tx) = pending_requests.lock().await.remove(&res.request_seq) {
                         if let Err(e) = tx.send(Self::process_response(res)) {
                             log::trace!("Did not send response `{:?}` for a cancelled", e);
                         }
                     } else {
                         client_tx.send(Message::Response(res)).await?;
-                    };
+                    }
                 }
-                Ok(message) => {
-                    client_tx.send(message).await?;
-                }
-                Err(e) => break Err(e),
+                ConnectionResult::Result(Ok(message)) => client_tx.send(message).await?,
+                ConnectionResult::Result(Err(e)) => break Err(e),
             }
         };
 
         drop(client_tx);
-
         log::debug!("Handle adapter output dropped");
 
         result
     }
 
-    async fn handle_error<Stderr>(stderr: Stderr, log_handlers: LogHandlers) -> Result<()>
+    async fn handle_error<Stderr>(stderr: Stderr, log_handlers: LogHandlers) -> ConnectionResult<()>
     where
         Stderr: AsyncRead + Unpin + Send + 'static,
     {
+        log::debug!("Handle error started");
         let mut buffer = String::new();
 
         let mut reader = BufReader::new(stderr);
 
         let result = loop {
-            match reader.read_line(&mut buffer).await {
-                Ok(0) => break Err(anyhow!("debugger error stream closed")),
+            match reader
+                .read_line(&mut buffer)
+                .await
+                .context("reading error log line")
+            {
+                Ok(0) => break ConnectionResult::ConnectionReset,
                 Ok(_) => {
                     for (kind, log_handler) in log_handlers.lock().iter_mut() {
                         if matches!(kind, LogKind::Adapter) {
@@ -385,7 +422,7 @@ impl TransportDelegate {
 
                     buffer.truncate(0);
                 }
-                Err(error) => break Err(error.into()),
+                Err(error) => break ConnectionResult::Result(Err(error)),
             }
         };
 
@@ -405,13 +442,13 @@ impl TransportDelegate {
                 .and_then(|response| response.error.map(|msg| msg.format))
                 .or_else(|| response.message.clone())
             {
-                return Err(anyhow!(error_message));
+                anyhow::bail!(error_message);
             };
 
-            Err(anyhow!(
+            anyhow::bail!(
                 "Received error response from adapter. Response: {:?}",
-                response.clone()
-            ))
+                response
+            );
         }
     }
 
@@ -419,7 +456,7 @@ impl TransportDelegate {
         reader: &mut BufReader<Stdout>,
         buffer: &mut String,
         log_handlers: Option<&LogHandlers>,
-    ) -> Result<Message>
+    ) -> ConnectionResult<Message>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
     {
@@ -427,48 +464,58 @@ impl TransportDelegate {
         loop {
             buffer.truncate(0);
 
-            if reader
+            match reader
                 .read_line(buffer)
                 .await
-                .with_context(|| "reading a message from server")?
-                == 0
+                .with_context(|| "reading a message from server")
             {
-                return Err(anyhow!("debugger reader stream closed"));
+                Ok(0) => return ConnectionResult::ConnectionReset,
+                Ok(_) => {}
+                Err(e) => return ConnectionResult::Result(Err(e)),
             };
 
             if buffer == "\r\n" {
                 break;
             }
 
-            let parts = buffer.trim().split_once(": ");
-
-            match parts {
-                Some(("Content-Length", value)) => {
-                    content_length = Some(value.parse().context("invalid content length")?);
+            if let Some(("Content-Length", value)) = buffer.trim().split_once(": ") {
+                match value.parse().context("invalid content length") {
+                    Ok(length) => content_length = Some(length),
+                    Err(e) => return ConnectionResult::Result(Err(e)),
                 }
-                _ => {}
             }
         }
 
-        let content_length = content_length.context("missing content length")?;
+        let content_length = match content_length.context("missing content length") {
+            Ok(length) => length,
+            Err(e) => return ConnectionResult::Result(Err(e)),
+        };
 
         let mut content = vec![0; content_length];
-        reader
+        if let Err(e) = reader
             .read_exact(&mut content)
             .await
-            .with_context(|| "reading after a loop")?;
+            .with_context(|| "reading after a loop")
+        {
+            return ConnectionResult::Result(Err(e));
+        }
 
-        let message = std::str::from_utf8(&content).context("invalid utf8 from server")?;
+        let message_str = match std::str::from_utf8(&content).context("invalid utf8 from server") {
+            Ok(str) => str,
+            Err(e) => return ConnectionResult::Result(Err(e)),
+        };
 
         if let Some(log_handlers) = log_handlers {
             for (kind, log_handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Rpc) {
-                    log_handler(IoKind::StdOut, &message);
+                    log_handler(IoKind::StdOut, message_str);
                 }
             }
         }
 
-        Ok(serde_json::from_str::<Message>(message)?)
+        ConnectionResult::Result(
+            serde_json::from_str::<Message>(message_str).context("deserializing server message"),
+        )
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -520,39 +567,40 @@ pub struct TcpTransport {
 
 impl TcpTransport {
     /// Get an open port to use with the tcp client when not supplied by debug config
-    pub async fn port(host: &TCPHost) -> Result<u16> {
+    pub async fn port(host: &TcpArgumentsTemplate) -> Result<u16> {
         if let Some(port) = host.port {
             Ok(port)
         } else {
-            Ok(TcpListener::bind(SocketAddrV4::new(host.host(), 0))
-                .await?
-                .local_addr()?
-                .port())
+            Self::unused_port(host.host()).await
         }
     }
 
-    #[allow(dead_code, reason = "This is used in non test builds of Zed")]
+    pub async fn unused_port(host: Ipv4Addr) -> Result<u16> {
+        Ok(TcpListener::bind(SocketAddrV4::new(host, 0))
+            .await?
+            .local_addr()?
+            .port())
+    }
+
     async fn start(binary: &DebugAdapterBinary, cx: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let Some(connection_args) = binary.connection.as_ref() else {
-            return Err(anyhow!("No connection arguments provided"));
-        };
+        let connection_args = binary
+            .connection
+            .as_ref()
+            .context("No connection arguments provided")?;
 
         let host = connection_args.host;
         let port = connection_args.port;
 
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::null())
@@ -571,21 +619,31 @@ impl TcpTransport {
                 .unwrap_or(2000u64)
         });
 
-        let (rx, tx) = select! {
+        let (mut process, (rx, tx)) = select! {
             _ = cx.background_executor().timer(Duration::from_millis(timeout)).fuse() => {
-                return Err(anyhow!(format!("Connection to TCP DAP timeout {}:{}", host, port)))
+                anyhow::bail!("Connection to TCP DAP timeout {host}:{port}");
             },
             result = cx.spawn(async move |cx| {
                 loop {
                     match TcpStream::connect(address).await {
-                        Ok(stream) => return stream.split(),
+                        Ok(stream) => return Ok((process, stream.split())),
                         Err(_) => {
+                            if let Ok(Some(_)) = process.try_status() {
+                                let output = process.output().await?;
+                                let output = if output.stderr.is_empty() {
+                                    String::from_utf8_lossy(&output.stdout).to_string()
+                                } else {
+                                    String::from_utf8_lossy(&output.stderr).to_string()
+                                };
+                                anyhow::bail!("{output}\nerror: process exited before debugger attached.");
+                            }
                             cx.background_executor().timer(Duration::from_millis(100)).await;
                         }
                     }
                 }
-            }).fuse() => result
+            }).fuse() => result?
         };
+
         log::info!(
             "Debug adapter has connected to TCP server {}:{}",
             host,
@@ -629,19 +687,16 @@ pub struct StdioTransport {
 impl StdioTransport {
     #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let mut command = util::command::new_smol_command(&binary.command);
+        let mut command = util::command::new_std_command(&binary.command);
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
         }
 
-        if let Some(args) = &binary.arguments {
-            command.args(args);
-        }
-
-        if let Some(envs) = &binary.envs {
-            command.envs(envs);
-        }
+        command.args(&binary.arguments);
+        command.envs(&binary.envs);
 
         command
             .stdin(Stdio::piped())
@@ -649,18 +704,16 @@ impl StdioTransport {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        let mut process = command
-            .spawn()
-            .with_context(|| "failed to spawn command.")?;
+        let mut process = command.spawn().with_context(|| {
+            format!(
+                "failed to spawn command `{} {}`.",
+                binary.command,
+                binary.arguments.join(" ")
+            )
+        })?;
 
-        let stdin = process
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdin"))?;
-        let stdout = process
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("Failed to open stdout"))?;
+        let stdin = process.stdin.take().context("Failed to open stdin")?;
+        let stdout = process.stdout.take().context("Failed to open stdout")?;
         let stderr = process
             .stderr
             .take()
@@ -699,14 +752,8 @@ impl StdioTransport {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-type RequestHandler = Box<
-    dyn Send
-        + FnMut(
-            u64,
-            serde_json::Value,
-            Arc<Mutex<async_pipe::PipeWriter>>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
->;
+type RequestHandler =
+    Box<dyn Send + FnMut(u64, serde_json::Value) -> dap_types::messages::Response>;
 
 #[cfg(any(test, feature = "test-support"))]
 type ResponseHandler = Box<dyn Send + Fn(Response)>;
@@ -714,45 +761,41 @@ type ResponseHandler = Box<dyn Send + Fn(Response)>;
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeTransport {
     // for sending fake response back from adapter side
-    request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
+    request_handlers: Arc<parking_lot::Mutex<HashMap<&'static str, RequestHandler>>>,
     // for reverse request responses
-    response_handlers: Arc<Mutex<HashMap<&'static str, ResponseHandler>>>,
+    response_handlers: Arc<parking_lot::Mutex<HashMap<&'static str, ResponseHandler>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeTransport {
-    pub async fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
+    pub fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
     where
         F: 'static + Send + FnMut(u64, R::Arguments) -> Result<R::Response, ErrorResponse>,
     {
-        self.request_handlers.lock().await.insert(
+        self.request_handlers.lock().insert(
             R::COMMAND,
-            Box::new(
-                move |seq, args, writer: Arc<Mutex<async_pipe::PipeWriter>>| {
-                    let response = handler(seq, serde_json::from_value(args).unwrap());
-
-                    let message = serde_json::to_string(&Message::Response(Response {
+            Box::new(move |seq, args| {
+                let result = handler(seq, serde_json::from_value(args).unwrap());
+                let response = match result {
+                    Ok(response) => Response {
                         seq: seq + 1,
                         request_seq: seq,
-                        success: response.as_ref().is_ok(),
+                        success: true,
                         command: R::COMMAND.into(),
-                        body: util::maybe!({ serde_json::to_value(response.ok()?).ok() }),
+                        body: Some(serde_json::to_value(response).unwrap()),
                         message: None,
-                    }))
-                    .unwrap();
-
-                    let writer = writer.clone();
-
-                    Box::pin(async move {
-                        let mut writer = writer.lock().await;
-                        writer
-                            .write_all(TransportDelegate::build_rpc_message(message).as_bytes())
-                            .await
-                            .unwrap();
-                        writer.flush().await.unwrap();
-                    })
-                },
-            ),
+                    },
+                    Err(response) => Response {
+                        seq: seq + 1,
+                        request_seq: seq,
+                        success: false,
+                        command: R::COMMAND.into(),
+                        body: Some(serde_json::to_value(response).unwrap()),
+                        message: None,
+                    },
+                };
+                response
+            }),
         );
     }
 
@@ -762,14 +805,13 @@ impl FakeTransport {
     {
         self.response_handlers
             .lock()
-            .await
             .insert(R::COMMAND, Box::new(handler));
     }
 
     async fn start(cx: AsyncApp) -> Result<(TransportPipe, Self)> {
         let this = Self {
-            request_handlers: Arc::new(Mutex::new(HashMap::default())),
-            response_handlers: Arc::new(Mutex::new(HashMap::default())),
+            request_handlers: Arc::new(parking_lot::Mutex::new(HashMap::default())),
+            response_handlers: Arc::new(parking_lot::Mutex::new(HashMap::default())),
         };
         use dap_types::requests::{Request, RunInTerminal, StartDebugging};
         use serde_json::json;
@@ -781,63 +823,31 @@ impl FakeTransport {
         let response_handlers = this.response_handlers.clone();
         let stdout_writer = Arc::new(Mutex::new(stdout_writer));
 
-        cx.background_executor()
-            .spawn(async move {
-                let mut reader = BufReader::new(stdin_reader);
-                let mut buffer = String::new();
+        cx.background_spawn(async move {
+            let mut reader = BufReader::new(stdin_reader);
+            let mut buffer = String::new();
 
-                loop {
-                    let message =
-                        TransportDelegate::receive_server_message(&mut reader, &mut buffer, None)
-                            .await;
-
-                    match message {
-                        Err(error) => {
-                            break anyhow!(error);
-                        }
-                        Ok(message) => {
-                            match message {
-                                Message::Request(request) => {
-                                    // redirect reverse requests to stdout writer/reader
-                                    if request.command == RunInTerminal::COMMAND
-                                        || request.command == StartDebugging::COMMAND
-                                    {
-                                        let message =
-                                            serde_json::to_string(&Message::Request(request))
-                                                .unwrap();
-
-                                        let mut writer = stdout_writer.lock().await;
-                                        writer
-                                            .write_all(
-                                                TransportDelegate::build_rpc_message(message)
-                                                    .as_bytes(),
-                                            )
-                                            .await
-                                            .unwrap();
-                                        writer.flush().await.unwrap();
-                                    } else {
-                                        if let Some(handle) = request_handlers
-                                            .lock()
-                                            .await
-                                            .get_mut(request.command.as_str())
-                                        {
-                                            handle(
-                                                request.seq,
-                                                request.arguments.unwrap_or(json!({})),
-                                                stdout_writer.clone(),
-                                            )
-                                            .await;
-                                        } else {
-                                            log::error!(
-                                                "No request handler for {}",
-                                                request.command
-                                            );
-                                        }
-                                    }
-                                }
-                                Message::Event(event) => {
+            loop {
+                match TransportDelegate::receive_server_message(&mut reader, &mut buffer, None)
+                    .await
+                {
+                    ConnectionResult::Timeout => {
+                        anyhow::bail!("Timed out when connecting to debugger");
+                    }
+                    ConnectionResult::ConnectionReset => {
+                        log::info!("Debugger closed the connection");
+                        break Ok(());
+                    }
+                    ConnectionResult::Result(Err(e)) => break Err(e),
+                    ConnectionResult::Result(Ok(message)) => {
+                        match message {
+                            Message::Request(request) => {
+                                // redirect reverse requests to stdout writer/reader
+                                if request.command == RunInTerminal::COMMAND
+                                    || request.command == StartDebugging::COMMAND
+                                {
                                     let message =
-                                        serde_json::to_string(&Message::Event(event)).unwrap();
+                                        serde_json::to_string(&Message::Request(request)).unwrap();
 
                                     let mut writer = stdout_writer.lock().await;
                                     writer
@@ -848,24 +858,58 @@ impl FakeTransport {
                                         .await
                                         .unwrap();
                                     writer.flush().await.unwrap();
-                                }
-                                Message::Response(response) => {
-                                    if let Some(handle) = response_handlers
-                                        .lock()
-                                        .await
-                                        .get(response.command.as_str())
+                                } else {
+                                    let response = if let Some(handle) =
+                                        request_handlers.lock().get_mut(request.command.as_str())
                                     {
-                                        handle(response);
+                                        handle(request.seq, request.arguments.unwrap_or(json!({})))
                                     } else {
-                                        log::error!("No response handler for {}", response.command);
-                                    }
+                                        panic!("No request handler for {}", request.command);
+                                    };
+                                    let message =
+                                        serde_json::to_string(&Message::Response(response))
+                                            .unwrap();
+
+                                    let mut writer = stdout_writer.lock().await;
+
+                                    writer
+                                        .write_all(
+                                            TransportDelegate::build_rpc_message(message)
+                                                .as_bytes(),
+                                        )
+                                        .await
+                                        .unwrap();
+                                    writer.flush().await.unwrap();
+                                }
+                            }
+                            Message::Event(event) => {
+                                let message =
+                                    serde_json::to_string(&Message::Event(event)).unwrap();
+
+                                let mut writer = stdout_writer.lock().await;
+                                writer
+                                    .write_all(
+                                        TransportDelegate::build_rpc_message(message).as_bytes(),
+                                    )
+                                    .await
+                                    .unwrap();
+                                writer.flush().await.unwrap();
+                            }
+                            Message::Response(response) => {
+                                if let Some(handle) =
+                                    response_handlers.lock().get(response.command.as_str())
+                                {
+                                    handle(response);
+                                } else {
+                                    log::error!("No response handler for {}", response.command);
                                 }
                             }
                         }
                     }
                 }
-            })
-            .detach();
+            }
+        })
+        .detach();
 
         Ok((
             TransportPipe::new(Box::new(stdin_writer), Box::new(stdout_reader), None, None),

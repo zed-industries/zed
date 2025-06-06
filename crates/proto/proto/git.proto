@@ -75,7 +75,7 @@ message GetPermalinkToLineResponse {
 
 message Branch {
     bool is_head = 1;
-    string name = 2;
+    string ref_name = 2;
     optional uint64 unix_timestamp = 3;
     optional GitUpstream upstream = 4;
     optional CommitSummary most_recent_commit = 5;
@@ -120,6 +120,7 @@ message UpdateRepository {
     repeated string current_merge_conflicts = 8;
     uint64 scan_id = 9;
     bool is_last_update = 10;
+    optional GitCommitDetails head_commit_details = 11;
 }
 
 message RemoveRepository {
@@ -292,6 +293,11 @@ message Commit {
     optional string name = 4;
     optional string email = 5;
     string message = 6;
+    optional CommitOptions options = 7;
+
+    message CommitOptions {
+        bool amend = 1;
+    }
 }
 
 message OpenCommitMessageBuffer {

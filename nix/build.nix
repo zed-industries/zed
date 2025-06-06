@@ -140,6 +140,7 @@ let
           libxkbcommon
           wayland
           gpu-lib
+          xorg.libX11
           xorg.libxcb
         ]
         ++ lib.optionals stdenv'.hostPlatform.isDarwin [
@@ -190,6 +191,8 @@ let
             wayland
           ]
         }";
+
+        NIX_OUTPATH_USED_AS_RANDOM_SEED = "norebuilds";
       };
 
       # prevent nix from removing the "unused" wayland/gpu-lib rpaths
@@ -277,7 +280,9 @@ craneLib.buildPackage (
 
           mkdir -p $out/bin $out/libexec
           cp $TARGET_DIR/zed $out/libexec/zed-editor
-          cp $TARGET_DIR/cli $out/bin/zed
+          cp $TARGET_DIR/cli  $out/bin/zed
+          ln -s $out/bin/zed $out/bin/zeditor  # home-manager expects the CLI binary to be here
+
 
           install -D "crates/zed/resources/app-icon-nightly@2x.png" \
             "$out/share/icons/hicolor/1024x1024@2x/apps/zed.png"

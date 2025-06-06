@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use collections::{HashSet, VecDeque};
 use fs::Fs;
@@ -79,7 +79,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
 
         *WORKSPACE_CRATES.write() = Some((workspace_crates.clone(), Instant::now()));
 
-        Ok(workspace_crates.iter().cloned().collect())
+        Ok(workspace_crates.into_iter().collect())
     }
 
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {

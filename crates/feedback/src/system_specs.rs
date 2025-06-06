@@ -30,7 +30,7 @@ impl SystemSpecs {
         let architecture = env::consts::ARCH;
         let commit_sha = match release_channel {
             ReleaseChannel::Dev | ReleaseChannel::Nightly => {
-                AppCommitSha::try_global(cx).map(|sha| sha.0.clone())
+                AppCommitSha::try_global(cx).map(|sha| sha.full().clone())
             }
             _ => None,
         };
@@ -70,9 +70,7 @@ impl SystemSpecs {
         let memory = system.total_memory();
         let architecture = env::consts::ARCH;
         let commit_sha = match release_channel {
-            ReleaseChannel::Dev | ReleaseChannel::Nightly => {
-                app_commit_sha.map(|sha| sha.0.clone())
-            }
+            ReleaseChannel::Dev | ReleaseChannel::Nightly => app_commit_sha.map(|sha| sha.full()),
             _ => None,
         };
 

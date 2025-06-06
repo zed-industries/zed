@@ -250,10 +250,10 @@ trait ToTaffy<Output> {
 impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Style {
         taffy::style::Style {
-            display: self.display,
+            display: self.display.into(),
             overflow: self.overflow.into(),
             scrollbar_width: self.scrollbar_width,
-            position: self.position,
+            position: self.position.into(),
             inset: self.inset.to_taffy(rem_size),
             size: self.size.to_taffy(rem_size),
             min_size: self.min_size.to_taffy(rem_size),
@@ -262,13 +262,13 @@ impl ToTaffy<taffy::style::Style> for Style {
             margin: self.margin.to_taffy(rem_size),
             padding: self.padding.to_taffy(rem_size),
             border: self.border_widths.to_taffy(rem_size),
-            align_items: self.align_items,
-            align_self: self.align_self,
-            align_content: self.align_content,
-            justify_content: self.justify_content,
+            align_items: self.align_items.map(|x| x.into()),
+            align_self: self.align_self.map(|x| x.into()),
+            align_content: self.align_content.map(|x| x.into()),
+            justify_content: self.justify_content.map(|x| x.into()),
             gap: self.gap.to_taffy(rem_size),
-            flex_direction: self.flex_direction,
-            flex_wrap: self.flex_wrap,
+            flex_direction: self.flex_direction.into(),
+            flex_wrap: self.flex_wrap.into(),
             flex_basis: self.flex_basis.to_taffy(rem_size),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
@@ -359,7 +359,7 @@ impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
 impl<T, T2> From<TaffyPoint<T>> for Point<T2>
 where
     T: Into<T2>,
-    T2: Clone + Default + Debug,
+    T2: Clone + Debug + Default + PartialEq,
 {
     fn from(point: TaffyPoint<T>) -> Point<T2> {
         Point {
@@ -371,7 +371,7 @@ where
 
 impl<T, T2> From<Point<T>> for TaffyPoint<T2>
 where
-    T: Into<T2> + Clone + Default + Debug,
+    T: Into<T2> + Clone + Debug + Default + PartialEq,
 {
     fn from(val: Point<T>) -> Self {
         TaffyPoint {
@@ -383,7 +383,7 @@ where
 
 impl<T, U> ToTaffy<TaffySize<U>> for Size<T>
 where
-    T: ToTaffy<U> + Clone + Default + Debug,
+    T: ToTaffy<U> + Clone + Debug + Default + PartialEq,
 {
     fn to_taffy(&self, rem_size: Pixels) -> TaffySize<U> {
         TaffySize {
@@ -395,7 +395,7 @@ where
 
 impl<T, U> ToTaffy<TaffyRect<U>> for Edges<T>
 where
-    T: ToTaffy<U> + Clone + Default + Debug,
+    T: ToTaffy<U> + Clone + Debug + Default + PartialEq,
 {
     fn to_taffy(&self, rem_size: Pixels) -> TaffyRect<U> {
         TaffyRect {
@@ -410,7 +410,7 @@ where
 impl<T, U> From<TaffySize<T>> for Size<U>
 where
     T: Into<U>,
-    U: Clone + Default + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     fn from(taffy_size: TaffySize<T>) -> Self {
         Size {
@@ -422,7 +422,7 @@ where
 
 impl<T, U> From<Size<T>> for TaffySize<U>
 where
-    T: Into<U> + Clone + Default + Debug,
+    T: Into<U> + Clone + Debug + Default + PartialEq,
 {
     fn from(size: Size<T>) -> Self {
         TaffySize {

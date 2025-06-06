@@ -6,7 +6,7 @@ use crate::{Tab, TabBar, TabPosition, prelude::*};
 pub struct TabBarStory;
 
 impl Render for TabBarStory {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tab_count = 20;
         let selected_tab_index = 3;
 
@@ -31,9 +31,9 @@ impl Render for TabBarStory {
             })
             .collect::<Vec<_>>();
 
-        Story::container()
-            .child(Story::title_for::<TabBar>())
-            .child(Story::label("Default"))
+        Story::container(cx)
+            .child(Story::title_for::<TabBar>(cx))
+            .child(Story::label("Default", cx))
             .child(
                 h_flex().child(
                     TabBar::new("tab_bar_1")

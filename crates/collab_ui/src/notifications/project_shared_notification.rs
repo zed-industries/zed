@@ -109,9 +109,7 @@ impl ProjectSharedNotification {
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
-        if let Some(active_room) =
-            ActiveCall::global(cx).read_with(cx, |call, _| call.room().cloned())
-        {
+        if let Some(active_room) = ActiveCall::global(cx).read(cx).room().cloned() {
             active_room.update(cx, |_, cx| {
                 cx.emit(room::Event::RemoteProjectInvitationDiscarded {
                     project_id: self.project_id,

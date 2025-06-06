@@ -35,6 +35,7 @@ pub struct ChannelBuffer {
 pub enum ChannelBufferEvent {
     CollaboratorsChanged,
     Disconnected,
+    Connected,
     BufferEdited,
     ChannelChanged,
 }
@@ -100,6 +101,17 @@ impl ChannelBuffer {
                     channel_id: self.channel_id.0,
                 })
                 .log_err();
+        }
+    }
+
+    pub fn connected(&mut self, cx: &mut Context<Self>) {
+        self.connected = true;
+        if self.subscription.is_none() {
+            let Ok(subscription) = self.client.subscribe_to_entity(self.channel_id.0) else {
+                return;
+            };
+            self.subscription = Some(subscription.set_entity(&cx.entity(), &mut cx.to_async()));
+            cx.emit(ChannelBufferEvent::Connected);
         }
     }
 

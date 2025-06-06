@@ -35,7 +35,6 @@ rope.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
-terminal_view.workspace = true
 text.workspace = true
 toml.workspace = true
 ui.workspace = true
@@ -45,6 +44,6 @@ worktree.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-env_logger.workspace = true
 pretty_assertions.workspace = true
 settings.workspace = true
+zlog.workspace = true

@@ -3,7 +3,7 @@ use project::debugger::session::{Session, SessionEvent};
 use ui::prelude::*;
 use util::maybe;
 
-pub struct LoadedSourceList {
+pub(crate) struct LoadedSourceList {
     list: ListState,
     invalidate: bool,
     focus_handle: FocusHandle,

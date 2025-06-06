@@ -6,7 +6,7 @@ use std::{
     ptr,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use libsqlite3_sys::*;
 
 pub struct Connection {
@@ -199,11 +199,7 @@ impl Connection {
                 )
             };
 
-            Err(anyhow!(
-                "Sqlite call failed with code {} and message: {:?}",
-                code as isize,
-                message
-            ))
+            anyhow::bail!("Sqlite call failed with code {code} and message: {message:?}")
         }
     }
 

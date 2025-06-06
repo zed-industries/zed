@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -189,7 +189,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         window.spawn(cx, async move |_| {
             task.await?
                 .map(|output| output.to_event_stream())
-                .ok_or_else(|| anyhow!("No diagnostics found"))
+                .context("No diagnostics found")
         })
     }
 }

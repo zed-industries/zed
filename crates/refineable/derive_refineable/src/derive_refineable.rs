@@ -16,25 +16,24 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         ..
     } = parse_macro_input!(input);
 
-    let refineable_attr = attrs.iter().find(|attr| attr.path.is_ident("refineable"));
+    let refineable_attr = attrs.iter().find(|attr| attr.path().is_ident("refineable"));
 
     let mut impl_debug_on_refinement = false;
+    let mut derives_serialize = false;
     let mut refinement_traits_to_derive = vec![];
 
     if let Some(refineable_attr) = refineable_attr {
-        if let Ok(syn::Meta::List(meta_list)) = refineable_attr.parse_meta() {
-            for nested in meta_list.nested {
-                let syn::NestedMeta::Meta(syn::Meta::Path(path)) = nested else {
-                    continue;
-                };
-
-                if path.is_ident("Debug") {
-                    impl_debug_on_refinement = true;
-                } else {
-                    refinement_traits_to_derive.push(path);
+        let _ = refineable_attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("Debug") {
+                impl_debug_on_refinement = true;
+            } else {
+                if meta.path.is_ident("Serialize") {
+                    derives_serialize = true;
                 }
+                refinement_traits_to_derive.push(meta.path);
             }
-        }
+            Ok(())
+        });
     }
 
     let refinement_ident = format_ident!("{}Refinement", ident);
@@ -52,7 +51,22 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
     let field_visibilities: Vec<_> = fields.iter().map(|f| &f.vis).collect();
     let wrapped_types: Vec<_> = fields.iter().map(|f| get_wrapper_type(f, &f.ty)).collect();
 
-    // Create trait bound that each wrapped type must implement Clone // & Default
+    let field_attributes: Vec<TokenStream2> = fields
+        .iter()
+        .map(|f| {
+            if derives_serialize {
+                if is_refineable_field(f) {
+                    quote! { #[serde(default, skip_serializing_if = "::refineable::IsEmpty::is_empty")] }
+                } else {
+                    quote! { #[serde(skip_serializing_if = "::std::option::Option::is_none")] }
+                }
+            } else {
+                quote! {}
+            }
+        })
+        .collect();
+
+    // Create trait bound that each wrapped type must implement Clone
     let type_param_bounds: Vec<_> = wrapped_types
         .iter()
         .map(|ty| {
@@ -239,6 +253,136 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         quote! {}
     };
 
+    let refinement_is_empty_conditions: Vec<TokenStream2> = fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            let name = &field.ident;
+
+            let condition = if is_refineable_field(field) {
+                quote! { self.#name.is_empty() }
+            } else {
+                quote! { self.#name.is_none() }
+            };
+
+            if i < fields.len() - 1 {
+                quote! { #condition && }
+            } else {
+                condition
+            }
+        })
+        .collect();
+
+    let refineable_is_superset_conditions: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+            let is_optional = is_optional_field(field);
+
+            if is_refineable {
+                quote! {
+                    if !self.#name.is_superset_of(&refinement.#name) {
+                        return false;
+                    }
+                }
+            } else if is_optional {
+                quote! {
+                    if refinement.#name.is_some() && &self.#name != &refinement.#name {
+                        return false;
+                    }
+                }
+            } else {
+                quote! {
+                    if let Some(refinement_value) = &refinement.#name {
+                        if &self.#name != refinement_value {
+                            return false;
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let refinement_is_superset_conditions: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+
+            if is_refineable {
+                quote! {
+                    if !self.#name.is_superset_of(&refinement.#name) {
+                        return false;
+                    }
+                }
+            } else {
+                quote! {
+                    if refinement.#name.is_some() && &self.#name != &refinement.#name {
+                        return false;
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let refineable_subtract_assignments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+            let is_optional = is_optional_field(field);
+
+            if is_refineable {
+                quote! {
+                    #name: self.#name.subtract(&refinement.#name),
+                }
+            } else if is_optional {
+                quote! {
+                    #name: if &self.#name == &refinement.#name {
+                        None
+                    } else {
+                        self.#name.clone()
+                    },
+                }
+            } else {
+                quote! {
+                    #name: if let Some(refinement_value) = &refinement.#name {
+                        if &self.#name == refinement_value {
+                            None
+                        } else {
+                            Some(self.#name.clone())
+                        }
+                    } else {
+                        Some(self.#name.clone())
+                    },
+                }
+            }
+        })
+        .collect();
+
+    let refinement_subtract_assignments: Vec<TokenStream2> = fields
+        .iter()
+        .map(|field| {
+            let name = &field.ident;
+            let is_refineable = is_refineable_field(field);
+
+            if is_refineable {
+                quote! {
+                    #name: self.#name.subtract(&refinement.#name),
+                }
+            } else {
+                quote! {
+                    #name: if &self.#name == &refinement.#name {
+                        None
+                    } else {
+                        self.#name.clone()
+                    },
+                }
+            }
+        })
+        .collect();
+
     let mut derive_stream = quote! {};
     for trait_to_derive in refinement_traits_to_derive {
         derive_stream.extend(quote! { #[derive(#trait_to_derive)] })
@@ -251,6 +395,7 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
         pub struct #refinement_ident #impl_generics {
             #(
                 #[allow(missing_docs)]
+                #field_attributes
                 #field_visibilities #field_names: #wrapped_types
             ),*
         }
@@ -268,6 +413,19 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
                 #( #refineable_refined_assignments )*
                 self
             }
+
+            fn is_superset_of(&self, refinement: &Self::Refinement) -> bool
+            {
+                #( #refineable_is_superset_conditions )*
+                true
+            }
+
+            fn subtract(&self, refinement: &Self::Refinement) -> Self::Refinement
+            {
+                #refinement_ident {
+                    #( #refineable_subtract_assignments )*
+                }
+            }
         }
 
         impl #impl_generics Refineable for #refinement_ident #ty_generics
@@ -282,6 +440,27 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
             fn refined(mut self, refinement: Self::Refinement) -> Self {
                 #( #refinement_refined_assignments )*
                 self
+            }
+
+            fn is_superset_of(&self, refinement: &Self::Refinement) -> bool
+            {
+                #( #refinement_is_superset_conditions )*
+                true
+            }
+
+            fn subtract(&self, refinement: &Self::Refinement) -> Self::Refinement
+            {
+                #refinement_ident {
+                    #( #refinement_subtract_assignments )*
+                }
+            }
+        }
+
+        impl #impl_generics ::refineable::IsEmpty for #refinement_ident #ty_generics
+            #where_clause
+        {
+            fn is_empty(&self) -> bool {
+                #( #refinement_is_empty_conditions )*
             }
         }
 
@@ -325,7 +504,9 @@ pub fn derive_refineable(input: TokenStream) -> TokenStream {
 }
 
 fn is_refineable_field(f: &Field) -> bool {
-    f.attrs.iter().any(|attr| attr.path.is_ident("refineable"))
+    f.attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("refineable"))
 }
 
 fn is_optional_field(f: &Field) -> bool {

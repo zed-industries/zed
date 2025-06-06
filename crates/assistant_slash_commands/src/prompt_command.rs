@@ -5,7 +5,7 @@ use assistant_slash_command::{
 };
 use gpui::{Task, WeakEntity};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use prompt_store::PromptStore;
+use prompt_store::{PromptMetadata, PromptStore};
 use std::sync::{Arc, atomic::AtomicBool};
 use ui::prelude::*;
 use workspace::Workspace;
@@ -43,8 +43,12 @@ impl SlashCommand for PromptSlashCommand {
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let store = PromptStore::global(cx);
         let query = arguments.to_owned().join(" ");
-        cx.background_spawn(async move {
-            let prompts = store.await?.search(query).await;
+        cx.spawn(async move |cx| {
+            let cancellation_flag = Arc::new(AtomicBool::default());
+            let prompts: Vec<PromptMetadata> = store
+                .await?
+                .read_with(cx, |store, cx| store.search(query, cancellation_flag, cx))?
+                .await;
             Ok(prompts
                 .into_iter()
                 .filter_map(|prompt| {
@@ -77,14 +81,18 @@ impl SlashCommand for PromptSlashCommand {
 
         let store = PromptStore::global(cx);
         let title = SharedString::from(title.clone());
-        let prompt = cx.background_spawn({
+        let prompt = cx.spawn({
             let title = title.clone();
-            async move {
+            async move |cx| {
                 let store = store.await?;
-                let prompt_id = store
-                    .id_for_title(&title)
-                    .with_context(|| format!("no prompt found with title {:?}", title))?;
-                let body = store.load(prompt_id).await?;
+                let body = store
+                    .read_with(cx, |store, cx| {
+                        let prompt_id = store
+                            .id_for_title(&title)
+                            .with_context(|| format!("no prompt found with title {:?}", title))?;
+                        anyhow::Ok(store.load(prompt_id, cx))
+                    })??
+                    .await?;
                 anyhow::Ok(body)
             }
         });

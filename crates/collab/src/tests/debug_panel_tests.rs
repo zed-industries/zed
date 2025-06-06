@@ -1,7 +1,7 @@
 use call::ActiveCall;
-use dap::requests::{Initialize, Launch, StackTrace};
 use dap::DebugRequestType;
-use dap::{requests::SetBreakpoints, SourceBreakpoint};
+use dap::requests::{Initialize, Launch, StackTrace};
+use dap::{SourceBreakpoint, requests::SetBreakpoints};
 use debugger_ui::debugger_panel::DebugPanel;
 use debugger_ui::session::DebugSession;
 use editor::Editor;
@@ -13,14 +13,12 @@ use std::{
     path::Path,
     sync::atomic::{AtomicBool, Ordering},
 };
-use workspace::{dock::Panel, Workspace};
+use workspace::{Workspace, dock::Panel};
 
 use super::{TestClient, TestServer};
 
 pub fn init_test(cx: &mut gpui::TestAppContext) {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
+    zlog::init_test();
 
     cx.update(|cx| {
         theme::init(theme::LoadThemes::JustBase, cx);

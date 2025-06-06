@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Ok, Result, anyhow};
+use anyhow::{Context as _, Ok, Result};
 use dap::{
     Capabilities, ContinueArguments, ExceptionFilterOptions, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
@@ -14,7 +14,7 @@ use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
 
-pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
+pub trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
 
@@ -30,7 +30,7 @@ pub(crate) trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     ) -> Result<Self::Response>;
 }
 
-pub(crate) trait DapCommand: LocalDapCommand {
+pub trait DapCommand: LocalDapCommand {
     type ProtoRequest: 'static + Send;
     type ProtoResponse: 'static + Send;
     const CACHEABLE: bool = false;
@@ -1766,7 +1766,7 @@ impl DapCommand for LocationsCommand {
             source: response
                 .source
                 .map(<dap::Source as ProtoConversion>::from_proto)
-                .ok_or_else(|| anyhow!("Missing `source` field in Locations proto"))?,
+                .context("Missing `source` field in Locations proto")?,
             line: response.line,
             column: response.column,
             end_line: response.end_line,

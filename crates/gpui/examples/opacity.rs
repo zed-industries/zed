@@ -121,7 +121,7 @@ impl Render for HelloWorld {
                             .bg(gpui::blue())
                             .border_3()
                             .border_color(gpui::black())
-                            .shadow(smallvec::smallvec![BoxShadow {
+                            .shadow(vec![BoxShadow {
                                 color: hsla(0.0, 0.0, 0.0, 0.5),
                                 blur_radius: px(1.0),
                                 spread_radius: px(5.0),

@@ -18,6 +18,7 @@ mod random_channel_buffer_tests;
 mod random_project_collaboration_tests;
 mod randomized_test_helpers;
 mod remote_editing_collaboration_tests;
+mod stripe_billing_tests;
 mod test_server;
 
 use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
@@ -36,8 +37,8 @@ fn room_participants(room: &Entity<Room>, cx: &mut TestAppContext) -> RoomPartic
     room.read_with(cx, |room, _| {
         let mut remote = room
             .remote_participants()
-            .iter()
-            .map(|(_, participant)| participant.user.github_login.clone())
+            .values()
+            .map(|participant| participant.user.github_login.clone())
             .collect::<Vec<_>>();
         let mut pending = room
             .pending_participants()

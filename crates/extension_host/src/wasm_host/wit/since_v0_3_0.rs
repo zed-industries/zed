@@ -8,7 +8,6 @@ use wasmtime::component::{Linker, Resource};
 use super::latest;
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 3, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 3, 0);
 
 wasmtime::component::bindgen!({
     async: true,
