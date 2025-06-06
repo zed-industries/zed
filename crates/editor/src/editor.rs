@@ -2261,6 +2261,8 @@ impl Editor {
             window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
         };
 
+        // TODO: if the binding contains multiple keystrokes, display all of them, not
+        // just the first one.
         AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
             !in_conflict
                 || binding
