@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use chrono::NaiveDateTime;
 
 use super::*;
@@ -247,7 +248,7 @@ impl Database {
                 .into_values::<_, QueryAs>()
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("could not find user"))?;
+                .context("could not find user")?;
             Ok(metrics_id.to_string())
         })
         .await
@@ -381,7 +382,7 @@ impl Database {
 
     /// Returns the active flags for the user.
     pub async fn get_user_flags(&self, user: UserId) -> Result<Vec<String>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
             enum QueryAs {
                 Flag,

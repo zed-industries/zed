@@ -148,7 +148,7 @@ impl StackTraceView {
 
         let stack_frames = self
             .stack_frame_list
-            .update(cx, |list, _| list.flatten_entries(false));
+            .read_with(cx, |list, _| list.flatten_entries(false));
 
         let frames_to_open: Vec<_> = stack_frames
             .into_iter()
@@ -237,7 +237,7 @@ impl StackTraceView {
 
         let stack_frames = self
             .stack_frame_list
-            .update(cx, |session, _| session.flatten_entries(false));
+            .read_with(cx, |session, _| session.flatten_entries(false));
 
         let active_idx = self
             .selected_stack_frame_id

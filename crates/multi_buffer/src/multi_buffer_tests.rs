@@ -11,9 +11,7 @@ use util::test::sample_text;
 
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -1594,7 +1592,6 @@ fn test_set_excerpts_for_buffer_ordering(cx: &mut TestAppContext) {
              six
              seven
              eight
-             -----
              nine
              ten
              eleven
@@ -1850,7 +1847,6 @@ fn test_set_excerpts_for_buffer_rename(cx: &mut TestAppContext) {
         zero
         one
         two
-        -----
         three
         four
         five
@@ -2846,6 +2842,22 @@ async fn test_random_multibuffer(cx: &mut TestAppContext, mut rng: StdRng) {
                 .unwrap()
                 + 1
         );
+        let reference_ranges = cx.update(|cx| {
+            reference
+                .excerpts
+                .iter()
+                .map(|excerpt| {
+                    (
+                        excerpt.id,
+                        excerpt.range.to_offset(&excerpt.buffer.read(cx).snapshot()),
+                    )
+                })
+                .collect::<HashMap<_, _>>()
+        });
+        for i in 0..snapshot.len() {
+            let excerpt = snapshot.excerpt_containing(i..i).unwrap();
+            assert_eq!(excerpt.buffer_range(), reference_ranges[&excerpt.id()]);
+        }
 
         assert_consistent_line_numbers(&snapshot);
         assert_position_translation(&snapshot);

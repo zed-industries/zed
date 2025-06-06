@@ -2,12 +2,12 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_context_editor::AssistantContext;
 use collections::{HashSet, IndexSet};
 use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, EventEmitter, Image, SharedString, Task, WeakEntity};
-use language::Buffer;
+use language::{Buffer, File as _};
 use language_model::LanguageModelImage;
 use project::image_store::is_image_file;
 use project::{Project, ProjectItem, ProjectPath, Symbol};
@@ -58,9 +58,10 @@ impl ContextStore {
         self.context_set.iter().map(|entry| entry.as_ref())
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.context_set.clear();
         self.context_thread_ids.clear();
+        cx.notify();
     }
 
     pub fn new_context_for_thread(
@@ -142,17 +143,12 @@ impl ContextStore {
         remove_if_exists: bool,
         cx: &mut Context<Self>,
     ) -> Result<Option<AgentContextHandle>> {
-        let Some(project) = self.project.upgrade() else {
-            return Err(anyhow!("failed to read project"));
-        };
-
-        let Some(entry_id) = project
+        let project = self.project.upgrade().context("failed to read project")?;
+        let entry_id = project
             .read(cx)
             .entry_for_path(project_path, cx)
             .map(|entry| entry.id)
-        else {
-            return Err(anyhow!("no entry found for directory context"));
-        };
+            .context("no entry found for directory context")?;
 
         let context_id = self.next_context_id.post_inc();
         let context = AgentContextHandle::Directory(DirectoryContextHandle {
@@ -308,11 +304,13 @@ impl ContextStore {
                 project.open_image(project_path.clone(), cx)
             })?;
             let image_item = open_image_task.await?;
-            let image = image_item.read_with(cx, |image_item, _| image_item.image.clone())?;
+
             this.update(cx, |this, cx| {
+                let item = image_item.read(cx);
                 this.insert_image(
-                    Some(image_item.read(cx).project_path(cx)),
-                    image,
+                    Some(item.project_path(cx)),
+                    Some(item.file.full_path(cx).into()),
+                    item.image.clone(),
                     remove_if_exists,
                     cx,
                 )
@@ -321,12 +319,13 @@ impl ContextStore {
     }
 
     pub fn add_image_instance(&mut self, image: Arc<Image>, cx: &mut Context<ContextStore>) {
-        self.insert_image(None, image, false, cx);
+        self.insert_image(None, None, image, false, cx);
     }
 
     fn insert_image(
         &mut self,
         project_path: Option<ProjectPath>,
+        full_path: Option<Arc<Path>>,
         image: Arc<Image>,
         remove_if_exists: bool,
         cx: &mut Context<ContextStore>,
@@ -334,6 +333,7 @@ impl ContextStore {
         let image_task = LanguageModelImage::from_image(image.clone(), cx).shared();
         let context = AgentContextHandle::Image(ImageContext {
             project_path,
+            full_path,
             original_image: image,
             image_task,
             context_id: self.next_context_id.post_inc(),

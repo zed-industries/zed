@@ -3,7 +3,7 @@
 mod http_proxy;
 mod socks_proxy;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context as _, Result};
 use http_client::Url;
 use http_proxy::{HttpProxyType, connect_http_proxy_stream, parse_http_proxy};
 use socks_proxy::{SocksVersion, connect_socks_proxy_stream, parse_socks_proxy};
@@ -16,7 +16,7 @@ pub(crate) async fn connect_proxy_stream(
         // If parsing the proxy URL fails, we must avoid falling back to an insecure connection.
         // SOCKS proxies are often used in contexts where security and privacy are critical,
         // so any fallback could expose users to significant risks.
-        return Err(anyhow!("Parsing proxy url failed"));
+        anyhow::bail!("Parsing proxy url failed");
     };
 
     // Connect to proxy and wrap protocol later
@@ -39,7 +39,7 @@ enum ProxyType<'t> {
     HttpProxy(HttpProxyType<'t>),
 }
 
-fn parse_proxy_type<'t>(proxy: &'t Url) -> Option<((String, u16), ProxyType<'t>)> {
+fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType)> {
     let scheme = proxy.scheme();
     let host = proxy.host()?.to_string();
     let port = proxy.port_or_known_default()?;

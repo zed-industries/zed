@@ -23,11 +23,11 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
 criterion.workspace = true
+zlog.workspace = true
 
 [[bench]]
 name = "rope_benchmark"

@@ -1,76 +1,92 @@
 use collections::HashMap;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 pub const LATEST_PROTOCOL_VERSION: &str = "2024-11-05";
 
-pub enum RequestType {
-    Initialize,
-    CallTool,
-    ResourcesUnsubscribe,
-    ResourcesSubscribe,
-    ResourcesRead,
-    ResourcesList,
-    LoggingSetLevel,
-    PromptsGet,
-    PromptsList,
-    CompletionComplete,
-    Ping,
-    ListTools,
-    ListResourceTemplates,
-    ListRoots,
+pub mod request {
+    use super::*;
+
+    macro_rules! request {
+        ($method:expr, $name:ident, $params:ty, $response:ty) => {
+            pub struct $name;
+
+            impl Request for $name {
+                type Params = $params;
+                type Response = $response;
+                const METHOD: &'static str = $method;
+            }
+        };
+    }
+
+    request!(
+        "initialize",
+        Initialize,
+        InitializeParams,
+        InitializeResponse
+    );
+    request!("tools/call", CallTool, CallToolParams, CallToolResponse);
+    request!(
+        "resources/unsubscribe",
+        ResourcesUnsubscribe,
+        ResourcesUnsubscribeParams,
+        ()
+    );
+    request!(
+        "resources/subscribe",
+        ResourcesSubscribe,
+        ResourcesSubscribeParams,
+        ()
+    );
+    request!(
+        "resources/read",
+        ResourcesRead,
+        ResourcesReadParams,
+        ResourcesReadResponse
+    );
+    request!("resources/list", ResourcesList, (), ResourcesListResponse);
+    request!(
+        "logging/setLevel",
+        LoggingSetLevel,
+        LoggingSetLevelParams,
+        ()
+    );
+    request!(
+        "prompts/get",
+        PromptsGet,
+        PromptsGetParams,
+        PromptsGetResponse
+    );
+    request!("prompts/list", PromptsList, (), PromptsListResponse);
+    request!(
+        "completion/complete",
+        CompletionComplete,
+        CompletionCompleteParams,
+        CompletionCompleteResponse
+    );
+    request!("ping", Ping, (), ());
+    request!("tools/list", ListTools, (), ListToolsResponse);
+    request!(
+        "resources/templates/list",
+        ListResourceTemplates,
+        (),
+        ListResourceTemplatesResponse
+    );
+    request!("roots/list", ListRoots, (), ListRootsResponse);
 }
 
-impl RequestType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RequestType::Initialize => "initialize",
-            RequestType::CallTool => "tools/call",
-            RequestType::ResourcesUnsubscribe => "resources/unsubscribe",
-            RequestType::ResourcesSubscribe => "resources/subscribe",
-            RequestType::ResourcesRead => "resources/read",
-            RequestType::ResourcesList => "resources/list",
-            RequestType::LoggingSetLevel => "logging/setLevel",
-            RequestType::PromptsGet => "prompts/get",
-            RequestType::PromptsList => "prompts/list",
-            RequestType::CompletionComplete => "completion/complete",
-            RequestType::Ping => "ping",
-            RequestType::ListTools => "tools/list",
-            RequestType::ListResourceTemplates => "resources/templates/list",
-            RequestType::ListRoots => "roots/list",
-        }
-    }
-}
-
-impl TryFrom<&str> for RequestType {
-    type Error = ();
-
-    fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s {
-            "initialize" => Ok(RequestType::Initialize),
-            "tools/call" => Ok(RequestType::CallTool),
-            "resources/unsubscribe" => Ok(RequestType::ResourcesUnsubscribe),
-            "resources/subscribe" => Ok(RequestType::ResourcesSubscribe),
-            "resources/read" => Ok(RequestType::ResourcesRead),
-            "resources/list" => Ok(RequestType::ResourcesList),
-            "logging/setLevel" => Ok(RequestType::LoggingSetLevel),
-            "prompts/get" => Ok(RequestType::PromptsGet),
-            "prompts/list" => Ok(RequestType::PromptsList),
-            "completion/complete" => Ok(RequestType::CompletionComplete),
-            "ping" => Ok(RequestType::Ping),
-            "tools/list" => Ok(RequestType::ListTools),
-            "resources/templates/list" => Ok(RequestType::ListResourceTemplates),
-            "roots/list" => Ok(RequestType::ListRoots),
-            _ => Err(()),
-        }
-    }
+pub trait Request {
+    type Params: DeserializeOwned + Serialize + Send + Sync + 'static;
+    type Response: DeserializeOwned + Serialize + Send + Sync + 'static;
+    const METHOD: &'static str;
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ProtocolVersion(pub String);
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
     pub protocol_version: ProtocolVersion,
@@ -80,7 +96,7 @@ pub struct InitializeParams {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallToolParams {
     pub name: String,
@@ -90,7 +106,7 @@ pub struct CallToolParams {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesUnsubscribeParams {
     pub uri: Url,
@@ -98,7 +114,7 @@ pub struct ResourcesUnsubscribeParams {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesSubscribeParams {
     pub uri: Url,
@@ -106,7 +122,7 @@ pub struct ResourcesSubscribeParams {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesReadParams {
     pub uri: Url,
@@ -114,7 +130,7 @@ pub struct ResourcesReadParams {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoggingSetLevelParams {
     pub level: LoggingLevel,
@@ -122,7 +138,7 @@ pub struct LoggingSetLevelParams {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsGetParams {
     pub name: String,
@@ -132,37 +148,40 @@ pub struct PromptsGetParams {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionCompleteParams {
-    pub r#ref: CompletionReference,
+    #[serde(rename = "ref")]
+    pub reference: CompletionReference,
     pub argument: CompletionArgument,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CompletionReference {
     Prompt(PromptReference),
     Resource(ResourceReference),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptReference {
-    pub r#type: PromptReferenceType,
+    #[serde(rename = "type")]
+    pub ty: PromptReferenceType,
     pub name: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceReference {
-    pub r#type: PromptReferenceType,
+    #[serde(rename = "type")]
+    pub ty: PromptReferenceType,
     pub uri: Url,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptReferenceType {
     #[serde(rename = "ref/prompt")]
@@ -171,7 +190,7 @@ pub enum PromptReferenceType {
     Resource,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionArgument {
     pub name: String,
@@ -188,7 +207,7 @@ pub struct InitializeResponse {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesReadResponse {
     pub contents: Vec<ResourceContentsType>,
@@ -196,14 +215,14 @@ pub struct ResourcesReadResponse {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ResourceContentsType {
     Text(TextResourceContents),
     Blob(BlobResourceContents),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesListResponse {
     pub resources: Vec<Resource>,
@@ -220,7 +239,7 @@ pub struct SamplingMessage {
     pub content: MessageContent,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateMessageRequest {
     pub messages: Vec<SamplingMessage>,
@@ -296,7 +315,7 @@ pub struct MessageAnnotations {
     pub priority: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsGetResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -306,7 +325,7 @@ pub struct PromptsGetResponse {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsListResponse {
     pub prompts: Vec<Prompt>,
@@ -316,7 +335,7 @@ pub struct PromptsListResponse {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionCompleteResponse {
     pub completion: CompletionResult,
@@ -324,7 +343,7 @@ pub struct CompletionCompleteResponse {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionResult {
     pub values: Vec<String>,
@@ -336,7 +355,7 @@ pub struct CompletionResult {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Prompt {
     pub name: String,
@@ -346,7 +365,7 @@ pub struct Prompt {
     pub arguments: Option<Vec<PromptArgument>>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptArgument {
     pub name: String,
@@ -509,7 +528,7 @@ pub struct ModelHint {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NotificationType {
     Initialized,
@@ -589,7 +608,7 @@ pub struct Completion {
     pub total: CompletionTotal,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallToolResponse {
     pub content: Vec<ToolResponseContent>,
@@ -604,7 +623,7 @@ pub struct CallToolResponse {
 pub enum ToolResponseContent {
     #[serde(rename = "text")]
     Text { text: String },
-    #[serde(rename = "image")]
+    #[serde(rename = "image", rename_all = "camelCase")]
     Image { data: String, mime_type: String },
     #[serde(rename = "resource")]
     Resource { resource: ResourceContents },
@@ -620,7 +639,7 @@ pub struct ListToolsResponse {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListResourceTemplatesResponse {
     pub resource_templates: Vec<ResourceTemplate>,
@@ -630,7 +649,7 @@ pub struct ListResourceTemplatesResponse {
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListRootsResponse {
     pub roots: Vec<Root>,
