@@ -794,7 +794,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // Start a new instance of the language server.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx)
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], Vec::new(), cx)
     });
     cx.executor().run_until_parked();
 
@@ -816,7 +816,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx)
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], Vec::new(), cx)
     });
 
     // The extension re-fetches the latest version of the language server.

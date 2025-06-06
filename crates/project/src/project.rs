@@ -3144,20 +3144,22 @@ impl Project {
     pub fn restart_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
+        only_restart_rervers: Vec<LanguageServerId>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.restart_language_servers_for_buffers(buffers, cx)
+            lsp_store.restart_language_servers_for_buffers(buffers, only_restart_rervers, cx)
         })
     }
 
     pub fn stop_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
+        also_restart_servers: Vec<LanguageServerId>,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.stop_language_servers_for_buffers(buffers, cx)
+            lsp_store.stop_language_servers_for_buffers(buffers, also_restart_servers, cx)
         })
     }
 

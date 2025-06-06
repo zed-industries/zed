@@ -246,14 +246,18 @@ impl LspPickerDelegate {
                 )
             })
             .child(
-                IconButton::new("disable-server", IconName::StopFilled)
-                    .tooltip(|_, cx| Tooltip::simple("Disable server", cx))
+                IconButton::new("stop-server", IconName::StopFilled)
+                    .tooltip(|_, cx| Tooltip::simple("Stop server", cx))
                     .on_click({
                         let lsp_store = self.lsp_store.clone();
                         let server_id = *server_id;
                         move |_, _, cx| {
                             lsp_store.update(cx, |lsp_store, cx| {
-                                lsp_store.disable_language_server(server_id, cx);
+                                lsp_store.stop_language_servers_for_buffers(
+                                    Vec::new(),
+                                    vec![server_id],
+                                    cx,
+                                );
                             });
                         }
                     }),
@@ -269,6 +273,16 @@ impl LspPickerDelegate {
         cx: &App,
     ) -> Div {
         let lsp_store = self.lsp_store.clone();
+
+        let buffers = self
+            .active_editor
+            .as_ref()
+            .into_iter()
+            .filter_map(|editor| editor.editor.upgrade())
+            .flat_map(|editor| editor.read(cx).buffer().read(cx).all_buffers())
+            .map(|buffer| buffer)
+            .collect::<Vec<_>>();
+
         let restart_button = IconButton::new("restart-server", IconName::Rerun)
             .icon_size(IconSize::Small)
             .size(ButtonSize::Compact)
@@ -282,10 +296,18 @@ impl LspPickerDelegate {
                     cx,
                 )
             })
-            .on_click(move |_, _, cx| {
-                lsp_store.update(cx, |lsp_store, cx| {
-                    lsp_store.restart_language_server(server_id, cx)
-                });
+            .when(!buffers.is_empty(), |button| {
+                button.on_click({
+                    move |_, _, cx| {
+                        lsp_store.update(cx, |lsp_store, cx| {
+                            lsp_store.restart_language_servers_for_buffers(
+                                buffers.clone(),
+                                vec![server_id],
+                                cx,
+                            )
+                        });
+                    }
+                })
             });
         let (icon, icon_color) = match status {
             LanguageServerStatus::Running => (IconName::Play, Color::Success),
@@ -756,6 +778,7 @@ impl Render for LspTool {
     // TODO kb add scrollbar + max width and height
     // TODO kb keyboard story
     // TODO kb add a link to LSP docs (footer?)
+    // TODO kb when a server restarts/stops, it disappears from the list
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let delegate = &self.lsp_picker.read(cx).delegate;
         if delegate.active_editor.is_none() || delegate.items.is_empty() {
