@@ -1,24 +1,102 @@
-**/*.db
-**/cargo-target
-**/target
-**/venv
-**/.direnv
-*.wasm
-*.xcodeproj
+# Build and dependency directories
+**/target/
+**/node_modules/
+**/dist/
+**/build/
+**/.cargo/
+**/Cargo.lock
+
+# Environment variables
+.env
+!.env.example
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local development
+.local/
+
+# Testing
+coverage/
+
+# Misc
+*.pdb
+*.su
+*.idb
+*.pch
+*.lib
+*.dll
+*.exe
+*.so
+*.dylib
+*.test
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+*.d
+
+# Debug files
+*.dSYM/
+
+# Project specific
 .blob_store
-.build
-.envrc
 .flatpak-builder
-.idea
 .netrc
 .pytest_cache
-.swiftpm
-.swiftpm/config/registries.json
-.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
-.venv
-.vscode
-.wrangler
+.swiftpm/
+.wrangler/
+
+# Virtual environments
+**/venv/
+**/.venv/
+**/env/
+**/ENV/
+
+# Rust
+**/target/
+**/Cargo.lock
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# System Files
+.DS_Store
+Thumbs.db
 /assets/*licenses.*
 /crates/collab/seed.json
 /crates/theme/schemas/theme.json
