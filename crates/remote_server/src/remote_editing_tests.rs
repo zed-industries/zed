@@ -1512,6 +1512,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
         &[("src/lib.rs".into(), text_1.clone())],
+        "sha",
     );
 
     cx.executor().run_until_parked();
@@ -1558,6 +1559,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
         &[("src/lib.rs".into(), text_2.clone())],
+        "sha",
     );
 
     cx.executor().run_until_parked();
