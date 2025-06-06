@@ -697,7 +697,7 @@ fn handle_ime_composition_inner(
         with_input_handler(&state_ptr, |input_handler| {
             input_handler.replace_text_in_range(None, "");
         })?;
-        return Some(0);
+        Some(0)
     } else {
         let mut ime_input = None;
         if lparam.0 as u32 & GCS_COMPSTR.0 > 0 {
