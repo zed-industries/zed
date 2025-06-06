@@ -812,6 +812,6 @@ message PulledDiagnostics {
     repeated LspDiagnostic diagnostics = 5;
 }
 
-message RefreshDocumentsDiagnostics {
+message PullWorkspaceDiagnostics {
     uint64 project_id = 1;
 }
