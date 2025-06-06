@@ -1,32 +1,85 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use collections::FxHashMap;
+use collections::HashMap;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
-use std::path::PathBuf;
-use task::{
-    BuildTaskDefinition, DebugScenario, RevealStrategy, RevealTarget, Shell, SpawnInTerminal,
-    TaskTemplate,
-};
-use uuid::Uuid;
+use serde::{Deserialize, Serialize};
+use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
 
 pub(crate) struct GoLocator;
 
-impl GoLocator {
-    fn get_build_tags(&self, build_config: &TaskTemplate) -> Vec<String> {
-        let mut tags = Vec::new();
-        let mut i = 0;
-        let args = &build_config.args;
-        while i < args.len() {
-            if args[i] == "-tags" && i + 1 < args.len() {
-                tags.push("-tags".to_string());
-                tags.push(args[i + 1].clone());
-                i += 2;
-            } else {
-                i += 1;
-            }
-        }
-        tags
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+struct DelveLaunchRequest {
+    request: String,
+    mode: String,
+    program: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
+    args: Vec<String>,
+    build_flags: Vec<String>,
+    env: HashMap<String, String>,
+}
+
+fn is_debug_flag(arg: &str) -> Option<bool> {
+    let mut part = if let Some(suffix) = arg.strip_prefix("test.") {
+        suffix
+    } else {
+        arg
+    };
+    let mut might_have_arg = true;
+    if let Some(idx) = part.find('=') {
+        might_have_arg = false;
+        part = &part[..idx];
+    }
+    match part {
+        "benchmem" | "failfast" | "fullpath" | "fuzzworker" | "json" | "short" | "v"
+        | "paniconexit0" => Some(false),
+        "bench"
+        | "benchtime"
+        | "blockprofile"
+        | "blockprofilerate"
+        | "count"
+        | "coverprofile"
+        | "cpu"
+        | "cpuprofile"
+        | "fuzz"
+        | "fuzzcachedir"
+        | "fuzzminimizetime"
+        | "fuzztime"
+        | "gocoverdir"
+        | "list"
+        | "memprofile"
+        | "memprofilerate"
+        | "mutexprofile"
+        | "mutexprofilefraction"
+        | "outputdir"
+        | "parallel"
+        | "run"
+        | "shuffle"
+        | "skip"
+        | "testlogfile"
+        | "timeout"
+        | "trace" => Some(might_have_arg),
+        _ if arg.starts_with("test.") => Some(false),
+        _ => None,
+    }
+}
+
+fn is_build_flag(mut arg: &str) -> Option<bool> {
+    let mut might_have_arg = true;
+    if let Some(idx) = arg.find('=') {
+        might_have_arg = false;
+        arg = &arg[..idx];
+    }
+    match arg {
+        "a" | "n" | "race" | "msan" | "asan" | "cover" | "work" | "x" | "v" | "buildvcs"
+        | "json" | "linkshared" | "modcacherw" | "trimpath" => Some(false),
+
+        "p" | "covermode" | "coverpkg" | "asmflags" | "buildmode" | "compiler" | "gccgoflags"
+        | "gcflags" | "installsuffix" | "ldflags" | "mod" | "modfile" | "overlay" | "pgo"
+        | "pkgdir" | "tags" | "toolexec" => Some(might_have_arg),
+        _ => None,
     }
 }
 
@@ -50,82 +103,114 @@ impl DapLocator for GoLocator {
 
         match go_action.as_str() {
             "test" => {
-                let binary_path = format!("__debug_{}", Uuid::new_v4().simple());
-                let build_tags = self.get_build_tags(build_config);
+                let mut program = ".".to_string();
+                let mut args = Vec::default();
+                let mut build_flags = Vec::default();
 
-                let mut args = vec!["test".into(), "-c".into()];
-                args.extend(build_tags);
-                args.extend(vec![
-                    "-gcflags \"all=-N -l\"".into(),
-                    "-o".into(),
-                    binary_path,
-                ]);
+                let mut all_args_are_test = false;
+                let mut next_arg_is_test = false;
+                let mut next_arg_is_build = false;
+                let mut seen_pkg = false;
 
-                let build_task = TaskTemplate {
-                    label: "go test debug".into(),
-                    command: "go".into(),
-                    args,
-                    env: build_config.env.clone(),
+                for arg in build_config.args.iter().skip(1) {
+                    if all_args_are_test || next_arg_is_test {
+                        // HACK: tasks assume that they are run in a shell context,
+                        // so the -run regex has escaped specials. Delve correctly
+                        // handles escaping, so we undo that here.
+                        if arg.starts_with("\\^") && arg.ends_with("\\$") {
+                            let mut arg = arg[1..arg.len() - 2].to_string();
+                            arg.push('$');
+                            args.push(arg);
+                        } else {
+                            args.push(arg.clone());
+                        }
+                        next_arg_is_test = false;
+                    } else if next_arg_is_build {
+                        build_flags.push(arg.clone());
+                        next_arg_is_build = false;
+                    } else if arg.starts_with('-') {
+                        let flag = arg.trim_start_matches('-');
+                        if flag == "args" {
+                            all_args_are_test = true;
+                        } else if let Some(has_arg) = is_debug_flag(flag) {
+                            if flag.starts_with("test.") {
+                                args.push(arg.clone());
+                            } else {
+                                args.push(format!("-test.{flag}"))
+                            }
+                            next_arg_is_test = has_arg;
+                        } else if let Some(has_arg) = is_build_flag(flag) {
+                            build_flags.push(arg.clone());
+                            next_arg_is_build = has_arg;
+                        }
+                    } else if !seen_pkg {
+                        program = arg.clone();
+                        seen_pkg = true;
+                    } else {
+                        args.push(arg.clone());
+                    }
+                }
+
+                let config: serde_json::Value = serde_json::to_value(DelveLaunchRequest {
+                    request: "launch".to_string(),
+                    mode: "test".to_string(),
+                    program,
+                    args: args,
+                    build_flags,
                     cwd: build_config.cwd.clone(),
-                    use_new_terminal: false,
-                    allow_concurrent_runs: false,
-                    reveal: RevealStrategy::Always,
-                    reveal_target: RevealTarget::Dock,
-                    hide: task::HideStrategy::Never,
-                    shell: Shell::System,
-                    tags: vec![],
-                    show_summary: true,
-                    show_command: true,
-                };
+                    env: build_config.env.clone(),
+                })
+                .unwrap();
 
                 Some(DebugScenario {
                     label: resolved_label.to_string().into(),
                     adapter: adapter.0,
-                    build: Some(BuildTaskDefinition::Template {
-                        task_template: build_task,
-                        locator_name: Some(self.name()),
-                    }),
-                    config: serde_json::Value::Null,
+                    build: None,
+                    config: config,
                     tcp_connection: None,
                 })
             }
             "run" => {
-                let program = build_config
-                    .args
-                    .get(1)
-                    .cloned()
-                    .unwrap_or_else(|| ".".to_string());
-                let build_tags = self.get_build_tags(build_config);
+                let mut next_arg_is_build = false;
+                let mut seen_pkg = false;
 
-                let mut args = vec!["build".into()];
-                args.extend(build_tags);
-                args.extend(vec!["-gcflags \"all=-N -l\"".into(), program.clone()]);
+                let mut program = ".".to_string();
+                let mut args = Vec::default();
+                let mut build_flags = Vec::default();
 
-                let build_task = TaskTemplate {
-                    label: "go build debug".into(),
-                    command: "go".into(),
-                    args,
-                    env: build_config.env.clone(),
+                for arg in build_config.args.iter().skip(1) {
+                    if seen_pkg {
+                        args.push(arg.clone())
+                    } else if next_arg_is_build {
+                        build_flags.push(arg.clone());
+                        next_arg_is_build = false;
+                    } else if arg.starts_with("-") {
+                        if let Some(has_arg) = is_build_flag(arg) {
+                            next_arg_is_build = has_arg;
+                        }
+                        args.push(arg.clone())
+                    } else {
+                        program = arg.to_string();
+                        seen_pkg = true;
+                    }
+                }
+
+                let config: serde_json::Value = serde_json::to_value(DelveLaunchRequest {
                     cwd: build_config.cwd.clone(),
-                    use_new_terminal: false,
-                    allow_concurrent_runs: false,
-                    reveal: RevealStrategy::Always,
-                    reveal_target: RevealTarget::Dock,
-                    hide: task::HideStrategy::Never,
-                    shell: Shell::System,
-                    tags: vec![],
-                    show_summary: true,
-                    show_command: true,
-                };
+                    env: build_config.env.clone(),
+                    request: "launch".to_string(),
+                    mode: "debug".to_string(),
+                    program,
+                    args: args,
+                    build_flags,
+                })
+                .unwrap();
 
                 Some(DebugScenario {
                     label: resolved_label.to_string().into(),
                     adapter: adapter.0,
-                    build: Some(BuildTaskDefinition::Template {
-                        task_template: build_task,
-                        locator_name: Some(self.name()),
-                    }),
-                    config: serde_json::Value::Null,
+                    build: None,
+                    config,
                     tcp_connection: None,
                 })
             }
@@ -134,60 +219,7 @@ impl DapLocator for GoLocator {
     }
 
     async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest> {
-        if build_config.args.is_empty() {
-            return Err(anyhow::anyhow!("Invalid Go command"));
-        }
-
-        let go_action = &build_config.args[0];
-        let cwd = build_config
-            .cwd
-            .as_ref()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| ".".to_string());
-
-        let mut env = FxHashMap::default();
-        for (key, value) in &build_config.env {
-            env.insert(key.clone(), value.clone());
-        }
-
-        match go_action.as_str() {
-            "test" => {
-                // Find the binary path after the -o flag
-                let binary_arg = build_config
-                    .args
-                    .windows(2)
-                    .find(|window| window[0] == "-o")
-                    .map(|window| &window[1])
-                    .ok_or_else(|| anyhow::anyhow!("can't locate debug binary"))?;
-
-                let program = PathBuf::from(&cwd)
-                    .join(binary_arg)
-                    .to_string_lossy()
-                    .into_owned();
-
-                Ok(DebugRequest::Launch(task::LaunchRequest {
-                    program,
-                    cwd: Some(PathBuf::from(&cwd)),
-                    args: vec!["-test.v".into(), "-test.run=${ZED_SYMBOL}".into()],
-                    env,
-                }))
-            }
-            "build" => {
-                let package = build_config
-                    .args
-                    .get(2)
-                    .cloned()
-                    .unwrap_or_else(|| ".".to_string());
-
-                Ok(DebugRequest::Launch(task::LaunchRequest {
-                    program: package,
-                    cwd: Some(PathBuf::from(&cwd)),
-                    args: vec![],
-                    env,
-                }))
-            }
-            _ => Err(anyhow::anyhow!("Unsupported Go command: {}", go_action)),
-        }
+        unreachable!()
     }
 }
 
