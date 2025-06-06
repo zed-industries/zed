@@ -23,5 +23,7 @@ exclude = [
     'https://platform.openai.com',
     'https://linux.die.net/man/1/sed',
     'https://allaboutcookies.org',
-    'https://www.gnu.org'
+    'https://www.gnu.org',
+    'https://auth.mistral.ai',
+    'https://console.mistral.ai',
 ]
