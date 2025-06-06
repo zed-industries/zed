@@ -1699,10 +1699,7 @@ impl Editor {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.pull_diagnostics(window, cx);
-                        }
-                        project::Event::PullWorkspaceDiagnostics => {
-                            editor.pull_diagnostics(window, cx);
+                            editor.pull_diagnostics(None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -2105,7 +2102,7 @@ impl Editor {
 
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
-            editor.pull_diagnostics(window, cx);
+            editor.pull_diagnostics(None, window, cx);
         }
 
         editor.report_editor_event("Editor Opened", None, cx);
@@ -15974,7 +15971,12 @@ impl Editor {
         });
     }
 
-    fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
+    fn pull_diagnostics(
+        &mut self,
+        buffer_id: Option<BufferId>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
         let project = self.project.as_ref()?.downgrade();
         let pull_diagnostics_settings = ProjectSettings::get_global(cx)
             .diagnostics
@@ -15983,7 +15985,10 @@ impl Editor {
             return None;
         }
         let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
-        let buffers = self.buffer.read(cx).all_buffers();
+        let mut buffers = self.buffer.read(cx).all_buffers();
+        if let Some(buffer_id) = buffer_id {
+            buffers.retain(|buffer| buffer.read(cx).remote_id() == buffer_id);
+        }
 
         self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(debounce).await;
@@ -18744,27 +18749,23 @@ impl Editor {
                     self.update_visible_inline_completion(window, cx);
                 }
                 if let Some(project) = self.project.as_ref() {
-                    project.update(cx, |project, cx| {
-                        if edited_buffer
-                            .as_ref()
-                            .is_some_and(|buffer| buffer.read(cx).file().is_some())
-                        {
-                            // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
-                            // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
-                            // TODO: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic_refresh explains the flow how
-                            // diagnostics should be pulled: instead of pulling every open editor's buffer's diagnostics (which happens effectively due to emitting this event),
-                            // we should only pull for the current buffer's diagnostics and get the rest via the workspace diagnostics LSP request — this is not implemented yet.
-                            cx.emit(project::Event::PullWorkspaceDiagnostics);
-                        }
-
-                        if let Some(buffer) = edited_buffer {
+                    if let Some(edited_buffer) = edited_buffer {
+                        project.update(cx, |project, cx| {
                             self.registered_buffers
-                                .entry(buffer.read(cx).remote_id())
+                                .entry(edited_buffer.read(cx).remote_id())
                                 .or_insert_with(|| {
-                                    project.register_buffer_with_language_servers(&buffer, cx)
+                                    project
+                                        .register_buffer_with_language_servers(&edited_buffer, cx)
                                 });
+                        });
+                        if edited_buffer.read(cx).file().is_some() {
+                            self.pull_diagnostics(
+                                Some(edited_buffer.read(cx).remote_id()),
+                                window,
+                                cx,
+                            );
                         }
-                    });
+                    }
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
