@@ -271,7 +271,7 @@ impl ManageProfilesModal {
                 let name = mode.name_editor.read(cx).text(cx);
                 let profile_id = AgentProfileId(name.to_case(Case::Kebab).into());
 
-                let profile = AgentProfileSettings {
+                let profile_settings = AgentProfileSettings {
                     name: name.into(),
                     tools: base_profile
                         .as_ref()
@@ -286,7 +286,7 @@ impl ManageProfilesModal {
                         .unwrap_or_default(),
                 };
 
-                self.create_profile(profile_id.clone(), profile, cx);
+                self.create_profile(profile_id.clone(), profile_settings, cx);
                 self.view_profile(profile_id, window, cx);
             }
             Mode::ViewProfile(_) => {}

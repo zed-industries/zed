@@ -531,6 +531,7 @@ impl ThreadStore {
         match event {
             project::context_server_store::Event::ServerStatusChanged { server_id, status } => {
                 match status {
+                    ContextServerStatus::Starting => {}
                     ContextServerStatus::Running => {
                         if let Some(server) =
                             context_server_store.read(cx).get_running_server(server_id)
@@ -589,7 +590,6 @@ impl ThreadStore {
                             });
                         }
                     }
-                    _ => {}
                 }
             }
         }

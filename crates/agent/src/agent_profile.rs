@@ -21,38 +21,32 @@ impl AgentProfile {
     }
 
     pub fn enabled_tools(&self, cx: &App) -> Vec<Arc<dyn Tool>> {
-        let Some(settings) = self.settings(cx) else {
-            return vec![];
+        let Some(settings) = AgentSettings::get_global(cx).profiles.get(&self.id) else {
+            return Vec::new();
         };
+
         self.tool_set
             .read(cx)
             .tools(cx)
             .into_iter()
-            .filter(|tool| Self::is_enabled(&settings, tool.source(), tool.name()))
+            .filter(|tool| Self::is_enabled(settings, tool.source(), tool.name()))
             .collect()
     }
 
     fn is_enabled(settings: &AgentProfileSettings, source: ToolSource, name: String) -> bool {
         match source {
-            ToolSource::Native => *settings.tools.get(&Arc::from(name)).unwrap_or(&false),
+            ToolSource::Native => *settings.tools.get(name.as_str()).unwrap_or(&false),
             ToolSource::ContextServer { id } => {
                 if settings.enable_all_context_servers {
                     return true;
                 }
 
-                let Some(preset) = settings.context_servers.get(&Arc::from(id)) else {
+                let Some(preset) = settings.context_servers.get(id.as_ref()) else {
                     return false;
                 };
-                *preset.tools.get(&Arc::from(name)).unwrap_or(&false)
+                *preset.tools.get(name.as_str()).unwrap_or(&false)
             }
         }
-    }
-
-    fn settings(&self, cx: &App) -> Option<AgentProfileSettings> {
-        AgentSettings::get_global(cx)
-            .profiles
-            .get(&self.id)
-            .cloned()
     }
 }
 
@@ -277,6 +271,10 @@ mod tests {
             _window: Option<gpui::AnyWindowHandle>,
             _cx: &mut App,
         ) -> assistant_tool::ToolResult {
+            unimplemented!()
+        }
+
+        fn may_perform_edits(&self) -> bool {
             unimplemented!()
         }
     }
