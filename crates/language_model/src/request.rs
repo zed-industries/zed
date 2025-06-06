@@ -7,7 +7,7 @@ use anyhow::Result;
 use base64::write::EncoderWriter;
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
-    point, px, size,
+    phypx, point, px, size,
 };
 use image::codecs::png::PngEncoder;
 use serde::{Deserialize, Serialize};
@@ -60,7 +60,7 @@ impl LanguageModelImage {
         }
 
         Some(Self {
-            size: size(DevicePixels(width?), DevicePixels(height?)),
+            size: size(phypx(width?), phypx(height?)),
             source: SharedString::from(source.to_string()),
         })
     }
@@ -82,7 +82,7 @@ impl LanguageModelImage {
     pub fn empty() -> Self {
         Self {
             source: "".into(),
-            size: size(DevicePixels(0), DevicePixels(0)),
+            size: size(phypx(0), phypx(0)),
         }
     }
 
@@ -104,7 +104,7 @@ impl LanguageModelImage {
 
             let width = dynamic_image.width();
             let height = dynamic_image.height();
-            let image_size = size(DevicePixels(width as i32), DevicePixels(height as i32));
+            let image_size = size(phypx(width as i32), phypx(height as i32));
 
             let base64_image = {
                 if image_size.width.0 > ANTHROPIC_SIZE_LIMT as i32

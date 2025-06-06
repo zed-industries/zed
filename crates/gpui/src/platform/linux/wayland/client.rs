@@ -71,17 +71,14 @@ use super::{
     window::{ImeInput, WaylandWindowStatePtr},
 };
 
-use crate::platform::linux::{
-    LinuxClient, get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
-    reveal_path_internal,
-    wayland::{
+use crate::{phypx, platform::linux::{
+    get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd, reveal_path_internal, wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
         serial::{SerialKind, SerialTracker},
         window::WaylandWindow,
-    },
-    xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
-};
+    }, xdg_desktop_portal::{Event as XDPEvent, XDPEventSource}, LinuxClient
+}};
 use crate::platform::{PlatformWindow, blade::BladeContext};
 use crate::{
     AnyWindowHandle, Bounds, CursorStyle, DOUBLE_CLICK_INTERVAL, DevicePixels, DisplayId,
@@ -983,10 +980,10 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                 in_progress_output.scale = Some(factor);
             }
             wl_output::Event::Geometry { x, y, .. } => {
-                in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)))
+                in_progress_output.position = Some(point(phypx(x), phypx(y)))
             }
             wl_output::Event::Mode { width, height, .. } => {
-                in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)))
+                in_progress_output.size = Some(size(phypx(width), phypx(height)))
             }
             wl_output::Event::Done => {
                 if let Some(complete) = in_progress_output.complete() {
