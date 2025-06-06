@@ -1,4 +1,4 @@
-use gpui::{Rgba, WindowAppearance, prelude::*};
+use gpui::{Rgba, WindowAppearance, WindowControlArea, prelude::*};
 
 use ui::prelude::*;
 
@@ -118,17 +118,12 @@ impl WindowsCaptionButton {
 
 impl RenderOnce for WindowsCaptionButton {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        // todo(windows) report this width to the Windows platform API
-        // NOTE: this is intentionally hard coded. An option to use the 'native' size
-        //       could be added when the width is reported to the Windows platform API
-        //       as this could change between future Windows versions.
-        let width = px(36.);
-
         h_flex()
             .id(self.id)
             .justify_center()
             .content_center()
-            .w(width)
+            .occlude()
+            .w(px(36.))
             .h_full()
             .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
@@ -137,6 +132,17 @@ impl RenderOnce for WindowsCaptionButton {
                 active_color.a *= 0.2;
 
                 style.bg(active_color)
+            })
+            .map(|this| match self.icon {
+                WindowsCaptionButtonIcon::Close => {
+                    this.window_control_area(WindowControlArea::Close)
+                }
+                WindowsCaptionButtonIcon::Maximize | WindowsCaptionButtonIcon::Restore => {
+                    this.window_control_area(WindowControlArea::Max)
+                }
+                WindowsCaptionButtonIcon::Minimize => {
+                    this.window_control_area(WindowControlArea::Min)
+                }
             })
             .child(match self.icon {
                 WindowsCaptionButtonIcon::Minimize => "\u{e921}",

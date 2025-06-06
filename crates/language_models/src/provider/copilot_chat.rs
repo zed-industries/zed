@@ -10,12 +10,14 @@ use copilot::copilot_chat::{
     ToolCall,
 };
 use copilot::{Copilot, Status};
+use editor::{Editor, EditorElement, EditorStyle};
+use fs::Fs;
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, Render, Subscription, Task,
-    Transformation, percentage, svg,
+    Action, Animation, AnimationExt, AnyView, App, AsyncApp, Entity, FontStyle, Render,
+    Subscription, Task, TextStyle, Transformation, WhiteSpace, percentage, svg,
 };
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -25,20 +27,21 @@ use language_model::{
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
     StopReason,
 };
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::time::Duration;
+use theme::ThemeSettings;
 use ui::prelude::*;
 use util::debug_panic;
+
+use crate::{AllLanguageModelSettings, CopilotChatSettingsContent};
 
 use super::anthropic::count_anthropic_tokens;
 use super::google::count_google_tokens;
 use super::open_ai::count_open_ai_tokens;
+pub(crate) use copilot::copilot_chat::CopilotChatSettings;
 
 const PROVIDER_ID: &str = "copilot_chat";
 const PROVIDER_NAME: &str = "GitHub Copilot Chat";
-
-#[derive(Default, Clone, Debug, PartialEq)]
-pub struct CopilotChatSettings {}
 
 pub struct CopilotChatLanguageModelProvider {
     state: Entity<State>,
@@ -163,9 +166,10 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(Err(err.into()))
     }
 
-    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
         let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new(|cx| ConfigurationView::new(state, window, cx))
+            .into()
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -608,15 +612,38 @@ fn into_copilot_chat(
 
 struct ConfigurationView {
     copilot_status: Option<copilot::Status>,
+    api_url_editor: Entity<Editor>,
+    models_url_editor: Entity<Editor>,
+    auth_url_editor: Entity<Editor>,
     state: Entity<State>,
     _subscription: Option<Subscription>,
 }
 
 impl ConfigurationView {
-    pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let copilot = Copilot::global(cx);
-
+        let settings = AllLanguageModelSettings::get_global(cx)
+            .copilot_chat
+            .clone();
+        let api_url_editor = cx.new(|cx| Editor::single_line(window, cx));
+        api_url_editor.update(cx, |this, cx| {
+            this.set_text(settings.api_url.clone(), window, cx);
+            this.set_placeholder_text("GitHub Copilot API URL", cx);
+        });
+        let models_url_editor = cx.new(|cx| Editor::single_line(window, cx));
+        models_url_editor.update(cx, |this, cx| {
+            this.set_text(settings.models_url.clone(), window, cx);
+            this.set_placeholder_text("GitHub Copilot Models URL", cx);
+        });
+        let auth_url_editor = cx.new(|cx| Editor::single_line(window, cx));
+        auth_url_editor.update(cx, |this, cx| {
+            this.set_text(settings.auth_url.clone(), window, cx);
+            this.set_placeholder_text("GitHub Copilot Auth URL", cx);
+        });
         Self {
+            api_url_editor,
+            models_url_editor,
+            auth_url_editor,
             copilot_status: copilot.as_ref().map(|copilot| copilot.read(cx).status()),
             state,
             _subscription: copilot.as_ref().map(|copilot| {
@@ -625,6 +652,104 @@ impl ConfigurationView {
                     cx.notify();
                 })
             }),
+        }
+    }
+    fn make_input_styles(&self, cx: &App) -> Div {
+        let bg_color = cx.theme().colors().editor_background;
+        let border_color = cx.theme().colors().border;
+
+        h_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .bg(bg_color)
+            .border_1()
+            .border_color(border_color)
+            .rounded_sm()
+    }
+
+    fn make_text_style(&self, cx: &Context<Self>) -> TextStyle {
+        let settings = ThemeSettings::get_global(cx);
+        TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.ui_font.family.clone(),
+            font_features: settings.ui_font.features.clone(),
+            font_fallbacks: settings.ui_font.fallbacks.clone(),
+            font_size: rems(0.875).into(),
+            font_weight: settings.ui_font.weight,
+            font_style: FontStyle::Normal,
+            line_height: relative(1.3),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            white_space: WhiteSpace::Normal,
+            text_overflow: None,
+            text_align: Default::default(),
+            line_clamp: None,
+        }
+    }
+
+    fn render_api_url_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.api_url_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn render_auth_url_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.auth_url_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+    fn render_models_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text_style = self.make_text_style(cx);
+
+        EditorElement::new(
+            &self.models_url_editor,
+            EditorStyle {
+                background: cx.theme().colors().editor_background,
+                local_player: cx.theme().players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        )
+    }
+
+    fn update_copilot_settings(&self, cx: &mut Context<'_, Self>) {
+        let settings = CopilotChatSettings {
+            api_url: self.api_url_editor.read(cx).text(cx).into(),
+            models_url: self.models_url_editor.read(cx).text(cx).into(),
+            auth_url: self.auth_url_editor.read(cx).text(cx).into(),
+        };
+        update_settings_file::<AllLanguageModelSettings>(<dyn Fs>::global(cx), cx, {
+            let settings = settings.clone();
+            move |content, _| {
+                content.copilot_chat = Some(CopilotChatSettingsContent {
+                    api_url: Some(settings.api_url.as_ref().into()),
+                    models_url: Some(settings.models_url.as_ref().into()),
+                    auth_url: Some(settings.auth_url.as_ref().into()),
+                });
+            }
+        });
+        if let Some(chat) = CopilotChat::global(cx) {
+            chat.update(cx, |this, cx| {
+                this.set_settings(settings, cx);
+            });
         }
     }
 }
@@ -684,15 +809,52 @@ impl Render for ConfigurationView {
                     }
                     _ => {
                         const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-                        v_flex().gap_2().child(Label::new(LABEL)).child(
-                            Button::new("sign_in", "Sign in to use GitHub Copilot")
-                                .icon_color(Color::Muted)
-                                .icon(IconName::Github)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::Medium)
-                                .full_width()
-                                .on_click(|_, window, cx| copilot::initiate_sign_in(window, cx)),
-                        )
+                        v_flex()
+                            .gap_2()
+                            .child(Label::new(LABEL))
+                            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                                this.update_copilot_settings(cx);
+                                copilot::initiate_sign_in(window, cx);
+                            }))
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(Label::new("API URL").size(LabelSize::Small))
+                                    .child(
+                                        self.make_input_styles(cx)
+                                            .child(self.render_api_url_editor(cx)),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(Label::new("Auth URL").size(LabelSize::Small))
+                                    .child(
+                                        self.make_input_styles(cx)
+                                            .child(self.render_auth_url_editor(cx)),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_0p5()
+                                    .child(Label::new("Models list URL").size(LabelSize::Small))
+                                    .child(
+                                        self.make_input_styles(cx)
+                                            .child(self.render_models_editor(cx)),
+                                    ),
+                            )
+                            .child(
+                                Button::new("sign_in", "Sign in to use GitHub Copilot")
+                                    .icon_color(Color::Muted)
+                                    .icon(IconName::Github)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::Medium)
+                                    .full_width()
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.update_copilot_settings(cx);
+                                        copilot::initiate_sign_in(window, cx)
+                                    })),
+                            )
                     }
                 },
                 None => v_flex().gap_6().child(Label::new(ERROR_LABEL)),

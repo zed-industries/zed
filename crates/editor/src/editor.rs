@@ -128,7 +128,8 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath, SemanticToken,
+    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath, PulledDiagnostics,
+    SemanticToken,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -1736,7 +1737,7 @@ impl Editor {
                             }
                             editor.pull_diagnostics(window, cx);
                         }
-                        project::Event::RefreshDocumentsDiagnostics => {
+                        project::Event::PullWorkspaceDiagnostics => {
                             editor.pull_diagnostics(window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
@@ -2287,31 +2288,28 @@ impl Editor {
 
     pub fn accept_edit_prediction_keybind(
         &self,
+        accept_partial: bool,
         window: &Window,
         cx: &App,
     ) -> AcceptEditPredictionBinding {
         let key_context = self.key_context_internal(true, window, cx);
         let in_conflict = self.edit_prediction_in_conflict();
 
-        AcceptEditPredictionBinding(
-            window
-                .bindings_for_action_in_context(&AcceptEditPrediction, key_context)
-                .into_iter()
-                .filter(|binding| {
-                    !in_conflict
-                        || binding
-                            .keystrokes()
-                            .first()
-                            .map_or(false, |keystroke| keystroke.modifiers.modified())
-                })
-                .rev()
-                .min_by_key(|binding| {
-                    binding
-                        .keystrokes()
-                        .first()
-                        .map_or(u8::MAX, |k| k.modifiers.number_of_modifiers())
-                }),
-        )
+        let bindings = if accept_partial {
+            window.bindings_for_action_in_context(&AcceptPartialEditPrediction, key_context)
+        } else {
+            window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
+        };
+
+        // TODO: if the binding contains multiple keystrokes, display all of them, not
+        // just the first one.
+        AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
+            !in_conflict
+                || binding
+                    .keystrokes()
+                    .first()
+                    .map_or(false, |keystroke| keystroke.modifiers.modified())
+        }))
     }
 
     pub fn new_file(
@@ -7281,12 +7279,25 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let accept_keybind = self.accept_edit_prediction_keybind(window, cx);
-        let Some(accept_keystroke) = accept_keybind.keystroke() else {
-            return;
+        let mut modifiers_held = false;
+        if let Some(accept_keystroke) = self
+            .accept_edit_prediction_keybind(false, window, cx)
+            .keystroke()
+        {
+            modifiers_held = modifiers_held
+                || (&accept_keystroke.modifiers == modifiers
+                    && accept_keystroke.modifiers.modified());
         };
+        if let Some(accept_partial_keystroke) = self
+            .accept_edit_prediction_keybind(true, window, cx)
+            .keystroke()
+        {
+            modifiers_held = modifiers_held
+                || (&accept_partial_keystroke.modifiers == modifiers
+                    && accept_partial_keystroke.modifiers.modified());
+        }
 
-        if &accept_keystroke.modifiers == modifiers && accept_keystroke.modifiers.modified() {
+        if modifiers_held {
             if matches!(
                 self.edit_prediction_preview,
                 EditPredictionPreview::Inactive { .. }
@@ -8603,7 +8614,7 @@ impl Editor {
         window: &mut Window,
         cx: &App,
     ) -> Option<AnyElement> {
-        let accept_binding = self.accept_edit_prediction_keybind(window, cx);
+        let accept_binding = self.accept_edit_prediction_keybind(false, window, cx);
         let accept_keystroke = accept_binding.keystroke()?;
 
         let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
@@ -16118,11 +16129,13 @@ impl Editor {
 
     fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
         let project = self.project.as_ref()?.downgrade();
-        let debounce = Duration::from_millis(
-            ProjectSettings::get_global(cx)
-                .diagnostics
-                .lsp_pull_diagnostics_debounce_ms?,
-        );
+        let pull_diagnostics_settings = ProjectSettings::get_global(cx)
+            .diagnostics
+            .lsp_pull_diagnostics;
+        if !pull_diagnostics_settings.enabled {
+            return None;
+        }
+        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
         let buffers = self.buffer.read(cx).all_buffers();
 
         self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
@@ -18885,13 +18898,16 @@ impl Editor {
                 }
                 if let Some(project) = self.project.as_ref() {
                     project.update(cx, |project, cx| {
-                        // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
-                        // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
                         if edited_buffer
                             .as_ref()
                             .is_some_and(|buffer| buffer.read(cx).file().is_some())
                         {
-                            cx.emit(project::Event::RefreshDocumentsDiagnostics);
+                            // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
+                            // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
+                            // TODO: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic_refresh explains the flow how
+                            // diagnostics should be pulled: instead of pulling every open editor's buffer's diagnostics (which happens effectively due to emitting this event),
+                            // we should only pull for the current buffer's diagnostics and get the rest via the workspace diagnostics LSP request — this is not implemented yet.
+                            cx.emit(project::Event::PullWorkspaceDiagnostics);
                         }
 
                         if let Some(buffer) = edited_buffer {
@@ -21232,7 +21248,7 @@ impl SemanticsProvider for Entity<Project> {
                         let LspPullDiagnostics::Response {
                             server_id,
                             uri,
-                            diagnostics: project::PulledDiagnostics::Changed { diagnostics, .. },
+                            diagnostics,
                         } = diagnostics_set
                         else {
                             continue;
@@ -21243,25 +21259,49 @@ impl SemanticsProvider for Entity<Project> {
                             .as_ref()
                             .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
                             .unwrap_or(&[]);
-                        lsp_store
-                            .merge_diagnostics(
-                                server_id,
-                                lsp::PublishDiagnosticsParams {
-                                    uri: uri.clone(),
-                                    diagnostics,
-                                    version: None,
-                                },
-                                DiagnosticSourceKind::Pulled,
-                                disk_based_sources,
-                                |old_diagnostic, _| match old_diagnostic.source_kind {
-                                    DiagnosticSourceKind::Pulled => false,
-                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
-                                        true
-                                    }
-                                },
-                                cx,
-                            )
-                            .log_err();
+                        match diagnostics {
+                            PulledDiagnostics::Unchanged { result_id } => {
+                                lsp_store
+                                    .merge_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: uri.clone(),
+                                            diagnostics: Vec::new(),
+                                            version: None,
+                                        },
+                                        Some(result_id),
+                                        DiagnosticSourceKind::Pulled,
+                                        disk_based_sources,
+                                        |_, _| true,
+                                        cx,
+                                    )
+                                    .log_err();
+                            }
+                            PulledDiagnostics::Changed {
+                                diagnostics,
+                                result_id,
+                            } => {
+                                lsp_store
+                                    .merge_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: uri.clone(),
+                                            diagnostics,
+                                            version: None,
+                                        },
+                                        result_id,
+                                        DiagnosticSourceKind::Pulled,
+                                        disk_based_sources,
+                                        |old_diagnostic, _| match old_diagnostic.source_kind {
+                                            DiagnosticSourceKind::Pulled => false,
+                                            DiagnosticSourceKind::Other
+                                            | DiagnosticSourceKind::Pushed => true,
+                                        },
+                                        cx,
+                                    )
+                                    .log_err();
+                            }
+                        }
                     }
                 })
             })
