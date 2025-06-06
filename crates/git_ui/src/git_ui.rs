@@ -387,7 +387,7 @@ mod remote_button {
                         .action("Pull", git::Pull.boxed_clone())
                         .separator()
                         .action("Push", git::Push.boxed_clone())
-                        .action("PushTo", git::PushTo.boxed_clone())
+                        .action("Push To", git::PushTo.boxed_clone())
                         .action("Force Push", git::ForcePush.boxed_clone())
                 }))
             })
