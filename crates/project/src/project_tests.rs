@@ -1332,6 +1332,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
                 DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
@@ -1350,6 +1351,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
                 DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
@@ -1441,6 +1443,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
                 DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
@@ -1459,6 +1462,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
                 DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
@@ -2376,6 +2380,7 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
                     LanguageServerId(0),
                     PathBuf::from("/dir/a.rs"),
                     None,
+                    None,
                     vec![
                         DiagnosticEntry {
                             range: Unclipped(PointUtf16::new(0, 10))
@@ -2442,6 +2447,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                 LanguageServerId(0),
                 Path::new("/dir/a.rs").to_owned(),
                 None,
+                None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
                     diagnostic: Diagnostic {
@@ -2459,6 +2465,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
             .update_diagnostic_entries(
                 LanguageServerId(1),
                 Path::new("/dir/a.rs").to_owned(),
+                None,
                 None,
                 vec![DiagnosticEntry {
                     range: Unclipped(PointUtf16::new(0, 0))..Unclipped(PointUtf16::new(0, 3)),
@@ -4596,6 +4603,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
             lsp_store.update_diagnostics(
                 LanguageServerId(0),
                 message,
+                None,
                 DiagnosticSourceKind::Pushed,
                 &[],
                 cx,

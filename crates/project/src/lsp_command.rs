@@ -3832,7 +3832,7 @@ impl LspCommand for GetDocumentDiagnostics {
     fn to_lsp(
         &self,
         path: &Path,
-        _: &Buffer,
+        buffer: &Buffer,
         language_server: &Arc<LanguageServer>,
         _: &App,
     ) -> Result<lsp::DocumentDiagnosticParams> {
@@ -3849,7 +3849,7 @@ impl LspCommand for GetDocumentDiagnostics {
                 uri: file_path_to_lsp_url(path)?,
             },
             identifier,
-            previous_result_id: None,
+            previous_result_id: buffer.result_id(),
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         })
