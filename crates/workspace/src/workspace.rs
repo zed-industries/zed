@@ -6257,7 +6257,9 @@ fn resize_right_dock(
 ) {
     let mut size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
     workspace.left_dock.read_with(cx, |left_dock, cx| {
-        let left_dock_size = left_dock.active_panel_size(window, cx).unwrap_or(Pixels(0.0));
+        let left_dock_size = left_dock
+            .active_panel_size(window, cx)
+            .unwrap_or(Pixels(0.0));
         if left_dock_size + size > workspace.bounds.right() {
             size = workspace.bounds.right() - left_dock_size
         }
