@@ -260,34 +260,23 @@ For more information on this, please see [win32 docs](https://learn.microsoft.co
 
 (note that you will need to restart your system after enabling longpath support)
 
-### Compiled Zed binary fails to start
+### Graphics issues
 
-If your zed binary fails to start, here are some "possible solution" for you.
+#### Zed fails to launch
 
-1. Check your `zed.log` at `C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
+Currently, Zed uses Vulkan as its graphics API on Windows. However, Vulkan isn't always the most reliable on Windows, so if Zed fails to launch, it's likely a Vulkan-related issue.
 
-2. If you find something like
+You can check the Zed log at:
+`C:\Users\YOU\AppData\Local\Zed\logs\Zed.log`
 
-```text
-2025-03-06T11:25:41.8523248+08:00 [WARN] Rejected for device extension "VK_KHR_dynamic_rendering" not supported. Please update the driver!
-```
+If you see messages like:
 
-Then you should try to update your driver.
+* `Zed failed to open a window: NoSupportedDeviceFound`
+* `ERROR_INITIALIZATION_FAILED`
+* `GPU Crashed`
+* `ERROR_SURFACE_LOST_KHR`
 
-3. If you find nothing but
+then Vulkan might not be working properly on your system. In most cases, updating your GPU drivers may help resolve this.
 
-```text
-2025-04-30T22:29:03+05:30 INFO  [zed] ========== starting zed ==========
-2025-04-30T22:29:03+05:30 INFO  [gpui] Use Segoe UI as UI font.
-==EOF==
-```
+If there's nothing Vulkan-related in the logs and you happen to have Bandicam installed, try uninstalling it. Zed is currently not compatible with Bandicam.
 
-Then you are in bad luck, check `4.`
-
-4. One of the possible issue&solution we find until NOW(2025/05/27)
-
-Check if you have installed `bandicam`. If you do, try to uninstall it / remove the `bdcamvk64.dll`.
-
-If zed starts right away, your a lucky guy
-
-5. If nothing above, try to check the `Windows Event Viewer` and find some `Application Error` related with `zed.exe`
