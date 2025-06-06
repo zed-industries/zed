@@ -849,7 +849,8 @@ impl LanguageModel for CloudLanguageModel {
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::Anthropic,
                             model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)?,
+                            provider_request: serde_json::to_value(&request)
+                                .map_err(|e| anyhow!(e))?,
                         },
                     )
                     .await
@@ -906,7 +907,8 @@ impl LanguageModel for CloudLanguageModel {
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::OpenAi,
                             model: request.model.clone(),
-                            provider_request: serde_json::to_value(&request)?,
+                            provider_request: serde_json::to_value(&request)
+                                .map_err(|e| anyhow!(e))?,
                         },
                     )
                     .await?;
@@ -945,7 +947,8 @@ impl LanguageModel for CloudLanguageModel {
                             mode,
                             provider: zed_llm_client::LanguageModelProvider::Google,
                             model: request.model.model_id.clone(),
-                            provider_request: serde_json::to_value(&request)?,
+                            provider_request: serde_json::to_value(&request)
+                                .map_err(|e| anyhow!(e))?,
                         },
                     )
                     .await?;
