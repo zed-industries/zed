@@ -4,19 +4,17 @@ Note, FreeBSD is not currently a supported platform, and so this is a work-in-pr
 
 ## Repository
 
-Clone down the [Zed repository](https://github.com/zed-industries/zed).
+Clone the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
-- Install [rustup](https://www.rust-lang.org/tools/install)
-
-- Install the necessary system libraries:
+- Install the necessary system packages and rustup:
 
   ```sh
   script/freebsd
   ```
 
-  If you prefer to install the system libraries manually, you can find the list of required packages in the `script/freebsd` file.
+  If preferred, you can inspect [`script/freebsd`](https://github.com/zed-industries/zed/blob/main/script/freebsd) and perform the steps manually.
 
 ---
 

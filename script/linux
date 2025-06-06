@@ -238,24 +238,5 @@ if [[ -n $emerge ]]; then
   exit 0
 fi
 
-# FreeBSD
-# https://www.freebsd.org/ports/
-pkg=$(command -v pkg || true)
-if [[ -n $pkg ]]; then
-  deps=(
-    cmake
-    gcc
-    git
-    llvm
-    protobuf
-    rustup-init
-    libx11
-    alsa-lib
-  )
-  $maysudo "$pkg" install "${deps[@]}"
-  finalize
-  exit 0
-fi
-
 echo "Unsupported Linux distribution in script/linux"
 exit 1
