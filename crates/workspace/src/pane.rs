@@ -2929,6 +2929,7 @@ impl Pane {
                             if is_at_same_position
                                 || (moved_right && is_pinned_in_to_pane)
                                 || (!moved_right && !is_pinned_in_to_pane)
+                                || (!moved_right && was_pinned_in_from_pane)
                             {
                                 return;
                             }
@@ -4887,6 +4888,46 @@ mod tests {
         // A should remain unpinned since it was dropped outside the pinned region
         assert_item_labels(&pane_a, [], cx);
         assert_item_labels(&pane_b, ["B!", "A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_pinned_tab_to_start_of_pinned_region(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A, B and pin both
+        let item_a = add_labeled_item(&pane_a, "A", false, cx);
+        let item_b = add_labeled_item(&pane_a, "B", false, cx);
+        assert_item_labels(&pane_a, ["A", "B*"], cx);
+
+        pane_a.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane_a, ["A!", "B*!"], cx);
+
+        // Move B to left of A
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_b.boxed_clone(),
+                ix: 1,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 0, window, cx);
+        });
+
+        // Pinned B should be in front of pinned A
+        assert_item_labels(&pane_a, ["B*!", "A!"], cx);
     }
 
     #[gpui::test]
