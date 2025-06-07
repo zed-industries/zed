@@ -120,7 +120,7 @@
       "ctrl-'": "editor::ToggleSelectedDiffHunks",
       "ctrl-\"": "editor::ExpandAllDiffHunks",
       "ctrl-i": "editor::ShowSignatureHelp",
-      "alt-g b": "editor::ToggleGitBlame",
+      "alt-g b": "git::Blame",
       "menu": "editor::OpenContextMenu",
       "shift-f10": "editor::OpenContextMenu",
       "ctrl-shift-e": "editor::ToggleEditPrediction",
@@ -153,8 +153,7 @@
     "context": "Editor && mode == full && edit_prediction",
     "bindings": {
       "alt-]": "editor::NextEditPrediction",
-      "alt-[": "editor::PreviousEditPrediction",
-      "alt-right": "editor::AcceptPartialEditPrediction"
+      "alt-[": "editor::PreviousEditPrediction"
     }
   },
   {
@@ -219,7 +218,6 @@
       "ctrl-enter": "assistant::Assist",
       "ctrl-s": "workspace::Save",
       "save": "workspace::Save",
-      "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
@@ -245,6 +243,7 @@
       "ctrl-shift-j": "agent::ToggleNavigationMenu",
       "ctrl-shift-i": "agent::ToggleOptionsMenu",
       "shift-alt-escape": "agent::ExpandMessageEditor",
+      "ctrl->": "assistant::QuoteSelection",
       "ctrl-alt-e": "agent::RemoveAllContext",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
@@ -512,14 +511,14 @@
   {
     "context": "Workspace",
     "bindings": {
+      "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
-      "alt-open": "projects::OpenRecent",
-      "alt-ctrl-o": "projects::OpenRecent",
-      "alt-shift-open": "projects::OpenRemote",
-      "alt-ctrl-shift-o": "projects::OpenRemote",
+      "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": false }],
+      "alt-shift-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "alt-ctrl-shift-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
+      "alt-ctrl-shift-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "alt-shift-enter": "toast::RunAction",
       "ctrl-~": "workspace::NewTerminal",
@@ -662,14 +661,16 @@
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
       "alt-l": "editor::AcceptEditPrediction",
-      "tab": "editor::AcceptEditPrediction"
+      "tab": "editor::AcceptEditPrediction",
+      "alt-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
     "context": "Editor && edit_prediction_conflict",
     "bindings": {
       "alt-tab": "editor::AcceptEditPrediction",
-      "alt-l": "editor::AcceptEditPrediction"
+      "alt-l": "editor::AcceptEditPrediction",
+      "alt-right": "editor::AcceptPartialEditPrediction"
     }
   },
   {
@@ -911,7 +912,9 @@
     "context": "CollabPanel && not_editing",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm"
+      "space": "menu::Confirm",
+      "ctrl-up": "collab_panel::MoveChannelUp",
+      "ctrl-down": "collab_panel::MoveChannelDown"
     }
   },
   {

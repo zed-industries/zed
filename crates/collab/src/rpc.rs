@@ -312,6 +312,7 @@ impl Server {
             .add_request_handler(
                 forward_read_only_project_request::<proto::LanguageServerIdForName>,
             )
+            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -354,6 +355,9 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateDiffBases>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::PullWorkspaceDiagnostics>,
+            )
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
             .add_request_handler(request_contact)
@@ -384,6 +388,7 @@ impl Server {
             .add_request_handler(get_notifications)
             .add_request_handler(mark_notification_as_read)
             .add_request_handler(move_channel)
+            .add_request_handler(reorder_channel)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
@@ -3214,6 +3219,51 @@ async fn move_channel(
         };
 
         session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(Ack {})?;
+    Ok(())
+}
+
+async fn reorder_channel(
+    request: proto::ReorderChannel,
+    response: Response<proto::ReorderChannel>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let direction = request.direction();
+
+    let updated_channels = session
+        .db()
+        .await
+        .reorder_channel(channel_id, direction, session.user_id())
+        .await?;
+
+    if let Some(root_id) = updated_channels.first().map(|channel| channel.root_id()) {
+        let connection_pool = session.connection_pool().await;
+        for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
+            let channels = updated_channels
+                .iter()
+                .filter_map(|channel| {
+                    if role.can_see_channel(channel.visibility) {
+                        Some(channel.to_proto())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            if channels.is_empty() {
+                continue;
+            }
+
+            let update = proto::UpdateChannels {
+                channels,
+                ..Default::default()
+            };
+
+            session.peer.send(connection_id, update.clone())?;
+        }
     }
 
     response.send(Ack {})?;

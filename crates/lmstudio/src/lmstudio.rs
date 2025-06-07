@@ -243,8 +243,8 @@ pub struct ModelEntry {
     pub compatibility_type: CompatibilityType,
     pub quantization: Option<String>,
     pub state: ModelState,
-    pub max_context_length: Option<u32>,
-    pub loaded_context_length: Option<u32>,
+    pub max_context_length: Option<usize>,
+    pub loaded_context_length: Option<usize>,
     #[serde(default)]
     pub capabilities: Capabilities,
 }
