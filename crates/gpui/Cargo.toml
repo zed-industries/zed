@@ -1,10 +1,10 @@
-﻿[package]
+[package]
 name = "gpui"
 version = "0.1.0"
 edition.workspace = true
 authors = ["Nathan Sobo <nathan@CodeOrbit.dev>"]
 description = "CodeOrbit's GPU-accelerated UI framework"
-repository = "https://github.com/CodeOrbit-industries/CodeOrbit"
+repository = "https://github.com/shalinda-j/CodeOrbit.git"
 publish.workspace = true
 license = "Apache-2.0"
 
@@ -67,7 +67,6 @@ x11 = [
     "x11-clipboard",
     "filedescriptor",
     "open",
-    "scap",
 ]
 
 
@@ -136,7 +135,7 @@ core-foundation-sys.workspace = true
 core-graphics = "0.24"
 core-video.workspace = true
 core-text = "21"
-font-kit = { git = "https://github.com/CodeOrbit-industries/font-kit", rev = "5474cfad4b719a72ec8ed2cb7327b2b01fd10568", optional = true }
+font-kit = { version = "0.14.0", optional = true }
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
@@ -164,7 +163,7 @@ blade-macros = { workspace = true, optional = true }
 blade-util = { workspace = true, optional = true }
 bytemuck = { version = "1", optional = true }
 cosmic-text = { version = "0.14.0", optional = true }
-font-kit = { git = "https://github.com/CodeOrbit-industries/font-kit", rev = "5474cfad4b719a72ec8ed2cb7327b2b01fd10568", features = [
+font-kit = { version = "0.14.0", features = [
     "source-fontconfig-dlopen",
 ], optional = true }
 scap = { workspace = true, optional = true }
@@ -205,7 +204,7 @@ xkbcommon = { version = "0.8.0", features = [
     "wayland",
     "x11",
 ], optional = true }
-xim = { git = "https://github.com/XDeme1/xim-rs", rev = "d50d461764c2213655cd9cf65a0ea94c70d3c4fd", features = [
+xim = { version = "0.4.0", features = [
     "x11rb-xcb",
     "x11rb-client",
 ], optional = true }
@@ -248,12 +247,40 @@ naga.workspace = true
 
 
 [[example]]
+name = "animation"
+path = "examples/animation.rs"
+
+[[example]]
+name = "data_table"
+path = "examples/data_table.rs"
+
+[[example]]
+name = "drag_drop"
+path = "examples/drag_drop.rs"
+
+[[example]]
+name = "gif_viewer"
+path = "examples/gif_viewer.rs"
+
+[[example]]
+name = "gradient"
+path = "examples/gradient.rs"
+
+[[example]]
 name = "hello_world"
 path = "examples/hello_world.rs"
 
 [[example]]
 name = "image"
 path = "examples/image/image.rs"
+
+[[example]]
+name = "image_gallery"
+path = "examples/image_gallery.rs"
+
+[[example]]
+name = "image_loading"
+path = "examples/image_loading.rs"
 
 [[example]]
 name = "input"
@@ -266,6 +293,14 @@ path = "examples/on_window_close_quit.rs"
 [[example]]
 name = "opacity"
 path = "examples/opacity.rs"
+
+[[example]]
+name = "ownership_post"
+path = "examples/ownership_post.rs"
+
+[[example]]
+name = "painting"
+path = "examples/painting.rs"
 
 [[example]]
 name = "pattern"
@@ -288,12 +323,24 @@ name = "text"
 path = "examples/text.rs"
 
 [[example]]
+name = "text_layout"
+path = "examples/text_layout.rs"
+
+[[example]]
 name = "text_wrapper"
 path = "examples/text_wrapper.rs"
 
 [[example]]
 name = "uniform_list"
 path = "examples/uniform_list.rs"
+
+[[example]]
+name = "window"
+path = "examples/window.rs"
+
+[[example]]
+name = "window_positioning"
+path = "examples/window_positioning.rs"
 
 [[example]]
 name = "window_shadow"

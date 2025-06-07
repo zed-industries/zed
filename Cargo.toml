@@ -1,4 +1,4 @@
-﻿[workspace]
+[workspace]
 resolver = "2"
 members = [
     "crates/activity_indicator",
@@ -680,12 +680,6 @@ features = [
     "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
 ]
-
-# TODO livekit https://github.com/RustAudio/cpal/pull/891
-[patch.crates-io]
-cpal = { git = "https://github.com/CodeOrbit-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
-notify = { git = "https://github.com/CodeOrbit-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
-notify-types = { git = "https://github.com/CodeOrbit-industries/notify.git", rev = "bbb9ea5ae52b253e095737847e367c30653a2e96" }
 
 # Makes the workspace hack crate refer to the local one, but only when you're building locally
 workspace-hack = { path = "tooling/workspace-hack" }
