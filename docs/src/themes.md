@@ -62,8 +62,6 @@ Store new themes locally by placing them in the `~/.config/zed/themes` directory
 
 For example, to create a new theme called `my-cool-theme`, create a file called `my-cool-theme.json` in that directory. It will be available in the theme selector the next time Zed loads.
 
-Find more themes at [zed-themes.com](https://zed-themes.com).
-
 ## Theme Development
 
 See: [Developing Zed Themes](./extensions/themes.md)
