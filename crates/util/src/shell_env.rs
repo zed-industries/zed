@@ -68,6 +68,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
         .collect::<Result<_>>()
 }
 
+#[cfg(unix)]
 fn spawn_and_read_fd(
     mut command: std::process::Command,
     child_fd: std::os::fd::RawFd,
