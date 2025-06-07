@@ -2,6 +2,7 @@ mod actions;
 pub(crate) mod autoscroll;
 pub(crate) mod scroll_amount;
 
+use crate::SemanticTokensRefreshReason;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
@@ -488,7 +489,9 @@ impl Editor {
             cx.spawn_in(window, async move |editor, cx| {
                 editor
                     .update(cx, |editor, cx| {
-                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+                        editor
+                            .refresh_semantic_tokens(SemanticTokensRefreshReason::NewLinesShown, cx)
                     })
                     .ok()
             })
@@ -599,6 +602,7 @@ impl Editor {
         );
 
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+        self.refresh_semantic_tokens(SemanticTokensRefreshReason::NewLinesShown, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut Context<Self>) -> gpui::Point<f32> {

@@ -42,7 +42,6 @@ impl<'a> CustomHighlightsChunks<'a> {
             buffer_chunks: multibuffer_snapshot.chunks(range.clone(), language_aware),
             buffer_chunk: None,
             offset: range.start,
-
             text_highlights,
             highlight_endpoints: create_highlight_endpoints(
                 &range,
@@ -135,7 +134,7 @@ impl<'a> Iterator for CustomHighlightsChunks<'a> {
             .buffer_chunk
             .get_or_insert_with(|| self.buffer_chunks.next().unwrap());
         if chunk.text.is_empty() {
-            *chunk = self.buffer_chunks.next().unwrap();
+            *chunk = self.buffer_chunks.next()?;
         }
 
         let (prefix, suffix) = chunk
