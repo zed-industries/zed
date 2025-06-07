@@ -28,7 +28,8 @@
     "context": "InlineAssistEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-backspace": "editor::Cancel"
+      "cmd-shift-backspace": "editor::Cancel",
+      "cmd-enter": "menu::Confirm"
       // "alt-enter": // Quick Question
       // "cmd-shift-enter": // Full File Context
       // "cmd-shift-k": // Toggle input focus (editor <> inline assist)
