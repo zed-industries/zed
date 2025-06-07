@@ -17,8 +17,7 @@ use crate::{
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MinimapThumb, MinimapThumbBorder,
-        MultiCursorModifier, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics,
-        ShowMinimap, ShowScrollbar,
+        ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{

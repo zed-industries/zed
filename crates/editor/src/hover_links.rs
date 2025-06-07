@@ -1,7 +1,7 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
     GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
-    editor_settings::{GoToDefinitionFallback, MultiCursorModifier},
+    editor_settings::GoToDefinitionFallback,
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
 };
