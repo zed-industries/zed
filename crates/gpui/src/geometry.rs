@@ -2870,7 +2870,23 @@ pub const fn ScaledPixels(x: f32) -> ScaledPixels {
     PhysicalPixels(x)
 }
 
-impl DevicePixels {
+impl PhysicalPixels<i32> {
+    /// Converts `PhysicalPixels<i32>` into `PhysicalPixels<f32>`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cfg!(debug_assertions)` is true and `self` is outside of the
+    /// range of integers exactly representable by `f32`
+    /// (i.e. `-2.pow(24)..=2.pow(24)`).
+    ///
+    /// # Returns
+    ///
+    /// The mapped value.
+    pub fn unquantize(self) -> PhysicalPixels<f32> {
+        debug_assert!(-2i32.pow(24) <= self.0 && self.0 <= 2i32.pow(24));
+        PhysicalPixels(self.0 as f32)
+    }
+
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
     ///
     /// This function is useful when working with graphical data that needs to be stored in a buffer,
@@ -2898,7 +2914,7 @@ impl DevicePixels {
     }
 }
 
-impl ScaledPixels {
+impl PhysicalPixels<f32> {
     /// Floors the `ScaledPixels` value to the nearest whole number.
     ///
     /// # Returns
@@ -2915,6 +2931,30 @@ impl ScaledPixels {
     /// Returns a new `ScaledPixels` instance with the rounded value.
     pub fn ceil(&self) -> Self {
         Self(self.0.ceil())
+    }
+
+    /// Converts `PhysicalPixels<f32>` into `PhysicalPixels<i32>`.
+    ///
+    /// This function rounds the value to the nearest integer.
+    /// Ties are resolved away from 0.
+    ///
+    /// In case you need different rounding, use rounding methods such as
+    /// [`floor`] before calling this function.
+    ///
+    /// [`floor`]: PhysicalPixels::floor
+    ///
+    /// # Panics
+    ///
+    /// When `cfg!(debug_assertions)` is true, panics if the `self` value is
+    /// outside the range of an `i32`.
+    ///
+    /// # Returns
+    ///
+    /// Returns a new `PhysicalPixels` instance with the rounded and
+    /// converted value.
+    pub fn quantize(self) -> PhysicalPixels<i32> {
+        debug_assert!(i32::MIN as f32 <= self.0 && self.0 <= i32::MAX as f32);
+        PhysicalPixels(self.0 as i32)
     }
 }
 
@@ -2963,18 +3003,6 @@ impl From<DevicePixels> for usize {
 impl From<usize> for DevicePixels {
     fn from(device_pixels: usize) -> Self {
         physical_px(device_pixels as i32)
-    }
-}
-
-impl From<ScaledPixels> for DevicePixels {
-    fn from(scaled: ScaledPixels) -> Self {
-        physical_px(scaled.0.ceil() as i32)
-    }
-}
-
-impl From<DevicePixels> for ScaledPixels {
-    fn from(device: DevicePixels) -> Self {
-        physical_px(device.0 as f32)
     }
 }
 
