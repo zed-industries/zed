@@ -1924,6 +1924,30 @@ Example:
 
 `boolean` values
 
+## Multi Cursor Modifier
+
+- Description: Determines which modifier key to hold down when clicking to add multiple cursors.
+- Setting: `multi_cursor_modifier`
+- Default: `alt`
+
+**Options**
+
+1. Use `alt` on Linux/Windows, and `opt` on MacOS:
+
+```json
+{
+  "multi_cursor_modifier": "alt"
+}
+```
+
+2. Use `ctrl` on Linux/Windows, and `cmd` on MacOS:
+
+```json
+{
+  "multi_cursor_modifier": "cmd_or_ctrl" // alias: "cmd", "ctrl"
+}
+```
+
 ## Hover Popover Enabled
 
 - Description: Whether or not to show the informational hover box when moving the mouse over symbols in the editor.
