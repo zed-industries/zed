@@ -5844,6 +5844,73 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
+    /// todo: This is copypasta from confirm_code_action, needs refactor
+    pub fn preferred_code_action(
+        &mut self,
+        _action: &PreferredCodeAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        self.hide_mouse_cursor(&HideMouseCursorOrigin::TypingAction);
+
+        let actions_menu =
+            if let CodeContextMenu::CodeActions(menu) = self.hide_context_menu(window, cx)? {
+                menu
+            } else {
+                return None;
+            };
+
+        let action_ix = actions_menu.actions.preferred_index()?;
+        let action = actions_menu.actions.get(action_ix)?;
+        let title = action.label();
+        let buffer = actions_menu.buffer;
+        let workspace = self.workspace()?;
+
+        match action {
+            CodeActionsItem::Task(task_source_kind, resolved_task) => {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.schedule_resolved_task(
+                        task_source_kind,
+                        resolved_task,
+                        false,
+                        window,
+                        cx,
+                    );
+
+                    Some(Task::ready(Ok(())))
+                })
+            }
+            CodeActionsItem::CodeAction {
+                excerpt_id,
+                action,
+                provider,
+            } => {
+                let apply_code_action =
+                    provider.apply_code_action(buffer, action, excerpt_id, true, window, cx);
+                let workspace = workspace.downgrade();
+                Some(cx.spawn_in(window, async move |editor, cx| {
+                    let project_transaction = apply_code_action.await?;
+                    Self::open_project_transaction(
+                        &editor,
+                        workspace,
+                        project_transaction,
+                        title,
+                        cx,
+                    )
+                    .await
+                }))
+            }
+            CodeActionsItem::DebugScenario(scenario) => {
+                let context = actions_menu.actions.context.clone();
+
+                workspace.update(cx, |workspace, cx| {
+                    dap::send_telemetry(&scenario, TelemetrySpawnLocation::Gutter, cx);
+                    workspace.start_debug_session(scenario, context, Some(buffer), window, cx);
+                });
+                Some(Task::ready(Ok(())))
+            }
+        }
+    }
     pub fn confirm_code_action(
         &mut self,
         action: &ConfirmCodeAction,

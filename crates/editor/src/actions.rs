@@ -106,6 +106,10 @@ pub struct ComposeCompletion {
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct PreferredCodeAction {}
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
@@ -229,6 +233,7 @@ impl_actions!(
         MoveToBeginningOfLine,
         MoveToEndOfLine,
         MoveUpByLines,
+        PreferredCodeAction,
         SelectDownByLines,
         SelectNext,
         SelectPrevious,
