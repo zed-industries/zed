@@ -1874,7 +1874,7 @@ impl Buffer {
     }
 
     /// Ensures that the buffer ends with a single newline character, and
-    /// no other whitespace.
+    /// no other whitespace. Skips if the buffer is empty.
     pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
         let len = self.len();
         if len == 0 {
