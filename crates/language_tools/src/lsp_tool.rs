@@ -210,6 +210,7 @@ impl LspPickerDelegate {
         });
 
         h_flex()
+            .w_full()
             .gap_2()
             .when(can_stop, |div| {
                 div.child(
@@ -357,6 +358,7 @@ impl LspPickerDelegate {
         };
 
         v_flex()
+            .w_full()
             .group("lsp-status")
             .child(
                 h_flex()
@@ -615,7 +617,7 @@ impl LspTool {
 
         Self {
             lsp_picker: cx.new(|cx| {
-                Picker::uniform_list(
+                Picker::list(
                     LspPickerDelegate {
                         selected_index: 0,
                         items: Vec::new(),
