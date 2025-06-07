@@ -1,4 +1,5 @@
 mod codelldb;
+mod dart;
 mod gdb;
 mod go;
 mod javascript;
@@ -20,6 +21,7 @@ use dap::{
     configure_tcp_connection,
     inline_value::{GoInlineValueProvider, PythonInlineValueProvider, RustInlineValueProvider},
 };
+use dart::DartDebugAdapter;
 use gdb::GdbDebugAdapter;
 use go::GoDebugAdapter;
 use gpui::{App, BorrowAppContext};
@@ -36,6 +38,7 @@ pub fn init(cx: &mut App) {
         registry.add_adapter(Arc::from(PythonDebugAdapter::default()));
         registry.add_adapter(Arc::from(PhpDebugAdapter::default()));
         registry.add_adapter(Arc::from(JsDebugAdapter::default()));
+        registry.add_adapter(Arc::from(DartDebugAdapter));
         registry.add_adapter(Arc::from(RubyDebugAdapter));
         registry.add_adapter(Arc::from(GoDebugAdapter::default()));
         registry.add_adapter(Arc::from(GdbDebugAdapter));
