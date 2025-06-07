@@ -1701,7 +1701,7 @@ impl EditorElement {
         let minimap_em_width =
             px(em_width.0 * minimap_font_size.to_pixels(rem_size).0 / font_size.0);
 
-        let minimap_width = (editor_width_plus_right_margin * 0.1)
+        let minimap_width = (editor_width_plus_right_margin * MinimapLayout::MINIMAP_WIDTH_PCT)
             .min(minimap_em_width * minimap_settings.max_columns);
 
         if editor_width_plus_right_margin - vertical_scrollbar_width - minimap_width < minimap_width
@@ -1718,7 +1718,7 @@ impl EditorElement {
                 },
                 vertical_scrollbar_width,
             ),
-            _ => (minimap_width, vertical_scrollbar_width),
+            _ => (minimap_width, vertical_scrollbar_width + minimap_width),
         }
     }
 
@@ -9226,7 +9226,7 @@ struct MinimapLayout {
 }
 
 impl MinimapLayout {
-    const MINIMAP_WIDTH: Pixels = px(100.);
+    const MINIMAP_WIDTH_PCT: f32 = 0.15;
     /// Calculates the scroll top offset the minimap editor has to have based on the
     /// current scroll progress.
     fn calculate_minimap_top_offset(
