@@ -2,11 +2,11 @@ use super::{
     Highlights,
     fold_map::{self, Chunk, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
 };
+
 use language::Point;
 use multi_buffer::MultiBufferSnapshot;
 use std::{cmp, mem, num::NonZeroU32, ops::Range};
 use sum_tree::Bias;
-use util::debug_panic;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 
@@ -310,6 +310,7 @@ impl TabSnapshot {
         let chunks = self
             .fold_snapshot
             .chunks_at(FoldPoint::new(output.row(), 0));
+
         let tab_cursor = TabStopCursor::new(chunks);
         let expanded = output.column();
         let (collapsed, expanded_char_column, to_next_stop) =
@@ -363,44 +364,44 @@ impl TabSnapshot {
     fn collapse_tabs(&self, mut cursor: TabStopCursor, column: u32, bias: Bias) -> (u32, u32, u32) {
         let tab_size = self.tab_size.get();
         let mut collapsed_column = column;
+        let mut seek_target = column;
         let mut tab_count = 0;
         let mut expanded_tab_len = 0;
-        dbg!(collapsed_column);
-        while let Some(tab_stop) = cursor.seek(collapsed_column) {
+        while let Some(tab_stop) = cursor.seek(seek_target) {
             // Calculate how much we want to expand this tab stop (into spaces)
-            let mut expanded_chars = tab_stop.char_offset - tab_count + expanded_tab_len;
-            let tab_len = tab_size - ((expanded_chars - 1) % tab_size);
+            let expanded_chars_old = tab_stop.char_offset - tab_count + expanded_tab_len;
+            let tab_len = tab_size - ((expanded_chars_old - 1) % tab_size);
             // Increment tab count
             tab_count += 1;
             // The count of how many spaces we've added to this line in place of tab bytes
-            expanded_tab_len += dbg!(tab_len);
+            expanded_tab_len += tab_len;
 
             // The count of bytes at this point in the iteration while considering tab_count and previous expansions
             let expanded_bytes = tab_stop.byte_offset - tab_count + expanded_tab_len;
 
             // Did we expand past the search target?
             if expanded_bytes > column {
+                let mut expanded_chars = tab_stop.char_offset - tab_count + expanded_tab_len;
                 // We expanded past the search target, so need to account for the offshoot
                 expanded_chars -= expanded_bytes - column;
-                dbg!(expanded_bytes);
                 return match bias {
                     Bias::Left => (
-                        cursor.byte_offset(),
+                        cursor.byte_offset() - 1,
                         expanded_chars,
                         expanded_bytes - column,
                     ),
-                    Bias::Right => (cursor.byte_offset() + 1, expanded_chars, 0),
+                    Bias::Right => (cursor.byte_offset(), expanded_chars, 0),
                 };
             } else {
                 // otherwise we only want to move the cursor collapse column forward
                 collapsed_column = collapsed_column - tab_len + 1;
+                seek_target = (collapsed_column - cursor.bytes_offset)
+                    .min(self.max_expansion_column - cursor.bytes_offset);
             }
         }
 
-        dbg!(tab_count, expanded_tab_len);
         let collapsed_bytes = cursor.byte_offset();
         let expanded_bytes = cursor.byte_offset() - tab_count + expanded_tab_len;
-        dbg!(collapsed_bytes, expanded_bytes, column);
         // let expanded_chars = cursor.char_offset() - tab_count + expanded_tab_len;
         (
             collapsed_bytes + column.saturating_sub(expanded_bytes),
@@ -629,8 +630,7 @@ mod tests {
             let mut expanded_bytes = 0;
             let mut expanded_chars = 0;
             let mut collapsed_bytes = 0;
-            let mut expanded_tab_len = 0;
-            for (i, c) in chars.enumerate() {
+            for c in chars {
                 if expanded_bytes >= column {
                     break;
                 }
@@ -640,13 +640,10 @@ mod tests {
 
                 if c == '\t' {
                     let tab_len = tab_size - (expanded_chars % tab_size);
-                    dbg!(tab_len);
-                    expanded_tab_len += tab_len;
                     expanded_chars += tab_len;
                     expanded_bytes += tab_len;
                     if expanded_bytes > column {
                         expanded_chars -= expanded_bytes - column;
-                        dbg!(expanded_bytes);
                         return match bias {
                             Bias::Left => {
                                 (collapsed_bytes, expanded_chars, expanded_bytes - column)
@@ -666,14 +663,6 @@ mod tests {
 
                 collapsed_bytes += c.len_utf8() as u32;
             }
-            dbg!(
-                collapsed_bytes,
-                column,
-                expanded_bytes,
-                expanded_chars,
-                expanded_tab_len
-            );
-            dbg!("expected\n---------------\n");
 
             (
                 collapsed_bytes + column.saturating_sub(expanded_bytes),
@@ -718,32 +707,38 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        let range = TabPoint::zero()..tab_snapshot.max_point();
+        for (ix, _) in input.char_indices() {
+            let range = TabPoint::new(0, ix as u32)..tab_snapshot.max_point();
 
-        assert_eq!(
-            tab_snapshot.test_to_fold_point(range.start, Bias::Left),
-            tab_snapshot.to_fold_point(range.start, Bias::Left)
-        );
-        assert_eq!(
-            tab_snapshot.test_to_fold_point(range.start, Bias::Right),
-            tab_snapshot.to_fold_point(range.start, Bias::Right)
-        );
+            assert_eq!(
+                tab_snapshot.test_to_fold_point(range.start, Bias::Left),
+                tab_snapshot.to_fold_point(range.start, Bias::Left),
+                "Failed with tab_point at column {ix}"
+            );
+            assert_eq!(
+                tab_snapshot.test_to_fold_point(range.start, Bias::Right),
+                tab_snapshot.to_fold_point(range.start, Bias::Right),
+                "Failed with tab_point at column {ix}"
+            );
 
-        assert_eq!(
-            tab_snapshot.test_to_fold_point(range.end, Bias::Left),
-            tab_snapshot.to_fold_point(range.end, Bias::Left)
-        );
-        assert_eq!(
-            tab_snapshot.test_to_fold_point(range.end, Bias::Right),
-            tab_snapshot.to_fold_point(range.end, Bias::Right)
-        );
+            assert_eq!(
+                tab_snapshot.test_to_fold_point(range.end, Bias::Left),
+                tab_snapshot.to_fold_point(range.end, Bias::Left),
+                "Failed with tab_point at column {ix}"
+            );
+            assert_eq!(
+                tab_snapshot.test_to_fold_point(range.end, Bias::Right),
+                tab_snapshot.to_fold_point(range.end, Bias::Right),
+                "Failed with tab_point at column {ix}"
+            );
+        }
     }
 
     #[gpui::test(iterations = 100)]
     fn test_collapse_tabs_random(cx: &mut gpui::App, mut rng: StdRng) {
         // Generate random input string with up to 200 characters including tabs
         // to stay within the MAX_EXPANSION_COLUMN limit of 256
-        let len = rng.gen_range(0..=200);
+        let len = rng.gen_range(0..=2048);
         let mut input = String::with_capacity(len);
 
         for _ in 0..len {
@@ -769,33 +764,35 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        let range = TabPoint::zero()..tab_snapshot.max_point();
+        for (ix, _) in input.char_indices() {
+            let range = TabPoint::new(0, ix as u32)..tab_snapshot.max_point();
 
-        assert_eq!(
-            tab_snapshot.test_to_fold_point(range.start, Bias::Left),
-            tab_snapshot.to_fold_point(range.start, Bias::Left),
-            "Failed with input: {}",
-            input
-        );
-        assert_eq!(
-            tab_snapshot.test_to_fold_point(range.start, Bias::Right),
-            tab_snapshot.to_fold_point(range.start, Bias::Right),
-            "Failed with input: {}",
-            input
-        );
+            assert_eq!(
+                tab_snapshot.test_to_fold_point(range.start, Bias::Left),
+                tab_snapshot.to_fold_point(range.start, Bias::Left),
+                "Failed with input: {}, with idx: {ix}",
+                input
+            );
+            assert_eq!(
+                tab_snapshot.test_to_fold_point(range.start, Bias::Right),
+                tab_snapshot.to_fold_point(range.start, Bias::Right),
+                "Failed with input: {}, with idx: {ix}",
+                input
+            );
 
-        assert_eq!(
-            tab_snapshot.test_to_fold_point(range.end, Bias::Left),
-            tab_snapshot.to_fold_point(range.end, Bias::Left),
-            "Failed with input: {}",
-            input
-        );
-        assert_eq!(
-            tab_snapshot.test_to_fold_point(range.end, Bias::Right),
-            tab_snapshot.to_fold_point(range.end, Bias::Right),
-            "Failed with input: {}",
-            input
-        );
+            assert_eq!(
+                tab_snapshot.test_to_fold_point(range.end, Bias::Left),
+                tab_snapshot.to_fold_point(range.end, Bias::Left),
+                "Failed with input: {}, with idx: {ix}",
+                input
+            );
+            assert_eq!(
+                tab_snapshot.test_to_fold_point(range.end, Bias::Right),
+                tab_snapshot.to_fold_point(range.end, Bias::Right),
+                "Failed with input: {}, with idx: {ix}",
+                input
+            );
+        }
     }
 
     #[gpui::test]
@@ -1094,8 +1091,13 @@ mod tests {
         let len = rng.gen_range(0..=2048);
         let mut input = String::with_capacity(len);
 
-        for _ in 0..len {
-            if rng.gen_bool(0.15) {
+        let mut skip_tabs = rng.gen_bool(0.10);
+        for idx in 0..len {
+            if idx % 128 == 0 {
+                skip_tabs = rng.gen_bool(0.10);
+            }
+
+            if rng.gen_bool(0.15) && !skip_tabs {
                 // 15% chance of inserting a tab
                 input.push('\t');
             } else {
@@ -1247,6 +1249,7 @@ impl<'a> TabStopCursor<'a> {
                     self.end_of_chunk = Some(overshoot);
                     return None;
                 }
+                self.bytes_offset += chunk.text.len() as u32;
                 continue;
             }
 
