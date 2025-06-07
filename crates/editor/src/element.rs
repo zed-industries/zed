@@ -680,24 +680,16 @@ impl EditorElement {
         let position = point_for_position.previous_valid;
 
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let should_do_columnar_selection = match multi_cursor_setting {
-            MultiCursorModifier::Alt => {
-                modifiers.alt
-                    && modifiers.shift
-                    && !modifiers.control
-                    && !modifiers.platform
-                    && !modifiers.function
-            }
-            MultiCursorModifier::CmdOrCtrl => {
-                modifiers.secondary() && modifiers.shift && !modifiers.alt && !modifiers.control
-            }
+        let multi_cursor_modifier = match multi_cursor_setting {
+            MultiCursorModifier::Alt => modifiers.alt,
+            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
         };
 
-        if should_do_columnar_selection {
+        if Editor::columnar_selection_modifiers(multi_cursor_modifier, &modifiers) {
             editor.select(
                 SelectPhase::BeginColumnar {
                     position,
-                    reset: false,
+                    reset: true,
                     goal_column: point_for_position.exact_unclipped.column(),
                 },
                 window,
@@ -714,10 +706,6 @@ impl EditorElement {
                 cx,
             );
         } else {
-            let multi_cursor_modifier = match multi_cursor_setting {
-                MultiCursorModifier::Alt => modifiers.alt,
-                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
-            };
             editor.select(
                 SelectPhase::Begin {
                     position,
@@ -882,12 +870,12 @@ impl EditorElement {
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let multi_cursor_modifier = match multi_cursor_setting {
+        let hovered_link_modifier = match multi_cursor_setting {
             MultiCursorModifier::Alt => event.modifiers().secondary(),
             MultiCursorModifier::CmdOrCtrl => event.modifiers().alt,
         };
 
-        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
+        if !pending_nonempty_selections && hovered_link_modifier && text_hitbox.is_hovered(window) {
             let point = position_map.point_for_position(event.up.position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
 
