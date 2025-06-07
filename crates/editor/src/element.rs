@@ -7192,6 +7192,7 @@ impl LineWithInvisibles {
 
             (
                 [token_offset, token_end_offset],
+                token_offset > 2,
                 Box::new(move |window: &mut Window, cx: &mut App| {
                     invisible_symbol
                         .paint(origin, line_height, window, cx)
@@ -7203,8 +7204,11 @@ impl LineWithInvisibles {
         let invisible_iter = self.invisibles.iter().map(extract_whitespace_info);
         match whitespace_setting {
             ShowWhitespaceSetting::None => (),
-            ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, paint)| paint(window, cx)),
-            ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], paint)| {
+            ShowWhitespaceSetting::All => invisible_iter.for_each(|(_, _, paint)| paint(window, cx)),
+            ShowWhitespaceSetting::Trailing => invisible_iter
+                .filter(|(_, is_trailing, _)| *is_trailing)
+                .for_each(|(_, _, paint)| paint(window, cx)),
+            ShowWhitespaceSetting::Selection => invisible_iter.for_each(|([start, _], _, paint)| {
                 let invisible_point = DisplayPoint::new(row, start as u32);
                 if !selection_ranges
                     .iter()
@@ -7225,7 +7229,7 @@ impl LineWithInvisibles {
                 // the above cases.
                 // Note: We zip in the original `invisibles` to check for tab equality
                 let mut last_seen: Option<(bool, usize, Box<dyn Fn(&mut Window, &mut App)>)> = None;
-                for (([start, end], paint), invisible) in
+                for (([start, end], _, paint), invisible) in
                     invisible_iter.zip_eq(self.invisibles.iter())
                 {
                     let should_render = match (&last_seen, invisible) {
@@ -7257,8 +7261,34 @@ impl LineWithInvisibles {
 
                     last_seen = Some((should_render, end, paint));
                 }
+            },
+        }
+    }
+
+    // Makes the assumption that the index is a whitespace character
+    fn index_is_trailing(&self, index: usize) -> bool {
+        let mut fragment_start_index = 0;
+
+        for fragment in &self.fragments {
+            match fragment {
+                LineFragment::Text(shaped_line) => {
+                    let fragment_end_index = fragment_start_index + shaped_line.len;
+                    if index < fragment_end_index {
+                        return shaped_line.text.chars()
+                    }
+                    fragment_start_index = fragment_end_index;
+                }
+                LineFragment::Element { len, size, .. } => {
+                    let fragment_end_index = fragment_start_index + len;
+                    if index < fragment_end_index {
+                        
+                    }
+                    fragment_start_index = fragment_end_index;
+                }
             }
         }
+
+        fragment_start_x
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {
