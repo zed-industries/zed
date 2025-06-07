@@ -1081,6 +1081,7 @@ pub struct Grammar {
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
+    pub(crate) fold_config: Option<FoldConfig>,
 }
 
 struct IndentConfig {
@@ -1138,6 +1139,25 @@ impl TextObject {
 pub struct TextObjectConfig {
     pub query: Query,
     pub text_objects_by_capture_ix: Vec<(u32, TextObject)>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FoldType {
+    AroundComment,
+}
+
+impl FoldType {
+    pub fn from_capture_name(name: &str) -> Option<FoldType> {
+        match name {
+            "comment.around" => Some(FoldType::AroundComment),
+            _ => None,
+        }
+    }
+}
+
+pub struct FoldConfig {
+    pub query: Query,
+    pub fold_types_by_capture_ix: Vec<(u32, FoldType)>,
 }
 
 #[derive(Debug)]
@@ -1237,6 +1257,7 @@ impl Language {
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     ts_language,
                     highlight_map: Default::default(),
+                    fold_config: None,
                 })
             }),
             context_provider: None,
@@ -1304,6 +1325,11 @@ impl Language {
             self = self
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
+        }
+        if let Some(query) = queries.folds {
+            self = self
+                .with_fold_query(query.as_ref())
+                .context("Error loading fold query")?;
         }
         Ok(self)
     }
@@ -1645,6 +1671,24 @@ impl Language {
             });
         }
 
+        Ok(self)
+    }
+
+    pub fn with_fold_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let query = Query::new(&grammar.ts_language, source)?;
+
+        let mut fold_types_by_capture_ix = Vec::new();
+        for (ix, name) in query.capture_names().iter().enumerate() {
+            if let Some(fold_type) = FoldType::from_capture_name(name) {
+                fold_types_by_capture_ix.push((ix as u32, fold_type));
+            }
+        }
+
+        grammar.fold_config = Some(FoldConfig {
+            query,
+            fold_types_by_capture_ix,
+        });
         Ok(self)
     }
 

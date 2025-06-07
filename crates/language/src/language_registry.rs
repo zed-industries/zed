@@ -214,6 +214,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("runnables", |q| &mut q.runnables),
     ("debug_variables", |q| &mut q.debug_variables),
     ("textobjects", |q| &mut q.text_objects),
+    ("folds", |q| &mut q.folds),
 ];
 
 /// Tree-sitter language queries for a given language.
@@ -230,6 +231,7 @@ pub struct LanguageQueries {
     pub runnables: Option<Cow<'static, str>>,
     pub text_objects: Option<Cow<'static, str>>,
     pub debug_variables: Option<Cow<'static, str>>,
+    pub folds: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]
