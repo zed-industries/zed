@@ -42,6 +42,7 @@ walkdir.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(unix)'.dependencies]
+command-fds = "0.3.1"
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
