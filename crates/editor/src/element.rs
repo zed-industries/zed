@@ -912,7 +912,11 @@ impl EditorElement {
             MultiCursorModifier::CmdOrCtrl => event.modifiers().alt,
         };
 
-        if !pending_nonempty_selections && multi_cursor_modifier && text_hitbox.is_hovered(window) {
+        if !pending_nonempty_selections
+            && multi_cursor_modifier
+            && text_hitbox.is_hovered(window)
+            && !matches!(editor.drag_state, DragState::Dragging { .. })
+        {
             let point = position_map.point_for_position(event.up.position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
 
