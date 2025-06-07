@@ -10,7 +10,7 @@ We’re working hard to expand the models supported by Zed’s subscription offe
 | Claude 3.7 Sonnet | Anthropic | ✅        | 200k           | N/A              | $0.05             |
 | Claude Sonnet 4   | Anthropic | ❌        | 120k           | $0.04            | N/A               |
 | Claude Sonnet 4   | Anthropic | ✅        | 200k           | N/A              | $0.05             |
-| Claude Opus 4     | Anthropic | ❌        | 120k           | $0.20              | N/A             |
+| Claude Opus 4     | Anthropic | ❌        | 120k           | $0.20            | N/A               |
 | Claude Opus 4     | Anthropic | ✅        | 200k           | N/A              | $0.25             |
 
 ## Usage {#usage}
