@@ -1,4 +1,7 @@
-use std::cmp;
+use globset::{Glob, GlobSet, GlobSetBuilder};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -6,12 +9,6 @@ use std::{
     path::{Path, PathBuf},
     sync::LazyLock,
 };
-
-use globset::{Glob, GlobSet, GlobSetBuilder};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
-
-use crate::NumericPrefixWithSuffix;
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
@@ -447,17 +444,137 @@ impl PathMatcher {
     }
 }
 
+/// Custom character comparison that prioritizes lowercase for same letters
+fn compare_chars(a: char, b: char) -> Ordering {
+    // First compare case-insensitive
+    match a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()) {
+        Ordering::Equal => {
+            // If same letter, prioritize lowercase (lowercase < uppercase)
+            match (a.is_ascii_lowercase(), b.is_ascii_lowercase()) {
+                (true, false) => Ordering::Less,    // lowercase comes first
+                (false, true) => Ordering::Greater, // uppercase comes after
+                _ => Ordering::Equal,               // both same case or both non-ascii
+            }
+        }
+        other => other,
+    }
+}
+
+/// Parse a consecutive sequence of ASCII digits from a peekable character iterator.
+///
+/// This function reads ASCII digits (`'0'` through `'9'`) from the iterator until it
+/// encounters a non-digit character or reaches the end of the iterator. The digits
+/// are parsed into a `u64` number, and the function also tracks how many digits
+/// were consumed.
+///
+/// # Arguments
+/// * `iter` - A mutable reference to a peekable iterator over characters. The iterator
+///           will be advanced by the number of digits parsed.
+///
+/// # Returns
+/// A tuple `(number, digit_count)` where:
+/// * `number` - The parsed numeric value as a `u64`
+/// * `digit_count` - The number of consecutive digits that were consumed from the iterator
+///
+/// # Behavior
+/// * Only ASCII digits (`'0'` to `'9'`) are considered valid digits
+/// * Parsing stops at the first non-digit character
+/// * If no digits are found, returns `(0, 0)`
+/// * The iterator position is advanced past all consumed digits
+/// * If overflow would occur, the result saturates at `u64::MAX`
+fn parse_number<I>(iter: &mut std::iter::Peekable<I>) -> (u64, usize)
+where
+    I: Iterator<Item = char>,
+{
+    let mut number = 0u64;
+    let mut count = 0;
+
+    while let Some(&c) = iter.peek() {
+        if !c.is_ascii_digit() {
+            break;
+        }
+
+        let digit = c as u64 - '0' as u64;
+
+        // Use checked arithmetic to prevent overflow
+        match number.checked_mul(10).and_then(|n| n.checked_add(digit)) {
+            Some(new_number) => number = new_number,
+            None => {
+                // Overflow detected, saturate at u64::MAX
+                number = u64::MAX;
+                count += 1;
+                iter.next(); // consume the digit
+
+                // Continue consuming remaining digits but don't update number
+                while let Some(&c) = iter.peek() {
+                    if !c.is_ascii_digit() {
+                        break;
+                    }
+
+                    count += 1;
+                    iter.next();
+                }
+
+                break;
+            }
+        }
+
+        count += 1;
+        iter.next(); // consume the digit
+    }
+
+    (number, count)
+}
+
+fn natural_sort(a: &str, b: &str) -> Ordering {
+    let mut a_iter = a.chars().peekable();
+    let mut b_iter = b.chars().peekable();
+
+    loop {
+        match (a_iter.peek(), b_iter.peek()) {
+            (None, None) => return Ordering::Equal,
+            (None, _) => return Ordering::Less,
+            (_, None) => return Ordering::Greater,
+            (Some(&a_char), Some(&b_char)) => {
+                if a_char.is_ascii_digit() && b_char.is_ascii_digit() {
+                    let (a_num, a_digits) = parse_number(&mut a_iter);
+                    let (b_num, b_digits) = parse_number(&mut b_iter);
+
+                    match a_num.cmp(&b_num) {
+                        Ordering::Equal => match a_digits.cmp(&b_digits) {
+                            Ordering::Equal => continue,
+                            ordering => return ordering,
+                        },
+                        ordering => return ordering,
+                    }
+                } else {
+                    match compare_chars(a_char, b_char) {
+                        Ordering::Equal => {
+                            a_iter.next();
+                            b_iter.next();
+                        }
+
+                        ordering => return ordering,
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub fn compare_paths(
     (path_a, a_is_file): (&Path, bool),
     (path_b, b_is_file): (&Path, bool),
-) -> cmp::Ordering {
+) -> Ordering {
     let mut components_a = path_a.components().peekable();
     let mut components_b = path_b.components().peekable();
+
     loop {
         match (components_a.next(), components_b.next()) {
             (Some(component_a), Some(component_b)) => {
                 let a_is_file = components_a.peek().is_none() && a_is_file;
                 let b_is_file = components_b.peek().is_none() && b_is_file;
+
                 let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
                     let path_a = Path::new(component_a.as_os_str());
                     let path_string_a = if a_is_file {
@@ -466,9 +583,6 @@ pub fn compare_paths(
                         path_a.file_name()
                     }
                     .map(|s| s.to_string_lossy());
-                    let num_and_remainder_a = path_string_a
-                        .as_deref()
-                        .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
 
                     let path_b = Path::new(component_b.as_os_str());
                     let path_string_b = if b_is_file {
@@ -477,27 +591,32 @@ pub fn compare_paths(
                         path_b.file_name()
                     }
                     .map(|s| s.to_string_lossy());
-                    let num_and_remainder_b = path_string_b
-                        .as_deref()
-                        .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
 
-                    num_and_remainder_a.cmp(&num_and_remainder_b).then_with(|| {
+                    let compare_components = match (path_string_a, path_string_b) {
+                        (Some(a), Some(b)) => natural_sort(&a, &b),
+                        (Some(_), None) => Ordering::Greater,
+                        (None, Some(_)) => Ordering::Less,
+                        (None, None) => Ordering::Equal,
+                    };
+
+                    compare_components.then_with(|| {
                         if a_is_file && b_is_file {
                             let ext_a = path_a.extension().unwrap_or_default();
                             let ext_b = path_b.extension().unwrap_or_default();
                             ext_a.cmp(ext_b)
                         } else {
-                            cmp::Ordering::Equal
+                            Ordering::Equal
                         }
                     })
                 });
+
                 if !ordering.is_eq() {
                     return ordering;
                 }
             }
-            (Some(_), None) => break cmp::Ordering::Greater,
-            (None, Some(_)) => break cmp::Ordering::Less,
-            (None, None) => break cmp::Ordering::Equal,
+            (Some(_), None) => break Ordering::Greater,
+            (None, Some(_)) => break Ordering::Less,
+            (None, None) => break Ordering::Equal,
         }
     }
 }
