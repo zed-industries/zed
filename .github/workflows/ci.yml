@@ -683,7 +683,7 @@ jobs:
     timeout-minutes: 60
     name: Linux arm64 release bundle
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204-arm
+      - hosted-linux-arm-1
     if: |
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
