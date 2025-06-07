@@ -3138,7 +3138,7 @@ impl GitPanel {
                     )
                     .child(
                         div()
-                            .pr_2p5()
+                            .pr_6()
                             .on_action(|&editor::actions::MoveUp, _, cx| {
                                 cx.stop_propagation();
                             })
