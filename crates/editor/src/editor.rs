@@ -125,7 +125,7 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath,
+    BreakpointWithPosition, CompletionResponse, LspPullDiagnostics, ProjectPath, PulledDiagnostics,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -299,6 +299,7 @@ pub enum DebugStackFrameLine {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
+pub enum PendingInput {}
 enum SelectedTextHighlight {}
 
 pub enum ConflictsOuter {}
@@ -1698,10 +1699,7 @@ impl Editor {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.pull_diagnostics(window, cx);
-                        }
-                        project::Event::RefreshDocumentsDiagnostics => {
-                            editor.pull_diagnostics(window, cx);
+                            editor.pull_diagnostics(None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -1775,6 +1773,8 @@ impl Editor {
         cx.on_focus_out(&focus_handle, window, Self::handle_focus_out)
             .detach();
         cx.on_blur(&focus_handle, window, Self::handle_blur)
+            .detach();
+        cx.observe_pending_input(window, Self::observe_pending_input)
             .detach();
 
         let show_indent_guides = if matches!(mode, EditorMode::SingleLine { .. }) {
@@ -2102,7 +2102,7 @@ impl Editor {
 
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
-            editor.pull_diagnostics(window, cx);
+            editor.pull_diagnostics(None, window, cx);
         }
 
         editor.report_editor_event("Editor Opened", None, cx);
@@ -2261,6 +2261,8 @@ impl Editor {
             window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
         };
 
+        // TODO: if the binding contains multiple keystrokes, display all of them, not
+        // just the first one.
         AcceptEditPredictionBinding(bindings.into_iter().rev().find(|binding| {
             !in_conflict
                 || binding
@@ -5062,10 +5064,16 @@ impl Editor {
             return;
         }
 
+        let multibuffer_snapshot = self.buffer.read(cx).read(cx);
+
         // Typically `start` == `end`, but with snippet tabstop choices the default choice is
         // inserted and selected. To handle that case, the start of the selection is used so that
         // the menu starts with all choices.
-        let position = self.selections.newest_anchor().start;
+        let position = self
+            .selections
+            .newest_anchor()
+            .start
+            .bias_right(&multibuffer_snapshot);
         if position.diff_base_anchor.is_some() {
             return;
         }
@@ -5078,8 +5086,9 @@ impl Editor {
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let query: Option<Arc<String>> =
-            Self::completion_query(&self.buffer.read(cx).read(cx), position)
-                .map(|query| query.into());
+            Self::completion_query(&multibuffer_snapshot, position).map(|query| query.into());
+
+        drop(multibuffer_snapshot);
 
         let provider = match requested_source {
             Some(CompletionsMenuSource::Normal) | None => self.completion_provider.clone(),
@@ -15962,14 +15971,24 @@ impl Editor {
         });
     }
 
-    fn pull_diagnostics(&mut self, window: &Window, cx: &mut Context<Self>) -> Option<()> {
+    fn pull_diagnostics(
+        &mut self,
+        buffer_id: Option<BufferId>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
         let project = self.project.as_ref()?.downgrade();
-        let debounce = Duration::from_millis(
-            ProjectSettings::get_global(cx)
-                .diagnostics
-                .lsp_pull_diagnostics_debounce_ms?,
-        );
-        let buffers = self.buffer.read(cx).all_buffers();
+        let pull_diagnostics_settings = ProjectSettings::get_global(cx)
+            .diagnostics
+            .lsp_pull_diagnostics;
+        if !pull_diagnostics_settings.enabled {
+            return None;
+        }
+        let debounce = Duration::from_millis(pull_diagnostics_settings.debounce_ms);
+        let mut buffers = self.buffer.read(cx).all_buffers();
+        if let Some(buffer_id) = buffer_id {
+            buffers.retain(|buffer| buffer.read(cx).remote_id() == buffer_id);
+        }
 
         self.pull_diagnostics_task = cx.spawn_in(window, async move |editor, cx| {
             cx.background_executor().timer(debounce).await;
@@ -18730,24 +18749,23 @@ impl Editor {
                     self.update_visible_inline_completion(window, cx);
                 }
                 if let Some(project) = self.project.as_ref() {
-                    project.update(cx, |project, cx| {
-                        // Diagnostics are not local: an edit within one file (`pub mod foo()` -> `pub mod bar()`), may cause errors in another files with `foo()`.
-                        // Hence, emit a project-wide event to pull for every buffer's diagnostics that has an open editor.
-                        if edited_buffer
-                            .as_ref()
-                            .is_some_and(|buffer| buffer.read(cx).file().is_some())
-                        {
-                            cx.emit(project::Event::RefreshDocumentsDiagnostics);
-                        }
-
-                        if let Some(buffer) = edited_buffer {
+                    if let Some(edited_buffer) = edited_buffer {
+                        project.update(cx, |project, cx| {
                             self.registered_buffers
-                                .entry(buffer.read(cx).remote_id())
+                                .entry(edited_buffer.read(cx).remote_id())
                                 .or_insert_with(|| {
-                                    project.register_buffer_with_language_servers(&buffer, cx)
+                                    project
+                                        .register_buffer_with_language_servers(&edited_buffer, cx)
                                 });
+                        });
+                        if edited_buffer.read(cx).file().is_some() {
+                            self.pull_diagnostics(
+                                Some(edited_buffer.read(cx).remote_id()),
+                                window,
+                                cx,
+                            );
                         }
-                    });
+                    }
                 }
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
@@ -19544,6 +19562,90 @@ impl Editor {
         self.discard_inline_completion(false, cx);
         cx.emit(EditorEvent::Blurred);
         cx.notify();
+    }
+
+    pub fn observe_pending_input(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut pending: String = window
+            .pending_input_keystrokes()
+            .into_iter()
+            .flatten()
+            .filter_map(|keystroke| {
+                if keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
+                    Some(keystroke.key_char.clone().unwrap_or(keystroke.key.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !self.input_enabled || self.read_only || !self.focus_handle.is_focused(window) {
+            pending = "".to_string();
+        }
+
+        let existing_pending = self
+            .text_highlights::<PendingInput>(cx)
+            .map(|(_, ranges)| ranges.iter().cloned().collect::<Vec<_>>());
+        if existing_pending.is_none() && pending.is_empty() {
+            return;
+        }
+        let transaction =
+            self.transact(window, cx, |this, window, cx| {
+                let selections = this.selections.all::<usize>(cx);
+                let edits = selections
+                    .iter()
+                    .map(|selection| (selection.end..selection.end, pending.clone()));
+                this.edit(edits, cx);
+                this.change_selections(None, window, cx, |s| {
+                    s.select_ranges(selections.into_iter().enumerate().map(|(ix, sel)| {
+                        sel.start + ix * pending.len()..sel.end + ix * pending.len()
+                    }));
+                });
+                if let Some(existing_ranges) = existing_pending {
+                    let edits = existing_ranges.iter().map(|range| (range.clone(), ""));
+                    this.edit(edits, cx);
+                }
+            });
+
+        let snapshot = self.snapshot(window, cx);
+        let ranges = self
+            .selections
+            .all::<usize>(cx)
+            .into_iter()
+            .map(|selection| {
+                snapshot.buffer_snapshot.anchor_after(selection.end)
+                    ..snapshot
+                        .buffer_snapshot
+                        .anchor_before(selection.end + pending.len())
+            })
+            .collect();
+
+        if pending.is_empty() {
+            self.clear_highlights::<PendingInput>(cx);
+        } else {
+            self.highlight_text::<PendingInput>(
+                ranges,
+                HighlightStyle {
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.),
+                        color: None,
+                        wavy: false,
+                    }),
+                    ..Default::default()
+                },
+                cx,
+            );
+        }
+
+        self.ime_transaction = self.ime_transaction.or(transaction);
+        if let Some(transaction) = self.ime_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.group_until_transaction(transaction, cx);
+            });
+        }
+
+        if self.text_highlights::<PendingInput>(cx).is_none() {
+            self.ime_transaction.take();
+        }
     }
 
     pub fn register_action<A: Action>(
@@ -20988,7 +21090,7 @@ impl SemanticsProvider for Entity<Project> {
                         let LspPullDiagnostics::Response {
                             server_id,
                             uri,
-                            diagnostics: project::PulledDiagnostics::Changed { diagnostics, .. },
+                            diagnostics,
                         } = diagnostics_set
                         else {
                             continue;
@@ -20999,25 +21101,49 @@ impl SemanticsProvider for Entity<Project> {
                             .as_ref()
                             .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
                             .unwrap_or(&[]);
-                        lsp_store
-                            .merge_diagnostics(
-                                server_id,
-                                lsp::PublishDiagnosticsParams {
-                                    uri: uri.clone(),
-                                    diagnostics,
-                                    version: None,
-                                },
-                                DiagnosticSourceKind::Pulled,
-                                disk_based_sources,
-                                |old_diagnostic, _| match old_diagnostic.source_kind {
-                                    DiagnosticSourceKind::Pulled => false,
-                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
-                                        true
-                                    }
-                                },
-                                cx,
-                            )
-                            .log_err();
+                        match diagnostics {
+                            PulledDiagnostics::Unchanged { result_id } => {
+                                lsp_store
+                                    .merge_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: uri.clone(),
+                                            diagnostics: Vec::new(),
+                                            version: None,
+                                        },
+                                        Some(result_id),
+                                        DiagnosticSourceKind::Pulled,
+                                        disk_based_sources,
+                                        |_, _| true,
+                                        cx,
+                                    )
+                                    .log_err();
+                            }
+                            PulledDiagnostics::Changed {
+                                diagnostics,
+                                result_id,
+                            } => {
+                                lsp_store
+                                    .merge_diagnostics(
+                                        server_id,
+                                        lsp::PublishDiagnosticsParams {
+                                            uri: uri.clone(),
+                                            diagnostics,
+                                            version: None,
+                                        },
+                                        result_id,
+                                        DiagnosticSourceKind::Pulled,
+                                        disk_based_sources,
+                                        |old_diagnostic, _| match old_diagnostic.source_kind {
+                                            DiagnosticSourceKind::Pulled => false,
+                                            DiagnosticSourceKind::Other
+                                            | DiagnosticSourceKind::Pushed => true,
+                                        },
+                                        cx,
+                                    )
+                                    .log_err();
+                            }
+                        }
                     }
                 })
             })

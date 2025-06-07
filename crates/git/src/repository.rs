@@ -193,6 +193,44 @@ pub enum ResetMode {
     Mixed,
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub enum FetchOptions {
+    All,
+    Remote(Remote),
+}
+
+impl FetchOptions {
+    pub fn to_proto(&self) -> Option<String> {
+        match self {
+            FetchOptions::All => None,
+            FetchOptions::Remote(remote) => Some(remote.clone().name.into()),
+        }
+    }
+
+    pub fn from_proto(remote_name: Option<String>) -> Self {
+        match remote_name {
+            Some(name) => FetchOptions::Remote(Remote { name: name.into() }),
+            None => FetchOptions::All,
+        }
+    }
+
+    pub fn name(&self) -> SharedString {
+        match self {
+            Self::All => "Fetch all remotes".into(),
+            Self::Remote(remote) => remote.name.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for FetchOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FetchOptions::All => write!(f, "--all"),
+            FetchOptions::Remote(remote) => write!(f, "{}", remote.name),
+        }
+    }
+}
+
 /// Modifies .git/info/exclude temporarily
 pub struct GitExcludeOverride {
     git_exclude_path: PathBuf,
@@ -381,6 +419,7 @@ pub trait GitRepository: Send + Sync {
 
     fn fetch(
         &self,
+        fetch_options: FetchOptions,
         askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
@@ -1196,18 +1235,20 @@ impl GitRepository for RealGitRepository {
 
     fn fetch(
         &self,
+        fetch_options: FetchOptions,
         ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
         cx: AsyncApp,
     ) -> BoxFuture<Result<RemoteCommandOutput>> {
         let working_directory = self.working_directory();
+        let remote_name = format!("{}", fetch_options);
         let executor = cx.background_executor().clone();
         async move {
             let mut command = new_smol_command("git");
             command
                 .envs(env.iter())
                 .current_dir(&working_directory?)
-                .args(["fetch", "--all"])
+                .args(["fetch", &remote_name])
                 .stdout(smol::process::Stdio::piped())
                 .stderr(smol::process::Stdio::piped());
 

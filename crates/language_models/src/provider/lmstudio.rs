@@ -84,7 +84,9 @@ impl State {
                     lmstudio::Model::new(
                         &model.id,
                         None,
-                        None,
+                        model
+                            .loaded_context_length
+                            .or_else(|| model.max_context_length),
                         model.capabilities.supports_tool_calls(),
                     )
                 })

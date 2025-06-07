@@ -773,7 +773,6 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
-          "create_file": true,
           "delete_path": true,
           "diagnostics": true,
           "edit_file": true,
@@ -1036,9 +1035,14 @@
     "button": true,
     // Whether to show warnings or not by default.
     "include_warnings": true,
-    // Minimum time to wait before pulling diagnostics from the language server(s).
-    // 0 turns the debounce off, `null` disables the feature.
-    "lsp_pull_diagnostics_debounce_ms": 50,
+    // Settings for using LSP pull diagnostics mechanism in Zed.
+    "lsp_pull_diagnostics": {
+      // Whether to pull for diagnostics or not.
+      "enabled": true,
+      // Minimum time to wait before pulling diagnostics from the language server(s).
+      // 0 turns the debounce off.
+      "debounce_ms": 50
+    },
     // Settings for inline diagnostics
     "inline": {
       // Whether to show diagnostics inline or not
@@ -1540,12 +1544,6 @@
     "SCSS": {
       "prettier": {
         "allowed": true
-      }
-    },
-    "SQL": {
-      "prettier": {
-        "allowed": true,
-        "plugins": ["prettier-plugin-sql"]
       }
     },
     "Starlark": {

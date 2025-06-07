@@ -13940,6 +13940,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
                             },
                         ],
                     },
+                    None,
                     DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
@@ -21854,7 +21855,7 @@ fn assert_hunk_revert(
     assert_eq!(actual_hunk_statuses_before, expected_hunk_statuses_before);
 }
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -21912,7 +21913,8 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
     let mut first_request = fake_server
         .set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(move |params, _| {
-            counter.fetch_add(1, atomic::Ordering::Release);
+            let new_result_id = counter.fetch_add(1, atomic::Ordering::Release) + 1;
+            let result_id = Some(new_result_id.to_string());
             assert_eq!(
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/a/first.rs")).unwrap()
@@ -21923,13 +21925,29 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                         related_documents: None,
                         full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
                             items: Vec::new(),
-                            result_id: None,
+                            result_id,
                         },
                     }),
                 ))
             }
         });
 
+    let ensure_result_id = |expected: Option<String>, cx: &mut TestAppContext| {
+        project.update(cx, |project, cx| {
+            let buffer_id = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("created a singleton buffer")
+                .read(cx)
+                .remote_id();
+            let buffer_result_id = project.lsp_store().read(cx).result_id(buffer_id);
+            assert_eq!(expected, buffer_result_id);
+        });
+    };
+
+    ensure_result_id(None, cx);
     cx.executor().advance_clock(Duration::from_millis(60));
     cx.executor().run_until_parked();
     assert_eq!(
@@ -21941,6 +21959,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         .next()
         .await
         .expect("should have sent the first diagnostics pull request");
+    ensure_result_id(Some("1".to_string()), cx);
 
     // Editing should trigger diagnostics
     editor.update_in(cx, |editor, window, cx| {
@@ -21953,6 +21972,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         2,
         "Editing should trigger diagnostic request"
     );
+    ensure_result_id(Some("2".to_string()), cx);
 
     // Moving cursor should not trigger diagnostic request
     editor.update_in(cx, |editor, window, cx| {
@@ -21967,6 +21987,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         2,
         "Cursor movement should not trigger diagnostic request"
     );
+    ensure_result_id(Some("2".to_string()), cx);
 
     // Multiple rapid edits should be debounced
     for _ in 0..5 {
@@ -21980,7 +22001,57 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
     let final_requests = diagnostic_requests.load(atomic::Ordering::Acquire);
     assert!(
         final_requests <= 4,
-        "Multiple rapid edits should be debounced (got {} requests)",
-        final_requests
+        "Multiple rapid edits should be debounced (got {final_requests} requests)",
+    );
+    ensure_result_id(Some(final_requests.to_string()), cx);
+}
+
+#[gpui::test]
+async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppContext) {
+    // Regression test for issue #11671
+    // Previously, adding a cursor after moving multiple cursors would reset
+    // the cursor count instead of adding to the existing cursors.
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Create a simple buffer with cursor at start
+    cx.set_state(indoc! {"
+        ˇaaaa
+        bbbb
+        cccc
+        dddd
+        eeee
+        ffff
+        gggg
+        hhhh"});
+
+    // Add 2 cursors below (so we have 3 total)
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    // Verify we have 3 cursors
+    let initial_count = cx.update_editor(|editor, _, _| editor.selections.count());
+    assert_eq!(
+        initial_count, 3,
+        "Should have 3 cursors after adding 2 below"
+    );
+
+    // Move down one line
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+    });
+
+    // Add another cursor below
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    // Should now have 4 cursors (3 original + 1 new)
+    let final_count = cx.update_editor(|editor, _, _| editor.selections.count());
+    assert_eq!(
+        final_count, 4,
+        "Should have 4 cursors after moving and adding another"
     );
 }

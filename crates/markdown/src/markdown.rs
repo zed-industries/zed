@@ -576,9 +576,9 @@ impl MarkdownElement {
                 .is_some();
 
         if is_hovering_link {
-            window.set_cursor_style(CursorStyle::PointingHand, Some(hitbox));
+            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         } else {
-            window.set_cursor_style(CursorStyle::IBeam, Some(hitbox));
+            window.set_cursor_style(CursorStyle::IBeam, hitbox);
         }
 
         let on_open_url = self.on_url_click.take();
