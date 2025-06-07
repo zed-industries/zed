@@ -3279,6 +3279,28 @@ fn test_contiguous_ranges() {
     );
 }
 
+#[test]
+fn test_buffer_chunks_tabs() {
+    let buffer = text::Buffer::new(0, BufferId::new(1).unwrap(), "\ta\tbc");
+    let mut iter = buffer.as_rope().chunks();
+
+    while let Some((str, tabs)) = iter.peek_tabs() {
+        dbg!(str, format!("{:b}", tabs));
+        iter.next();
+    }
+    dbg!("---");
+
+    let buffer = text::Buffer::new(0, BufferId::new(1).unwrap(), "\ta\tbc");
+    let mut iter = buffer.as_rope().chunks();
+    iter.seek(3);
+
+    while let Some((str, tabs)) = iter.peek_tabs() {
+        dbg!(str, format!("{:b}", tabs));
+        iter.next();
+    }
+    assert!(false)
+}
+
 #[gpui::test(iterations = 500)]
 fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     // Generate a random multi-line string containing

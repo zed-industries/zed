@@ -278,6 +278,7 @@ impl EditorElement {
                 if text.is_empty() {
                     return;
                 }
+                dbg!("Handle input text:", text);
                 editor.handle_input(text, window, cx);
             },
         );

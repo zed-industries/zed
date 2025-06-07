@@ -13,7 +13,7 @@ pub struct Chunk {
     chars: u128,
     chars_utf16: u128,
     newlines: u128,
-    tabs: u128,
+    pub tabs: u128,
     pub text: ArrayString<MAX_BASE>,
 }
 
