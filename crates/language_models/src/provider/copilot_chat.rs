@@ -60,17 +60,6 @@ impl State {
     }
 }
 
-fn apply_settings_to_copilot_chat(cx: &mut App) {
-    if let Some(copilot_chat) = CopilotChat::global(cx) {
-        let settings = AllLanguageModelSettings::get_global(cx)
-            .copilot_chat
-            .clone();
-        copilot_chat.update(cx, |chat, cx| {
-            chat.set_settings(settings, cx);
-        });
-    }
-}
-
 impl CopilotChatLanguageModelProvider {
     pub fn new(cx: &mut App) -> Self {
         let state = cx.new(|cx| {
@@ -79,7 +68,14 @@ impl CopilotChatLanguageModelProvider {
             State {
                 _copilot_chat_subscription: copilot_chat_subscription,
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
-                    apply_settings_to_copilot_chat(cx);
+                    if let Some(copilot_chat) = CopilotChat::global(cx) {
+                        let settings = AllLanguageModelSettings::get_global(cx)
+                            .copilot_chat
+                            .clone();
+                        copilot_chat.update(cx, |chat, cx| {
+                            chat.set_settings(settings, cx);
+                        });
+                    }
                     cx.notify();
                 }),
             }
