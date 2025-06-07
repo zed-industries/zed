@@ -3,7 +3,7 @@ use crate::{
     ChunkRendererContext, ChunkReplacement, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
     ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
-    EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    DragState, EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
     HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
     LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MINIMAP_FONT_SIZE,
@@ -614,7 +614,7 @@ impl EditorElement {
         let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
         let point_for_position = position_map.point_for_position(event.position);
-        let display_point = &point_for_position.previous_valid;
+        let position = point_for_position.previous_valid;
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
 
@@ -628,7 +628,7 @@ impl EditorElement {
             return;
         }
 
-        if click_count == 1 && editor.is_intersect_drag_selection(*display_point, window, cx) {
+        if click_count == 1 && editor.is_intersect_drag_selection(position, window, cx) {
             return;
         }
 
@@ -675,8 +675,6 @@ impl EditorElement {
             }
         }
 
-        let point_for_position = position_map.point_for_position(event.position);
-        let position = point_for_position.previous_valid;
         if modifiers == COLUMNAR_SELECTION_MODIFIERS {
             editor.select(
                 SelectPhase::BeginColumnar {
@@ -824,11 +822,28 @@ impl EditorElement {
         let display_point = &point_for_position.previous_valid;
 
         if !end_selection {
-            if editor.is_intersect_drag_selection(*display_point, window, cx) {
-                if editor.dragging {
-                    editor.dragging = false;
-                } else {
-                    editor.reset_drag_selection();
+            match editor.drag_state {
+                DragState::Dragging { ref selection, .. } => {
+                    if !editor.is_intersect_drag_selection(*display_point, window, cx)
+                        && text_hitbox.is_hovered(window)
+                    {
+                        let is_cut = !event.modifiers.control;
+                        editor.drop_selection(
+                            *display_point,
+                            selection.clone(),
+                            is_cut,
+                            window,
+                            cx,
+                        );
+                    } else {
+                        editor.drag_state = DragState::ReadyToDrag {
+                            selection: selection.clone(),
+                        }
+                    }
+                    return;
+                }
+                DragState::ReadyToDrag { .. } => {
+                    editor.drag_state = DragState::None;
                     editor.select(
                         SelectPhase::Begin {
                             position: *display_point,
@@ -839,24 +854,19 @@ impl EditorElement {
                         cx,
                     );
                     editor.select(SelectPhase::End, window, cx);
+                    return;
                 }
-            } else {
-                if editor.dragging && text_hitbox.is_hovered(window) {
-                    let is_cut = !event.modifiers.control;
-                    editor.drop_selection(*display_point, is_cut, window, cx);
-                    cx.stop_propagation();
-                } else {
-                    editor.cancel_dragging();
-                }
+                _ => {}
             }
-            return;
         } else {
             editor.select(SelectPhase::End, window, cx);
         }
 
         if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
-            editor.drag_selection = Some(editor.selections.disjoint[0].clone());
+            editor.drag_state = DragState::ReadyToDrag {
+                selection: editor.selections.newest_anchor().clone(),
+            };
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
         {
@@ -917,7 +927,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !editor.has_pending_selection() && editor.drag_selection.is_none() {
+        if !editor.has_pending_selection() && matches!(editor.drag_state, DragState::None) {
             return;
         }
 
@@ -957,7 +967,7 @@ impl EditorElement {
 
         if !editor.has_pending_selection() {
             editor.update_drag_selection_head(
-                Some(point_for_position.previous_valid),
+                point_for_position.previous_valid,
                 scroll_delta,
                 window,
                 cx,
@@ -982,7 +992,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if editor.dragging {
+        if let DragState::Dragging { .. } = editor.drag_state {
             return;
         }
         let text_hitbox = &position_map.text_hitbox;
@@ -1488,44 +1498,46 @@ impl EditorElement {
                 }
             }
 
-            if let Some(head) = editor.drag_selection_head.as_ref() {
+            if let DragState::Dragging {
+                ref selection,
+                ref head,
+            } = editor.drag_state
+            {
                 let cursor_position = head;
                 let in_range = visible_display_row_range.contains(&cursor_position.row());
-                if let Some(selection_range) = editor.drag_selection.as_ref() {
-                    if in_range
-                        && (cursor_position < &selection_range.start.to_display_point(&snapshot)
-                            || cursor_position > &selection_range.end.to_display_point(&snapshot))
-                    {
-                        let cursor_row_layout = &line_layouts
-                            [cursor_position.row().minus(visible_display_row_range.start) as usize];
-                        let cursor_column = cursor_position.column() as usize;
+                if in_range
+                    && (cursor_position < &selection.start.to_display_point(&snapshot)
+                        || cursor_position > &selection.end.to_display_point(&snapshot))
+                {
+                    let cursor_row_layout = &line_layouts
+                        [cursor_position.row().minus(visible_display_row_range.start) as usize];
+                    let cursor_column = cursor_position.column() as usize;
 
-                        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                        let mut block_width =
-                            cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
-                        if block_width == Pixels::ZERO {
-                            block_width = em_advance;
-                        }
-
-                        let x = cursor_character_x - scroll_pixel_position.x;
-                        let y = (cursor_position.row().as_f32()
-                            - scroll_pixel_position.y / line_height)
-                            * line_height;
-
-                        let color = cx.theme().players().absent().cursor;
-                        let mut cursor = CursorLayout {
-                            color,
-                            block_width,
-                            origin: point(x, y),
-                            line_height,
-                            shape: CursorShape::Bar,
-                            block_text: None,
-                            cursor_name: None,
-                        };
-
-                        cursor.layout(content_origin, None, window, cx);
-                        cursors.push(cursor);
+                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+                    let mut block_width =
+                        cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
+                    if block_width == Pixels::ZERO {
+                        block_width = em_advance;
                     }
+
+                    let x = cursor_character_x - scroll_pixel_position.x;
+                    let y = (cursor_position.row().as_f32()
+                        - scroll_pixel_position.y / line_height)
+                        * line_height;
+
+                    let color = cx.theme().players().absent().cursor;
+                    let mut cursor = CursorLayout {
+                        color,
+                        block_width,
+                        origin: point(x, y),
+                        line_height,
+                        shape: CursorShape::Bar,
+                        block_text: None,
+                        cursor_name: None,
+                    };
+
+                    cursor.layout(content_origin, None, window, cx);
+                    cursors.push(cursor);
                 }
             }
 

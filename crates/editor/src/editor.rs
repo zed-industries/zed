@@ -864,6 +864,17 @@ struct InlineBlamePopover {
     popover_state: InlineBlamePopoverState,
 }
 
+enum DragState {
+    None,
+    ReadyToDrag {
+        selection: Selection<Anchor>,
+    },
+    Dragging {
+        selection: Selection<Anchor>,
+        head: DisplayPoint,
+    },
+}
+
 /// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
 /// a breakpoint on them.
 #[derive(Clone, Copy, Debug)]
@@ -1044,9 +1055,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
-    drag_selection: Option<Selection<Anchor>>,
-    drag_selection_head: Option<DisplayPoint>,
-    dragging: bool,
+    drag_state: DragState,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1906,9 +1915,7 @@ impl Editor {
                 .unwrap_or_default(),
             change_list: ChangeList::new(),
             mode,
-            drag_selection: None,
-            drag_selection_head: None,
-            dragging: false,
+            drag_state: DragState::None,
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -3372,26 +3379,25 @@ impl Editor {
 
     fn update_drag_selection_head(
         &mut self,
-        head: Option<DisplayPoint>,
+        display_point: DisplayPoint,
         scroll_delta: gpui::Point<f32>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.drag_selection_head = head;
-        self.dragging = true;
+        match self.drag_state {
+            DragState::Dragging { ref mut head, .. } => {
+                *head = display_point;
+            }
+            DragState::ReadyToDrag { ref selection } => {
+                self.drag_state = DragState::Dragging {
+                    selection: selection.clone(),
+                    head: display_point,
+                };
+            }
+            _ => {}
+        }
         self.apply_scroll_delta(scroll_delta, window, cx);
         cx.notify()
-    }
-
-    fn reset_drag_selection(&mut self) {
-        self.drag_selection = None;
-        self.drag_selection_head = None;
-        self.dragging = false;
-    }
-
-    fn cancel_dragging(&mut self) {
-        self.drag_selection_head = None;
-        self.dragging = false;
     }
 
     fn is_intersect_drag_selection(
@@ -3400,21 +3406,23 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> bool {
-        if let Some(selection) = self.drag_selection.as_ref() {
-            let snapshot = self.snapshot(window, cx);
-            let start = selection.start.to_display_point(&snapshot);
-            let end = selection.end.to_display_point(&snapshot);
-            point >= start && point <= end
-        } else {
-            false
-        }
+        let snapshot = self.snapshot(window, cx);
+        let selection = match self.drag_state {
+            DragState::Dragging { ref selection, .. } => selection.clone(),
+            DragState::ReadyToDrag { ref selection } => selection.clone(),
+            _ => return false,
+        };
+
+        let start = selection.start.to_display_point(&snapshot);
+        let end = selection.end.to_display_point(&snapshot);
+        point >= start && point <= end
     }
 
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.selection_mark_mode = false;
 
-        if self.dragging {
-            self.reset_drag_selection();
+        if let DragState::Dragging { .. } = self.drag_state {
+            self.drag_state = DragState::None;
             return;
         }
 
@@ -10054,6 +10062,7 @@ impl Editor {
     pub fn drop_selection(
         &mut self,
         point: DisplayPoint,
+        selection: Selection<Anchor>,
         is_cut: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -10061,30 +10070,28 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let mut edits = Vec::new();
-        if let Some(selection) = self.drag_selection.take() {
-            let insert_point = display_map
-                .clip_point(point, Bias::Left)
-                .to_point(&display_map);
-            let text = buffer
-                .text_for_range(selection.start..selection.end)
-                .collect::<String>();
-            if is_cut {
-                edits.push(((selection.start..selection.end), String::new()));
-            }
-            let insert_anchor = buffer.anchor_before(insert_point);
-            edits.push(((insert_anchor..insert_anchor), text));
-            let last_edit_start = insert_anchor.bias_left(buffer);
-            let last_edit_end = insert_anchor.bias_right(buffer);
-            self.transact(window, cx, |this, window, cx| {
-                this.buffer.update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
-                this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                    s.select_anchor_ranges([last_edit_start..last_edit_end]);
-                });
-            });
+        let insert_point = display_map
+            .clip_point(point, Bias::Left)
+            .to_point(&display_map);
+        let text = buffer
+            .text_for_range(selection.start..selection.end)
+            .collect::<String>();
+        if is_cut {
+            edits.push(((selection.start..selection.end), String::new()));
         }
-        self.reset_drag_selection();
+        let insert_anchor = buffer.anchor_before(insert_point);
+        edits.push(((insert_anchor..insert_anchor), text));
+        let last_edit_start = insert_anchor.bias_left(buffer);
+        let last_edit_end = insert_anchor.bias_right(buffer);
+        self.transact(window, cx, |this, window, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+            this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.select_anchor_ranges([last_edit_start..last_edit_end]);
+            });
+        });
+        self.drag_state = DragState::None;
     }
 
     pub fn duplicate(
