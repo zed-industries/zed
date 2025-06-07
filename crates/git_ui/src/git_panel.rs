@@ -27,7 +27,7 @@ use git::status::StageStatus;
 use git::{Amend, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
 use gpui::{
-    Action, Animation, AnimationExt as _, Axis, ClickEvent, Corner, DismissEvent, Entity,
+    Action, Animation, AnimationExt as _, AsyncApp, Axis, ClickEvent, Corner, DismissEvent, Entity,
     EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
     ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, Point,
     PromptLevel, ScrollStrategy, Subscription, Task, Transformation, UniformListScrollHandle,
@@ -67,7 +67,7 @@ use workspace::AppState;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
-    notifications::DetachAndPromptErr,
+    notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
 };
 use zed_llm_client::CompletionIntent;
 
@@ -1774,7 +1774,19 @@ impl GitPanel {
                     this.generate_commit_message_task.take();
                 });
 
-                let mut diff_text = diff.await??;
+                let mut diff_text = match diff.await {
+                    Ok(result) => match result {
+                        Ok(text) => text,
+                        Err(e) => {
+                            Self::show_commit_message_error(&this, &e, cx);
+                            return anyhow::Ok(());
+                        }
+                    },
+                    Err(e) => {
+                        Self::show_commit_message_error(&this, &e, cx);
+                        return anyhow::Ok(());
+                    }
+                };
 
                 const ONE_MB: usize = 1_000_000;
                 if diff_text.len() > ONE_MB {
@@ -1812,26 +1824,37 @@ impl GitPanel {
                 };
 
                 let stream = model.stream_completion_text(request, &cx);
-                let mut messages = stream.await?;
+                match stream.await {
+                    Ok(mut messages) => {
+                        if !text_empty {
+                            this.update(cx, |this, cx| {
+                                this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                    let insert_position = buffer.anchor_before(buffer.len());
+                                    buffer.edit([(insert_position..insert_position, "\n")], None, cx)
+                                });
+                            })?;
+                        }
 
-                if !text_empty {
-                    this.update(cx, |this, cx| {
-                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                            let insert_position = buffer.anchor_before(buffer.len());
-                            buffer.edit([(insert_position..insert_position, "\n")], None, cx)
-                        });
-                    })?;
-                }
-
-                while let Some(message) = messages.stream.next().await {
-                    let text = message?;
-
-                    this.update(cx, |this, cx| {
-                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
-                            let insert_position = buffer.anchor_before(buffer.len());
-                            buffer.edit([(insert_position..insert_position, text)], None, cx);
-                        });
-                    })?;
+                        while let Some(message) = messages.stream.next().await {
+                            match message {
+                                Ok(text) => {
+                                    this.update(cx, |this, cx| {
+                                        this.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                                            let insert_position = buffer.anchor_before(buffer.len());
+                                            buffer.edit([(insert_position..insert_position, text)], None, cx);
+                                        });
+                                    })?;
+                                }
+                                Err(e) => {
+                                    Self::show_commit_message_error(&this, &e, cx);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        Self::show_commit_message_error(&this, &e, cx);
+                    }
                 }
 
                 anyhow::Ok(())
@@ -2685,6 +2708,26 @@ impl GitPanel {
                         })
                 });
                 workspace.toggle_status_toast(toast, cx)
+            });
+        }
+    }
+
+    fn show_commit_message_error<E>(weak_this: &WeakEntity<Self>, err: &E, cx: &mut AsyncApp)
+    where
+        E: std::fmt::Debug + std::fmt::Display,
+    {
+        if let Ok(Some(workspace)) = weak_this.update(cx, |this, _cx| this.workspace.upgrade()) {
+            let _ = workspace.update(cx, |workspace, cx| {
+                struct CommitMessageError;
+                let notification_id = NotificationId::unique::<CommitMessageError>();
+                workspace.show_notification(notification_id, cx, |cx| {
+                    cx.new(|cx| {
+                        ErrorMessagePrompt::new(
+                            format!("Failed to generate commit message: {err}"),
+                            cx,
+                        )
+                    })
+                });
             });
         }
     }
