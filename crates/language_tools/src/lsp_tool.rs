@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use client::proto;
+use client::{proto, zed_urls};
 use collections::{HashMap, HashSet};
 use editor::{
     Editor, EditorEvent,
@@ -16,7 +16,9 @@ use language::BufferId;
 use lsp::{LanguageServerId, LanguageServerName};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, WorktreeId};
-use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
+use ui::{
+    ButtonLike, Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*,
+};
 use util::debug_panic;
 use workspace::{StatusItemView, Workspace};
 
@@ -486,6 +488,21 @@ impl PickerDelegate for LspPickerDelegate {
         div().child(div().track_focus(&editor.focus_handle(cx)))
     }
 
+    fn render_header(
+        &self,
+        _window: &mut Window,
+        _: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let header = ButtonLike::new("lsp-tool-header")
+            .child(
+                Label::new("Active language servers")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+            .on_click(|_, _, cx| cx.open_url(&zed_urls::language_docs_url(cx)));
+        Some(header.into_any_element())
+    }
+
     fn render_footer(
         &self,
         window: &mut Window,
@@ -776,8 +793,7 @@ impl StatusItemView for LspTool {
 
 impl Render for LspTool {
     // TODO kb add scrollbar + max width and height
-    // TODO kb keyboard story
-    // TODO kb add a link to LSP docs (footer?)
+    // TODO kb keyboard story: toggling the button; navigation inside it; showing keybindings (need new actions?) for each button
     // TODO kb when a server restarts/stops, it disappears from the list
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let delegate = &self.lsp_picker.read(cx).delegate;
