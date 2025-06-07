@@ -46,6 +46,7 @@ actions!(
         TrashUntrackedFiles,
         Uncommit,
         Push,
+        PushTo,
         ForcePush,
         Pull,
         Fetch,

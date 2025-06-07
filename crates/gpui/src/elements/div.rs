@@ -1744,11 +1744,11 @@ impl Interactivity {
 
                                         if let Some(drag) = cx.active_drag.as_ref() {
                                             if let Some(mouse_cursor) = drag.cursor_style {
-                                                window.set_cursor_style(mouse_cursor, None);
+                                                window.set_window_cursor_style(mouse_cursor);
                                             }
                                         } else {
                                             if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, Some(hitbox));
+                                                window.set_cursor_style(mouse_cursor, hitbox);
                                             }
                                         }
 

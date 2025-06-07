@@ -839,7 +839,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
-    fn replace_and_mark_text_in_range(
+    pub fn replace_and_mark_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
