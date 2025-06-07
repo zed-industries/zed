@@ -7,11 +7,16 @@ use std::borrow::Cow;
 #[cfg(unix)]
 pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
     use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
 
     let shell_path = std::env::var("SHELL").map(std::path::PathBuf::from)?;
     let shell_name = shell_path.file_name().and_then(std::ffi::OsStr::to_str);
 
     let mut command = std::process::Command::new(&shell_path);
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
     let mut command_string = String::new();
 
     // What we're doing here is to spawn a shell and then `cd` into
@@ -29,14 +34,8 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
 
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
     // so file descriptor 0 is used instead.
-    command_string.push_str("sh -c 'export -p' >&0;");
-    unsafe {
-        command.pre_exec(|| {
-            libc::dup2(1, 0);
-            libc::dup2(2, 1);
-            Ok(())
-        });
-    }
+    const ENV_OUTPUT_FD: std::os::fd::RawFd = 0;
+    command_string.push_str(&format!("sh -c 'export -p' >&{ENV_OUTPUT_FD};"));
 
     // For csh/tcsh, the login shell option is set by passing `-` as
     // the 0th argument instead of using `-l`.
@@ -48,21 +47,48 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
 
     command.args(["-i", "-c", &command_string]);
 
-    let output = super::set_pre_exec_to_start_new_session(&mut command).output()?;
+    super::set_pre_exec_to_start_new_session(&mut command);
+
+    let (env_output, process_output) = spawn_and_read_fd(command, ENV_OUTPUT_FD)?;
+    let env_output = String::from_utf8_lossy(&env_output);
+
     anyhow::ensure!(
-        output.status.success(),
-        "login shell exited with {}: {:?}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr),
+        process_output.status.success(),
+        "login shell exited with {}. stdout: {:?}, stderr: {:?}",
+        process_output.status,
+        String::from_utf8_lossy(&process_output.stdout),
+        String::from_utf8_lossy(&process_output.stderr),
     );
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse(&stdout)
+    parse(&env_output)
         .filter_map(|entry| match entry {
             Ok((name, value)) => Some(Ok((name.into(), value?.into()))),
             Err(err) => Some(Err(err)),
         })
         .collect::<Result<_>>()
+}
+
+fn spawn_and_read_fd(
+    mut command: std::process::Command,
+    child_fd: std::os::fd::RawFd,
+) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
+    use command_fds::{CommandFdExt, FdMapping};
+    use std::io::Read;
+
+    let (mut reader, writer) = std::io::pipe()?;
+
+    command.fd_mappings(vec![FdMapping {
+        parent_fd: writer.into(),
+        child_fd,
+    }])?;
+
+    let process = command.spawn()?;
+    drop(command);
+
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer)?;
+
+    Ok((buffer, process.wait_with_output()?))
 }
 
 /// Parse the result of calling `sh -c 'export -p'`.
@@ -149,6 +175,16 @@ fn parse_literal_double_quoted(input: &str) -> Option<(String, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_spawn_and_read_fd() -> anyhow::Result<()> {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-lic", "printf 'abc%.0s' {1..65536} >&0"]);
+        let (bytes, _) = spawn_and_read_fd(command, 0)?;
+        assert_eq!(bytes.len(), 65536 * 3);
+        Ok(())
+    }
 
     #[test]
     fn test_parse() {
