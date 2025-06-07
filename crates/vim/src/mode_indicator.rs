@@ -1,8 +1,9 @@
 use gpui::{Context, Element, Entity, Render, Subscription, WeakEntity, Window, div};
+use settings::Settings;
 use ui::text_for_keystrokes;
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
 
-use crate::{Vim, VimEvent, VimGlobals};
+use crate::{Vim, VimEvent, VimGlobals, VimSettings};
 
 /// The ModeIndicator displays the current mode in the status bar.
 pub struct ModeIndicator {
@@ -96,14 +97,25 @@ impl Render for ModeIndicator {
             return div().into_any();
         };
 
+        let mut container = h_flex().gap_2();
+
         let vim_readable = vim.read(cx);
-        let label = if let Some(label) = vim_readable.status_label.clone() {
-            label
+        if let Some(label) = vim_readable.status_label.clone() {
+            container = container.child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .line_height_style(LineHeightStyle::UiLabel),
+            );
         } else {
-            let mode = if vim_readable.temp_mode {
+            let mode_label = if vim_readable.temp_mode {
                 format!("(insert) {}", vim_readable.mode)
             } else {
                 vim_readable.mode.to_string()
+            };
+            let mode_color = if VimSettings::get_global(cx).colored_mode {
+                vim_readable.mode.color()
+            } else {
+                Color::Default
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
@@ -111,13 +123,24 @@ impl Render for ModeIndicator {
                 .pending_keys
                 .as_ref()
                 .unwrap_or(&current_operators_description);
-            format!("{} -- {} --", pending, mode).into()
-        };
 
-        Label::new(label)
-            .size(LabelSize::Small)
-            .line_height_style(LineHeightStyle::UiLabel)
-            .into_any_element()
+            if !pending.is_empty() {
+                container = container.child(
+                    Label::new(pending)
+                        .size(LabelSize::Small)
+                        .line_height_style(LineHeightStyle::UiLabel),
+                );
+            }
+
+            container = container.child(
+                Label::new(mode_label)
+                    .size(LabelSize::Small)
+                    .line_height_style(LineHeightStyle::UiLabel)
+                    .color(mode_color),
+            );
+        }
+
+        container.into_any_element()
     }
 }
 

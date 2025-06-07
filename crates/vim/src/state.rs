@@ -28,8 +28,8 @@ use std::{fmt::Display, ops::Range, sync::Arc};
 use text::{Bias, ToPoint};
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, Context, Div, FluentBuilder, KeyBinding, ParentElement, SharedString, Styled,
-    StyledTypography, Window, h_flex, rems,
+    ActiveTheme, Color, Context, Div, FluentBuilder, KeyBinding, ParentElement, SharedString,
+    Styled, StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
 use workspace::searchable::Direction;
@@ -65,6 +65,18 @@ impl Mode {
         match self {
             Self::Visual | Self::VisualLine | Self::VisualBlock => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
+        }
+    }
+
+    pub fn color(&self) -> Color {
+        match self {
+            Mode::Normal => Color::Accent,
+            Mode::Insert => Color::Created,
+            Mode::Replace => Color::Deleted,
+            Mode::Visual => Color::Conflict,
+            Mode::VisualLine => Color::Conflict,
+            Mode::VisualBlock => Color::Conflict,
+            Mode::HelixNormal => Color::Accent,
         }
     }
 }
