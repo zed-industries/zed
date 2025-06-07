@@ -5236,6 +5236,7 @@ dependencies = [
  "telemetry",
  "theme",
  "ui",
+ "url",
  "util",
  "vim_mode_setting",
  "workspace",
