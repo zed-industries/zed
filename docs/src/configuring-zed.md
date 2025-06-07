@@ -412,6 +412,7 @@ Note: Dirty files (files with unsaved changes) will not be automatically closed 
 "centered_layout": {
   "left_padding": 0.2,
   "right_padding": 0.2,
+  "show_border": true,
 }
 ```
 
