@@ -1731,6 +1731,7 @@ struct VimSettings {
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
+    pub colored_mode: bool,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1743,6 +1744,7 @@ struct VimSettingsContent {
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
+    pub colored_mode: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1802,6 +1804,7 @@ impl Settings for VimSettings {
                 .highlight_on_yank_duration
                 .ok_or_else(Self::missing_default)?,
             cursor_shape: settings.cursor_shape.ok_or_else(Self::missing_default)?,
+            colored_mode: settings.colored_mode.ok_or_else(Self::missing_default)?,
         })
     }
 

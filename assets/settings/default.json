@@ -1681,7 +1681,9 @@
     // Specify the mode as the key and the shape as the value.
     // The mode can be one of the following: "normal", "replace", "insert", "visual".
     // The shape can be one of the following: "block", "bar", "underline", "hollow".
-    "cursor_shape": {}
+    "cursor_shape": {},
+    // Adds color to the mode in the status bar
+    "colored_mode": false
   },
   // The server to connect to. If the environment variable
   // ZED_SERVER_URL is set, it will override this setting.
