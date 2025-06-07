@@ -282,12 +282,42 @@ pub enum EditPredictionsMode {
     Eager,
 }
 
+/// Telemetry level for Copilot.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CopilotTelemetryLevel {
+    /// Send all telemetry data
+    #[default]
+    All,
+    /// Send only error telemetry
+    Error,
+    /// Send only crash telemetry
+    Crash,
+    /// Disable all telemetry
+    Off,
+}
+
+impl CopilotTelemetryLevel {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CopilotTelemetryLevel::All => "all",
+            CopilotTelemetryLevel::Error => "error",
+            CopilotTelemetryLevel::Crash => "crash",
+            CopilotTelemetryLevel::Off => "off",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
+    /// Enterprise URI for Copilot.
+    pub enterprise_uri: Option<String>,
+    /// Telemetry level for Copilot.
+    pub telemetry_level: CopilotTelemetryLevel,
 }
 
 /// The settings for all languages.
@@ -607,6 +637,16 @@ pub struct CopilotSettingsContent {
     /// Default: false
     #[serde(default)]
     pub proxy_no_verify: Option<bool>,
+    /// Enterprise URI for Copilot.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub enterprise_uri: Option<String>,
+    /// Telemetry level for Copilot.
+    ///
+    /// Default: "all"
+    #[serde(default)]
+    pub telemetry_level: Option<CopilotTelemetryLevel>,
 }
 
 /// The settings for enabling/disabling features.
@@ -1232,6 +1272,8 @@ impl settings::Settings for AllLanguageSettings {
             .map(|copilot| CopilotSettings {
                 proxy: copilot.proxy,
                 proxy_no_verify: copilot.proxy_no_verify,
+                enterprise_uri: copilot.enterprise_uri,
+                telemetry_level: copilot.telemetry_level.unwrap_or_default(),
             })
             .unwrap_or_default();
 
@@ -1285,6 +1327,22 @@ impl settings::Settings for AllLanguageSettings {
                 .and_then(|settings| settings.copilot.proxy_no_verify)
             {
                 copilot_settings.proxy_no_verify = Some(proxy_no_verify);
+            }
+
+            if let Some(enterprise_uri) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.copilot.enterprise_uri.clone())
+            {
+                copilot_settings.enterprise_uri = Some(enterprise_uri);
+            }
+
+            if let Some(telemetry_level) = user_settings
+                .edit_predictions
+                .as_ref()
+                .and_then(|settings| settings.copilot.telemetry_level.clone())
+            {
+                copilot_settings.telemetry_level = telemetry_level;
             }
 
             // A user's global settings override the default global settings and
