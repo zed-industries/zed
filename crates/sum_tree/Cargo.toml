@@ -20,5 +20,5 @@ workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
-env_logger.workspace = true
 rand.workspace = true
+zlog.workspace = true

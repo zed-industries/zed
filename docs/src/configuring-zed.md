@@ -38,22 +38,11 @@ Extensions that provide language servers may also provide default settings for t
 ```json
 {
   "active_pane_modifiers": {
-    "magnification": 1.0,
     "border_size": 0.0,
     "inactive_opacity": 1.0
   }
 }
 ```
-
-### Magnification
-
-- Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `magnification`
-- Default: `1.0`
-
-**Options**
-
-`float` values
 
 ### Border size
 
@@ -123,7 +112,7 @@ Non-negative `float` values
 
 **Options**
 
-You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
 On MacOS:
 
@@ -388,6 +377,20 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 **Options**
 
 `"standard"`, `"comfortable"` or `{ "custom": float }` (`1` is compact, `2` is loose)
+
+## Close on File Delete
+
+- Description: Whether to automatically close editor tabs when their corresponding files are deleted from disk.
+- Setting: `close_on_file_delete`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
+When enabled, this setting will automatically close tabs for files that have been deleted from the file system. This is particularly useful for workflows involving temporary or scratch files that are frequently created and deleted. When disabled (default), deleted files remain open with a strikethrough through their tab title.
+
+Note: Dirty files (files with unsaved changes) will not be automatically closed even when this setting is enabled, ensuring you don't lose unsaved work.
 
 ## Confirm Quit
 
@@ -831,6 +834,185 @@ List of `string` values
 
 `boolean` values
 
+## Minimap
+
+- Description: Settings related to the editor's minimap, which provides an overview of your document.
+- Setting: `minimap`
+- Default:
+
+```json
+{
+  "minimap": {
+    "show": "never",
+    "thumb": "always",
+    "thumb_border": "left_open",
+    "current_line_highlight": null
+  }
+}
+```
+
+### Show Mode
+
+- Description: When to show the minimap in the editor.
+- Setting: `show`
+- Default: `never`
+
+**Options**
+
+1. Always show the minimap:
+
+```json
+{
+  "show": "always"
+}
+```
+
+2. Show the minimap if the editor's scrollbars are visible:
+
+```json
+{
+  "show": "auto"
+}
+```
+
+3. Never show the minimap:
+
+```json
+{
+  "show": "never"
+}
+```
+
+### Thumb Display
+
+- Description: When to show the minimap thumb (the visible editor area) in the minimap.
+- Setting: `thumb`
+- Default: `always`
+
+**Options**
+
+1. Show the minimap thumb when hovering over the minimap:
+
+```json
+{
+  "thumb": "hover"
+}
+```
+
+2. Always show the minimap thumb:
+
+```json
+{
+  "thumb": "always"
+}
+```
+
+### Thumb Border
+
+- Description: How the minimap thumb border should look.
+- Setting: `thumb_border`
+- Default: `left_open`
+
+**Options**
+
+1. Display a border on all sides of the thumb:
+
+```json
+{
+  "thumb_border": "full"
+}
+```
+
+2. Display a border on all sides except the left side:
+
+```json
+{
+  "thumb_border": "left_open"
+}
+```
+
+3. Display a border on all sides except the right side:
+
+```json
+{
+  "thumb_border": "right_open"
+}
+```
+
+4. Display a border only on the left side:
+
+```json
+{
+  "thumb_border": "left_only"
+}
+```
+
+5. Display the thumb without any border:
+
+```json
+{
+  "thumb_border": "none"
+}
+```
+
+### Current Line Highlight
+
+- Description: How to highlight the current line in the minimap.
+- Setting: `current_line_highlight`
+- Default: `null`
+
+**Options**
+
+1. Inherit the editor's current line highlight setting:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": null
+  }
+}
+```
+
+2. Highlight the current line in the minimap:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "line"
+  }
+}
+```
+
+or
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "all"
+  }
+}
+```
+
+3. Do not highlight the current line in the minimap:
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "gutter"
+  }
+}
+```
+
+or
+
+```json
+{
+  "minimap": {
+    "current_line_highlight": "none"
+  }
+}
+```
+
 ## Editor Tab Bar
 
 - Description: Settings related to the editor's tab bar.
@@ -1024,6 +1206,16 @@ List of `string` values
 }
 ```
 
+### Show Inline Code Actions
+
+- Description: Whether to show code action button at start of buffer line.
+- Setting: `inline_code_actions`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
@@ -1035,7 +1227,8 @@ List of `string` values
   "breadcrumbs": true,
   "quick_actions": true,
   "selections_menu": true,
-  "agent_review": true
+  "agent_review": true,
+  "code_actions": false
 },
 ```
 
@@ -1171,7 +1364,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
+3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like Prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
 
 WARNING: `{buffer_path}` should not be used to direct your formatter to read from a filename. Your formatter should only read from standard input and should not read or write files directly.
 
@@ -1563,42 +1756,6 @@ Example:
 }
 ```
 
-### Hunk Style
-
-- Description: What styling we should use for the diff hunks.
-- Setting: `hunk_style`
-- Default:
-
-```json
-{
-  "git": {
-    "hunk_style": "staged_hollow"
-  }
-}
-```
-
-**Options**
-
-1. Show the staged hunks faded out and with a border:
-
-```json
-{
-  "git": {
-    "hunk_style": "staged_hollow"
-  }
-}
-```
-
-2. Show unstaged hunks faded out and with a border:
-
-```json
-{
-  "git": {
-    "hunk_style": "unstaged_hollow"
-  }
-}
-```
-
 **Options**
 
 1. Disable inline git blame:
@@ -1648,6 +1805,42 @@ Example:
       "enabled": true,
       "min_column": 80
     }
+  }
+}
+```
+
+### Hunk Style
+
+- Description: What styling we should use for the diff hunks.
+- Setting: `hunk_style`
+- Default:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+**Options**
+
+1. Show the staged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "staged_hollow"
+  }
+}
+```
+
+2. Show unstaged hunks faded out and with a border:
+
+```json
+{
+  "git": {
+    "hunk_style": "unstaged_hollow"
   }
 }
 ```
@@ -3094,13 +3287,10 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "dock": "right",
   "default_width": 640,
   "default_height": 320,
+  "default_view": "thread",
   "default_model": {
     "provider": "zed.dev",
-    "model": "claude-3-7-sonnet-latest"
-  },
-  "editor_model": {
-    "provider": "zed.dev",
-    "model": "claude-3-7-sonnet-latest"
+    "model": "claude-sonnet-4"
   },
   "single_file_review": true,
 }

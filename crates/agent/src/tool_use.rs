@@ -54,15 +54,19 @@ impl ToolUseState {
     /// Constructs a [`ToolUseState`] from the given list of [`SerializedMessage`]s.
     ///
     /// Accepts a function to filter the tools that should be used to populate the state.
+    ///
+    /// If `window` is `None` (e.g., when in headless mode or when running evals),
+    /// tool cards won't be deserialized
     pub fn from_serialized_messages(
         tools: Entity<ToolWorkingSet>,
         messages: &[SerializedMessage],
         project: Entity<Project>,
-        window: &mut Window,
+        window: Option<&mut Window>, // None in headless mode
         cx: &mut App,
     ) -> Self {
         let mut this = Self::new(tools);
         let mut tool_names_by_id = HashMap::default();
+        let mut window = window;
 
         for message in messages {
             match message.role {
@@ -107,12 +111,17 @@ impl ToolUseState {
                                 },
                             );
 
-                            if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
-                                if let Some(output) = tool_result.output.clone() {
-                                    if let Some(card) =
-                                        tool.deserialize_card(output, project.clone(), window, cx)
-                                    {
-                                        this.tool_result_cards.insert(tool_use_id, card);
+                            if let Some(window) = &mut window {
+                                if let Some(tool) = this.tools.read(cx).tool(tool_use, cx) {
+                                    if let Some(output) = tool_result.output.clone() {
+                                        if let Some(card) = tool.deserialize_card(
+                                            output,
+                                            project.clone(),
+                                            window,
+                                            cx,
+                                        ) {
+                                            this.tool_result_cards.insert(tool_use_id, card);
+                                        }
                                     }
                                 }
                             }
@@ -328,6 +337,12 @@ impl ToolUseState {
             )
             .into();
 
+        let may_perform_edits = self
+            .tools
+            .read(cx)
+            .tool(&tool_use.name, cx)
+            .is_some_and(|tool| tool.may_perform_edits());
+
         self.pending_tool_uses_by_id.insert(
             tool_use.id.clone(),
             PendingToolUse {
@@ -336,6 +351,7 @@ impl ToolUseState {
                 name: tool_use.name.clone(),
                 ui_text: ui_text.clone(),
                 input: tool_use.input,
+                may_perform_edits,
                 status,
             },
         );
@@ -416,16 +432,17 @@ impl ToolUseState {
 
                 let content = match tool_result {
                     ToolResultContent::Text(text) => {
-                        let truncated = truncate_lines_to_byte_limit(&text, tool_output_limit);
-
-                        LanguageModelToolResultContent::Text(
+                        let text = if text.len() < tool_output_limit {
+                            text
+                        } else {
+                            let truncated = truncate_lines_to_byte_limit(&text, tool_output_limit);
                             format!(
                                 "Tool result too long. The first {} bytes:\n\n{}",
                                 truncated.len(),
                                 truncated
                             )
-                            .into(),
-                        )
+                        };
+                        LanguageModelToolResultContent::Text(text.into())
                     }
                     ToolResultContent::Image(language_model_image) => {
                         if language_model_image.estimate_tokens() < tool_output_limit {
@@ -508,6 +525,7 @@ pub struct PendingToolUse {
     pub ui_text: Arc<str>,
     pub input: serde_json::Value,
     pub status: PendingToolUseStatus,
+    pub may_perform_edits: bool,
 }
 
 #[derive(Debug, Clone)]

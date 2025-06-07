@@ -2,23 +2,18 @@ use db::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use util::serde::default_true;
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TitleBarSettings {
-    #[serde(default)]
     pub show_branch_icon: bool,
-    #[serde(default = "default_true")]
-    pub show_branch_name: bool,
-    #[serde(default = "default_true")]
-    pub show_project_items: bool,
-    #[serde(default = "default_true")]
     pub show_onboarding_banner: bool,
-    #[serde(default = "default_true")]
     pub show_user_picture: bool,
+    pub show_branch_name: bool,
+    pub show_project_items: bool,
+    pub show_sign_in: bool,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TitleBarSettingsContent {
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
@@ -40,6 +35,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: true
     pub show_project_items: Option<bool>,
+    /// Whether to show the sign in button in the title bar.
+    ///
+    /// Default: true
+    pub show_sign_in: Option<bool>,
 }
 
 impl Settings for TitleBarSettings {

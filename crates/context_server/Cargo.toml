@@ -11,6 +11,9 @@ workspace = true
 [lib]
 path = "src/context_server.rs"
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

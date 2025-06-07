@@ -101,7 +101,10 @@ pub fn init(cx: &mut App) {
                         directories: true,
                         multiple: false,
                     },
-                    DirectoryLister::Local(workspace.app_state().fs.clone()),
+                    DirectoryLister::Local(
+                        workspace.project().clone(),
+                        workspace.app_state().fs.clone(),
+                    ),
                     window,
                     cx,
                 );
@@ -132,10 +135,13 @@ pub fn init(cx: &mut App) {
                         match install_task.await {
                             Ok(_) => {}
                             Err(err) => {
+                                log::error!("Failed to install dev extension: {:?}", err);
                                 workspace_handle
                                     .update(cx, |workspace, cx| {
                                         workspace.show_error(
-                                            &err.context("failed to install dev extension"),
+                                            // NOTE: using `anyhow::context` here ends up not printing
+                                            // the error
+                                            &format!("Failed to install dev extension: {}", err),
                                             cx,
                                         );
                                     })
@@ -444,9 +450,11 @@ impl ExtensionsPage {
 
         let extension_store = ExtensionStore::global(cx);
 
-        let dev_extensions = extension_store.update(cx, |store, _| {
-            store.dev_extensions().cloned().collect::<Vec<_>>()
-        });
+        let dev_extensions = extension_store
+            .read(cx)
+            .dev_extensions()
+            .cloned()
+            .collect::<Vec<_>>();
 
         let remote_extensions = extension_store.update(cx, |store, cx| {
             store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)
@@ -955,7 +963,7 @@ impl ExtensionsPage {
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .disabled(true)
@@ -980,7 +988,7 @@ impl ExtensionsPage {
                 }),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .on_click({
@@ -1049,7 +1057,7 @@ impl ExtensionsPage {
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
-                        SharedString::from(format!("configure-{}", extension.id.clone())),
+                        SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
                     )
                     .disabled(true)

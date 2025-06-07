@@ -1,7 +1,6 @@
 pub mod running;
 
-use std::{cell::OnceCell, sync::OnceLock};
-
+use crate::{StackTraceView, debugger_panel::DebugPanel, persistence::SerializedLayout};
 use dap::client::SessionId;
 use gpui::{
     App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
@@ -11,13 +10,12 @@ use project::debugger::session::Session;
 use project::worktree_store::WorktreeStore;
 use rpc::proto;
 use running::RunningState;
+use std::{cell::OnceCell, sync::OnceLock};
 use ui::{Indicator, prelude::*};
 use workspace::{
     CollaboratorId, FollowableItem, ViewId, Workspace,
     item::{self, Item},
 };
-
-use crate::{StackTraceView, debugger_panel::DebugPanel, persistence::SerializedLayout};
 
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
@@ -159,7 +157,11 @@ impl DebugSession {
             .gap_2()
             .when_some(icon, |this, indicator| this.child(indicator))
             .justify_between()
-            .child(Label::new(label).when(is_terminated, |this| this.strikethrough()))
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .when(is_terminated, |this| this.strikethrough()),
+            )
             .into_any_element()
     }
 }
@@ -194,7 +196,7 @@ impl FollowableItem for DebugSession {
         _state: &mut Option<proto::view::Variant>,
         _window: &mut Window,
         _cx: &mut App,
-    ) -> Option<gpui::Task<gpui::Result<Entity<Self>>>> {
+    ) -> Option<gpui::Task<anyhow::Result<Entity<Self>>>> {
         None
     }
 
@@ -216,7 +218,7 @@ impl FollowableItem for DebugSession {
         _message: proto::update_view::Variant,
         _window: &mut Window,
         _cx: &mut Context<Self>,
-    ) -> gpui::Task<gpui::Result<()>> {
+    ) -> gpui::Task<anyhow::Result<()>> {
         Task::ready(Ok(()))
     }
 

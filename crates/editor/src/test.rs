@@ -25,9 +25,7 @@ use util::test::{marked_text_offsets, marked_text_ranges};
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 pub fn test_font() -> Font {
@@ -47,6 +45,7 @@ pub fn test_font() -> Font {
 }
 
 // Returns a snapshot from text containing '|' character markers with the markers removed, and DisplayPoints for each one.
+#[track_caller]
 pub fn marked_display_snapshot(
     text: &str,
     cx: &mut gpui::App,
@@ -85,6 +84,7 @@ pub fn marked_display_snapshot(
     (snapshot, markers)
 }
 
+#[track_caller]
 pub fn select_ranges(
     editor: &mut Editor,
     marked_text: &str,

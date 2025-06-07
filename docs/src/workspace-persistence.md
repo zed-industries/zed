@@ -3,7 +3,7 @@
 Zed creates local SQLite databases to persist data relating to its workspace and your projects. These databases store, for instance, the tabs and panes you have open in a project, the scroll position of each open file, the list of all projects you've opened (for the recent projects modal picker), etc. You can find and explore these databases in the following locations:
 
 - macOS: `~/Library/Application Support/Zed`
-- Linux: `~/.local/share/Zed`
+- Linux and FreeBSD: `~/.local/share/zed` (or within `XDG_DATA_HOME` or `FLATPAK_XDG_DATA_HOME`)
 - Windows: `%LOCALAPPDATA%\Zed`
 
 The naming convention of these databases takes on the form of `0-<zed_channel>`:
