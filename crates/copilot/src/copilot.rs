@@ -346,8 +346,11 @@ impl Copilot {
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
         this.start_copilot(true, false, cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
-            .detach();
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.start_copilot(true, false, cx);
+            this.send_configuration_update(cx);
+        })
+        .detach();
         this
     }
 
@@ -428,6 +431,74 @@ impl Copilot {
         Some(env)
     }
 
+    fn build_configuration(&self, copilot_settings: &CopilotSettings) -> serde_json::Value {
+        let mut settings = serde_json::Map::new();
+
+        // HTTP proxy settings
+        if let Some(proxy_url) = &copilot_settings.proxy {
+            let mut http_settings = serde_json::Map::new();
+            http_settings.insert(
+                "proxy".to_string(),
+                serde_json::Value::String(proxy_url.clone()),
+            );
+
+            if let Some(proxy_no_verify) = copilot_settings.proxy_no_verify {
+                http_settings.insert(
+                    "proxyStrictSSL".to_string(),
+                    serde_json::Value::Bool(!proxy_no_verify),
+                );
+            } else {
+                http_settings.insert("proxyStrictSSL".to_string(), serde_json::Value::Bool(true));
+            }
+
+            settings.insert("http".to_string(), serde_json::Value::Object(http_settings));
+        }
+
+        // Telemetry settings
+        let mut telemetry_settings = serde_json::Map::new();
+        let telemetry_level = copilot_settings.telemetry_level.as_str();
+        telemetry_settings.insert(
+            "telemetryLevel".to_string(),
+            serde_json::Value::String(telemetry_level.to_string()),
+        );
+        settings.insert(
+            "telemetry".to_string(),
+            serde_json::Value::Object(telemetry_settings),
+        );
+
+        // GitHub Enterprise settings
+        if let Some(enterprise_uri) = &copilot_settings.enterprise_uri {
+            let mut github_enterprise_settings = serde_json::Map::new();
+            github_enterprise_settings.insert(
+                "uri".to_string(),
+                serde_json::Value::String(enterprise_uri.clone()),
+            );
+            settings.insert(
+                "github-enterprise".to_string(),
+                serde_json::Value::Object(github_enterprise_settings),
+            );
+        }
+
+        serde_json::Value::Object(settings)
+    }
+
+    fn send_configuration_update(&mut self, cx: &mut Context<Self>) {
+        let language_settings = all_language_settings(None, cx);
+        let copilot_settings = language_settings.edit_predictions.copilot.clone();
+        let configuration_settings = self.build_configuration(&copilot_settings);
+
+        let configuration = lsp::DidChangeConfigurationParams {
+            settings: configuration_settings,
+        };
+
+        if let Ok(server) = self.server.as_running() {
+            server
+                .lsp
+                .notify::<lsp::notification::DidChangeConfiguration>(&configuration)
+                .log_err();
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake(cx: &mut gpui::TestAppContext) -> (Entity<Self>, lsp::FakeLanguageServer) {
         use fs::FakeFs;
@@ -502,8 +573,17 @@ impl Copilot {
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
 
+            let copilot_settings = cx.update(|cx| {
+                all_language_settings(None, cx)
+                    .edit_predictions
+                    .copilot
+                    .clone()
+            })?;
+            let configuration_settings =
+                this.update(cx, |this, _| this.build_configuration(&copilot_settings))?;
+
             let configuration = lsp::DidChangeConfigurationParams {
-                settings: Default::default(),
+                settings: configuration_settings,
             };
 
             let editor_info = request::SetEditorInfoParams {
@@ -533,12 +613,6 @@ impl Copilot {
                 .await
                 .into_response()
                 .context("copilot: check status")?;
-
-            server
-                .request::<request::SetEditorInfo>(editor_info)
-                .await
-                .into_response()
-                .context("copilot: set editor info")?;
 
             anyhow::Ok((server, status))
         };
