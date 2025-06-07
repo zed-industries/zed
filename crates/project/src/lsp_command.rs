@@ -38,6 +38,7 @@ use text::{BufferId, LineEnding};
 use util::{ResultExt as _, debug_panic};
 
 pub use signature_help::SignatureHelp;
+pub use signature_help::SignatureHelpData;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {
     lsp::FormattingOptions {
