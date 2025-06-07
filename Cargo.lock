@@ -7405,6 +7405,7 @@ dependencies = [
  "anyhow",
  "gpui",
  "settings",
+ "workspace-hack",
 ]
 
 [[package]]

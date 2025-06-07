@@ -12,3 +12,4 @@ path = "src/helix_mode_setting.rs"
 anyhow.workspace = true
 gpui.workspace = true
 settings.workspace = true
+workspace-hack.workspace = true
