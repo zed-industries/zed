@@ -120,7 +120,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let hovered_link_modifier = !Editor::multi_cursor_modifier(&modifiers, cx);
+        let hovered_link_modifier = Editor::multi_cursor_modifier(false, &modifiers, cx);
         if !hovered_link_modifier || self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;

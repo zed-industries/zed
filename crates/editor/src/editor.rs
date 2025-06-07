@@ -7086,11 +7086,22 @@ impl Editor {
         )
     }
 
-    fn multi_cursor_modifier(modifiers: &Modifiers, cx: &mut Context<Self>) -> bool {
+    fn multi_cursor_modifier(
+        cursor_event: bool,
+        modifiers: &Modifiers,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        match multi_cursor_setting {
-            MultiCursorModifier::Alt => modifiers.alt,
-            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
+        if cursor_event {
+            match multi_cursor_setting {
+                MultiCursorModifier::Alt => modifiers.alt,
+                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
+            }
+        } else {
+            match multi_cursor_setting {
+                MultiCursorModifier::Alt => modifiers.secondary(),
+                MultiCursorModifier::CmdOrCtrl => modifiers.alt,
+            }
         }
     }
 
@@ -7105,7 +7116,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let multi_cursor_modifier = Self::multi_cursor_modifier(modifiers, cx);
+        let multi_cursor_modifier = Self::multi_cursor_modifier(true, modifiers, cx);
         if !Self::columnar_selection_modifiers(multi_cursor_modifier, modifiers)
             || self.selections.pending.is_none()
         {
