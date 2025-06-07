@@ -3224,11 +3224,74 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     let contents = fs.load(abs_path).await?;
     let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
+
     let mut builder = GitignoreBuilder::new(parent);
     for line in contents.lines() {
         builder.add_line(Some(abs_path.into()), line)?;
     }
-    Ok(builder.build()?)
+
+    builder.build()?;
+
+    let mut combined_builder = GitignoreBuilder::new(parent);
+
+    let home = home_dir();
+    let repo_root = abs_path.parent().unwrap_or_else(|| Path::new("/"));
+    let repo_git_path = repo_root.join(".git");
+    let repo_git_config_path = repo_git_path.join("config");
+    
+    let mut global_ignore_path = None;
+    if let Ok(config_output) = std::process::Command::new("git")
+        .args(["config", "--file", &repo_git_config_path.to_string_lossy(), "core.excludesFile"])
+        .output()
+    {
+        if config_output.status.success() {
+            let path_str = String::from_utf8_lossy(&config_output.stdout).trim().to_string();
+            if !path_str.is_empty() {
+                let path = PathBuf::from(path_str);
+                global_ignore_path = Some(path);
+            }
+        }
+    }
+    
+    if global_ignore_path.is_none() {
+        if let Ok(config_output) = std::process::Command::new("git")
+            .args(["config", "--global", "core.excludesFile"])
+            .output()
+        {
+            if config_output.status.success() {
+                let path_str = String::from_utf8_lossy(&config_output.stdout).trim().to_string();
+                if !path_str.is_empty() {
+                    let path = PathBuf::from(path_str);
+                    global_ignore_path = Some(path);
+                }
+            }
+        }
+    }
+    
+    if global_ignore_path.is_none() && !home.as_os_str().is_empty() {
+        global_ignore_path = Some(home.join(".config/git/ignore"));
+    }
+    
+    let repo_git_exclude_path = repo_git_path.join("info/exclude");
+    if let Ok(exclude_contents) = fs.load(&repo_git_exclude_path).await {
+        for line in exclude_contents.lines() {
+            let _ = combined_builder.add_line(Some(repo_git_exclude_path.clone()), line);
+        }
+    }
+    
+    if let Some(global_ignore_path) = global_ignore_path {
+        if let Ok(global_contents) = fs.load(&global_ignore_path).await {
+            for line in global_contents.lines() {
+                let _ = combined_builder.add_line(Some(global_ignore_path.clone()), line);
+            }
+        }
+    }
+
+    for line in contents.lines() {
+        combined_builder.add_line(Some(abs_path.into()), line)?;
+    }
+
+    Ok(combined_builder.build()?)
 }
 
 impl Deref for Worktree {
