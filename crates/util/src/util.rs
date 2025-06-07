@@ -341,6 +341,8 @@ pub fn set_pre_exec_to_start_new_session(
     unsafe {
         use std::os::unix::process::CommandExt;
         command.pre_exec(|| {
+            let pid = libc::getpid();
+            libc::setpgid(pid, pid);
             libc::setsid();
             Ok(())
         });

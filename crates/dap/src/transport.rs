@@ -22,7 +22,7 @@ use std::{
     time::Duration,
 };
 use task::TcpArgumentsTemplate;
-use util::{ConnectionResult, ResultExt as _};
+use util::ConnectionResult;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -102,7 +102,7 @@ impl Transport {
         }
     }
 
-    async fn kill(&self) -> Result<()> {
+    async fn kill(&self) {
         match self {
             Transport::Stdio(stdio_transport) => stdio_transport.kill().await,
             Transport::Tcp(tcp_transport) => tcp_transport.kill().await,
@@ -531,7 +531,7 @@ impl TransportDelegate {
         current_requests.clear();
         pending_requests.clear();
 
-        let _ = self.transport.kill().await.log_err();
+        self.transport.kill().await;
 
         drop(current_requests);
         drop(pending_requests);
@@ -673,10 +673,9 @@ impl TcpTransport {
         true
     }
 
-    async fn kill(&self) -> Result<()> {
-        self.process.lock().await.kill()?;
-
-        Ok(())
+    async fn kill(&self) {
+        let process = self.process.lock().await;
+        kill_child_process_group(&process);
     }
 }
 
@@ -745,9 +744,9 @@ impl StdioTransport {
         false
     }
 
-    async fn kill(&self) -> Result<()> {
-        self.process.lock().await.kill()?;
-        Ok(())
+    async fn kill(&self) {
+        let process = self.process.lock().await;
+        kill_child_process_group(&process);
     }
 }
 
@@ -921,7 +920,10 @@ impl FakeTransport {
         false
     }
 
-    async fn kill(&self) -> Result<()> {
-        Ok(())
-    }
+    async fn kill(&self) {}
+}
+
+fn kill_child_process_group(child: &Child) {
+    let pgid = -(child.id() as i32);
+    unsafe { libc::kill(pgid, libc::SIGKILL) };
 }
