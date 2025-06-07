@@ -3006,18 +3006,6 @@ impl From<u64> for DevicePixels {
     }
 }
 
-impl From<DevicePixels> for usize {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0 as usize
-    }
-}
-
-impl From<usize> for DevicePixels {
-    fn from(device_pixels: usize) -> Self {
-        physical_px(device_pixels as i32)
-    }
-}
-
 impl From<ScaledPixels> for f64 {
     fn from(scaled_pixels: ScaledPixels) -> Self {
         scaled_pixels.0 as f64
@@ -3070,22 +3058,6 @@ impl Mul<ScaledPixels> for f32 {
     type Output = ScaledPixels;
 
     fn mul(self, rhs: ScaledPixels) -> Self::Output {
-        rhs * self
-    }
-}
-
-impl Mul<usize> for ScaledPixels {
-    type Output = Self;
-
-    fn mul(self, rhs: usize) -> Self {
-        self * (rhs as f32)
-    }
-}
-
-impl Mul<ScaledPixels> for usize {
-    type Output = ScaledPixels;
-
-    fn mul(self, rhs: ScaledPixels) -> ScaledPixels {
         rhs * self
     }
 }
