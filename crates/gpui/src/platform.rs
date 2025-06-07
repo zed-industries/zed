@@ -215,6 +215,8 @@ pub(crate) trait Platform: 'static {
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
+    #[cfg(any(target_os = "macos"))]
+    fn new_window_for_tab(&self, callback: Box<dyn FnMut()>);
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -1129,6 +1131,7 @@ impl Default for WindowOptions {
                 title: Default::default(),
                 appears_transparent: Default::default(),
                 traffic_light_position: Default::default(),
+                use_native_tabs: Default::default(),
             }),
             focus: true,
             show: true,
@@ -1155,6 +1158,9 @@ pub struct TitlebarOptions {
 
     /// The position of the macOS traffic light buttons
     pub traffic_light_position: Option<Point<Pixels>>,
+
+    /// Whether native tabs should be enabled for macOS.
+    pub use_native_tabs: Option<bool>,
 }
 
 /// The kind of window to create
