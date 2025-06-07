@@ -459,10 +459,30 @@ enum Match {
 }
 
 impl Match {
-    fn path(&self) -> Option<&Arc<Path>> {
+    fn relative_path(&self) -> Option<&Arc<Path>> {
         match self {
             Match::History { path, .. } => Some(&path.project.path),
             Match::Search(panel_match) => Some(&panel_match.0.path),
+            Match::CreateNew(_) => None,
+        }
+    }
+
+    fn abs_path(&self, project: &Entity<Project>, cx: &App) -> Option<PathBuf> {
+        match self {
+            Match::History { path, .. } => path.absolute.clone().or_else(|| {
+                project
+                    .read(cx)
+                    .worktree_for_id(path.project.worktree_id, cx)?
+                    .read(cx)
+                    .absolutize(&path.project.path)
+                    .ok()
+            }),
+            Match::Search(ProjectPanelOrdMatch(path_match)) => project
+                .read(cx)
+                .worktree_for_id(WorktreeId::from_usize(path_match.worktree_id), cx)?
+                .read(cx)
+                .absolutize(&path_match.path)
+                .ok(),
             Match::CreateNew(_) => None,
         }
     }
@@ -501,7 +521,7 @@ impl Matches {
             // reason for the matches set to change.
             self.matches
                 .iter()
-                .position(|m| match m.path() {
+                .position(|m| match m.relative_path() {
                     Some(p) => path.project.path == *p,
                     None => false,
                 })
@@ -1570,7 +1590,8 @@ impl PickerDelegate for FileFinderDelegate {
             if !settings.file_icons {
                 return None;
             }
-            let file_name = path_match.path()?.file_name()?;
+            let abs_path = path_match.abs_path(&self.project, cx)?;
+            let file_name = abs_path.file_name()?;
             let icon = FileIcons::get_icon(file_name.as_ref(), cx)?;
             Some(Icon::from_path(icon).color(Color::Muted))
         });
