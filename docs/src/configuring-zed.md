@@ -23,7 +23,9 @@ The syntax for configuration files is a super-set of JSON that allows `//` comme
 
 ## Default settings
 
-You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette.
+You can find the default settings for your current Zed by running {#action zed::OpenDefaultSettings} from the command palette or viewing [default.json](https://github.com/zed-industries/zed/blob/main/assets/settings/default.json) in the Zed repo.
+
+In addition to user and project settings described above, if available, Zed will load system-level settings from /etc/zed/settings.json (or `%PROGRAMDATA%\Zed` on Windows).
 
 Extensions that provide language servers may also provide default settings for those language servers.
 
