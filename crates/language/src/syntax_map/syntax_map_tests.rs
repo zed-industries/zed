@@ -797,6 +797,54 @@ fn test_empty_combined_injections_inside_injections(cx: &mut App) {
     );
 }
 
+#[gpui::test]
+fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
+    let text = r#"
+        <body>
+            <% if @one %>
+                <div class=one>
+            <% else %>
+                <div class=two>
+            <% end %>
+            </div>
+        </body>
+    "#
+    .unindent();
+
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry.clone());
+
+    let language = Arc::new(erb_lang());
+
+    registry.add(language.clone());
+    syntax_map.reparse(language.clone(), &buffer);
+
+    registry.add(Arc::new(html_lang()));
+    syntax_map.reparse(language.clone(), &buffer);
+
+    registry.add(Arc::new(ruby_lang()));
+    syntax_map.reparse(language.clone(), &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["tag", "ivar"],
+        "
+            <«body»>
+                <% if «@one» %>
+                    <«div» class=one>
+                <% else %>
+                    <«div» class=two>
+                <% end %>
+                </«div»>
+            </«body»>
+        ",
+    );
+}
+
 #[gpui::test(iterations = 50)]
 fn test_random_syntax_map_edits_rust_macros(rng: StdRng, cx: &mut App) {
     let text = r#"

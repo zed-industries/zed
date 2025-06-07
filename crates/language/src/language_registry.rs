@@ -1000,6 +1000,7 @@ impl LanguageRegistry {
                     txs.push(tx);
                 }
                 AvailableGrammar::Unloaded(wasm_path) => {
+                    log::trace!("start loading grammar {name:?}");
                     let this = self.clone();
                     let wasm_path = wasm_path.clone();
                     *grammar = AvailableGrammar::Loading(wasm_path.clone(), vec![tx]);
@@ -1025,6 +1026,7 @@ impl LanguageRegistry {
                                 Err(error) => AvailableGrammar::LoadFailed(error.clone()),
                             };
 
+                            log::trace!("finish loading grammar {name:?}");
                             let old_value = this.state.write().grammars.insert(name, value);
                             if let Some(AvailableGrammar::Loading(_, txs)) = old_value {
                                 for tx in txs {
