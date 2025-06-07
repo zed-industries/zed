@@ -97,28 +97,30 @@ impl Render for AgentModelSelector {
         let model_name = model
             .map(|model| model.model.name().0)
             .unwrap_or_else(|| SharedString::from("No model selected"));
-        PickerPopoverMenu::new(
-            self.selector.clone(),
-            Button::new("active-model", model_name)
-                .label_size(LabelSize::Small)
-                .color(Color::Muted)
-                .icon(IconName::ChevronDown)
-                .icon_size(IconSize::XSmall)
-                .icon_position(IconPosition::End)
-                .icon_color(Color::Muted),
-            move |window, cx| {
-                Tooltip::for_action_in(
-                    "Change Model",
-                    &ToggleModelSelector,
-                    &focus_handle,
-                    window,
-                    cx,
-                )
-            },
-            gpui::Corner::BottomRight,
-            cx,
+        div().w_full().min_w_0().overflow_hidden().child(
+            PickerPopoverMenu::new(
+                self.selector.clone(),
+                Button::new("active-model", model_name)
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .icon(IconName::ChevronDown)
+                    .icon_size(IconSize::XSmall)
+                    .icon_position(IconPosition::End)
+                    .icon_color(Color::Muted),
+                move |window, cx| {
+                    Tooltip::for_action_in(
+                        "Change Model",
+                        &ToggleModelSelector,
+                        &focus_handle,
+                        window,
+                        cx,
+                    )
+                },
+                gpui::Corner::BottomRight,
+                cx,
+            )
+            .with_handle(self.menu_handle.clone())
+            .render(window, cx),
         )
-        .with_handle(self.menu_handle.clone())
-        .render(window, cx)
     }
 }
