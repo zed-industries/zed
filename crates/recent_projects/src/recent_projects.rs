@@ -50,6 +50,7 @@ pub fn init(cx: &mut App) {
     });
     cx.on_action(|open_remote: &OpenRemote, cx| {
         let from_existing_connection = open_remote.from_existing_connection;
+        let create_new_window = open_remote.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
             if from_existing_connection {
                 cx.propagate();
@@ -58,7 +59,7 @@ pub fn init(cx: &mut App) {
             let handle = cx.entity().downgrade();
             let fs = workspace.project().read(cx).fs().clone();
             workspace.toggle_modal(window, cx, |window, cx| {
-                RemoteServerProjects::new(fs, window, cx, handle)
+                RemoteServerProjects::new(create_new_window, fs, window, handle, cx)
             })
         });
     });
@@ -480,6 +481,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .key_binding(KeyBinding::for_action(
                             &OpenRemote {
                                 from_existing_connection: false,
+                                create_new_window: false,
                             },
                             window,
                             cx,
@@ -488,6 +490,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             window.dispatch_action(
                                 OpenRemote {
                                     from_existing_connection: false,
+                                    create_new_window: false,
                                 }
                                 .boxed_clone(),
                                 cx,
