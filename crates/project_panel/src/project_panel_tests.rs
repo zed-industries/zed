@@ -4849,6 +4849,87 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     );
 }
 
+/// Test the functionality of hiding the worktree root in the project panel.
+#[gpui::test]
+async fn test_hide_worktree_root(cx: &mut gpui::TestAppContext) {
+    // Initialize the test environment.
+    init_test(cx);
+
+    // Create a fake file system with a specific directory structure.
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "subdir1": {
+                    "nested1": {
+                        "file1.txt": "",
+                        "file2.txt": ""
+                    },
+                },
+                "subdir2": {
+                    "file4.txt": ""
+                }
+            },
+            "dir2": {
+                "single_file": {
+                    "file5.txt": ""
+                }
+            },
+            "file3.txt": ""
+        }),
+    )
+    .await;
+
+    // Create a project using the fake file system.
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    // Add a new window with the project panel.
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    // Create a visual test context from the window.
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    // Initialize the project panel.
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    // Update the global settings to hide the worktree root.
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    // Refresh the panel to apply the settings.
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel(&menu::Cancel, window, cx);
+    });
+
+    // Assert that the worktree root is not visible in the panel.
+    /*
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "> dir1",
+            "> dir2",
+            "  file3.txt"
+        ]
+    );
+    */
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "> dir1",
+            "> dir2/single_file",
+            "  file3.txt"
+        ]
+    );
+}
+
 #[gpui::test]
 async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
