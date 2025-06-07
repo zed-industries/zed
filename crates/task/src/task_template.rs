@@ -237,6 +237,30 @@ impl TaskTemplate {
             env
         };
 
+        // We filter out env variables here that aren't set so we don't have extra white space in args
+        let args = self
+            .args
+            .iter()
+            .filter(|arg| {
+                shellexpand::env_with_context(arg, |var| {
+                    let colon_position = var.find(':').unwrap_or(var.len());
+                    let (variable_name, default) = var.split_at(colon_position);
+
+                    if env
+                        .get(variable_name)
+                        .is_some_and(|arg| !arg.trim().is_empty())
+                        || !default.is_empty()
+                    {
+                        Ok(Some(""))
+                    } else {
+                        Err(anyhow::anyhow!("Empty argument should be filtered out"))
+                    }
+                })
+                .is_ok()
+            })
+            .cloned()
+            .collect();
+
         Some(ResolvedTask {
             id: id.clone(),
             substituted_variables,
@@ -256,7 +280,7 @@ impl TaskTemplate {
                     },
                 ),
                 command,
-                args: self.args.clone(),
+                args,
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
@@ -703,6 +727,7 @@ mod tests {
             label: "My task".into(),
             command: "echo".into(),
             args: vec!["$PATH".into()],
+            env: HashMap::from_iter([("PATH".to_owned(), "non-empty".to_owned())]),
             ..TaskTemplate::default()
         };
         let resolved_task = task
@@ -716,6 +741,32 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_env_variables_excluded_from_args() {
+        let task = TaskTemplate {
+            label: "My task".into(),
+            command: "echo".into(),
+            args: vec![
+                "$EMPTY_VAR".into(),
+                "hello".into(),
+                "$WHITESPACE_VAR".into(),
+                "$UNDEFINED_VAR".into(),
+                "$WORLD".into(),
+            ],
+            env: HashMap::from_iter([
+                ("EMPTY_VAR".to_owned(), "".to_owned()),
+                ("WHITESPACE_VAR".to_owned(), "   ".to_owned()),
+                ("WORLD".to_owned(), "non-empty".to_owned()),
+            ]),
+            ..TaskTemplate::default()
+        };
+        let resolved_task = task
+            .resolve_task(TEST_ID_BASE, &TaskContext::default())
+            .unwrap();
+        let resolved = resolved_task.resolved;
+        assert_eq!(resolved.args, vec!["hello", "$WORLD"]);
+    }
+
+    #[test]
     fn test_errors_on_missing_zed_variable() {
         let task = TaskTemplate {
             label: "My task".into(),
@@ -726,6 +777,85 @@ mod tests {
         assert!(
             task.resolve_task(TEST_ID_BASE, &TaskContext::default())
                 .is_none()
+        );
+    }
+
+    // The fish shell doesn't handle white space well so we want to filter out empty environment variables
+    // this test ensures that we maintain this behavior
+    #[test]
+    fn test_mixed_env_variable_formats_in_args() {
+        let task = TaskTemplate {
+            label: "Mixed env test".into(),
+            command: "echo".into(),
+            args: vec![
+                "start".into(),
+                "$DEFINED_VAR".into(),
+                "${ANOTHER_DEFINED}".into(),
+                "$UNDEFINED_VAR".into(),
+                "${UNDEFINED_BRACES}".into(),
+                "${UNDEFINED_BRACES: 5}".into(),
+                "$EMPTY_VAR".into(),
+                "${WHITESPACE_VAR}".into(),
+                "middle".into(),
+                "${ZED_WORKTREE_ROOT}".into(),
+                "${UNDEFINED_VAR}/bin".into(),
+                "$PATH".into(),
+                "end".into(),
+            ],
+            env: HashMap::from_iter([
+                ("DEFINED_VAR".to_owned(), "value1".to_owned()),
+                ("ANOTHER_DEFINED".to_owned(), "value2".to_owned()),
+                ("EMPTY_VAR".to_owned(), "".to_owned()),
+                ("WHITESPACE_VAR".to_owned(), "   ".to_owned()),
+                ("PATH".to_owned(), "/usr/bin:/usr/local/bin".to_owned()),
+            ]),
+            ..TaskTemplate::default()
+        };
+
+        let context = TaskContext {
+            cwd: Some(PathBuf::from("/project")),
+            task_variables: TaskVariables::from_iter([(
+                VariableName::WorktreeRoot,
+                "/project".into(),
+            )]),
+            ..TaskContext::default()
+        };
+
+        let resolved_task = task.resolve_task(TEST_ID_BASE, &context).unwrap();
+        let resolved = resolved_task.resolved;
+
+        // Verify that:
+        // - Regular args like "start", "middle", "end" remain
+        // - Defined env vars ($DEFINED_VAR, ${ANOTHER_DEFINED}, $PATH) remain
+        // - Undefined env vars ($UNDEFINED_VAR, ${UNDEFINED_BRACES}) are filtered out
+        // - Empty/whitespace env vars ($EMPTY_VAR, ${WHITESPACE_VAR}) are filtered out
+        // - Zed variables (${ZED_WORKTREE_ROOT}) remain as they're resolved to task variables
+        assert_eq!(
+            resolved.args,
+            vec![
+                "start",
+                "$DEFINED_VAR",
+                "${ANOTHER_DEFINED}",
+                "${UNDEFINED_BRACES: 5}",
+                "middle",
+                "${ZED_WORKTREE_ROOT}",
+                "$PATH",
+                "end"
+            ]
+        );
+
+        assert_eq!(resolved.env.get("DEFINED_VAR"), Some(&"value1".to_owned()));
+        assert_eq!(
+            resolved.env.get("ANOTHER_DEFINED"),
+            Some(&"value2".to_owned())
+        );
+        assert_eq!(
+            resolved.env.get("PATH"),
+            Some(&"/usr/bin:/usr/local/bin".to_owned())
+        );
+        assert_eq!(
+            resolved.env.get("ZED_WORKTREE_ROOT"),
+            Some(&"/project".to_owned())
         );
     }
 
