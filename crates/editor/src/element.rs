@@ -16,7 +16,7 @@ use crate::{
         ToDisplayPoint,
     },
     editor_settings::{
-        CurrentLineHighlight, DoubleClickInMultibuffer, MinimapThumb, MinimapThumbBorder,
+        CurrentLineHighlight, DoubleClickInMultibuffer, Minimap, MinimapThumb, MinimapThumbBorder,
         MultiCursorModifier, ScrollBeyondLastLine, ScrollbarAxes, ScrollbarDiagnostics,
         ShowMinimap, ShowScrollbar,
     },
@@ -1674,6 +1674,31 @@ impl EditorElement {
         let mut text_style = self.style.text.clone();
         text_style.font_size = font_size;
         text_style.line_height_in_pixels(rem_size)
+    }
+
+    fn get_minimap_width(
+        &self,
+        minimap_settings: &Minimap,
+        scrollbars_shown: bool,
+        editor_width_plus_minimap_width: Pixels,
+        cx: &mut App,
+    ) -> Pixels {
+        let minimap_width = self
+            .editor
+            .read(cx)
+            .minimap()
+            .is_some()
+            .then(|| match minimap_settings.show {
+                ShowMinimap::Auto => scrollbars_shown.then_some(MinimapLayout::MINIMAP_WIDTH),
+                _ => Some(MinimapLayout::MINIMAP_WIDTH),
+            })
+            .flatten()
+            .filter(|minimap_width| {
+                editor_width_plus_minimap_width - *minimap_width > *minimap_width
+            })
+            .unwrap_or_default();
+
+        minimap_width
     }
 
     fn prepaint_crease_toggles(
@@ -7589,6 +7614,10 @@ impl Element for EditorElement {
                         && self.editor.read(cx).show_scrollbars.vertical)
                         .then_some(style.scrollbar_width)
                         .unwrap_or_default();
+                    let editor_width_plus_minimap_width = text_width
+                        - gutter_dimensions.margin
+                        - 2 * em_width
+                        - vertical_scrollbar_width;
                     let minimap_width = self
                         .editor
                         .read(cx)
@@ -7606,14 +7635,11 @@ impl Element for EditorElement {
                         })
                         .unwrap_or_default();
 
-                    let right_margin = minimap_width + vertical_scrollbar_width;
-
-                    let editor_width =
-                        text_width - gutter_dimensions.margin - 2 * em_width - right_margin;
+                    let editor_width = editor_width_plus_minimap_width - minimap_width;
 
                     let editor_margins = EditorMargins {
                         gutter: gutter_dimensions,
-                        right: right_margin,
+                        right: right_margin + minimap_width,
                     };
 
                     // Offset the content_bounds from the text_bounds by the gutter margin (which

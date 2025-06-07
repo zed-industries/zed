@@ -132,6 +132,7 @@ pub struct Minimap {
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    pub max_columns: f32,
 }
 
 impl Minimap {
@@ -580,6 +581,11 @@ pub struct MinimapContent {
     ///
     /// Default: inherits editor line highlights setting
     pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+
+    /// Maximum number of columns to display in the minimap.
+    ///
+    /// Default: 60.0
+    pub max_columns: f32,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis

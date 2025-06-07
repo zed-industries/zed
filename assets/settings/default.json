@@ -419,7 +419,11 @@
     // 1. `null` to inherit the editor `current_line_highlight` setting (default)
     // 2. "line" or "all" to highlight the current line in the minimap.
     // 3. "gutter" or "none" to not highlight the current line in the minimap.
-    "current_line_highlight": null
+    "current_line_highlight": null,
+    // Maximum number of columns to display in the minimap.
+    //
+    // Default: 60.0
+    "max_columns": 60.0
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
