@@ -2925,15 +2925,9 @@ impl Pane {
                             let ix = if moved_right { ix - 1 } else { ix };
                             let is_pinned_in_to_pane = this.is_tab_pinned(ix);
 
-                            if (was_pinned_in_from_pane && is_pinned_in_to_pane)
-                                || (!was_pinned_in_from_pane && !is_pinned_in_to_pane)
-                            {
-                                return;
-                            }
-
-                            if is_pinned_in_to_pane {
+                            if !was_pinned_in_from_pane && is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
-                            } else {
+                            } else if was_pinned_in_from_pane && !is_pinned_in_to_pane {
                                 this.pinned_tab_count -= 1;
                             }
                         } else if this.items.len() >= to_pane_old_length {
