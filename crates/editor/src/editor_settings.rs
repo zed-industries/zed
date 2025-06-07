@@ -422,7 +422,7 @@ pub struct EditorSettingsContent {
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
     pub use_smartcase_search: Option<bool>,
-    /// Determines which modifier key to hold down when clicking to add multiple cursors.
+    /// Determines the modifier to be used to add multiple cursors with the mouse.
     ///
     /// Default: alt
     pub multi_cursor_modifier: Option<MultiCursorModifier>,

@@ -101,11 +101,11 @@
     // The second option is decimal.
     "unit": "binary"
   },
-  // Determines which modifier key to hold down when clicking to add multiple cursors.
+  // Determines the modifier to be used to add multiple cursors with the mouse.
   //
-  // 1. Use `alt` on Linux/Windows, and `opt` on MacOS:
+  // 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
   //    "alt"
-  // 2. Use `ctrl` on Linux/Windows, and `cmd` on MacOS:
+  // 2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
   //    "cmd_or_ctrl" (alias: "cmd", "ctrl")
   "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings.

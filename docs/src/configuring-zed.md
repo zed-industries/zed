@@ -1926,13 +1926,13 @@ Example:
 
 ## Multi Cursor Modifier
 
-- Description: Determines which modifier key to hold down when clicking to add multiple cursors.
+- Description: Determines the modifier to be used to add multiple cursors with the mouse.
 - Setting: `multi_cursor_modifier`
 - Default: `alt`
 
 **Options**
 
-1. Use `alt` on Linux/Windows, and `opt` on MacOS:
+1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
 
 ```json
 {
@@ -1940,7 +1940,7 @@ Example:
 }
 ```
 
-2. Use `ctrl` on Linux/Windows, and `cmd` on MacOS:
+2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
 
 ```json
 {
