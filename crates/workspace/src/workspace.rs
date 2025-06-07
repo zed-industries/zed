@@ -1399,15 +1399,23 @@ impl Workspace {
                     .await;
             }
             let window = if let Some(window) = requesting_window {
+                let centered_layout = serialized_workspace
+                    .as_ref()
+                    .map(|w| w.centered_layout)
+                    .unwrap_or(false);
+
                 cx.update_window(window.into(), |_, window, cx| {
                     window.replace_root(cx, |window, cx| {
-                        Workspace::new(
+                        let mut workspace = Workspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
                             app_state.clone(),
                             window,
                             cx,
-                        )
+                        );
+
+                        workspace.centered_layout = centered_layout;
+                        workspace
                     });
                 })?;
                 window
@@ -7036,6 +7044,11 @@ async fn open_ssh_project_inner(
                 Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
             workspace.set_serialized_ssh_project(serialized_ssh_project);
             workspace.update_history(cx);
+
+            if let Some(ref serialized) = serialized_workspace {
+                workspace.centered_layout = serialized.centered_layout;
+            }
+
             workspace
         });
     })?;
