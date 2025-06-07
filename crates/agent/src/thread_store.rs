@@ -393,14 +393,9 @@ impl ThreadStore {
         self.threads.len()
     }
 
-    pub fn unordered_threads(&self) -> impl Iterator<Item = &SerializedThreadMetadata> {
+    pub fn reverse_chronological_threads(&self) -> impl Iterator<Item = &SerializedThreadMetadata> {
+        // ordering is from "ORDER BY" in `list_threads`
         self.threads.iter()
-    }
-
-    pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {
-        let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
-        threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
-        threads
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
