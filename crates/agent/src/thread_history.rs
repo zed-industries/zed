@@ -671,7 +671,7 @@ impl RenderOnce for HistoryEntryElement {
             ),
             HistoryEntry::Context(context) => (
                 context.path.to_string_lossy().to_string(),
-                context.title.clone().into(),
+                context.title.clone(),
                 context.mtime.timestamp(),
             ),
         };
