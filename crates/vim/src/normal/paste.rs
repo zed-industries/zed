@@ -1,8 +1,10 @@
 use editor::{DisplayPoint, RowExt, display_map::ToDisplayPoint, movement, scroll::Autoscroll};
 use gpui::{Context, Window, impl_actions};
+use helix_mode_setting::HelixModeSetting;
 use language::{Bias, SelectionGoal};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use settings::Settings;
 use std::cmp;
 
 use crate::{
@@ -218,7 +220,11 @@ impl Vim {
             });
         });
 
-        self.switch_mode(self.default_mode(cx), true, window, cx);
+        if HelixModeSetting::get_global(cx).0 {
+            self.switch_mode(Mode::HelixNormal, true, window, cx);
+        } else {
+            self.switch_mode(Mode::Normal, true, window, cx);
+        }
     }
 
     pub fn replace_with_register_object(

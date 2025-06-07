@@ -1,7 +1,9 @@
 use crate::{Vim, state::Mode};
 use editor::{Bias, Editor, scroll::Autoscroll};
 use gpui::{Action, Context, Window, actions};
+use helix_mode_setting::HelixModeSetting;
 use language::SelectionGoal;
+use settings::Settings;
 
 actions!(vim, [NormalBefore, TemporaryNormal]);
 
@@ -36,7 +38,11 @@ impl Vim {
                     });
                 });
             });
-            self.switch_mode(Mode::Normal, false, window, cx);
+            if HelixModeSetting::get_global(cx).0 {
+                self.switch_mode(Mode::HelixNormal, false, window, cx);
+            } else {
+                self.switch_mode(Mode::Normal, false, window, cx);
+            }
             return;
         }
 

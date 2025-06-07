@@ -165,6 +165,7 @@ members = [
     "crates/util_macros",
     "crates/vim",
     "crates/vim_mode_setting",
+    "crates/helix_mode_setting",
     "crates/web_search",
     "crates/web_search_providers",
     "crates/welcome",
@@ -373,6 +374,7 @@ util = { path = "crates/util" }
 util_macros = { path = "crates/util_macros" }
 vim = { path = "crates/vim" }
 vim_mode_setting = { path = "crates/vim_mode_setting" }
+helix_mode_setting = { path = "crates/helix_mode_setting" }
 web_search = { path = "crates/web_search" }
 web_search_providers = { path = "crates/web_search_providers" }
 welcome = { path = "crates/welcome" }
