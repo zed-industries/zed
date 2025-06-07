@@ -348,6 +348,7 @@ impl LanguageModel for DeepSeekLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_deepseek(request, &self.model, self.max_output_tokens());

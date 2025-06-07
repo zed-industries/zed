@@ -386,8 +386,10 @@ impl CodegenAlternative {
                 async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
                 let request = self.build_request(&model, user_prompt, cx)?;
-                cx.spawn(async move |_, cx| model.stream_completion_text(request.await, &cx).await)
-                    .boxed_local()
+                cx.spawn(async move |_, cx| {
+                    Ok(model.stream_completion_text(request.await, &cx).await?)
+                })
+                .boxed_local()
             };
         self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
         Ok(())

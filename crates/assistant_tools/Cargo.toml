@@ -80,6 +80,7 @@ rand.workspace = true
 pretty_assertions.workspace = true
 reqwest_client.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+smol.workspace = true
 task = { workspace = true, features = ["test-support"]}
 tempfile.workspace = true
 theme.workspace = true

@@ -1,4 +1,5 @@
 use std::str::FromStr;
+use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -406,6 +407,7 @@ impl RateLimit {
 /// <https://docs.anthropic.com/en/api/rate-limits#response-headers>
 #[derive(Debug)]
 pub struct RateLimitInfo {
+    pub retry_after: Option<Duration>,
     pub requests: Option<RateLimit>,
     pub tokens: Option<RateLimit>,
     pub input_tokens: Option<RateLimit>,
@@ -417,10 +419,11 @@ impl RateLimitInfo {
         // Check if any rate limit headers exist
         let has_rate_limit_headers = headers
             .keys()
-            .any(|k| k.as_str().starts_with("anthropic-ratelimit-"));
+            .any(|k| k == "retry-after" || k.as_str().starts_with("anthropic-ratelimit-"));
 
         if !has_rate_limit_headers {
             return Self {
+                retry_after: None,
                 requests: None,
                 tokens: None,
                 input_tokens: None,
@@ -429,6 +432,11 @@ impl RateLimitInfo {
         }
 
         Self {
+            retry_after: headers
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(Duration::from_secs),
             requests: RateLimit::from_headers("requests", headers).ok(),
             tokens: RateLimit::from_headers("tokens", headers).ok(),
             input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
@@ -481,8 +489,8 @@ pub async fn stream_completion_with_rate_limit_info(
         .send(request)
         .await
         .context("failed to send request to Anthropic")?;
+    let rate_limits = RateLimitInfo::from_headers(response.headers());
     if response.status().is_success() {
-        let rate_limits = RateLimitInfo::from_headers(response.headers());
         let reader = BufReader::new(response.into_body());
         let stream = reader
             .lines()
@@ -500,6 +508,8 @@ pub async fn stream_completion_with_rate_limit_info(
             })
             .boxed();
         Ok((stream, Some(rate_limits)))
+    } else if let Some(retry_after) = rate_limits.retry_after {
+        Err(AnthropicError::RateLimit(retry_after))
     } else {
         let mut body = Vec::new();
         response
@@ -769,6 +779,8 @@ pub struct MessageDelta {
 
 #[derive(Error, Debug)]
 pub enum AnthropicError {
+    #[error("rate limit exceeded, retry after {0:?}")]
+    RateLimit(Duration),
     #[error("an error occurred while interacting with the Anthropic API: {error_type}: {message}", error_type = .0.error_type, message = .0.message)]
     ApiError(ApiError),
     #[error("{0}")]

@@ -704,6 +704,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "smol",
  "streaming_diff",
  "strsim",
  "task",

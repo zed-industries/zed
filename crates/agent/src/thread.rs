@@ -1563,6 +1563,9 @@ impl Thread {
                             Err(LanguageModelCompletionError::Other(error)) => {
                                 return Err(error);
                             }
+                            Err(err @ LanguageModelCompletionError::RateLimit(..)) => {
+                                return Err(err.into());
+                            }
                         };
 
                         match event {
