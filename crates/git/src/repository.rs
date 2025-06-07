@@ -96,6 +96,7 @@ impl Upstream {
 #[derive(Clone, Copy, Default)]
 pub struct CommitOptions {
     pub amend: bool,
+    pub signoff: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -1156,6 +1157,10 @@ impl GitRepository for RealGitRepository {
 
                 if options.amend {
                     cmd.arg("--amend");
+                }
+
+                if options.signoff {
+                    cmd.arg("--signoff");
                 }
 
                 if let Some((name, email)) = name_and_email {
