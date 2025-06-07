@@ -679,11 +679,7 @@ impl EditorElement {
         let point_for_position = position_map.point_for_position(event.position);
         let position = point_for_position.previous_valid;
 
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let multi_cursor_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => modifiers.alt,
-            MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
-        };
+        let multi_cursor_modifier = Editor::multi_cursor_modifier(&modifiers, cx);
 
         if Editor::columnar_selection_modifiers(multi_cursor_modifier, &modifiers) {
             editor.select(
@@ -869,11 +865,7 @@ impl EditorElement {
         let text_hitbox = &position_map.text_hitbox;
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
 
-        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
-        let hovered_link_modifier = match multi_cursor_setting {
-            MultiCursorModifier::Alt => event.modifiers().secondary(),
-            MultiCursorModifier::CmdOrCtrl => event.modifiers().alt,
-        };
+        let hovered_link_modifier = !Editor::multi_cursor_modifier(&event.modifiers(), cx);
 
         if !pending_nonempty_selections && hovered_link_modifier && text_hitbox.is_hovered(window) {
             let point = position_map.point_for_position(event.up.position);
