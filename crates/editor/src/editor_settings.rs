@@ -584,8 +584,8 @@ pub struct MinimapContent {
 
     /// Maximum number of columns to display in the minimap.
     ///
-    /// Default: 60.0
-    pub max_columns: f32,
+    /// Default: 80.0
+    pub max_columns: Option<f32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
