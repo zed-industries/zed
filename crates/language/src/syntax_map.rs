@@ -94,6 +94,7 @@ enum SyntaxLayerContent {
     Parsed {
         tree: tree_sitter::Tree,
         language: Arc<Language>,
+        included_sub_ranges: Option<Vec<Range<Anchor>>>,
     },
     Pending {
         language_name: Arc<str>,
@@ -122,6 +123,7 @@ impl SyntaxLayerContent {
 pub struct SyntaxLayer<'a> {
     /// The language for this layer.
     pub language: &'a Arc<Language>,
+    pub included_sub_ranges: Option<&'a [Range<Anchor>]>,
     pub(crate) depth: usize,
     tree: &'a Tree,
     pub(crate) offset: (usize, tree_sitter::Point),
@@ -621,7 +623,7 @@ impl SyntaxSnapshot {
                             grammar,
                             text.as_rope(),
                             step_start_byte,
-                            included_ranges,
+                            &included_ranges,
                             Some(old_tree.clone()),
                         );
                         match result {
@@ -674,7 +676,7 @@ impl SyntaxSnapshot {
                             grammar,
                             text.as_rope(),
                             step_start_byte,
-                            included_ranges,
+                            &included_ranges,
                             None,
                         );
                         match result {
@@ -717,7 +719,21 @@ impl SyntaxSnapshot {
                         );
                     }
 
-                    SyntaxLayerContent::Parsed { tree, language }
+                    let included_sub_ranges: Option<Vec<Range<Anchor>>> =
+                        (included_ranges.len() > 1).then_some(
+                            included_ranges
+                                .into_iter()
+                                .map(|r| {
+                                    text.anchor_before(r.start_byte + step_start_byte)
+                                        ..text.anchor_after(r.end_byte + step_start_byte)
+                                })
+                                .collect(),
+                        );
+                    SyntaxLayerContent::Parsed {
+                        tree,
+                        language,
+                        included_sub_ranges,
+                    }
                 }
                 ParseStepLanguage::Pending { name } => SyntaxLayerContent::Pending {
                     language_name: name,
@@ -783,6 +799,7 @@ impl SyntaxSnapshot {
             [SyntaxLayer {
                 language,
                 tree,
+                included_sub_ranges: None,
                 depth: 0,
                 offset: (0, tree_sitter::Point::new(0, 0)),
             }]
@@ -867,13 +884,19 @@ impl SyntaxSnapshot {
         iter::from_fn(move || {
             while let Some(layer) = cursor.item() {
                 let mut info = None;
-                if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
+                if let SyntaxLayerContent::Parsed {
+                    tree,
+                    language,
+                    included_sub_ranges,
+                } = &layer.content
+                {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
                     if include_hidden || !language.config.hidden {
                         info = Some(SyntaxLayer {
                             tree,
                             language,
+                            included_sub_ranges: included_sub_ranges.as_deref(),
                             depth: layer.depth,
                             offset: (layer_start_offset, layer_start_point),
                         });
@@ -1231,7 +1254,7 @@ fn parse_text(
     grammar: &Grammar,
     text: &Rope,
     start_byte: usize,
-    ranges: Vec<tree_sitter::Range>,
+    ranges: &[tree_sitter::Range],
     old_tree: Option<Tree>,
 ) -> anyhow::Result<Tree> {
     with_parser(|parser| {

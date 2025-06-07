@@ -1546,12 +1546,6 @@
         "allowed": true
       }
     },
-    "SQL": {
-      "prettier": {
-        "allowed": true,
-        "plugins": ["prettier-plugin-sql"]
-      }
-    },
     "Starlark": {
       "language_servers": ["starpls", "!buck2-lsp", "..."]
     },
