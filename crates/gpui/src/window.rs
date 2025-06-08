@@ -9,13 +9,13 @@ use crate::{
     KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PolychromeSprite, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle, Style,
-    SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    point, prelude::*, px, rems, size, transparent_black,
+    PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TaffyLayoutEngine, Task, TextStyle,
+    TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowOptions,
+    WindowParams, WindowTextSystem, point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -25,7 +25,7 @@ use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use futures::channel::oneshot;
 use parking_lot::RwLock;
-use raw_window_handle::{HandleError, HasWindowHandle};
+use raw_window_handle::{HandleError, HasDisplayHandle, HasWindowHandle};
 use refineable::Refineable;
 use slotmap::SlotMap;
 use smallvec::SmallVec;
@@ -52,6 +52,7 @@ use uuid::Uuid;
 
 mod prompts;
 
+use crate::util::atomic_incr_if_not_zero;
 pub use prompts::*;
 
 pub(crate) const DEFAULT_WINDOW_SIZE: Size<Pixels> = size(px(1024.), px(700.));
@@ -263,15 +264,13 @@ impl FocusHandle {
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
         let ref_count = lock.get(id)?;
-        if ref_count.load(SeqCst) == 0 {
-            None
-        } else {
-            ref_count.fetch_add(1, SeqCst);
-            Some(Self {
-                id,
-                handles: handles.clone(),
-            })
+        if atomic_incr_if_not_zero(ref_count) == 0 {
+            return None;
         }
+        Some(Self {
+            id,
+            handles: handles.clone(),
+        })
     }
 
     /// Converts this focus handle into a weak variant, which does not prevent it from being released.
@@ -409,18 +408,59 @@ pub(crate) type AnyMouseListener =
 
 #[derive(Clone)]
 pub(crate) struct CursorStyleRequest {
-    pub(crate) hitbox_id: Option<HitboxId>, // None represents whole window
+    pub(crate) hitbox_id: HitboxId,
     pub(crate) style: CursorStyle,
 }
 
-/// An identifier for a [Hitbox].
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Hash)]
-pub struct HitboxId(usize);
+#[derive(Default, Eq, PartialEq)]
+pub(crate) struct HitTest {
+    pub(crate) ids: SmallVec<[HitboxId; 8]>,
+    pub(crate) hover_hitbox_count: usize,
+}
+
+/// A type of window control area that corresponds to the platform window.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WindowControlArea {
+    /// An area that allows dragging of the platform window.
+    Drag,
+    /// An area that allows closing of the platform window.
+    Close,
+    /// An area that allows maximizing of the platform window.
+    Max,
+    /// An area that allows minimizing of the platform window.
+    Min,
+}
+
+/// An identifier for a [Hitbox] which also includes [HitboxBehavior].
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
+pub struct HitboxId(u64);
 
 impl HitboxId {
-    /// Checks if the hitbox with this id is currently hovered.
-    pub fn is_hovered(&self, window: &Window) -> bool {
-        window.mouse_hit_test.0.contains(self)
+    /// Checks if the hitbox with this ID is currently hovered. Except when handling
+    /// `ScrollWheelEvent`, this is typically what you want when determining whether to handle mouse
+    /// events or paint hover styles.
+    ///
+    /// See [`Hitbox::is_hovered`] for details.
+    pub fn is_hovered(self, window: &Window) -> bool {
+        let hit_test = &window.mouse_hit_test;
+        for id in hit_test.ids.iter().take(hit_test.hover_hitbox_count) {
+            if self == *id {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// Checks if the hitbox with this ID contains the mouse and should handle scroll events.
+    /// Typically this should only be used when handling `ScrollWheelEvent`, and otherwise
+    /// `is_hovered` should be used. See the documentation of `Hitbox::is_hovered` for details about
+    /// this distinction.
+    pub fn should_handle_scroll(self, window: &Window) -> bool {
+        window.mouse_hit_test.ids.contains(&self)
+    }
+
+    fn next(mut self) -> HitboxId {
+        HitboxId(self.0.wrapping_add(1))
     }
 }
 
@@ -435,19 +475,98 @@ pub struct Hitbox {
     pub bounds: Bounds<Pixels>,
     /// The content mask when the hitbox was inserted.
     pub content_mask: ContentMask<Pixels>,
-    /// Whether the hitbox occludes other hitboxes inserted prior.
-    pub opaque: bool,
+    /// Flags that specify hitbox behavior.
+    pub behavior: HitboxBehavior,
 }
 
 impl Hitbox {
-    /// Checks if the hitbox is currently hovered.
+    /// Checks if the hitbox is currently hovered. Except when handling `ScrollWheelEvent`, this is
+    /// typically what you want when determining whether to handle mouse events or paint hover
+    /// styles.
+    ///
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`) or
+    /// `HitboxBehavior::BlockMouseExceptScroll` (`InteractiveElement::block_mouse_except_scroll`).
+    ///
+    /// Handling of `ScrollWheelEvent` should typically use `should_handle_scroll` instead.
+    /// Concretely, this is due to use-cases like overlays that cause the elements under to be
+    /// non-interactive while still allowing scrolling. More abstractly, this is because
+    /// `is_hovered` is about element interactions directly under the mouse - mouse moves, clicks,
+    /// hover styling, etc. In contrast, scrolling is about finding the current outer scrollable
+    /// container.
     pub fn is_hovered(&self, window: &Window) -> bool {
         self.id.is_hovered(window)
     }
+
+    /// Checks if the hitbox contains the mouse and should handle scroll events. Typically this
+    /// should only be used when handling `ScrollWheelEvent`, and otherwise `is_hovered` should be
+    /// used. See the documentation of `Hitbox::is_hovered` for details about this distinction.
+    ///
+    /// This can return `false` even when the hitbox contains the mouse, if a hitbox in front of
+    /// this sets `HitboxBehavior::BlockMouse` (`InteractiveElement::occlude`).
+    pub fn should_handle_scroll(&self, window: &Window) -> bool {
+        self.id.should_handle_scroll(window)
+    }
 }
 
-#[derive(Default, Eq, PartialEq)]
-pub(crate) struct HitTest(SmallVec<[HitboxId; 8]>);
+/// How the hitbox affects mouse behavior.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub enum HitboxBehavior {
+    /// Normal hitbox mouse behavior, doesn't affect mouse handling for other hitboxes.
+    #[default]
+    Normal,
+
+    /// All hitboxes behind this hitbox will be ignored and so will have `hitbox.is_hovered() ==
+    /// false` and `hitbox.should_handle_scroll() == false`. Typically for elements this causes
+    /// skipping of all mouse events, hover styles, and tooltips. This flag is set by
+    /// [`InteractiveElement::occlude`].
+    ///
+    /// For mouse handlers that check those hitboxes, this behaves the same as registering a
+    /// bubble-phase handler for every mouse event type:
+    ///
+    /// ```
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeHere, phase, window, cx| {
+    ///     if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
+    ///         cx.stop_propagation();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// This has effects beyond event handling - any use of hitbox checking, such as hover
+    /// styles and tooltops. These other behaviors are the main point of this mechanism. An
+    /// alternative might be to not affect mouse event handling - but this would allow
+    /// inconsistent UI where clicks and moves interact with elements that are not considered to
+    /// be hovered.
+    BlockMouse,
+
+    /// All hitboxes behind this hitbox will have `hitbox.is_hovered() == false`, even when
+    /// `hitbox.should_handle_scroll() == true`. Typically for elements this causes all mouse
+    /// interaction except scroll events to be ignored - see the documentation of
+    /// [`Hitbox::is_hovered`] for details. This flag is set by
+    /// [`InteractiveElement::block_mouse_except_scroll`].
+    ///
+    /// For mouse handlers that check those hitboxes, this behaves the same as registering a
+    /// bubble-phase handler for every mouse event type **except** `ScrollWheelEvent`:
+    ///
+    /// ```
+    /// window.on_mouse_event(move |_: &EveryMouseEventTypeExceptScroll, phase, window, _cx| {
+    ///     if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
+    ///         cx.stop_propagation();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// See the documentation of [`Hitbox::is_hovered`] for details of why `ScrollWheelEvent` is
+    /// handled differently than other mouse events. If also blocking these scroll events is
+    /// desired, then a `cx.stop_propagation()` handler like the one above can be used.
+    ///
+    /// This has effects beyond event handling - this affects any use of `is_hovered`, such as
+    /// hover styles and tooltops. These other behaviors are the main point of this mechanism.
+    /// An alternative might be to not affect mouse event handling - but this would allow
+    /// inconsistent UI where clicks and moves interact with elements that are not considered to
+    /// be hovered.
+    BlockMouseExceptScroll,
+}
 
 /// An identifier for a tooltip.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
@@ -498,10 +617,12 @@ pub(crate) struct Frame {
     pub(crate) dispatch_tree: DispatchTree,
     pub(crate) scene: Scene,
     pub(crate) hitboxes: Vec<Hitbox>,
+    pub(crate) window_control_hitboxes: Vec<(WindowControlArea, Hitbox)>,
     pub(crate) deferred_draws: Vec<DeferredDraw>,
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
+    window_cursor_style: Option<CursorStyle>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -541,10 +662,12 @@ impl Frame {
             dispatch_tree,
             scene: Scene::default(),
             hitboxes: Vec::new(),
+            window_control_hitboxes: Vec::new(),
             deferred_draws: Vec::new(),
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
+            window_cursor_style: None,
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -567,8 +690,10 @@ impl Frame {
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
         self.hitboxes.clear();
+        self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
         self.focus = None;
+        self.window_cursor_style = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
         {
@@ -577,16 +702,37 @@ impl Frame {
         }
     }
 
+    pub(crate) fn cursor_style(&self, window: &Window) -> Option<CursorStyle> {
+        self.window_cursor_style.or_else(|| {
+            self.cursor_styles.iter().rev().find_map(|request| {
+                request
+                    .hitbox_id
+                    .is_hovered(window)
+                    .then_some(request.style)
+            })
+        })
+    }
+
     pub(crate) fn hit_test(&self, position: Point<Pixels>) -> HitTest {
+        let mut set_hover_hitbox_count = false;
         let mut hit_test = HitTest::default();
         for hitbox in self.hitboxes.iter().rev() {
             let bounds = hitbox.bounds.intersect(&hitbox.content_mask.bounds);
             if bounds.contains(&position) {
-                hit_test.0.push(hitbox.id);
-                if hitbox.opaque {
+                hit_test.ids.push(hitbox.id);
+                if !set_hover_hitbox_count
+                    && hitbox.behavior == HitboxBehavior::BlockMouseExceptScroll
+                {
+                    hit_test.hover_hitbox_count = hit_test.ids.len();
+                    set_hover_hitbox_count = true;
+                }
+                if hitbox.behavior == HitboxBehavior::BlockMouse {
                     break;
                 }
             }
+        }
+        if !set_hover_hitbox_count {
+            hit_test.hover_hitbox_count = hit_test.ids.len();
         }
         hit_test
     }
@@ -638,7 +784,7 @@ pub struct Window {
     pub(crate) image_cache_stack: Vec<AnyImageCache>,
     pub(crate) rendered_frame: Frame,
     pub(crate) next_frame: Frame,
-    pub(crate) next_hitbox_id: HitboxId,
+    next_hitbox_id: HitboxId,
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
@@ -897,6 +1043,22 @@ impl Window {
                     .unwrap_or(DispatchEventResult::default())
             })
         });
+        platform_window.on_hit_test_window_control({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, _cx| {
+                        for (area, hitbox) in &window.rendered_frame.window_control_hitboxes {
+                            if window.mouse_hit_test.ids.contains(&hitbox.id) {
+                                return Some(*area);
+                            }
+                        }
+                        None
+                    })
+                    .log_err()
+                    .unwrap_or(None)
+            })
+        });
 
         if let Some(app_id) = app_id {
             platform_window.set_app_id(&app_id);
@@ -927,7 +1089,7 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
-            next_hitbox_id: HitboxId::default(),
+            next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
@@ -979,7 +1141,7 @@ pub(crate) struct DispatchEventResult {
 /// to leave room to support more complex shapes in the future.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
-pub struct ContentMask<P: Clone + Default + Debug> {
+pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
     pub bounds: Bounds<P>,
 }
@@ -2009,12 +2171,21 @@ impl Window {
 
     /// Updates the cursor style at the platform level. This method should only be called
     /// during the prepaint phase of element drawing.
-    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: Option<&Hitbox>) {
+    pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
         self.next_frame.cursor_styles.push(CursorStyleRequest {
-            hitbox_id: hitbox.map(|hitbox| hitbox.id),
+            hitbox_id: hitbox.id,
             style,
         });
+    }
+
+    /// Updates the cursor style for the entire window at the platform level. A cursor
+    /// style using this method will have precedence over any cursor style set using
+    /// `set_cursor_style`. This method should only be called during the prepaint
+    /// phase of element drawing.
+    pub fn set_window_cursor_style(&mut self, style: CursorStyle) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_cursor_style = Some(style);
     }
 
     /// Sets a tooltip to be rendered for the upcoming frame. This method should only be called
@@ -2870,20 +3041,28 @@ impl Window {
     /// to determine whether the inserted hitbox was the topmost.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, opaque: bool) -> Hitbox {
+    pub fn insert_hitbox(&mut self, bounds: Bounds<Pixels>, behavior: HitboxBehavior) -> Hitbox {
         self.invalidator.debug_assert_prepaint();
 
         let content_mask = self.content_mask();
-        let id = self.next_hitbox_id;
-        self.next_hitbox_id.0 += 1;
+        let mut id = self.next_hitbox_id;
+        self.next_hitbox_id = self.next_hitbox_id.next();
         let hitbox = Hitbox {
             id,
             bounds,
             content_mask,
-            opaque,
+            behavior,
         };
         self.next_frame.hitboxes.push(hitbox.clone());
         hitbox
+    }
+
+    /// Set a hitbox which will act as a control area of the platform window.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn insert_window_control_hitbox(&mut self, area: WindowControlArea, hitbox: Hitbox) {
+        self.invalidator.debug_assert_paint();
+        self.next_frame.window_control_hitboxes.push((area, hitbox));
     }
 
     /// Sets the key context for the current element. This context will be used to translate
@@ -3089,15 +3268,7 @@ impl Window {
         if self.is_window_hovered() {
             let style = self
                 .rendered_frame
-                .cursor_styles
-                .iter()
-                .rev()
-                .find(|request| {
-                    request
-                        .hitbox_id
-                        .map_or(true, |hitbox_id| hitbox_id.is_hovered(self))
-                })
-                .map(|request| request.style)
+                .cursor_style(self)
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
@@ -3132,8 +3303,7 @@ impl Window {
     /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
     /// binding for the action (last binding added to the keymap).
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
-        self.bindings_for_action(action)
-            .last()
+        self.highest_precedence_binding_for_action(action)
             .map(|binding| {
                 binding
                     .keystrokes()
@@ -3387,6 +3557,7 @@ impl Window {
                         .dispatch_tree
                         .flush_dispatch(currently_pending.keystrokes, &dispatch_path);
 
+                    window.pending_input_changed(cx);
                     window.replay_pending_input(to_replay, cx)
                 })
                 .log_err();
@@ -3705,28 +3876,36 @@ impl Window {
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
-    pub fn prompt(
+    pub fn prompt<T>(
         &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[T],
         cx: &mut App,
-    ) -> oneshot::Receiver<usize> {
+    ) -> oneshot::Receiver<usize>
+    where
+        T: Clone + Into<PromptButton>,
+    {
         let prompt_builder = cx.prompt_builder.take();
         let Some(prompt_builder) = prompt_builder else {
             unreachable!("Re-entrant window prompting is not supported by GPUI");
         };
 
+        let answers = answers
+            .iter()
+            .map(|answer| answer.clone().into())
+            .collect::<Vec<_>>();
+
         let receiver = match &prompt_builder {
             PromptBuilder::Default => self
                 .platform_window
-                .prompt(level, message, detail, answers)
+                .prompt(level, message, detail, &answers)
                 .unwrap_or_else(|| {
-                    self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
+                    self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
                 }),
             PromptBuilder::Custom(_) => {
-                self.build_custom_prompt(&prompt_builder, level, message, detail, answers, cx)
+                self.build_custom_prompt(&prompt_builder, level, message, detail, &answers, cx)
             }
         };
 
@@ -3741,7 +3920,7 @@ impl Window {
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
         cx: &mut App,
     ) -> oneshot::Receiver<usize> {
         let (sender, receiver) = oneshot::channel();
@@ -3797,6 +3976,38 @@ impl Window {
             .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
     }
 
+    /// Returns the highest precedence key binding that invokes an action on the currently focused
+    /// element. This is more efficient than getting the last result of `bindings_for_action`.
+    pub fn highest_precedence_binding_for_action(&self, action: &dyn Action) -> Option<KeyBinding> {
+        self.rendered_frame
+            .dispatch_tree
+            .highest_precedence_binding_for_action(
+                action,
+                &self.rendered_frame.dispatch_tree.context_stack,
+            )
+    }
+
+    /// Returns the key bindings for an action in a context.
+    pub fn bindings_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Vec<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.bindings_for_action(action, &[context])
+    }
+
+    /// Returns the highest precedence key binding for an action in a context. This is more
+    /// efficient than getting the last result of `bindings_for_action_in_context`.
+    pub fn highest_precedence_binding_for_action_in_context(
+        &self,
+        action: &dyn Action,
+        context: KeyContext,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        dispatch_tree.highest_precedence_binding_for_action(action, &[context])
+    }
+
     /// Returns any bindings that would invoke an action on the given focus handle if it were
     /// focused. Bindings are returned in the order they were added. For display, the last binding
     /// should take precedence.
@@ -3806,26 +4017,37 @@ impl Window {
         focus_handle: &FocusHandle,
     ) -> Vec<KeyBinding> {
         let dispatch_tree = &self.rendered_frame.dispatch_tree;
-
-        let Some(node_id) = dispatch_tree.focusable_node_id(focus_handle.id) else {
+        let Some(context_stack) = self.context_stack_for_focus_handle(focus_handle) else {
             return vec![];
         };
+        dispatch_tree.bindings_for_action(action, &context_stack)
+    }
+
+    /// Returns the highest precedence key binding that would invoke an action on the given focus
+    /// handle if it were focused. This is more efficient than getting the last result of
+    /// `bindings_for_action_in`.
+    pub fn highest_precedence_binding_for_action_in(
+        &self,
+        action: &dyn Action,
+        focus_handle: &FocusHandle,
+    ) -> Option<KeyBinding> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let context_stack = self.context_stack_for_focus_handle(focus_handle)?;
+        dispatch_tree.highest_precedence_binding_for_action(action, &context_stack)
+    }
+
+    fn context_stack_for_focus_handle(
+        &self,
+        focus_handle: &FocusHandle,
+    ) -> Option<Vec<KeyContext>> {
+        let dispatch_tree = &self.rendered_frame.dispatch_tree;
+        let node_id = dispatch_tree.focusable_node_id(focus_handle.id)?;
         let context_stack: Vec<_> = dispatch_tree
             .dispatch_path(node_id)
             .into_iter()
             .filter_map(|node_id| dispatch_tree.node(node_id).context.clone())
             .collect();
-        dispatch_tree.bindings_for_action(action, &context_stack)
-    }
-
-    /// Returns the key bindings for the given action in the given context.
-    pub fn bindings_for_action_in_context(
-        &self,
-        action: &dyn Action,
-        context: KeyContext,
-    ) -> Vec<KeyBinding> {
-        let dispatch_tree = &self.rendered_frame.dispatch_tree;
-        dispatch_tree.bindings_for_action(action, &[context])
+        Some(context_stack)
     }
 
     /// Returns a generic event listener that invokes the given listener with the view and context associated with the given view handle.
@@ -3885,6 +4107,12 @@ impl Window {
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.platform_window.gpu_specs()
+    }
+
+    /// Perform titlebar double-click action.
+    /// This is MacOS specific.
+    pub fn titlebar_double_click(&self) {
+        self.platform_window.titlebar_double_click();
     }
 
     /// Toggles the inspector mode on this window.
@@ -4042,7 +4270,7 @@ impl Window {
                 inspector.update(cx, |inspector, _cx| {
                     if let Some(depth) = inspector.pick_depth.as_mut() {
                         *depth += delta_y.0 / SCROLL_PIXELS_PER_LAYER;
-                        let max_depth = self.mouse_hit_test.0.len() as f32 - 0.5;
+                        let max_depth = self.mouse_hit_test.ids.len() as f32 - 0.5;
                         if *depth < 0.0 {
                             *depth = 0.0;
                         } else if *depth > max_depth {
@@ -4067,9 +4295,9 @@ impl Window {
     ) -> Option<(HitboxId, crate::InspectorElementId)> {
         if let Some(pick_depth) = inspector.pick_depth {
             let depth = (pick_depth as i64).try_into().unwrap_or(0);
-            let max_skipped = self.mouse_hit_test.0.len().saturating_sub(1);
+            let max_skipped = self.mouse_hit_test.ids.len().saturating_sub(1);
             let skip_count = (depth as usize).min(max_skipped);
-            for hitbox_id in self.mouse_hit_test.0.iter().skip(skip_count) {
+            for hitbox_id in self.mouse_hit_test.ids.iter().skip(skip_count) {
                 if let Some(inspector_id) = frame.inspector_hitboxes.get(hitbox_id) {
                     return Some((*hitbox_id, inspector_id.clone()));
                 }
@@ -4295,6 +4523,14 @@ impl AnyWindowHandle {
 impl HasWindowHandle for Window {
     fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
         self.platform_window.window_handle()
+    }
+}
+
+impl HasDisplayHandle for Window {
+    fn display_handle(
+        &self,
+    ) -> std::result::Result<raw_window_handle::DisplayHandle<'_>, HandleError> {
+        self.platform_window.display_handle()
     }
 }
 

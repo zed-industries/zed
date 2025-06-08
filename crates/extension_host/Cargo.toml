@@ -57,7 +57,6 @@ workspace-hack.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 ctor.workspace = true
-env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
@@ -68,6 +67,7 @@ rand.workspace = true
 reqwest_client.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 theme_extension.workspace = true
+zlog.workspace = true
 
 [[bench]]
 name = "extension_compilation_benchmark"

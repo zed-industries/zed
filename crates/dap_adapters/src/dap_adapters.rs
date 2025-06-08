@@ -19,7 +19,7 @@ use dap::{
         GithubRepo,
     },
     configure_tcp_connection,
-    inline_value::{PythonInlineValueProvider, RustInlineValueProvider},
+    inline_value::{GoInlineValueProvider, PythonInlineValueProvider, RustInlineValueProvider},
 };
 use dart::DartDebugAdapter;
 use gdb::GdbDebugAdapter;
@@ -40,7 +40,7 @@ pub fn init(cx: &mut App) {
         registry.add_adapter(Arc::from(JsDebugAdapter::default()));
         registry.add_adapter(Arc::from(DartDebugAdapter));
         registry.add_adapter(Arc::from(RubyDebugAdapter));
-        registry.add_adapter(Arc::from(GoDebugAdapter));
+        registry.add_adapter(Arc::from(GoDebugAdapter::default()));
         registry.add_adapter(Arc::from(GdbDebugAdapter));
 
         #[cfg(any(test, feature = "test-support"))]
@@ -51,5 +51,6 @@ pub fn init(cx: &mut App) {
         registry.add_inline_value_provider("Rust".to_string(), Arc::from(RustInlineValueProvider));
         registry
             .add_inline_value_provider("Python".to_string(), Arc::from(PythonInlineValueProvider));
+        registry.add_inline_value_provider("Go".to_string(), Arc::from(GoInlineValueProvider));
     })
 }

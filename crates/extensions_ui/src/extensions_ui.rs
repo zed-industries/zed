@@ -101,7 +101,10 @@ pub fn init(cx: &mut App) {
                         directories: true,
                         multiple: false,
                     },
-                    DirectoryLister::Local(workspace.app_state().fs.clone()),
+                    DirectoryLister::Local(
+                        workspace.project().clone(),
+                        workspace.app_state().fs.clone(),
+                    ),
                     window,
                     cx,
                 );
@@ -447,9 +450,11 @@ impl ExtensionsPage {
 
         let extension_store = ExtensionStore::global(cx);
 
-        let dev_extensions = extension_store.update(cx, |store, _| {
-            store.dev_extensions().cloned().collect::<Vec<_>>()
-        });
+        let dev_extensions = extension_store
+            .read(cx)
+            .dev_extensions()
+            .cloned()
+            .collect::<Vec<_>>();
 
         let remote_extensions = extension_store.update(cx, |store, cx| {
             store.fetch_extensions(search.as_deref(), provides_filter.as_ref(), cx)

@@ -39,3 +39,4 @@ windows.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
+url.workspace = true

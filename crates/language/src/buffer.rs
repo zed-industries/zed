@@ -18,7 +18,6 @@ use crate::{
     text_diff::text_diff,
 };
 use anyhow::{Context as _, Result};
-use async_watch as watch;
 pub use clock::ReplicaId;
 use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
@@ -229,8 +228,19 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
     /// Whether this diagnostic marks unnecessary code.
     pub is_unnecessary: bool,
+    /// Quick separation of diagnostics groups based by their source.
+    pub source_kind: DiagnosticSourceKind,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
+    /// Whether to underline the corresponding text range in the editor.
+    pub underline: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiagnosticSourceKind {
+    Pulled,
+    Pushed,
+    Other,
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -462,6 +472,7 @@ pub struct BufferChunks<'a> {
     information_depth: usize,
     hint_depth: usize,
     unnecessary_depth: usize,
+    underline: bool,
     highlights: Option<BufferChunkHighlights<'a>>,
 }
 
@@ -482,6 +493,10 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// Whether this chunk of text was originally a tab character.
+    pub is_inlay: bool,
+    /// Whether to underline the corresponding text range in the editor.
+    pub underline: bool,
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
@@ -492,10 +507,11 @@ pub struct Diff {
     pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct DiagnosticEndpoint {
     offset: usize,
     is_start: bool,
+    underline: bool,
     severity: DiagnosticSeverity,
     is_unnecessary: bool,
 }
@@ -926,7 +942,7 @@ impl Buffer {
             reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
-            parse_status: async_watch::channel(ParseStatus::Idle),
+            parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
@@ -1367,9 +1383,30 @@ impl Buffer {
     /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
+        let mut is_first = true;
+        let start_anchor = self.anchor_before(offset);
+        let end_anchor = self.anchor_after(offset);
         self.syntax_map
             .lock()
             .layers_for_range(offset..offset, &self.text, false)
+            .filter(|layer| {
+                if is_first {
+                    is_first = false;
+                    return true;
+                }
+                let any_sub_ranges_contain_range = layer
+                    .included_sub_ranges
+                    .map(|sub_ranges| {
+                        sub_ranges.iter().any(|sub_range| {
+                            let is_before_start = sub_range.end.cmp(&start_anchor, self).is_lt();
+                            let is_after_end = sub_range.start.cmp(&end_anchor, self).is_gt();
+                            !is_before_start && !is_after_end
+                        })
+                    })
+                    .unwrap_or(true);
+                let result = any_sub_ranges_contain_range;
+                return result;
+            })
             .last()
             .map(|info| info.language.clone())
             .or_else(|| self.language.clone())
@@ -2901,7 +2938,7 @@ impl BufferSnapshot {
                 end
             };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row && !significant_indentation {
+                if start.row == end.row && (!significant_indentation || start.column < end.column) {
                     continue;
                 }
                 let range = start..end;
@@ -3277,8 +3314,8 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
-        let mut next_chars = self.chars_at(start).peekable();
-        let mut prev_chars = self.reversed_chars_at(start).peekable();
+        let mut next_chars = self.chars_at(start).take(128).peekable();
+        let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
         let classifier = self.char_classifier_at(start);
         let word_kind = cmp::max(
@@ -4388,6 +4425,7 @@ impl<'a> BufferChunks<'a> {
             information_depth: 0,
             hint_depth: 0,
             unnecessary_depth: 0,
+            underline: true,
             highlights,
         };
         this.initialize_diagnostic_endpoints();
@@ -4448,12 +4486,14 @@ impl<'a> BufferChunks<'a> {
                         is_start: true,
                         severity: entry.diagnostic.severity,
                         is_unnecessary: entry.diagnostic.is_unnecessary,
+                        underline: entry.diagnostic.underline,
                     });
                     diagnostic_endpoints.push(DiagnosticEndpoint {
                         offset: entry.range.end,
                         is_start: false,
                         severity: entry.diagnostic.severity,
                         is_unnecessary: entry.diagnostic.is_unnecessary,
+                        underline: entry.diagnostic.underline,
                     });
                 }
                 diagnostic_endpoints
@@ -4559,6 +4599,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 if endpoint.offset <= self.range.start {
                     self.update_diagnostic_depths(endpoint);
                     diagnostic_endpoints.next();
+                    self.underline = endpoint.underline;
                 } else {
                     next_diagnostic_endpoint = endpoint.offset;
                     break;
@@ -4590,9 +4631,10 @@ impl<'a> Iterator for BufferChunks<'a> {
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,
+                underline: self.underline,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
-                ..Default::default()
+                ..Chunk::default()
             })
         } else {
             None
@@ -4623,6 +4665,7 @@ impl Default for Diagnostic {
     fn default() -> Self {
         Self {
             source: Default::default(),
+            source_kind: DiagnosticSourceKind::Other,
             code: None,
             code_description: None,
             severity: DiagnosticSeverity::ERROR,
@@ -4632,6 +4675,7 @@ impl Default for Diagnostic {
             is_primary: false,
             is_disk_based: false,
             is_unnecessary: false,
+            underline: true,
             data: None,
         }
     }

@@ -64,7 +64,6 @@ client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
@@ -79,3 +78,4 @@ unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
 call = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

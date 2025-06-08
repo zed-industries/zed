@@ -311,6 +311,7 @@ impl LanguageModelRegistry {
 
         self.commit_message_model
             .clone()
+            .or_else(|| self.default_fast_model.clone())
             .or_else(|| self.default_model.clone())
     }
 

@@ -37,7 +37,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    TokenUsage, WrappedTextContent,
+    TokenUsage,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -531,13 +531,13 @@ impl LanguageModel for BedrockModel {
     > {
         let Ok(region) = cx.read_entity(&self.state, |state, _cx| {
             // Get region - from credentials or directly from settings
-            let region = state
-                .credentials
-                .as_ref()
-                .map(|s| s.region.clone())
-                .unwrap_or(String::from("us-east-1"));
+            let credentials_region = state.credentials.as_ref().map(|s| s.region.clone());
+            let settings_region = state.settings.as_ref().and_then(|s| s.region.clone());
 
-            region
+            // Use credentials region if available, otherwise use settings region, finally fall back to default
+            credentials_region
+                .or(settings_region)
+                .unwrap_or(String::from("us-east-1"))
         }) else {
             return async move {
                 anyhow::bail!("App State Dropped");
@@ -639,8 +639,7 @@ pub fn into_bedrock(
                             BedrockToolResultBlock::builder()
                                 .tool_use_id(tool_result.tool_use_id.to_string())
                                 .content(match tool_result.content {
-                                    LanguageModelToolResultContent::Text(text)
-                                    | LanguageModelToolResultContent::WrappedText(WrappedTextContent { text, .. }) => {
+                                    LanguageModelToolResultContent::Text(text) => {
                                         BedrockToolResultContentBlock::Text(text.to_string())
                                     }
                                     LanguageModelToolResultContent::Image(_) => {
@@ -775,11 +774,7 @@ pub fn get_bedrock_tokens(
                             // TODO: Estimate token usage from tool uses.
                         }
                         MessageContent::ToolResult(tool_result) => match tool_result.content {
-                            LanguageModelToolResultContent::Text(text)
-                            | LanguageModelToolResultContent::WrappedText(WrappedTextContent {
-                                text,
-                                ..
-                            }) => {
+                            LanguageModelToolResultContent::Text(text) => {
                                 string_contents.push_str(&text);
                             }
                             LanguageModelToolResultContent::Image(image) => {

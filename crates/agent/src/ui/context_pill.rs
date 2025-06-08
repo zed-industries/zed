@@ -93,20 +93,9 @@ impl ContextPill {
             Self::Suggested {
                 icon_path: Some(icon_path),
                 ..
-            }
-            | Self::Added {
-                context:
-                    AddedContext {
-                        icon_path: Some(icon_path),
-                        ..
-                    },
-                ..
             } => Icon::from_path(icon_path),
-            Self::Suggested { kind, .. }
-            | Self::Added {
-                context: AddedContext { kind, .. },
-                ..
-            } => Icon::new(kind.icon()),
+            Self::Suggested { kind, .. } => Icon::new(kind.icon()),
+            Self::Added { context, .. } => context.icon(),
         }
     }
 }
@@ -133,6 +122,7 @@ impl RenderOnce for ContextPill {
                 on_click,
             } => {
                 let status_is_error = matches!(context.status, ContextStatus::Error { .. });
+                let status_is_warning = matches!(context.status, ContextStatus::Warning { .. });
 
                 base_pill
                     .pr(if on_remove.is_some() { px(2.) } else { px(4.) })
@@ -140,6 +130,9 @@ impl RenderOnce for ContextPill {
                         if status_is_error {
                             pill.bg(cx.theme().status().error_background)
                                 .border_color(cx.theme().status().error_border)
+                        } else if status_is_warning {
+                            pill.bg(cx.theme().status().warning_background)
+                                .border_color(cx.theme().status().warning_border)
                         } else if *focused {
                             pill.bg(color.element_background)
                                 .border_color(color.border_focused)
@@ -195,7 +188,8 @@ impl RenderOnce for ContextPill {
                                         |label, delta| label.opacity(delta),
                                     )
                                     .into_any_element(),
-                                ContextStatus::Error { message } => element
+                                ContextStatus::Warning { message }
+                                | ContextStatus::Error { message } => element
                                     .tooltip(ui::Tooltip::text(message.clone()))
                                     .into_any_element(),
                             }),
@@ -270,6 +264,7 @@ pub enum ContextStatus {
     Ready,
     Loading { message: SharedString },
     Error { message: SharedString },
+    Warning { message: SharedString },
 }
 
 #[derive(RegisterComponent)]
@@ -285,6 +280,19 @@ pub struct AddedContext {
 }
 
 impl AddedContext {
+    pub fn icon(&self) -> Icon {
+        match &self.status {
+            ContextStatus::Warning { .. } => Icon::new(IconName::Warning).color(Color::Warning),
+            ContextStatus::Error { .. } => Icon::new(IconName::XCircle).color(Color::Error),
+            _ => {
+                if let Some(icon_path) = &self.icon_path {
+                    Icon::from_path(icon_path)
+                } else {
+                    Icon::new(self.kind.icon())
+                }
+            }
+        }
+    }
     /// Creates an `AddedContext` by retrieving relevant details of `AgentContext`. This returns a
     /// `None` if `DirectoryContext` or `RulesContext` no longer exist.
     ///
@@ -293,6 +301,7 @@ impl AddedContext {
         handle: AgentContextHandle,
         prompt_store: Option<&Entity<PromptStore>>,
         project: &Project,
+        model: Option<&Arc<dyn language_model::LanguageModel>>,
         cx: &App,
     ) -> Option<AddedContext> {
         match handle {
@@ -304,11 +313,15 @@ impl AddedContext {
             AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
             AgentContextHandle::TextThread(handle) => Some(Self::pending_text_thread(handle, cx)),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
-            AgentContextHandle::Image(handle) => Some(Self::image(handle)),
+            AgentContextHandle::Image(handle) => Some(Self::image(handle, model, cx)),
         }
     }
 
-    pub fn new_attached(context: &AgentContext, cx: &App) -> AddedContext {
+    pub fn new_attached(
+        context: &AgentContext,
+        model: Option<&Arc<dyn language_model::LanguageModel>>,
+        cx: &App,
+    ) -> AddedContext {
         match context {
             AgentContext::File(context) => Self::attached_file(context, cx),
             AgentContext::Directory(context) => Self::attached_directory(context),
@@ -318,7 +331,7 @@ impl AddedContext {
             AgentContext::Thread(context) => Self::attached_thread(context),
             AgentContext::TextThread(context) => Self::attached_text_thread(context),
             AgentContext::Rules(context) => Self::attached_rules(context),
-            AgentContext::Image(context) => Self::image(context.clone()),
+            AgentContext::Image(context) => Self::image(context.clone(), model, cx),
         }
     }
 
@@ -333,14 +346,8 @@ impl AddedContext {
 
     fn file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
         let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let name = full_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned().into())
-            .unwrap_or_else(|| full_path_string.clone());
-        let parent = full_path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned().into());
+        let (name, parent) =
+            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
         AddedContext {
             kind: ContextKind::File,
             name,
@@ -370,14 +377,8 @@ impl AddedContext {
 
     fn directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
         let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let name = full_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned().into())
-            .unwrap_or_else(|| full_path_string.clone());
-        let parent = full_path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned().into());
+        let (name, parent) =
+            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
         AddedContext {
             kind: ContextKind::Directory,
             name,
@@ -605,22 +606,45 @@ impl AddedContext {
         }
     }
 
-    fn image(context: ImageContext) -> AddedContext {
+    fn image(
+        context: ImageContext,
+        model: Option<&Arc<dyn language_model::LanguageModel>>,
+        cx: &App,
+    ) -> AddedContext {
+        let (name, parent, icon_path) = if let Some(full_path) = context.full_path.as_ref() {
+            let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
+            let (name, parent) =
+                extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
+            let icon_path = FileIcons::get_icon(&full_path, cx);
+            (name, parent, icon_path)
+        } else {
+            ("Image".into(), None, None)
+        };
+
+        let status = match context.status(model) {
+            ImageStatus::Loading => ContextStatus::Loading {
+                message: "Loading…".into(),
+            },
+            ImageStatus::Error => ContextStatus::Error {
+                message: "Failed to load Image".into(),
+            },
+            ImageStatus::Warning => ContextStatus::Warning {
+                message: format!(
+                    "{} doesn't support attaching Images as Context",
+                    model.map(|m| m.name().0).unwrap_or_else(|| "Model".into())
+                )
+                .into(),
+            },
+            ImageStatus::Ready => ContextStatus::Ready,
+        };
+
         AddedContext {
             kind: ContextKind::Image,
-            name: "Image".into(),
-            parent: None,
+            name,
+            parent,
             tooltip: None,
-            icon_path: None,
-            status: match context.status() {
-                ImageStatus::Loading => ContextStatus::Loading {
-                    message: "Loading…".into(),
-                },
-                ImageStatus::Error => ContextStatus::Error {
-                    message: "Failed to load image".into(),
-                },
-                ImageStatus::Ready => ContextStatus::Ready,
-            },
+            icon_path,
+            status,
             render_hover: Some(Rc::new({
                 let image = context.original_image.clone();
                 move |_, cx| {
@@ -637,6 +661,22 @@ impl AddedContext {
             handle: AgentContextHandle::Image(context),
         }
     }
+}
+
+fn extract_file_name_and_directory_from_full_path(
+    path: &Path,
+    name_fallback: &SharedString,
+) -> (SharedString, Option<SharedString>) {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned().into())
+        .unwrap_or_else(|| name_fallback.clone());
+    let parent = path
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned().into());
+
+    (name, parent)
 }
 
 #[derive(Debug, Clone)]
@@ -765,37 +805,52 @@ impl Component for AddedContext {
         let mut next_context_id = ContextId::zero();
         let image_ready = (
             "Ready",
-            AddedContext::image(ImageContext {
-                context_id: next_context_id.post_inc(),
-                project_path: None,
-                original_image: Arc::new(Image::empty()),
-                image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
-            }),
+            AddedContext::image(
+                ImageContext {
+                    context_id: next_context_id.post_inc(),
+                    project_path: None,
+                    full_path: None,
+                    original_image: Arc::new(Image::empty()),
+                    image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+                },
+                None,
+                cx,
+            ),
         );
 
         let image_loading = (
             "Loading",
-            AddedContext::image(ImageContext {
-                context_id: next_context_id.post_inc(),
-                project_path: None,
-                original_image: Arc::new(Image::empty()),
-                image_task: cx
-                    .background_spawn(async move {
-                        smol::Timer::after(Duration::from_secs(60 * 5)).await;
-                        Some(LanguageModelImage::empty())
-                    })
-                    .shared(),
-            }),
+            AddedContext::image(
+                ImageContext {
+                    context_id: next_context_id.post_inc(),
+                    project_path: None,
+                    full_path: None,
+                    original_image: Arc::new(Image::empty()),
+                    image_task: cx
+                        .background_spawn(async move {
+                            smol::Timer::after(Duration::from_secs(60 * 5)).await;
+                            Some(LanguageModelImage::empty())
+                        })
+                        .shared(),
+                },
+                None,
+                cx,
+            ),
         );
 
         let image_error = (
             "Error",
-            AddedContext::image(ImageContext {
-                context_id: next_context_id.post_inc(),
-                project_path: None,
-                original_image: Arc::new(Image::empty()),
-                image_task: Task::ready(None).shared(),
-            }),
+            AddedContext::image(
+                ImageContext {
+                    context_id: next_context_id.post_inc(),
+                    project_path: None,
+                    full_path: None,
+                    original_image: Arc::new(Image::empty()),
+                    image_task: Task::ready(None).shared(),
+                },
+                None,
+                cx,
+            ),
         );
 
         Some(
@@ -813,5 +868,62 @@ impl Component for AddedContext {
                 )
                 .into_any(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::App;
+    use language_model::{LanguageModel, fake_provider::FakeLanguageModel};
+    use std::sync::Arc;
+
+    #[gpui::test]
+    fn test_image_context_warning_for_unsupported_model(cx: &mut App) {
+        let model: Arc<dyn LanguageModel> = Arc::new(FakeLanguageModel::default());
+        assert!(!model.supports_images());
+
+        let image_context = ImageContext {
+            context_id: ContextId::zero(),
+            project_path: None,
+            original_image: Arc::new(Image::empty()),
+            image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+            full_path: None,
+        };
+
+        let added_context = AddedContext::image(image_context, Some(&model), cx);
+
+        assert!(matches!(
+            added_context.status,
+            ContextStatus::Warning { .. }
+        ));
+
+        assert!(matches!(added_context.kind, ContextKind::Image));
+        assert_eq!(added_context.name.as_ref(), "Image");
+        assert!(added_context.parent.is_none());
+        assert!(added_context.icon_path.is_none());
+    }
+
+    #[gpui::test]
+    fn test_image_context_ready_for_no_model(cx: &mut App) {
+        let image_context = ImageContext {
+            context_id: ContextId::zero(),
+            project_path: None,
+            original_image: Arc::new(Image::empty()),
+            image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
+            full_path: None,
+        };
+
+        let added_context = AddedContext::image(image_context, None, cx);
+
+        assert!(
+            matches!(added_context.status, ContextStatus::Ready),
+            "Expected ready status when no model provided"
+        );
+
+        assert!(matches!(added_context.kind, ContextKind::Image));
+        assert_eq!(added_context.name.as_ref(), "Image");
+        assert!(added_context.parent.is_none());
+        assert!(added_context.icon_path.is_none());
     }
 }
