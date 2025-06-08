@@ -10,7 +10,7 @@ use editor::{
     Editor, EditorEvent,
     actions::{RestartLanguageServer, StopLanguageServer},
 };
-use gpui::{Corner, DismissEvent, Entity, Focusable, Subscription, Task, WeakEntity};
+use gpui::{Corner, DismissEvent, Entity, Focusable, MouseButton, Subscription, Task, WeakEntity};
 use itertools::Itertools;
 use language::BufferId;
 use lsp::{LanguageServerId, LanguageServerName};
@@ -198,7 +198,7 @@ impl LspPickerDelegate {
         language_server_name: &LanguageServerName,
         status: LanguageServerStatus,
         lsp_status: &Option<(SharedString, Severity)>,
-        cx: &App,
+        cx: &Context<Picker<Self>>,
     ) -> Div {
         let lsp_store = self.lsp_store.clone();
 
@@ -245,6 +245,7 @@ impl LspPickerDelegate {
         };
 
         v_flex()
+            .p_1()
             .w_full()
             .group("lsp-status")
             .child(
@@ -271,6 +272,8 @@ impl LspPickerDelegate {
             .when_some(lsp_status.as_ref(), |header, (message, severity)| {
                 header.child(
                     div()
+                        .child(Label::new(message))
+                        .hover(|s| s.opacity(0.6))
                         .map(|div| match severity {
                             Severity::Other | Severity::Ok | Severity::Info => div,
                             Severity::Warning => {
@@ -278,8 +281,46 @@ impl LspPickerDelegate {
                             }
                             Severity::Error => div.border_1().border_color(Color::Error.color(cx)),
                         })
-                        // TODO kb have a close button to dismiss the message
-                        .child(Label::new(message)),
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, {
+                            let message = message.clone();
+                            let severity = *severity;
+                            cx.listener(move |picker, _, _, cx| {
+                                if let Some(server_state) =
+                                    picker.delegate.language_servers.servers.get_mut(&server_id)
+                                {
+                                    if server_state.message.as_ref().is_some_and(
+                                        |(state_message, state_severity)| {
+                                            state_message == &message && state_severity == &severity
+                                        },
+                                    ) {
+                                        server_state.message = None;
+                                    }
+                                }
+                                if let Some(state_message) = picker
+                                    .delegate
+                                    .items
+                                    .iter_mut()
+                                    .find_map(|item| match item {
+                                        LspItem::Header {
+                                            server_id: state_server_id,
+                                            message,
+                                            ..
+                                        } => {
+                                            if server_id == *state_server_id {
+                                                Some(message)
+                                            } else {
+                                                None
+                                            }
+                                        }
+                                        LspItem::Item { .. } => None,
+                                    })
+                                {
+                                    *state_message = None;
+                                    cx.notify();
+                                }
+                            })
+                        }),
                 )
             })
             .cursor_default()
