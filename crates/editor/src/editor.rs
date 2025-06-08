@@ -214,10 +214,13 @@ use workspace::{
     searchable::SearchEvent,
 };
 
-use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 use crate::{
     code_context_menus::CompletionsMenuSource,
     hover_links::{find_url, find_url_from_range},
+};
+use crate::{
+    editor_settings::MultiCursorModifier,
+    signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
 
 pub const FILE_HEADER_HEIGHT: u32 = 2;
@@ -253,14 +256,6 @@ pub type RenderDiffHunkControlsFn = Arc<
         &mut App,
     ) -> AnyElement,
 >;
-
-const COLUMNAR_SELECTION_MODIFIERS: Modifiers = Modifiers {
-    alt: true,
-    shift: true,
-    control: false,
-    platform: false,
-    function: false,
-};
 
 struct InlineValueCache {
     enabled: bool,
@@ -7092,6 +7087,29 @@ impl Editor {
         )
     }
 
+    fn multi_cursor_modifier(
+        cursor_event: bool,
+        modifiers: &Modifiers,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let multi_cursor_setting = EditorSettings::get_global(cx).multi_cursor_modifier;
+        if cursor_event {
+            match multi_cursor_setting {
+                MultiCursorModifier::Alt => modifiers.alt,
+                MultiCursorModifier::CmdOrCtrl => modifiers.secondary(),
+            }
+        } else {
+            match multi_cursor_setting {
+                MultiCursorModifier::Alt => modifiers.secondary(),
+                MultiCursorModifier::CmdOrCtrl => modifiers.alt,
+            }
+        }
+    }
+
+    fn columnar_selection_modifiers(multi_cursor_modifier: bool, modifiers: &Modifiers) -> bool {
+        modifiers.shift && multi_cursor_modifier && modifiers.number_of_modifiers() == 2
+    }
+
     fn update_selection_mode(
         &mut self,
         modifiers: &Modifiers,
@@ -7099,7 +7117,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if modifiers != &COLUMNAR_SELECTION_MODIFIERS || self.selections.pending.is_none() {
+        let multi_cursor_modifier = Self::multi_cursor_modifier(true, modifiers, cx);
+        if !Self::columnar_selection_modifiers(multi_cursor_modifier, modifiers)
+            || self.selections.pending.is_none()
+        {
             return;
         }
 
