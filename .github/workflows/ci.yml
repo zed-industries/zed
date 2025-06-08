@@ -183,6 +183,9 @@ jobs:
       - name: Check for todo! and FIXME comments
         run: script/check-todos
 
+      - name: Check modifier use in keymaps
+        run: script/check-keymaps
+
       - name: Run style checks
         uses: ./.github/actions/check_style
 
