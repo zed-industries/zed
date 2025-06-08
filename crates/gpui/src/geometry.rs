@@ -2870,6 +2870,17 @@ pub const fn ScaledPixels(x: f32) -> ScaledPixels {
 }
 
 impl PhysicalPixels<i32> {
+    /// Creates `PhysicalPixels<i32>` from a `u32` amount of physical pixels.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cfg!(debug_assertions)` is true and `physical_pixels` is greatrer than
+    /// [`i32::MAX`].
+    pub(crate) fn from_u32(physical_pixels: u32) -> Self {
+        debug_assert!(physical_pixels <= i32::MAX as u32);
+        Self(physical_pixels as _)
+    }
+
     /// Converts `PhysicalPixels<i32>` into `PhysicalPixels<f32>`.
     ///
     /// # Panics
@@ -2975,12 +2986,6 @@ impl From<i32> for DevicePixels {
     }
 }
 
-impl From<u32> for DevicePixels {
-    fn from(device_pixels: u32) -> Self {
-        physical_px(device_pixels as i32)
-    }
-}
-
 impl From<DevicePixels> for u32 {
     fn from(device_pixels: DevicePixels) -> Self {
         device_pixels.0 as u32
@@ -2990,12 +2995,6 @@ impl From<DevicePixels> for u32 {
 impl From<DevicePixels> for u64 {
     fn from(device_pixels: DevicePixels) -> Self {
         device_pixels.0 as u64
-    }
-}
-
-impl From<u64> for DevicePixels {
-    fn from(device_pixels: u64) -> Self {
-        physical_px(device_pixels as i32)
     }
 }
 
