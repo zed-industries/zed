@@ -401,7 +401,16 @@ impl LocalLspStore {
         cx.defer(move |cx| {
             lsp_store
                 .update(cx, |_, cx| {
-                    report_starting_language_server(server_id, server_name, cx)
+                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                        language_server_id: server_id,
+                        name: Some(server_name),
+                        message: proto::update_language_server::Variant::StatusUpdate(
+                            proto::StatusUpdate {
+                                message: None,
+                                status: proto::status_update::Status::Starting as i32,
+                            },
+                        ),
+                    });
                 })
                 .ok();
         });
@@ -2424,7 +2433,6 @@ impl LocalLspStore {
                     return None;
                 }
 
-                // TODO kb do I need to cover 2 other `.server_id_or_init` cases?
                 let server_id = server_node.server_id_or_init(
                     |LaunchDisposition {
                          server_name,
@@ -2447,7 +2455,6 @@ impl LocalLspStore {
                                        .into_iter()
                                        .find(|adapter| &adapter.name() == server_name)
                                        .expect("To find LSP adapter");
-                                   let server_name = adapter.name();
                                    let server_id = self.start_language_server(
                                        &worktree,
                                        delegate.clone(),
@@ -2455,7 +2462,6 @@ impl LocalLspStore {
                                        settings,
                                        cx,
                                    );
-                                   report_starting_language_server(server_id, server_name, cx);
                                    server_id
                                }
                            }
@@ -2471,15 +2477,13 @@ impl LocalLspStore {
                                        .into_iter()
                                        .find(|adapter| &adapter.name() == server_name)
                                        .expect("To find LSP adapter");
-                                   let server_name = adapter.name();
-                                   let server_id = self.start_language_server(
+                                   self.start_language_server(
                                        &worktree,
                                        delegate.clone(),
                                        adapter,
                                        settings,
                                        cx,
                                    );
-                                   report_starting_language_server(server_id, server_name, cx);
                                }
                                if let Some(server_ids) = self
                                    .language_server_ids
@@ -4583,6 +4587,7 @@ impl LspStore {
                 }
             };
 
+            let mut messages_to_report = Vec::new();
             let to_stop = local.lsp_tree.clone().update(cx, |lsp_tree, cx| {
                 let mut rebase = lsp_tree.rebase();
                 for buffer_handle in buffer_store.read(cx).buffers().sorted_by_key(|buffer| {
@@ -4646,7 +4651,7 @@ impl LspStore {
 
                         for node in nodes {
                             if !reused {
-                                node.server_id_or_init(
+                                let server_id = node.server_id_or_init(
                                     |LaunchDisposition {
                                          server_name,
                                          attach,
@@ -4708,12 +4713,29 @@ impl LspStore {
                                         }
                                     },
                                 );
+
+                                if let Some(language_server_id) = server_id {
+                                    messages_to_report.push(LspStoreEvent::LanguageServerUpdate {
+                                        language_server_id,
+                                        name: node.name(),
+                                        message:
+                                            proto::update_language_server::Variant::RegisteredForBuffer(
+                                                proto::RegisteredForBuffer {
+                                                    worktree_id: worktree_id.to_proto(),
+                                                    buffer_id: buffer_handle.read(cx).remote_id().to_proto(),
+                                                },
+                                            ),
+                                    });
+                                }
                             }
                         }
                     }
                 }
                 rebase.finish()
             });
+            for message in messages_to_report {
+                cx.emit(message);
+            }
             for (id, _) in to_stop {
                 self.stop_local_language_server(id, cx).detach();
             }
@@ -11704,21 +11726,6 @@ fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     }
 
     label.text = new_text;
-}
-
-fn report_starting_language_server(
-    language_server_id: LanguageServerId,
-    name: LanguageServerName,
-    cx: &mut Context<LspStore>,
-) {
-    cx.emit(LspStoreEvent::LanguageServerUpdate {
-        language_server_id,
-        name: Some(name),
-        message: proto::update_language_server::Variant::StatusUpdate(proto::StatusUpdate {
-            message: None,
-            status: proto::status_update::Status::Starting as i32,
-        }),
-    });
 }
 
 #[cfg(test)]

@@ -86,6 +86,7 @@ enum Severity {
 enum LanguageServerStatus {
     Starting,
     Running,
+    // TODO kb is this status needed? Not used right now.
     Stopping,
     Stopped,
 }
@@ -736,7 +737,6 @@ impl LspTool {
                 message: proto::update_language_server::Variant::RegisteredForBuffer(update),
                 ..
             } => {
-                // TODO kb langservers from extensions like `typos` are not getting into this branch initially
                 if let Ok(buffer_id) = BufferId::new(update.buffer_id) {
                     self.lsp_picker.update(cx, |picker, _| {
                         picker
