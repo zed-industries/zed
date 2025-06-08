@@ -172,8 +172,8 @@ impl BladeAtlasState {
             name: "atlas",
             format,
             size: gpu::Extent {
-                width: size.width.into(),
-                height: size.height.into(),
+                width: size.width.as_u32(),
+                height: size.height.as_u32(),
                 depth: 1,
             },
             array_layer_count: 1,
@@ -245,14 +245,14 @@ impl BladeAtlasState {
                     mip_level: 0,
                     array_layer: 0,
                     origin: [
-                        upload.bounds.origin.x.into(),
-                        upload.bounds.origin.y.into(),
+                        upload.bounds.origin.x.as_u32(),
+                        upload.bounds.origin.y.as_u32(),
                         0,
                     ],
                 },
                 gpu::Extent {
-                    width: upload.bounds.size.width.into(),
-                    height: upload.bounds.size.height.into(),
+                    width: upload.bounds.size.width.as_u32(),
+                    height: upload.bounds.size.height.as_u32(),
                     depth: 1,
                 },
             );

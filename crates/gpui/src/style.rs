@@ -46,7 +46,8 @@ impl ObjectFit {
         bounds: Bounds<Pixels>,
         image_size: Size<DevicePixels>,
     ) -> Bounds<Pixels> {
-        let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
+        // NB: this reinterprets physical pixels as logical pixels without scaling them properly
+        let image_size = image_size.map(|dimension| dimension.to_logical(1.));
         let image_ratio = image_size.width / image_size.height;
         let bounds_ratio = bounds.size.width / bounds.size.height;
 

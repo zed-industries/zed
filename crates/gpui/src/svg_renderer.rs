@@ -85,7 +85,7 @@ impl SvgRenderer {
         };
 
         // Render the SVG to a pixmap with the specified width and height.
-        let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width.into(), size.height.into())
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width.as_u32(), size.height.as_u32())
             .ok_or(usvg::Error::InvalidSize)?;
 
         let scale = size.width.0 as f32 / tree.size().width();

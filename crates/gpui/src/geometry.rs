@@ -2881,6 +2881,16 @@ impl PhysicalPixels<i32> {
         Self(physical_pixels as _)
     }
 
+    /// Returns the amount of physical pixels, in `u32`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `cfg!(debug_assertions)` is true and `self.0` is negative.
+    pub fn as_u32(self) -> u32 {
+        debug_assert!(0 <= self.0);
+        self.0 as _
+    }
+
     /// Converts `PhysicalPixels<i32>` into `PhysicalPixels<f32>`.
     ///
     /// # Panics
@@ -2983,18 +2993,6 @@ impl PhysicalPixels<f32> {
 impl From<i32> for DevicePixels {
     fn from(device_pixels: i32) -> Self {
         physical_px(device_pixels)
-    }
-}
-
-impl From<DevicePixels> for u32 {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0 as u32
-    }
-}
-
-impl From<DevicePixels> for u64 {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0 as u64
     }
 }
 

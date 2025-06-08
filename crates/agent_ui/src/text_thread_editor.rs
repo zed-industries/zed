@@ -2950,7 +2950,7 @@ fn token_state(context: &Entity<AssistantContext>, cx: &App) -> Option<TokenStat
 fn size_for_image(data: &RenderImage, max_size: Size<Pixels>) -> Size<Pixels> {
     let image_size = data
         .size(0)
-        .map(|dimension| Pixels::from(u32::from(dimension)));
+        .map(|dimension| Pixels::from(dimension.as_u32()));
     let image_ratio = image_size.width / image_size.height;
     let bounds_ratio = max_size.width / max_size.height;
 
