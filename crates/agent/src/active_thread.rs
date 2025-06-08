@@ -4680,7 +4680,7 @@ mod tests {
         let project = create_test_project(cx, json!({})).await;
         let (cx, active_thread, _, thread, _) = setup_test_environment(cx, project).await;
         // TODO test on windows
-        let test_cases = vec![
+        let test_cases = [
             "```src/file.rs\ncode\n```",
             "```path/to/file.py#L1-10\ncode\n```",
             "```\nno path\n```",
