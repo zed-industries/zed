@@ -1924,6 +1924,30 @@ Example:
 
 `boolean` values
 
+## Multi Cursor Modifier
+
+- Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+- Setting: `multi_cursor_modifier`
+- Default: `alt`
+
+**Options**
+
+1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+
+```jsonc
+{
+  "multi_cursor_modifier": "alt",
+}
+```
+
+2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+
+```jsonc
+{
+  "multi_cursor_modifier": "cmd_or_ctrl", // alias: "cmd", "ctrl"
+}
+```
+
 ## Hover Popover Enabled
 
 - Description: Whether or not to show the informational hover box when moving the mouse over symbols in the editor.
