@@ -4,11 +4,13 @@ use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
+#[cfg(debug_assertions)]
+use std::panic::Location;
 use std::{
     any::{Any, TypeId, type_name},
     cell::RefCell,
     cmp::Ordering,
-    fmt::{self, Display},
+    fmt::{self, Debug, Display, Formatter},
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
@@ -49,15 +51,23 @@ impl EntityId {
 }
 
 impl Display for EntityId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_u64())
     }
 }
 
 pub(crate) struct EntityMap {
-    entities: SecondaryMap<EntityId, Box<dyn Any>>,
+    entities: SecondaryMap<EntityId, EntityData>,
     pub accessed_entities: RefCell<FxHashSet<EntityId>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
+}
+
+struct EntityData {
+    value: Box<dyn Any>,
+    #[cfg(debug_assertions)]
+    type_name: &'static str,
+    #[cfg(debug_assertions)]
+    constructed_at: &'static Location<'static>,
 }
 
 struct EntityRefCounts {
@@ -85,6 +95,7 @@ impl EntityMap {
     }
 
     /// Reserve a slot for an entity, which you can subsequently use with `insert`.
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn reserve<T: 'static>(&self) -> Slot<T> {
         let id = self.ref_counts.write().counts.insert(1.into());
         Slot(Entity::new(id, Arc::downgrade(&self.ref_counts)))
@@ -99,7 +110,16 @@ impl EntityMap {
         accessed_entities.insert(slot.entity_id);
 
         let handle = slot.0;
-        self.entities.insert(handle.entity_id, Box::new(entity));
+        self.entities.insert(
+            handle.entity_id,
+            EntityData {
+                value: Box::new(entity),
+                #[cfg(debug_assertions)]
+                type_name: handle.entity_type_name,
+                #[cfg(debug_assertions)]
+                constructed_at: handle.entity_constructed_at,
+            },
+        );
         handle
     }
 
@@ -135,13 +155,13 @@ impl EntityMap {
 
         self.entities
             .get(entity.entity_id)
-            .and_then(|entity| entity.downcast_ref())
+            .and_then(|entity| entity.value.downcast_ref())
             .unwrap_or_else(|| double_lease_panic::<T>("read"))
     }
 
     fn assert_valid_context(&self, entity: &AnyEntity) {
         debug_assert!(
-            Weak::ptr_eq(&entity.entity_map, &Arc::downgrade(&self.ref_counts)),
+            Weak::ptr_eq(&entity.entity_ref_counts, &Arc::downgrade(&self.ref_counts)),
             "used a entity with the wrong context"
         );
     }
@@ -173,9 +193,33 @@ impl EntityMap {
                 accessed_entities.remove(&entity_id);
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
-                Some((entity_id, self.entities.remove(entity_id)?))
+                Some((entity_id, self.entities.remove(entity_id)?.value))
             })
             .collect()
+    }
+
+    #[allow(dead_code)]
+    pub fn debug_entity_id(&self, entity_id: EntityId) -> Option<DebugEntityData> {
+        self.entities
+            .get(entity_id)
+            .map(|entity_data| DebugEntityData { entity_data })
+    }
+}
+
+/// Helper struct with `impl Debug` for `EntityMap::debug_entity_id`.
+pub(crate) struct DebugEntityData<'a> {
+    entity_data: &'a EntityData,
+}
+
+impl Debug for DebugEntityData<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut builder = f.debug_struct("EntityData");
+        builder.field("type", &self.entity_data.value.type_id());
+        #[cfg(debug_assertions)]
+        builder.field("type_name", &self.entity_data.type_name);
+        #[cfg(debug_assertions)]
+        builder.field("constructed_at", &self.entity_data.constructed_at);
+        builder.finish()
     }
 }
 
@@ -183,12 +227,12 @@ impl EntityMap {
 fn double_lease_panic<T>(operation: &str) -> ! {
     panic!(
         "cannot {operation} {} while it is already being updated",
-        std::any::type_name::<T>()
+        type_name::<T>()
     )
 }
 
 pub(crate) struct Lease<'a, T> {
-    entity: Option<Box<dyn Any>>,
+    entity: Option<EntityData>,
     pub pointer: &'a Entity<T>,
     entity_type: PhantomData<T>,
 }
@@ -197,13 +241,13 @@ impl<T: 'static> core::ops::Deref for Lease<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.entity.as_ref().unwrap().downcast_ref().unwrap()
+        self.entity.as_ref().unwrap().value.downcast_ref().unwrap()
     }
 }
 
 impl<T: 'static> core::ops::DerefMut for Lease<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.entity.as_mut().unwrap().downcast_mut().unwrap()
+        self.entity.as_mut().unwrap().value.downcast_mut().unwrap()
     }
 }
 
@@ -222,27 +266,16 @@ pub(crate) struct Slot<T>(Entity<T>);
 pub struct AnyEntity {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
-    entity_map: Weak<RwLock<EntityRefCounts>>,
+    entity_ref_counts: Weak<RwLock<EntityRefCounts>>,
     #[cfg(any(test, feature = "leak-detection"))]
-    handle_id: HandleId,
+    entity_handle_id: HandleId,
+    #[cfg(debug_assertions)]
+    entity_type_name: &'static str,
+    #[cfg(debug_assertions)]
+    entity_constructed_at: &'static Location<'static>,
 }
 
 impl AnyEntity {
-    fn new(id: EntityId, entity_type: TypeId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self {
-        Self {
-            entity_id: id,
-            entity_type,
-            entity_map: entity_map.clone(),
-            #[cfg(any(test, feature = "leak-detection"))]
-            handle_id: entity_map
-                .upgrade()
-                .unwrap()
-                .write()
-                .leak_detector
-                .handle_created(id),
-        }
-    }
-
     /// Returns the id associated with this entity.
     pub fn entity_id(&self) -> EntityId {
         self.entity_id
@@ -258,7 +291,11 @@ impl AnyEntity {
         AnyWeakEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
-            entity_ref_counts: self.entity_map.clone(),
+            entity_ref_counts: self.entity_ref_counts.clone(),
+            #[cfg(debug_assertions)]
+            entity_type_name: self.entity_type_name,
+            #[cfg(debug_assertions)]
+            entity_constructed_at: self.entity_constructed_at,
         }
     }
 
@@ -278,9 +315,9 @@ impl AnyEntity {
 
 impl Clone for AnyEntity {
     fn clone(&self) -> Self {
-        if let Some(entity_map) = self.entity_map.upgrade() {
-            let entity_map = entity_map.read();
-            let count = entity_map
+        if let Some(ref_counts) = self.entity_ref_counts.upgrade() {
+            let ref_counts = ref_counts.read();
+            let count = ref_counts
                 .counts
                 .get(self.entity_id)
                 .expect("detected over-release of a entity");
@@ -291,24 +328,28 @@ impl Clone for AnyEntity {
         Self {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
-            entity_map: self.entity_map.clone(),
+            entity_ref_counts: self.entity_ref_counts.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
-            handle_id: self
-                .entity_map
+            entity_handle_id: self
+                .entity_ref_counts
                 .upgrade()
                 .unwrap()
                 .write()
                 .leak_detector
                 .handle_created(self.entity_id),
+            #[cfg(debug_assertions)]
+            entity_type_name: self.entity_type_name,
+            #[cfg(debug_assertions)]
+            entity_constructed_at: self.entity_constructed_at,
         }
     }
 }
 
 impl Drop for AnyEntity {
     fn drop(&mut self) {
-        if let Some(entity_map) = self.entity_map.upgrade() {
-            let entity_map = entity_map.upgradable_read();
-            let count = entity_map
+        if let Some(ref_counts) = self.entity_ref_counts.upgrade() {
+            let ref_counts = ref_counts.upgradable_read();
+            let count = ref_counts
                 .counts
                 .get(self.entity_id)
                 .expect("detected over-release of a handle.");
@@ -316,17 +357,17 @@ impl Drop for AnyEntity {
             assert_ne!(prev_count, 0, "Detected over-release of a entity.");
             if prev_count == 1 {
                 // We were the last reference to this entity, so we can remove it.
-                let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
-                entity_map.dropped_entity_ids.push(self.entity_id);
+                let mut ref_counts = RwLockUpgradableReadGuard::upgrade(ref_counts);
+                ref_counts.dropped_entity_ids.push(self.entity_id);
             }
         }
 
         #[cfg(any(test, feature = "leak-detection"))]
-        if let Some(entity_map) = self.entity_map.upgrade() {
-            entity_map
+        if let Some(ref_counts) = self.entity_ref_counts.upgrade() {
+            ref_counts
                 .write()
                 .leak_detector
-                .handle_released(self.entity_id, self.handle_id)
+                .handle_released(self.entity_id, self.entity_handle_id)
         }
     }
 }
@@ -363,11 +404,16 @@ impl PartialOrd for AnyEntity {
     }
 }
 
-impl std::fmt::Debug for AnyEntity {
+impl Debug for AnyEntity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("AnyEntity")
-            .field("entity_id", &self.entity_id.as_u64())
-            .finish()
+        let mut builder = f.debug_struct(type_name::<Self>());
+        builder.field("id", &self.entity_id.as_u64());
+        builder.field("type", &self.entity_type);
+        #[cfg(debug_assertions)]
+        builder.field("type_name", &self.entity_type_name);
+        #[cfg(debug_assertions)]
+        builder.field("constructed_at", &format!("{}", self.entity_constructed_at));
+        builder.finish()
     }
 }
 
@@ -386,12 +432,28 @@ unsafe impl<T> Sync for Entity<T> {}
 impl<T> Sealed for Entity<T> {}
 
 impl<T: 'static> Entity<T> {
-    fn new(id: EntityId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self
+    #[cfg_attr(debug_assertions, track_caller)]
+    fn new(id: EntityId, ref_counts: Weak<RwLock<EntityRefCounts>>) -> Self
     where
         T: 'static,
     {
         Self {
-            any_entity: AnyEntity::new(id, TypeId::of::<T>(), entity_map),
+            any_entity: AnyEntity {
+                entity_id: id,
+                entity_type: TypeId::of::<T>(),
+                entity_ref_counts: ref_counts.clone(),
+                #[cfg(any(test, feature = "leak-detection"))]
+                entity_handle_id: ref_counts
+                    .upgrade()
+                    .unwrap()
+                    .write()
+                    .leak_detector
+                    .handle_created(id),
+                #[cfg(debug_assertions)]
+                entity_type_name: type_name::<T>(),
+                #[cfg(debug_assertions)]
+                entity_constructed_at: Location::caller(),
+            },
             entity_type: PhantomData,
         }
     }
@@ -458,12 +520,16 @@ impl<T> Clone for Entity<T> {
     }
 }
 
-impl<T> std::fmt::Debug for Entity<T> {
+impl<T> Debug for Entity<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Entity")
-            .field("entity_id", &self.any_entity.entity_id)
-            .field("entity_type", &type_name::<T>())
-            .finish()
+        let mut builder = f.debug_struct("Entity");
+        builder.field("id", &self.any_entity.entity_id.as_u64());
+        builder.field("type", &self.any_entity.entity_type);
+        #[cfg(debug_assertions)]
+        builder.field("type_name", &self.any_entity.entity_type_name);
+        #[cfg(debug_assertions)]
+        builder.field("constructed_at", &format!("{}", self.entity_constructed_at));
+        builder.finish()
     }
 }
 
@@ -505,6 +571,10 @@ pub struct AnyWeakEntity {
     pub(crate) entity_id: EntityId,
     entity_type: TypeId,
     entity_ref_counts: Weak<RwLock<EntityRefCounts>>,
+    #[cfg(debug_assertions)]
+    entity_type_name: &'static str,
+    #[cfg(debug_assertions)]
+    entity_constructed_at: &'static Location<'static>,
 }
 
 impl AnyWeakEntity {
@@ -538,15 +608,19 @@ impl AnyWeakEntity {
         Some(AnyEntity {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
-            entity_map: self.entity_ref_counts.clone(),
+            entity_ref_counts: self.entity_ref_counts.clone(),
             #[cfg(any(test, feature = "leak-detection"))]
-            handle_id: self
+            entity_handle_id: self
                 .entity_ref_counts
                 .upgrade()
                 .unwrap()
                 .write()
                 .leak_detector
                 .handle_created(self.entity_id),
+            #[cfg(debug_assertions)]
+            entity_type_name: self.entity_type_name,
+            #[cfg(debug_assertions)]
+            entity_constructed_at: self.entity_constructed_at,
         })
     }
 
@@ -573,7 +647,13 @@ impl AnyWeakEntity {
     }
 
     /// Creates a weak entity that can never be upgraded.
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn new_invalid() -> Self {
+        Self::new_invalid_with_type_name("unknown")
+    }
+
+    #[cfg_attr(debug_assertions, track_caller)]
+    fn new_invalid_with_type_name(_type_name: &'static str) -> Self {
         /// To hold the invariant that all ids are unique, and considering that slotmap
         /// increases their IDs from `0`, we can decrease ours from `u64::MAX` so these
         /// two will never conflict (u64 is way too large).
@@ -593,16 +673,24 @@ impl AnyWeakEntity {
             entity_id: entity_id.into(),
             entity_type: TypeId::of::<()>(),
             entity_ref_counts: Weak::new(),
+            #[cfg(debug_assertions)]
+            entity_type_name: _type_name,
+            #[cfg(debug_assertions)]
+            entity_constructed_at: Location::caller(),
         }
     }
 }
 
-impl std::fmt::Debug for AnyWeakEntity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(type_name::<Self>())
-            .field("entity_id", &self.entity_id)
-            .field("entity_type", &self.entity_type)
-            .finish()
+impl Debug for AnyWeakEntity {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut builder = f.debug_struct(type_name::<Self>());
+        builder.field("id", &self.entity_id.as_u64());
+        builder.field("type", &self.entity_type);
+        #[cfg(debug_assertions)]
+        builder.field("type_name", &self.entity_type_name);
+        #[cfg(debug_assertions)]
+        builder.field("constructed_at", &format!("{}", self.entity_constructed_at));
+        builder.finish()
     }
 }
 
@@ -647,12 +735,19 @@ pub struct WeakEntity<T> {
     entity_type: PhantomData<T>,
 }
 
-impl<T> std::fmt::Debug for WeakEntity<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(&type_name::<Self>())
-            .field("entity_id", &self.any_entity.entity_id)
-            .field("entity_type", &type_name::<T>())
-            .finish()
+impl<T> Debug for WeakEntity<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut builder = f.debug_struct("WeakEntity");
+        builder.field("id", &self.any_entity.entity_id.as_u64());
+        builder.field("type", &self.any_entity.entity_type);
+        #[cfg(debug_assertions)]
+        builder.field("type_name", &self.any_entity.entity_type_name);
+        #[cfg(debug_assertions)]
+        builder.field(
+            "constructed_at",
+            &format!("{}", self.any_entity.entity_constructed_at),
+        );
+        builder.finish()
     }
 }
 
@@ -732,9 +827,10 @@ impl<T: 'static> WeakEntity<T> {
     }
 
     /// Create a new weak entity that can never be upgraded.
+    #[cfg_attr(debug_assertions, track_caller)]
     pub fn new_invalid() -> Self {
         Self {
-            any_entity: AnyWeakEntity::new_invalid(),
+            any_entity: AnyWeakEntity::new_invalid_with_type_name(type_name::<T>()),
             entity_type: PhantomData,
         }
     }

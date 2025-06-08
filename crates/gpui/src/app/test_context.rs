@@ -32,6 +32,7 @@ pub struct TestAppContext {
 impl AppContext for TestAppContext {
     type Result<T> = T;
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
@@ -40,6 +41,7 @@ impl AppContext for TestAppContext {
         app.new(build_entity)
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
         let mut app = self.app.borrow_mut();
         app.reserve_entity()
@@ -873,6 +875,7 @@ impl VisualTestContext {
 impl AppContext for VisualTestContext {
     type Result<T> = <TestAppContext as AppContext>::Result<T>;
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
@@ -880,6 +883,7 @@ impl AppContext for VisualTestContext {
         self.cx.new(build_entity)
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<crate::Reservation<T>> {
         self.cx.reserve_entity()
     }

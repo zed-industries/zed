@@ -23,6 +23,7 @@ pub struct AsyncApp {
 impl AppContext for AsyncApp {
     type Result<T> = Result<T>;
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
@@ -32,6 +33,7 @@ impl AppContext for AsyncApp {
         Ok(app.new(build_entity))
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
@@ -335,6 +337,7 @@ impl AsyncWindowContext {
 impl AppContext for AsyncWindowContext {
     type Result<T> = Result<T>;
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new<T>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Result<Entity<T>>
     where
         T: 'static,
@@ -342,6 +345,7 @@ impl AppContext for AsyncWindowContext {
         self.window.update(self, |_, _, cx| cx.new(build_entity))
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
         self.window.update(self, |_, _, cx| cx.reserve_entity())
     }

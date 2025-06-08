@@ -170,6 +170,7 @@ pub trait AppContext {
     type Result<T>;
 
     /// Create a new entity in the app context.
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
@@ -177,6 +178,7 @@ pub trait AppContext {
 
     /// Reserve a slot for a entity to be inserted later.
     /// The returned [Reservation] allows you to obtain the [EntityId] for the future entity.
+    #[cfg_attr(debug_assertions, track_caller)]
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>>;
 
     /// Insert a new entity in the app context based on a [Reservation] previously obtained from [`reserve_entity`].

@@ -690,10 +690,12 @@ impl<T> Context<'_, T> {
 impl<T> AppContext for Context<'_, T> {
     type Result<U> = U;
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new<U: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<U>) -> U) -> Entity<U> {
         self.app.new(build_entity)
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn reserve_entity<U: 'static>(&mut self) -> Reservation<U> {
         self.app.reserve_entity()
     }

@@ -1729,6 +1729,7 @@ impl AppContext for App {
     ///
     /// The given function will be invoked with a [`Context`] and must return an object representing the entity. An
     /// [`Entity`] handle will be returned, which can be used to access the entity in a context.
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new<T: 'static>(&mut self, build_entity: impl FnOnce(&mut Context<T>) -> T) -> Entity<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
@@ -1746,6 +1747,7 @@ impl AppContext for App {
         })
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<Reservation<T>> {
         Reservation(self.entities.reserve())
     }

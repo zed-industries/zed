@@ -392,6 +392,7 @@ impl ExampleContext {
 impl AppContext for ExampleContext {
     type Result<T> = anyhow::Result<T>;
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn new<T: 'static>(
         &mut self,
         build_entity: impl FnOnce(&mut gpui::Context<T>) -> T,
@@ -399,6 +400,7 @@ impl AppContext for ExampleContext {
         self.app.new(build_entity)
     }
 
+    #[cfg_attr(debug_assertions, track_caller)]
     fn reserve_entity<T: 'static>(&mut self) -> Self::Result<gpui::Reservation<T>> {
         self.app.reserve_entity()
     }
