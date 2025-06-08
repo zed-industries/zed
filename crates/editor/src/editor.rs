@@ -1205,7 +1205,6 @@ struct DeferredSelectionEffectsState {
     should_update_completions: bool,
     autoscroll: Option<Autoscroll>,
     old_cursor_position: Anchor,
-    history_entry: SelectionHistoryEntry,
 }
 
 #[derive(Default)]
@@ -3010,12 +3009,6 @@ impl Editor {
             should_update_completions,
             autoscroll,
             old_cursor_position: self.selections.newest_anchor().head(),
-            history_entry: SelectionHistoryEntry {
-                selections: self.selections.disjoint_anchors(),
-                select_next_state: self.select_next_state.clone(),
-                select_prev_state: self.select_prev_state.clone(),
-                add_selections_state: self.add_selections_state.clone(),
-            },
         };
         let (changed, result) = self.selections.change_with(cx, change);
         state.changed = state.changed || changed;
@@ -3056,7 +3049,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if state.changed {
-            self.selection_history.push(state.history_entry);
+            let selections = self.selections.disjoint_anchors();
+            if !selections.is_empty() {
+                self.selection_history.push(SelectionHistoryEntry {
+                    selections,
+                    select_next_state: self.select_next_state.clone(),
+                    select_prev_state: self.select_prev_state.clone(),
+                    add_selections_state: self.add_selections_state.clone(),
+                });
+            }
 
             if let Some(autoscroll) = state.autoscroll {
                 self.request_autoscroll(autoscroll, cx);
