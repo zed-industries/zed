@@ -13,7 +13,7 @@ use std::{
     cmp::{self, PartialOrd},
     fmt::{self, Display},
     hash::Hash,
-    ops::{Add, Div, Mul, MulAssign, Neg, Sub},
+    ops::{Add, Div, Mul, MulAssign, Neg, Rem, Sub},
 };
 
 use crate::{App, DisplayId};
@@ -2572,7 +2572,7 @@ impl std::ops::RemAssign for Pixels {
     }
 }
 
-impl std::ops::Rem for Pixels {
+impl Rem for Pixels {
     type Output = Self;
 
     fn rem(self, rhs: Self) -> Self {
@@ -2826,7 +2826,6 @@ impl From<usize> for Pixels {
     Clone,
     Copy,
     Default,
-    Div,
     Eq,
     Hash,
     Ord,
@@ -3000,52 +2999,48 @@ impl From<u64> for DevicePixels {
     }
 }
 
-impl Div for ScaledPixels {
-    type Output = f32;
+impl<T: Div> Div for PhysicalPixels<T> {
+    type Output = T::Output;
 
     fn div(self, rhs: Self) -> Self::Output {
         self.0 / rhs.0
     }
 }
 
-impl std::ops::DivAssign for ScaledPixels {
-    fn div_assign(&mut self, rhs: Self) {
-        *self = Self(self.0 / rhs.0);
+impl<T: Div> Div<T> for PhysicalPixels<T> {
+    type Output = PhysicalPixels<T::Output>;
+
+    fn div(self, rhs: T) -> Self::Output {
+        physical_px(self.0 / rhs)
     }
 }
 
-impl std::ops::RemAssign for ScaledPixels {
-    fn rem_assign(&mut self, rhs: Self) {
-        self.0 %= rhs.0;
+impl<T: Rem> Rem for PhysicalPixels<T> {
+    type Output = T::Output;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        self.0 % rhs.0
     }
 }
 
-impl std::ops::Rem for ScaledPixels {
-    type Output = Self;
+impl<T: Rem> Rem<T> for PhysicalPixels<T> {
+    type Output = PhysicalPixels<T::Output>;
 
-    fn rem(self, rhs: Self) -> Self {
-        Self(self.0 % rhs.0)
+    fn rem(self, rhs: T) -> Self::Output {
+        physical_px(self.0 % rhs)
     }
 }
 
-impl Mul<f32> for ScaledPixels {
-    type Output = Self;
+impl<T: Mul> Mul<T> for PhysicalPixels<T> {
+    type Output = PhysicalPixels<T::Output>;
 
-    fn mul(self, rhs: f32) -> Self {
-        Self(self.0 * rhs)
+    fn mul(self, rhs: T) -> Self::Output {
+        physical_px(self.0 * rhs)
     }
 }
 
-impl Mul<ScaledPixels> for f32 {
-    type Output = ScaledPixels;
-
-    fn mul(self, rhs: ScaledPixels) -> Self::Output {
-        rhs * self
-    }
-}
-
-impl MulAssign<f32> for ScaledPixels {
-    fn mul_assign(&mut self, rhs: f32) {
+impl<T: MulAssign> MulAssign<T> for PhysicalPixels<T> {
+    fn mul_assign(&mut self, rhs: T) {
         self.0 *= rhs;
     }
 }
