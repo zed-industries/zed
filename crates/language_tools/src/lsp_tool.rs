@@ -16,9 +16,7 @@ use language::BufferId;
 use lsp::{LanguageServerId, LanguageServerName};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, WorktreeId};
-use ui::{
-    ButtonLike, Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*,
-};
+use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
 use util::debug_panic;
 use workspace::{StatusItemView, Workspace};
 
@@ -194,6 +192,99 @@ impl LspPickerDelegate {
         }
     }
 
+    fn render_server_header(
+        &self,
+        server_id: LanguageServerId,
+        language_server_name: &LanguageServerName,
+        status: LanguageServerStatus,
+        lsp_status: &Option<(SharedString, Severity)>,
+        cx: &App,
+    ) -> Div {
+        let lsp_store = self.lsp_store.clone();
+
+        let buffers = self
+            .active_editor
+            .as_ref()
+            .into_iter()
+            .filter_map(|editor| editor.editor.upgrade())
+            .flat_map(|editor| editor.read(cx).buffer().read(cx).all_buffers())
+            .map(|buffer| buffer)
+            .collect::<Vec<_>>();
+
+        let restart_button = IconButton::new("restart-server", IconName::Rerun)
+            .icon_size(IconSize::Small)
+            .size(ButtonSize::Compact)
+            .icon_color(Color::Default)
+            .shape(ui::IconButtonShape::Square)
+            .tooltip(move |window, cx| {
+                Tooltip::for_action(
+                    format!("Restart server ({status:?})"),
+                    &RestartLanguageServer,
+                    window,
+                    cx,
+                )
+            })
+            .when(!buffers.is_empty(), |button| {
+                button.on_click({
+                    move |_, _, cx| {
+                        lsp_store.update(cx, |lsp_store, cx| {
+                            lsp_store.restart_language_servers_for_buffers(
+                                buffers.clone(),
+                                vec![server_id],
+                                cx,
+                            )
+                        });
+                    }
+                })
+            });
+        let (icon, icon_color) = match status {
+            LanguageServerStatus::Running => (IconName::Play, Color::Success),
+            LanguageServerStatus::Starting => (IconName::Play, Color::Modified),
+            LanguageServerStatus::Stopping => (IconName::StopFilled, Color::Modified),
+            LanguageServerStatus::Stopped => (IconName::StopFilled, Color::Disabled),
+        };
+
+        v_flex()
+            .w_full()
+            .group("lsp-status")
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .group("lsp-status")
+                            .child(
+                                div()
+                                    .hover(|style| style.invisible().w_0())
+                                    .child(Icon::new(icon).color(icon_color)),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .visible_on_hover("lsp-status")
+                                    .child(restart_button),
+                            ),
+                    )
+                    .child(Label::new(language_server_name.0.clone()).color(Color::Muted)),
+            )
+            .when_some(lsp_status.as_ref(), |header, (message, severity)| {
+                header.child(
+                    div()
+                        .map(|div| match severity {
+                            Severity::Other | Severity::Ok | Severity::Info => div,
+                            Severity::Warning => {
+                                div.border_1().border_color(Color::Warning.color(cx))
+                            }
+                            Severity::Error => div.border_1().border_color(Color::Error.color(cx)),
+                        })
+                        // TODO kb have a close button to dismiss the message
+                        .child(Label::new(message)),
+                )
+            })
+            .cursor_default()
+    }
+
     fn render_server_actions(
         &self,
         server_id: LanguageServerId,
@@ -303,99 +394,6 @@ impl LspPickerDelegate {
                         }),
                 )
             })
-    }
-
-    fn render_server_header(
-        &self,
-        server_id: LanguageServerId,
-        language_server_name: &LanguageServerName,
-        status: LanguageServerStatus,
-        lsp_status: &Option<(SharedString, Severity)>,
-        cx: &App,
-    ) -> Div {
-        let lsp_store = self.lsp_store.clone();
-
-        let buffers = self
-            .active_editor
-            .as_ref()
-            .into_iter()
-            .filter_map(|editor| editor.editor.upgrade())
-            .flat_map(|editor| editor.read(cx).buffer().read(cx).all_buffers())
-            .map(|buffer| buffer)
-            .collect::<Vec<_>>();
-
-        let restart_button = IconButton::new("restart-server", IconName::Rerun)
-            .icon_size(IconSize::Small)
-            .size(ButtonSize::Compact)
-            .icon_color(Color::Default)
-            .shape(ui::IconButtonShape::Square)
-            .tooltip(move |window, cx| {
-                Tooltip::for_action(
-                    format!("Restart server ({status:?})"),
-                    &RestartLanguageServer,
-                    window,
-                    cx,
-                )
-            })
-            .when(!buffers.is_empty(), |button| {
-                button.on_click({
-                    move |_, _, cx| {
-                        lsp_store.update(cx, |lsp_store, cx| {
-                            lsp_store.restart_language_servers_for_buffers(
-                                buffers.clone(),
-                                vec![server_id],
-                                cx,
-                            )
-                        });
-                    }
-                })
-            });
-        let (icon, icon_color) = match status {
-            LanguageServerStatus::Running => (IconName::Play, Color::Success),
-            LanguageServerStatus::Starting => (IconName::Play, Color::Modified),
-            LanguageServerStatus::Stopping => (IconName::StopFilled, Color::Modified),
-            LanguageServerStatus::Stopped => (IconName::StopFilled, Color::Disabled),
-        };
-
-        v_flex()
-            .w_full()
-            .group("lsp-status")
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        h_flex()
-                            .group("lsp-status")
-                            .child(
-                                div()
-                                    .hover(|style| style.invisible().w_0())
-                                    .child(Icon::new(icon).color(icon_color)),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .visible_on_hover("lsp-status")
-                                    .child(restart_button),
-                            ),
-                    )
-                    .child(Label::new(language_server_name.0.clone()).color(Color::Muted)),
-            )
-            .when_some(lsp_status.as_ref(), |header, (message, severity)| {
-                header.child(
-                    div()
-                        .map(|div| match severity {
-                            Severity::Other | Severity::Ok | Severity::Info => div,
-                            Severity::Warning => {
-                                div.border_1().border_color(Color::Warning.color(cx))
-                            }
-                            Severity::Error => div.border_1().border_color(Color::Error.color(cx)),
-                        })
-                        // TODO kb have a close button to dismiss the message
-                        .child(Label::new(message)),
-                )
-            })
-            .cursor_default()
     }
 }
 
@@ -508,15 +506,6 @@ impl PickerDelegate for LspPickerDelegate {
         )
     }
 
-    fn can_select(
-        &mut self,
-        _ix: usize,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
-    ) -> bool {
-        true
-    }
-
     fn render_editor(
         &self,
         editor: &Entity<Editor>,
@@ -531,14 +520,12 @@ impl PickerDelegate for LspPickerDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let header = ButtonLike::new("lsp-tool-header")
-            .child(
-                Label::new("Active language servers")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            )
-            .on_click(|_, _, cx| cx.open_url(&zed_urls::language_docs_url(cx)));
-        Some(header.into_any_element())
+        Some(
+            Button::new("lsp-tool-header", "Active language servers")
+                .full_width()
+                .on_click(|_, _, cx| cx.open_url(&zed_urls::language_docs_url(cx)))
+                .into_any_element(),
+        )
     }
 
     fn render_footer(
