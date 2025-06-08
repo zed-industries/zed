@@ -788,7 +788,6 @@ async fn test_show_document_collab_suppression(
     // Get the fake LSP server from the server-side language registry
     let fake_server = fake_language_servers.next().await.unwrap();
 
-    // Test ShowDocument suppression in collaboration scenario
     let show_document_result = fake_server
         .request::<lsp::request::ShowDocument>(lsp::ShowDocumentParams {
             uri: lsp::Url::from_file_path(path!("/code/project1/src/main.rs")).unwrap(),
@@ -802,15 +801,13 @@ async fn test_show_document_collab_suppression(
         .await
         .into_response();
 
-    // ShowDocument should be suppressed (bail) in collaborative scenarios
     assert!(
         show_document_result.is_err(),
-        "ShowDocument should be suppressed in collaboration"
+        "ShowDocument should be suppressed in collaboration scenarios"
     );
 
     executor.run_until_parked();
 
-    // Verify normal collaboration features still work
     let buffer_b_exists = project_b
         .update(cx_b, |project, cx| {
             project.open_buffer((worktree_id, "src/main.rs"), cx)
@@ -818,8 +815,5 @@ async fn test_show_document_collab_suppression(
         .await
         .is_ok();
 
-    assert!(
-        buffer_b_exists,
-        "Guest should still be able to open buffers normally"
-    );
+    assert!(buffer_b_exists);
 }

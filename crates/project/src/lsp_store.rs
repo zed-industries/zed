@@ -1024,18 +1024,17 @@ impl LocalLspStore {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
-                        // In collab scenarios, suppress ShowDocument requests since we can't
-                        // determine which client triggered the request and opening documents
-                        // for all participants would be disruptive
-                        let is_collab = this
-                            .update(&mut cx, |this, _cx| this.downstream_client.is_some())
-                            .unwrap_or(false);
+                        // Suppress ShowDocument in remote scenarios to prevent disruptive behavior
+                        // in multi-client environments where request origin cannot be determined.
+                        let is_remote = this.update(&mut cx, |this, _cx| {
+                            match &this.mode {
+                                LspStoreMode::Remote(_) => true,
+                                LspStoreMode::Local(_) => this.downstream_client.is_some(),
+                            }
+                        })?;
 
-                        if is_collab {
-                            // TODO: take decision on whether this needs to be raised as notification or silently ignored
-                            anyhow::bail!(
-                                "ShowDocument requests are not supported in collaborative scenarios"
-                            );
+                        if is_remote {
+                            anyhow::bail!("ShowDocument requests are not supported in remote scenarios");
                         }
 
                         if params.external.unwrap_or(false) || params.uri.scheme() != "file" {
@@ -3493,6 +3492,8 @@ pub struct RemoteLspStore {
     upstream_project_id: u64,
 }
 
+
+
 pub(crate) enum LspStoreMode {
     Local(LocalLspStore),   // ssh host and collab host
     Remote(RemoteLspStore), // collab guest
@@ -3671,6 +3672,8 @@ impl LspStore {
             LspStoreMode::Local(_) => None,
         }
     }
+
+
 
     pub fn new_local(
         buffer_store: Entity<BufferStore>,
@@ -6707,6 +6710,8 @@ impl LspStore {
             cx,
         )
     }
+
+
 
     pub fn merge_diagnostic_entries<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,

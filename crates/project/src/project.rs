@@ -2890,15 +2890,13 @@ impl Project {
                         uri: uri.clone(),
                     })
                     .log_err();
-                } else {
-                    if let Ok(path) = uri.to_file_path() {
-                        if let Some((worktree, relative_path)) = self.find_worktree(&path, cx) {
-                            let project_path = ProjectPath {
-                                worktree_id: worktree.read(cx).id(),
-                                path: relative_path.into(),
-                            };
-                            self.open_buffer(project_path, cx).detach();
-                        }
+                } else if let Ok(path) = uri.to_file_path() {
+                    if let Some((worktree, relative_path)) = self.find_worktree(&path, cx) {
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: relative_path.into(),
+                        };
+                        self.open_buffer(project_path, cx).detach();
                     }
                 }
             }
