@@ -688,3 +688,138 @@ async fn test_remote_server_debugger(
 
     shutdown_session.await.unwrap();
 }
+
+#[gpui::test]
+async fn test_show_document_collab_suppression(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let executor = cx_a.executor();
+    cx_a.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+
+    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let remote_fs = FakeFs::new(server_cx.executor());
+    remote_fs
+        .insert_tree(
+            path!("/code"),
+            json!({
+                "project1": {
+                    "README.md": "# project 1",
+                    "src": {
+                        "lib.rs": "fn one() -> usize { 1 }",
+                        "main.rs": "fn main() { println!(\"Hello, world!\"); }"
+                    }
+                },
+            }),
+        )
+        .await;
+
+    server_cx.update(HeadlessProject::init);
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let node = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+
+    languages.register_test_language(LanguageConfig {
+        name: "Rust".into(),
+        matcher: LanguageMatcher {
+            path_suffixes: vec!["rs".into()],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let mut fake_language_servers = languages.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
+            ..Default::default()
+        },
+    );
+
+    let _headless_project = server_cx.new(|cx| {
+        client::init_settings(cx);
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: node,
+                languages: languages.clone(),
+                extension_host_proxy: Arc::new(ExtensionHostProxy::new()),
+            },
+            cx,
+        )
+    });
+
+    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
+    let (project_a, worktree_id) = client_a
+        .build_ssh_project(path!("/code/project1"), client_ssh, cx_a)
+        .await;
+
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    executor.run_until_parked();
+
+    // Open a buffer with LSP to trigger language server setup on the server side
+    let (_buffer, _handle) = project_a
+        .update(cx_a, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    // Get the fake LSP server from the server-side language registry
+    let fake_server = fake_language_servers.next().await.unwrap();
+
+    // Test ShowDocument suppression in collaboration scenario
+    let show_document_result = fake_server
+        .request::<lsp::request::ShowDocument>(lsp::ShowDocumentParams {
+            uri: lsp::Url::from_file_path(path!("/code/project1/src/main.rs")).unwrap(),
+            external: Some(false),
+            take_focus: Some(true),
+            selection: Some(lsp::Range::new(
+                lsp::Position::new(0, 3),
+                lsp::Position::new(0, 7),
+            )),
+        })
+        .await
+        .into_response();
+
+    // ShowDocument should be suppressed (bail) in collaborative scenarios
+    assert!(
+        show_document_result.is_err(),
+        "ShowDocument should be suppressed in collaboration"
+    );
+
+    executor.run_until_parked();
+
+    // Verify normal collaboration features still work
+    let buffer_b_exists = project_b
+        .update(cx_b, |project, cx| {
+            project.open_buffer((worktree_id, "src/main.rs"), cx)
+        })
+        .await
+        .is_ok();
+
+    assert!(
+        buffer_b_exists,
+        "Guest should still be able to open buffers normally"
+    );
+}

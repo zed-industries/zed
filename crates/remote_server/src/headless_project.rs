@@ -353,22 +353,13 @@ impl HeadlessProject {
             }
             LspStoreEvent::ShowDocument {
                 uri,
-                take_focus,
-                selection,
+                take_focus: _,
+                selection: _,
             } => {
                 self.session
                     .send(proto::ShowDocument {
                         project_id: SSH_PROJECT_ID,
                         uri: uri.to_string(),
-                        take_focus: *take_focus,
-                        selection_start: selection.as_ref().map(|range| proto::PointUtf16 {
-                            row: range.start.line,
-                            column: range.start.character,
-                        }),
-                        selection_end: selection.as_ref().map(|range| proto::PointUtf16 {
-                            row: range.end.line,
-                            column: range.end.character,
-                        }),
                     })
                     .log_err();
             }

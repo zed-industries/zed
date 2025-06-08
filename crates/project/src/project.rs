@@ -251,8 +251,6 @@ enum BufferOrderedMessage {
     },
     ShowDocument {
         uri: lsp::Url,
-        take_focus: bool,
-        selection: Option<lsp::Range>,
     },
     Resync,
 }
@@ -919,7 +917,7 @@ impl Project {
         client.add_entity_request_handler(Self::handle_open_buffer_by_path);
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_message_handler(Self::handle_create_buffer_for_peer);
-        client.add_entity_message_handler(Self::handle_show_document);
+        client.add_entity_request_handler(Self::handle_show_document);
 
         WorktreeStore::init(&client);
         BufferStore::init(&client);
@@ -1271,7 +1269,7 @@ impl Project {
             ssh_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             ssh_proto.add_entity_message_handler(Self::handle_hide_toast);
             ssh_proto.add_entity_request_handler(Self::handle_update_buffer_from_ssh);
-            ssh_proto.add_entity_message_handler(Self::handle_show_document);
+            ssh_proto.add_entity_request_handler(Self::handle_show_document);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
@@ -2712,11 +2710,7 @@ impl Project {
                         })?;
                     }
 
-                    BufferOrderedMessage::ShowDocument {
-                        uri,
-                        take_focus,
-                        selection,
-                    } => {
+                    BufferOrderedMessage::ShowDocument { uri } => {
                         flush_operations(
                             &this,
                             &mut operations_by_buffer_id,
@@ -2732,19 +2726,6 @@ impl Project {
                                     .send(proto::ShowDocument {
                                         project_id,
                                         uri: uri.to_string(),
-                                        take_focus,
-                                        selection_start: selection.as_ref().map(|range| {
-                                            proto::PointUtf16 {
-                                                row: range.start.line,
-                                                column: range.start.character,
-                                            }
-                                        }),
-                                        selection_end: selection.as_ref().map(|range| {
-                                            proto::PointUtf16 {
-                                                row: range.end.line,
-                                                column: range.end.character,
-                                            }
-                                        }),
                                     })
                                     .log_err();
                             }
@@ -2901,14 +2882,12 @@ impl Project {
             }
             LspStoreEvent::ShowDocument {
                 uri,
-                take_focus,
-                selection,
+                take_focus: _,
+                selection: _,
             } => {
                 if self.is_via_collab() {
                     self.enqueue_buffer_ordered_message(BufferOrderedMessage::ShowDocument {
                         uri: uri.clone(),
-                        take_focus: *take_focus,
-                        selection: *selection,
                     })
                     .log_err();
                 } else {
@@ -4621,8 +4600,8 @@ impl Project {
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::ShowDocument>,
         mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
+    ) -> Result<proto::ShowDocumentResponse> {
+        let buffer_task = this.update(&mut cx, |this, cx| {
             if let Ok(uri) = lsp::Url::parse(&envelope.payload.uri) {
                 if let Ok(path) = uri.to_file_path() {
                     if let Some((worktree, relative_path)) = this.find_worktree(&path, cx) {
@@ -4630,12 +4609,25 @@ impl Project {
                             worktree_id: worktree.read(cx).id(),
                             path: relative_path.into(),
                         };
-                        this.open_buffer(project_path, cx).detach();
+                        return Some(this.open_buffer(project_path, cx));
                     }
                 }
             }
-            Ok(())
-        })?
+            None
+        })?;
+
+        let buffer_id = if let Some(buffer_task) = buffer_task {
+            match buffer_task.await {
+                Ok(buffer) => {
+                    Some(buffer.read_with(&cx, |buffer, _| buffer.remote_id().to_proto())?)
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+
+        Ok(proto::ShowDocumentResponse { buffer_id })
     }
 
     // Collab sends UpdateWorktree protos as messages

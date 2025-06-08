@@ -22055,3 +22055,65 @@ async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppC
         "Should have 4 cursors after moving and adding another"
     );
 }
+
+#[gpui::test]
+async fn test_show_document_request_succeeds(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(Default::default(), cx).await;
+
+    cx.set_state(indoc! {"
+        fn main() {
+            println!(\"Hello, world!\");
+        }
+
+        fn other() {
+            println!(\"Other function\");
+        }ˇ
+    "});
+    let show_document_result = cx
+        .lsp
+        .request::<lsp::request::ShowDocument>(lsp::ShowDocumentParams {
+            uri: cx.buffer_lsp_url.clone(),
+            external: Some(false),
+            take_focus: Some(true),
+            selection: Some(lsp::Range::new(
+                lsp::Position::new(4, 3), // Start of "other" function name
+                lsp::Position::new(4, 8), // End of "other" function name
+            )),
+        })
+        .await
+        .into_response()
+        .unwrap();
+
+    assert!(show_document_result.success);
+
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let start_point = language::Point::new(4, 3);
+        let end_point = language::Point::new(4, 8);
+        let start_offset = buffer.point_to_offset(start_point);
+        let end_offset = buffer.point_to_offset(end_point);
+
+        let text_in_range = buffer
+            .text_for_range(start_offset..end_offset)
+            .collect::<String>();
+        assert_eq!(text_in_range, "other");
+
+        editor.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
+            s.select_ranges([start_offset..end_offset]);
+        });
+    });
+
+    cx.update_editor(|editor, _, cx| {
+        let selections = editor.selections.ranges::<usize>(cx);
+        assert_eq!(selections.len(), 1);
+
+        let buffer = editor.buffer().read(cx).snapshot(cx);
+        let selected_text = buffer
+            .text_for_range(selections[0].clone())
+            .collect::<String>();
+        assert_eq!(selected_text, "other");
+    });
+}

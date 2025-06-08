@@ -310,7 +310,8 @@ messages!(
     (LogToDebugConsole, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
-    (PullWorkspaceDiagnostics, Background)
+    (PullWorkspaceDiagnostics, Background),
+    (ShowDocumentResponse, Background)
 );
 
 request_messages!(
@@ -474,7 +475,8 @@ request_messages!(
     (GetDebugAdapterBinary, DebugAdapterBinary),
     (RunDebugLocators, DebugRequest),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
-    (PullWorkspaceDiagnostics, Ack)
+    (PullWorkspaceDiagnostics, Ack),
+    (ShowDocument, ShowDocumentResponse)
 );
 
 entity_messages!(

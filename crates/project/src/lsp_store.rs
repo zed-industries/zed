@@ -1024,13 +1024,27 @@ impl LocalLspStore {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
+                        // In collab scenarios, suppress ShowDocument requests since we can't
+                        // determine which client triggered the request and opening documents
+                        // for all participants would be disruptive
+                        let is_collab = this
+                            .update(&mut cx, |this, _cx| this.downstream_client.is_some())
+                            .unwrap_or(false);
+
+                        if is_collab {
+                            // TODO: take decision on whether this needs to be raised as notification or silently ignored
+                            anyhow::bail!(
+                                "ShowDocument requests are not supported in collaborative scenarios"
+                            );
+                        }
+
                         if params.external.unwrap_or(false) || params.uri.scheme() != "file" {
                             let success = cx
                                 .update(|cx| {
                                     cx.open_url(params.uri.as_str());
                                     true
                                 })
-                                .unwrap_or(false);
+                                .is_ok();
                             return Ok(lsp::ShowDocumentResult { success });
                         }
 
@@ -1043,7 +1057,7 @@ impl LocalLspStore {
                                 });
                                 true
                             })
-                            .unwrap_or(false);
+                            .is_ok();
 
                         Ok(lsp::ShowDocumentResult { success })
                     }
