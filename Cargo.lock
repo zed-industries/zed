@@ -1167,6 +1167,7 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
+ "util",
  "which 6.0.3",
  "workspace",
  "workspace-hack",

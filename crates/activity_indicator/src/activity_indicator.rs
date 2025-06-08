@@ -485,7 +485,7 @@ impl ActivityIndicator {
         // Show any application auto-update info.
         if let Some(updater) = &self.auto_updater {
             return match &updater.read(cx).status() {
-                AutoUpdateStatus::Checking => Some(Content {
+                AutoUpdateStatus::Checking { .. } => Some(Content {
                     icon: Some(
                         Icon::new(IconName::Download)
                             .size(IconSize::Small)

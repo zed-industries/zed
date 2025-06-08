@@ -3,7 +3,8 @@ use client::{Client, TelemetrySettings};
 use db::RELEASE_CHANNEL;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window, actions,
+    App, AppContext as _, AsyncApp, Context, Entity, Global, SemanticVersion, Task, Window,
+    actions, impl_actions,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
@@ -23,12 +24,22 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use util::serde::default_true;
 use workspace::Workspace;
 
 const SHOULD_SHOW_UPDATE_NOTIFICATION_KEY: &str = "auto-updater-should-show-updated-notification";
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
-actions!(auto_update, [Check, DismissErrorMessage, ViewReleaseNotes,]);
+actions!(auto_update, [DismissErrorMessage, ViewReleaseNotes,]);
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Check {
+    #[serde(default = "default_true")]
+    pub manual: bool,
+}
+
+impl_actions!(auto_update, [Check]);
 
 #[derive(Serialize)]
 struct UpdateRequestBody {
@@ -48,7 +59,9 @@ pub enum VersionCheckType {
 #[derive(Clone, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
     Idle,
-    Checking,
+    Checking {
+        manual: bool,
+    },
     Downloading {
         version: VersionCheckType,
     },
@@ -331,9 +344,19 @@ impl AutoUpdater {
             this.update(cx, |this, cx| {
                 this.pending_poll = None;
                 if let Err(error) = result {
-                    log::error!("auto-update failed: error:{:?}", error);
-                    this.status = AutoUpdateStatus::Errored;
-                    cx.notify();
+                    match this.status {
+                        // Be quiet if the check was automated (e.g. when offline)
+                        AutoUpdateStatus::Checking { manual } if !manual => {
+                            log::info!("auto-update check failed: error:{:?}", error);
+                            this.status = AutoUpdateStatus::Idle;
+                            cx.notify();
+                        }
+                        _ => {
+                            log::error!("auto-update failed: error:{:?}", error);
+                            this.status = AutoUpdateStatus::Errored;
+                            cx.notify();
+                        }
+                    }
                 }
             })
             .ok()
@@ -507,7 +530,7 @@ impl AutoUpdater {
             })?;
 
         this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Checking;
+            this.status = AutoUpdateStatus::Checking { manual: false };
             cx.notify();
         })?;
 
