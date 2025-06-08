@@ -12,7 +12,7 @@ use crate::tool_use::{PendingToolUseStatus, ToolUse};
 use crate::ui::{
     AddedContext, AgentNotification, AgentNotificationEvent, AnimatedLabel, ContextPill,
 };
-use crate::{AgentPanel, EditAssistantMessage, ModelUsageContext};
+use crate::{AgentPanel, ModelUsageContext};
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use anyhow::Context as _;
 use assistant_tool::ToolUseStatus;
@@ -1419,6 +1419,11 @@ impl ActiveThread {
             },
         ));
         self.update_editing_message_token_count(false, cx);
+
+        if let Some(message_index) = self.messages.iter().position(|id| *id == message_id) {
+            self.list_state.scroll_to_reveal_item(message_index);
+        }
+
         cx.notify();
     }
 
@@ -4037,28 +4042,6 @@ impl Render for ActiveThread {
             .size_full()
             .relative()
             .bg(cx.theme().colors().panel_background)
-            .on_action(cx.listener(|this, _: &EditAssistantMessage, window, cx| {
-                let last_assistant_message_data = {
-                    let thread = this.thread.read(cx);
-                    let messages: Vec<_> = thread.messages().collect();
-                    let mut result = None;
-                    for message in messages.iter().rev() {
-                        if message.role == Role::Assistant {
-                            result = Some((
-                                message.id,
-                                message.segments.clone(),
-                                message.creases.clone(),
-                            ));
-                            break;
-                        }
-                    }
-                    result
-                };
-
-                if let Some((id, segments, creases)) = last_assistant_message_data {
-                    this.start_editing_assistant_message(id, &segments, &creases, None, window, cx);
-                }
-            }))
             .on_mouse_move(cx.listener(|this, _, _, cx| {
                 this.show_scrollbar = true;
                 this.hide_scrollbar_later(cx);
