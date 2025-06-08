@@ -1026,15 +1026,15 @@ impl LocalLspStore {
                     async move {
                         // Suppress ShowDocument in remote scenarios to prevent disruptive behavior
                         // in multi-client environments where request origin cannot be determined.
-                        let is_remote = this.update(&mut cx, |this, _cx| {
-                            match &this.mode {
-                                LspStoreMode::Remote(_) => true,
-                                LspStoreMode::Local(_) => this.downstream_client.is_some(),
-                            }
+                        let is_remote = this.update(&mut cx, |this, _cx| match &this.mode {
+                            LspStoreMode::Remote(_) => true,
+                            LspStoreMode::Local(_) => this.downstream_client.is_some(),
                         })?;
 
                         if is_remote {
-                            anyhow::bail!("ShowDocument requests are not supported in remote scenarios");
+                            anyhow::bail!(
+                                "ShowDocument requests are not supported in remote scenarios"
+                            );
                         }
 
                         if params.external.unwrap_or(false) || params.uri.scheme() != "file" {
@@ -3492,8 +3492,6 @@ pub struct RemoteLspStore {
     upstream_project_id: u64,
 }
 
-
-
 pub(crate) enum LspStoreMode {
     Local(LocalLspStore),   // ssh host and collab host
     Remote(RemoteLspStore), // collab guest
@@ -3672,8 +3670,6 @@ impl LspStore {
             LspStoreMode::Local(_) => None,
         }
     }
-
-
 
     pub fn new_local(
         buffer_store: Entity<BufferStore>,
@@ -6710,8 +6706,6 @@ impl LspStore {
             cx,
         )
     }
-
-
 
     pub fn merge_diagnostic_entries<F: Fn(&Diagnostic, &App) -> bool + Clone>(
         &mut self,

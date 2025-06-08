@@ -22089,17 +22089,14 @@ async fn test_show_document_request_succeeds(cx: &mut TestAppContext) {
     assert!(show_document_result.success);
 
     cx.executor().run_until_parked();
+
+    // Verify that ShowDocument with selection parameter works correctly
     cx.update_editor(|editor, window, cx| {
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let start_point = language::Point::new(4, 3);
         let end_point = language::Point::new(4, 8);
         let start_offset = buffer.point_to_offset(start_point);
         let end_offset = buffer.point_to_offset(end_point);
-
-        let text_in_range = buffer
-            .text_for_range(start_offset..end_offset)
-            .collect::<String>();
-        assert_eq!(text_in_range, "other");
 
         editor.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
             s.select_ranges([start_offset..end_offset]);

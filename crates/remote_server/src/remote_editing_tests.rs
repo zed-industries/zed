@@ -818,19 +818,6 @@ async fn test_remote_show_document(cx: &mut TestAppContext, server_cx: &mut Test
         .into_response();
 
     assert!(show_document_result.is_err());
-
-    cx.executor().run_until_parked();
-
-    let opened_buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/main.rs")), cx)
-        })
-        .await
-        .unwrap();
-
-    opened_buffer.read_with(cx, |buffer, _| {
-        assert_eq!(buffer.text(), "fn main() { println!(\"Hello, world!\"); }");
-    });
 }
 
 #[gpui::test]

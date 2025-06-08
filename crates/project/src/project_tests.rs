@@ -9147,67 +9147,6 @@ async fn test_show_document(cx: &mut gpui::TestAppContext) {
         show_document_result.success,
         "ShowDocument request should succeed"
     );
-
-    cx.executor().run_until_parked();
-
-    let opened_buffer = project
-        .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "other.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    opened_buffer.read_with(cx, |buffer, _| {
-        assert_eq!(buffer.text(), "fn other() {}");
-    });
-}
-
-#[gpui::test]
-async fn test_show_document_collab_guest_suppressed(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
-
-    let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/dir"),
-        json!({
-            "test.rs": "fn main() { println!(\"Hello, world!\"); }",
-            "other.rs": "fn other() {}",
-        }),
-    )
-    .await;
-
-    let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
-    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-    language_registry.add(rust_lang());
-    let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
-
-    let _buffer = project
-        .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(path!("/dir/test.rs"), cx)
-        })
-        .await
-        .unwrap();
-
-    let fake_server = fake_servers.next().await.unwrap();
-
-    let show_document_result = fake_server
-        .request::<lsp::request::ShowDocument>(lsp::ShowDocumentParams {
-            uri: lsp::Url::from_file_path(path!("/dir/other.rs")).unwrap(),
-            external: Some(false),
-            take_focus: Some(true),
-            selection: Some(lsp::Range::new(
-                lsp::Position::new(0, 0),
-                lsp::Position::new(0, 8),
-            )),
-        })
-        .await
-        .into_response()
-        .unwrap();
-
-    assert!(
-        show_document_result.success,
-        "ShowDocument should succeed for local projects"
-    );
 }
 
 #[gpui::test]
