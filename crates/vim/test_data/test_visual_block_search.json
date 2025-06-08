@@ -1,7 +1,0 @@
-{"Put":{"state":"ˇone two\nthree four\nfive six\n"}}
-{"Key":"ctrl-v"}
-{"Key":"j"}
-{"Key":"/"}
-{"Key":"f"}
-{"Key":"enter"}
-{"Get":{"state":"«one twoˇ»\n«three fˇ»our\nfive six\n","mode":"VisualBlock"}}

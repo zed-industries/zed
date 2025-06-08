@@ -1,6 +1,0 @@
-Generate a detailed summary of this conversation. Include:
-1. A brief overview of what was discussed
-2. Key facts or information discovered
-3. Outcomes or conclusions reached
-4. Any action items or next steps if any
-Format it in Markdown with headings and bullet points.

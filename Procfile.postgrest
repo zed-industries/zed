@@ -1,2 +1,0 @@
-app: postgrest crates/collab/postgrest_app.conf
-llm: postgrest crates/collab/postgrest_llm.conf

@@ -1,8 +1,0 @@
-{"Put":{"state":"hellˇo"}}
-{"Key":"3"}
-{"Key":"a"}
-{"Key":"."}
-{"Key":"escape"}
-{"Get":{"state":"hello..ˇ.","mode":"Normal"}}
-{"Key":"u"}
-{"Get":{"state":"hellˇo","mode":"Normal"}}
