@@ -2614,7 +2614,9 @@ impl MultiBuffer {
                     .skip_while(|ch| ch.is_whitespace())
                     .take_while(|&ch| ch != '\n')
                     .take(40)
-                    .collect();
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string();
 
                 (!title.is_empty()).then(|| title.into())
             })

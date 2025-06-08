@@ -3678,7 +3678,7 @@ fn test_new_empty_buffer_takes_first_line_for_title(cx: &mut App) {
 
 #[gpui::test]
 fn test_new_empty_buffer_takes_trimmed_first_line_for_title(cx: &mut App) {
-    let buffer = cx.new(|cx| Buffer::local("\nHello, World", cx));
+    let buffer = cx.new(|cx| Buffer::local("\nHello, World ", cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
     assert_eq!(multibuffer.read(cx).title(cx), "Hello, World");
