@@ -149,7 +149,11 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn open_modified_files(workspace: &mut Workspace, window: &mut Window, cx: &mut Context<Workspace>) {
+fn open_modified_files(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
     let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
         return;
     };
