@@ -142,7 +142,6 @@ pub use proposed_changes_editor::{
 };
 use std::{cell::OnceCell, iter::Peekable, ops::Not};
 use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
-use vim_mode_setting::VimModeSetting;
 
 pub use lsp::CompletionContext;
 use lsp::{
@@ -19891,7 +19890,10 @@ impl Editor {
 }
 
 fn vim_enabled(cx: &App) -> bool {
-    VimModeSetting::get_global(cx).0
+    cx.global::<SettingsStore>()
+        .raw_user_settings()
+        .get("vim_mode")
+        == Some(&serde_json::Value::Bool(true))
 }
 
 fn process_completion_for_edit(
