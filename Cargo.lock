@@ -7407,7 +7407,6 @@ dependencies = [
  "anyhow",
  "gpui",
  "settings",
- "vim_mode_setting",
  "workspace-hack",
 ]
 
