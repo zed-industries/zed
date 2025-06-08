@@ -241,7 +241,9 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "alt-enter": "agent::ContinueWithBurnMode",
-      "ctrl-alt-b": "agent::ToggleBurnMode"
+      "ctrl-alt-b": "agent::ToggleBurnMode",
+      "ctrl-alt-m": "agent::EditAssistantMessage",
+      "ctrl-alt-u": "agent::EditUserMessage"
     }
   },
   {
@@ -280,7 +282,8 @@
     "bindings": {
       "escape": "menu::Cancel",
       "enter": "menu::Confirm",
-      "alt-enter": "editor::Newline"
+      "alt-enter": "editor::Newline",
+      "ctrl-s": "menu::SaveEdit"
     }
   },
   {

@@ -444,6 +444,7 @@ pub struct MarkdownElement {
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
     on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_click: Option<Box<dyn Fn(usize, &mut Window, &mut App)>>,
 }
 
 impl MarkdownElement {
@@ -457,6 +458,7 @@ impl MarkdownElement {
                 border: false,
             },
             on_url_click: None,
+            on_click: None,
         }
     }
 
@@ -491,6 +493,11 @@ impl MarkdownElement {
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_url_click = Some(Box::new(handler));
+        self
+    }
+
+    pub fn on_click(mut self, handler: impl Fn(usize, &mut Window, &mut App) + 'static) -> Self {
+        self.on_click = Some(Box::new(handler));
         self
     }
 
@@ -582,6 +589,7 @@ impl MarkdownElement {
         }
 
         let on_open_url = self.on_url_click.take();
+        let on_click = self.on_click.take();
 
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
@@ -596,20 +604,25 @@ impl MarkdownElement {
                                 match rendered_text.source_index_for_position(event.position) {
                                     Ok(ix) | Err(ix) => ix,
                                 };
-                            let range = if event.click_count == 2 {
-                                rendered_text.surrounding_word_range(source_index)
-                            } else if event.click_count == 3 {
-                                rendered_text.surrounding_line_range(source_index)
+
+                            if let Some(on_click) = on_click.as_ref() {
+                                on_click(source_index, window, cx);
                             } else {
-                                source_index..source_index
-                            };
-                            markdown.selection = Selection {
-                                start: range.start,
-                                end: range.end,
-                                reversed: false,
-                                pending: true,
-                            };
-                            window.focus(&markdown.focus_handle);
+                                let range = if event.click_count == 2 {
+                                    rendered_text.surrounding_word_range(source_index)
+                                } else if event.click_count == 3 {
+                                    rendered_text.surrounding_line_range(source_index)
+                                } else {
+                                    source_index..source_index
+                                };
+                                markdown.selection = Selection {
+                                    start: range.start,
+                                    end: range.end,
+                                    reversed: false,
+                                    pending: true,
+                                };
+                                window.focus(&markdown.focus_handle);
+                            }
                         }
 
                         window.prevent_default();
