@@ -9592,7 +9592,6 @@ dependencies = [
  "theme",
  "ui",
  "util",
- "vim_mode_setting",
  "workspace-hack",
 ]
 
