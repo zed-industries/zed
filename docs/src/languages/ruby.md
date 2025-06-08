@@ -291,8 +291,14 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 ```json
 [
   {
-    "label": "test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
-    "command": "bin/rails test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
+    "label": "test $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
+    "command": "bin/rails",
+    "args": [
+      "test",
+      "$ZED_RELATIVE_FILE",
+      "-n",
+      "\"$ZED_CUSTOM_RUBY_TEST_NAME\""
+    ],
     "tags": ["ruby-test"]
   }
 ]
@@ -302,14 +308,21 @@ Note: We can't use `args` here because of the way quotes are handled.
 
 ### Minitest
 
-Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_SYMBOL` instead:
+Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_CUSTOM_RUBY_TEST_NAME` instead:
 
 ```json
 [
   {
-    "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
-    "command": "bundle exec ruby",
-    "args": ["-Itest", "$ZED_RELATIVE_FILE", "-n /$ZED_SYMBOL/"],
+    "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
+    "command": "bundle",
+    "args": [
+      "exec",
+      "ruby",
+      "-Itest",
+      "$ZED_RELATIVE_FILE",
+      "-n",
+      "\"$ZED_CUSTOM_RUBY_TEST_NAME\""
+    ],
     "tags": ["ruby-test"]
   }
 ]
@@ -321,8 +334,8 @@ Plain minitest does not support running tests by line number, only by name, so w
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec rspec",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "command": "bundle",
+    "args": ["exec", "rspec", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
     "tags": ["ruby-test"]
   }
 ]
@@ -334,8 +347,8 @@ Plain minitest does not support running tests by line number, only by name, so w
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec qt",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "command": "bundle",
+    "args": ["exec", "qt", "exec", "qt", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
     "tags": ["ruby-test"]
   }
 ]
@@ -347,8 +360,8 @@ Plain minitest does not support running tests by line number, only by name, so w
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec tldr",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "command": "bundle",
+    "args": ["exec", "tldr", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
     "tags": ["ruby-test"]
   }
 ]
