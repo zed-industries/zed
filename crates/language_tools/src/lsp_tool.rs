@@ -17,7 +17,7 @@ use lsp::{LanguageServerId, LanguageServerName};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, WorktreeId};
 use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
-use util::debug_panic;
+use util::{debug_panic, truncate_and_trailoff};
 use workspace::{StatusItemView, Workspace};
 
 use crate::{LogStore, lsp_log::GlobalLogStore};
@@ -391,9 +391,24 @@ impl LspPickerDelegate {
         message: &SharedString,
         severity: &Severity,
         cx: &Context<'_, Picker<Self>>,
-    ) -> Div {
-        div()
-            .child(Label::new(message))
+    ) -> AnyElement {
+        let full_label_message = message.trim();
+        let shortened_message = truncate_and_trailoff(full_label_message, 30);
+        let tooltip = if full_label_message == shortened_message {
+            None
+        } else if full_label_message == message.as_ref() {
+            Some(message.clone())
+        } else {
+            Some(SharedString::new(full_label_message))
+        };
+
+        h_flex()
+            .id("server-message")
+            .justify_center()
+            .child(Label::new(shortened_message))
+            .when_some(tooltip, |div, tooltip| {
+                div.tooltip(move |_, cx| Tooltip::simple(tooltip.clone(), cx))
+            })
             .hover(|s| s.opacity(0.6))
             .map(|div| match severity {
                 Severity::Other | Severity::Ok | Severity::Info => div,
@@ -448,6 +463,7 @@ impl LspPickerDelegate {
                     }
                 })
             })
+            .into_any_element()
     }
 }
 
@@ -870,6 +886,7 @@ impl StatusItemView for LspTool {
 }
 
 impl Render for LspTool {
+    // TODO kb allow to hide the button
     // TODO kb keyboard story: toggling the button; navigation inside it; showing keybindings (need new actions?) for each button
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let delegate = &self.lsp_picker.read(cx).delegate;
