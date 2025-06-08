@@ -2608,7 +2608,7 @@ impl MultiBuffer {
                     return Some(file.file_name(cx).to_string_lossy());
                 }
 
-                let title: String = buffer
+                let title = buffer
                     .snapshot()
                     .chars()
                     .skip_while(|ch| ch.is_whitespace())
