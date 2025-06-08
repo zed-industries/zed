@@ -1,5 +1,6 @@
 use crate::{
-    phypx, platform::AtlasTextureList, AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas, Point, Size
+    AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, DevicePixels, PlatformAtlas,
+    Point, Size, phypx, platform::AtlasTextureList,
 };
 use anyhow::Result;
 use blade_graphics as gpu;
@@ -446,7 +447,7 @@ impl BladeAtlasTexture {
 
 impl From<Size<DevicePixels>> for etagere::Size {
     fn from(size: Size<DevicePixels>) -> Self {
-        etagere::Size::new(size.width.into(), size.height.into())
+        etagere::Size::new(size.width.0, size.height.0)
     }
 }
 
