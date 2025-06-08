@@ -18737,10 +18737,7 @@ impl Editor {
 }
 
 fn vim_enabled(cx: &App) -> bool {
-    cx.global::<SettingsStore>()
-        .raw_user_settings()
-        .get("vim_mode")
-        == Some(&serde_json::Value::Bool(true))
+    VimModeSetting::get_global(cx).0
 }
 
 // Consider user intent and default settings

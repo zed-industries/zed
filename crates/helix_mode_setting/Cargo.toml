@@ -12,4 +12,5 @@ path = "src/helix_mode_setting.rs"
 anyhow.workspace = true
 gpui.workspace = true
 settings.workspace = true
+vim_mode_setting.workspace = true
 workspace-hack.workspace = true
