@@ -15,7 +15,8 @@ use itertools::Itertools;
 use language::BufferId;
 use lsp::{LanguageServerId, LanguageServerName};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
-use project::{LspStore, LspStoreEvent, WorktreeId};
+use project::{LspStore, LspStoreEvent, WorktreeId, project_settings::ProjectSettings};
+use settings::{Settings as _, SettingsStore};
 use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
 use util::{debug_panic, truncate_and_trailoff};
 use workspace::{StatusItemView, Workspace};
@@ -23,7 +24,8 @@ use workspace::{StatusItemView, Workspace};
 use crate::{LogStore, lsp_log::GlobalLogStore};
 
 pub struct LspTool {
-    lsp_picker: Entity<Picker<LspPickerDelegate>>,
+    lsp_picker: Option<Entity<Picker<LspPickerDelegate>>>,
+    _settings_subscription: Subscription,
 }
 
 struct ActiveEditor {
@@ -664,31 +666,34 @@ impl PickerDelegate for LspPickerDelegate {
 
 impl LspTool {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let lsp_logs = cx.global::<GlobalLogStore>().0.clone();
         let lsp_store = workspace.project().read(cx).lsp_store();
-        let lsp_store_subscription =
-            cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
-                lsp_tool.on_lsp_store_event(e, window, cx)
+
+        let settings_workspace = workspace.weak_handle();
+        let settings_lsp_store = lsp_store.clone();
+        let _settings_subscription =
+            cx.observe_global_in::<SettingsStore>(window, move |lsp_tool, window, cx| {
+                let enabled = ProjectSettings::get_global(cx).global_lsp_settings.button;
+                if enabled && lsp_tool.lsp_picker.is_none() {
+                    lsp_tool.lsp_picker = Some(Self::new_lsp_picker(
+                        settings_workspace.clone(),
+                        settings_lsp_store.clone(),
+                        window,
+                        cx,
+                    ));
+                    cx.notify();
+                } else if !enabled && lsp_tool.lsp_picker.is_some() {
+                    lsp_tool.lsp_picker = None;
+                    cx.notify();
+                }
             });
-        let workspace = workspace.weak_handle();
+
+        let enabled = ProjectSettings::get_global(cx).global_lsp_settings.button;
+        let lsp_picker =
+            enabled.then(|| Self::new_lsp_picker(workspace.weak_handle(), lsp_store, window, cx));
 
         Self {
-            lsp_picker: cx.new(|cx| {
-                Picker::list(
-                    LspPickerDelegate {
-                        selected_index: 0,
-                        items: Vec::new(),
-                        language_servers: LanguageServers::default(),
-                        active_editor: None,
-                        workspace,
-                        lsp_store,
-                        lsp_logs,
-                        _lsp_store_subscription: lsp_store_subscription,
-                    },
-                    window,
-                    cx,
-                )
-            }),
+            lsp_picker,
+            _settings_subscription,
         }
     }
 
@@ -698,6 +703,10 @@ impl LspTool {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let Some(lsp_picker) = &self.lsp_picker else {
+            return;
+        };
+
         let mut updated = true;
         match e {
             project::LspStoreEvent::LanguageServerUpdate {
@@ -705,7 +714,7 @@ impl LspTool {
                 name,
                 message: proto::update_language_server::Variant::StatusUpdate(status_update),
             } => {
-                self.lsp_picker.update(
+                lsp_picker.update(
                     cx,
                     |picker, _| match proto::status_update::Status::from_i32(status_update.status) {
                         Some(proto::status_update::Status::Starting) => {
@@ -793,7 +802,7 @@ impl LspTool {
                 ..
             } => {
                 if let Ok(buffer_id) = BufferId::new(update.buffer_id) {
-                    self.lsp_picker.update(cx, |picker, _| {
+                    lsp_picker.update(cx, |picker, _| {
                         picker
                             .delegate
                             .language_servers
@@ -810,10 +819,39 @@ impl LspTool {
         };
 
         if updated {
-            self.lsp_picker.update(cx, |lsp_picker, cx| {
+            lsp_picker.update(cx, |lsp_picker, cx| {
                 lsp_picker.refresh(window, cx);
             })
         }
+    }
+
+    fn new_lsp_picker(
+        workspace: WeakEntity<Workspace>,
+        lsp_store: Entity<LspStore>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<Picker<LspPickerDelegate>> {
+        let lsp_logs = cx.global::<GlobalLogStore>().0.clone();
+        let _lsp_store_subscription =
+            cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
+                lsp_tool.on_lsp_store_event(e, window, cx)
+            });
+        cx.new(|cx| {
+            Picker::list(
+                LspPickerDelegate {
+                    selected_index: 0,
+                    items: Vec::new(),
+                    language_servers: LanguageServers::default(),
+                    active_editor: None,
+                    workspace,
+                    lsp_store,
+                    lsp_logs,
+                    _lsp_store_subscription,
+                },
+                window,
+                cx,
+            )
+        })
     }
 }
 
@@ -824,79 +862,86 @@ impl StatusItemView for LspTool {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let editor = active_pane_item.and_then(|item| item.downcast::<Editor>());
-        self.lsp_picker.update(cx, |picker, cx| {
-            picker.delegate.active_editor = editor.as_ref().map(|editor| ActiveEditor {
-                editor: editor.downgrade(),
-                _editor_subscription: cx.subscribe_in(
-                    &editor,
-                    window,
-                    |picker, _, e: &EditorEvent, window, cx| match e {
-                        EditorEvent::ExcerptsAdded { buffer, .. } => {
-                            if let Some(worktree_id) =
-                                buffer.read(cx).file().map(|f| f.worktree_id(cx))
-                            {
+        if let Some(lsp_picker) = &self.lsp_picker {
+            let editor = active_pane_item.and_then(|item| item.downcast::<Editor>());
+            lsp_picker.update(cx, |picker, cx| {
+                picker.delegate.active_editor = editor.as_ref().map(|editor| ActiveEditor {
+                    editor: editor.downgrade(),
+                    _editor_subscription: cx.subscribe_in(
+                        &editor,
+                        window,
+                        |picker, _, e: &EditorEvent, window, cx| match e {
+                            EditorEvent::ExcerptsAdded { buffer, .. } => {
+                                if let Some(worktree_id) =
+                                    buffer.read(cx).file().map(|f| f.worktree_id(cx))
+                                {
+                                    if let Some(active_editor) =
+                                        picker.delegate.active_editor.as_mut()
+                                    {
+                                        if active_editor
+                                            .editor_buffers
+                                            .insert((worktree_id, buffer.read(cx).remote_id()))
+                                        {
+                                            picker.refresh(window, cx);
+                                        }
+                                    }
+                                }
+                            }
+                            EditorEvent::ExcerptsRemoved {
+                                removed_buffer_ids, ..
+                            } => {
                                 if let Some(active_editor) = picker.delegate.active_editor.as_mut()
                                 {
-                                    if active_editor
-                                        .editor_buffers
-                                        .insert((worktree_id, buffer.read(cx).remote_id()))
-                                    {
+                                    let mut removed = false;
+                                    for id in removed_buffer_ids {
+                                        active_editor.editor_buffers.retain(|(_, buffer_id)| {
+                                            let retain = buffer_id != id;
+                                            removed |= !retain;
+                                            retain
+                                        });
+                                    }
+                                    if removed {
                                         picker.refresh(window, cx);
                                     }
                                 }
                             }
-                        }
-                        EditorEvent::ExcerptsRemoved {
-                            removed_buffer_ids, ..
-                        } => {
-                            if let Some(active_editor) = picker.delegate.active_editor.as_mut() {
-                                let mut removed = false;
-                                for id in removed_buffer_ids {
-                                    active_editor.editor_buffers.retain(|(_, buffer_id)| {
-                                        let retain = buffer_id != id;
-                                        removed |= !retain;
-                                        retain
-                                    });
-                                }
-                                if removed {
-                                    picker.refresh(window, cx);
-                                }
-                            }
-                        }
-                        _ => {}
-                    },
-                ),
-                editor_buffers: editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .all_buffers()
-                    .into_iter()
-                    .filter_map(|buffer| {
-                        let buffer = buffer.read(cx);
-                        Some((buffer.file()?.worktree_id(cx), buffer.remote_id()))
-                    })
-                    .collect(),
-            });
+                            _ => {}
+                        },
+                    ),
+                    editor_buffers: editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .all_buffers()
+                        .into_iter()
+                        .filter_map(|buffer| {
+                            let buffer = buffer.read(cx);
+                            Some((buffer.file()?.worktree_id(cx), buffer.remote_id()))
+                        })
+                        .collect(),
+                });
 
-            picker.refresh(window, cx);
-        });
+                picker.refresh(window, cx);
+            });
+        }
     }
 }
 
 impl Render for LspTool {
-    // TODO kb allow to hide the button
     // TODO kb keyboard story: toggling the button; navigation inside it; showing keybindings (need new actions?) for each button
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        let delegate = &self.lsp_picker.read(cx).delegate;
+        let Some(lsp_picker) = &self.lsp_picker else {
+            return div();
+        };
+
+        let delegate = &lsp_picker.read(cx).delegate;
         if delegate.active_editor.is_none() || delegate.items.is_empty() {
             return div();
         }
 
         let mut has_errors = false;
         let mut has_warnings = false;
-        for item in &self.lsp_picker.read(cx).delegate.items {
+        for item in &delegate.items {
             match item {
                 LspItem::Header {
                     message: Some((_, Severity::Error)),
@@ -919,7 +964,7 @@ impl Render for LspTool {
 
         div().child(
             PickerPopoverMenu::new(
-                self.lsp_picker.clone(),
+                lsp_picker.clone(),
                 IconButton::new("zed-lsp-tool-button", IconName::Bolt)
                     .when_some(indicator, IconButton::indicator)
                     .shape(IconButtonShape::Square)
