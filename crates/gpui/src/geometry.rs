@@ -2958,12 +2958,6 @@ impl PhysicalPixels<f32> {
     }
 }
 
-impl From<DevicePixels> for i32 {
-    fn from(device_pixels: DevicePixels) -> Self {
-        device_pixels.0
-    }
-}
-
 impl From<i32> for DevicePixels {
     fn from(device_pixels: i32) -> Self {
         phypx(device_pixels)
@@ -2991,12 +2985,6 @@ impl From<DevicePixels> for u64 {
 impl From<u64> for DevicePixels {
     fn from(device_pixels: u64) -> Self {
         phypx(device_pixels as i32)
-    }
-}
-
-impl From<ScaledPixels> for f64 {
-    fn from(scaled_pixels: ScaledPixels) -> Self {
-        scaled_pixels.0 as f64
     }
 }
 
