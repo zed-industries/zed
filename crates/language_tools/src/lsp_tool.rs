@@ -270,58 +270,9 @@ impl LspPickerDelegate {
                     .child(Label::new(language_server_name.0.clone()).color(Color::Muted)),
             )
             .when_some(lsp_status.as_ref(), |header, (message, severity)| {
-                header.child(
-                    div()
-                        .child(Label::new(message))
-                        .hover(|s| s.opacity(0.6))
-                        .map(|div| match severity {
-                            Severity::Other | Severity::Ok | Severity::Info => div,
-                            Severity::Warning => {
-                                div.border_1().border_color(Color::Warning.color(cx))
-                            }
-                            Severity::Error => div.border_1().border_color(Color::Error.color(cx)),
-                        })
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, {
-                            let message = message.clone();
-                            let severity = *severity;
-                            cx.listener(move |picker, _, _, cx| {
-                                if let Some(server_state) =
-                                    picker.delegate.language_servers.servers.get_mut(&server_id)
-                                {
-                                    if server_state.message.as_ref().is_some_and(
-                                        |(state_message, state_severity)| {
-                                            state_message == &message && state_severity == &severity
-                                        },
-                                    ) {
-                                        server_state.message = None;
-                                    }
-                                }
-                                if let Some(state_message) = picker
-                                    .delegate
-                                    .items
-                                    .iter_mut()
-                                    .find_map(|item| match item {
-                                        LspItem::Header {
-                                            server_id: state_server_id,
-                                            message,
-                                            ..
-                                        } => {
-                                            if server_id == *state_server_id {
-                                                Some(message)
-                                            } else {
-                                                None
-                                            }
-                                        }
-                                        LspItem::Item { .. } => None,
-                                    })
-                                {
-                                    *state_message = None;
-                                    cx.notify();
-                                }
-                            })
-                        }),
-                )
+                header.child(Self::render_server_message(
+                    server_id, message, severity, cx,
+                ))
             })
             .cursor_default()
     }
@@ -411,9 +362,7 @@ impl LspPickerDelegate {
                             }
                         }),
                 )
-            })
-            .when(has_logs, |div| {
-                div.child(
+                .child(
                     IconButton::new("open-lsp-messages", IconName::BoltFilled)
                         .icon_size(IconSize::Small)
                         .tooltip(|_, cx| Tooltip::simple("Open LSP messages", cx))
@@ -434,6 +383,70 @@ impl LspPickerDelegate {
                             }
                         }),
                 )
+            })
+    }
+
+    fn render_server_message(
+        server_id: LanguageServerId,
+        message: &SharedString,
+        severity: &Severity,
+        cx: &Context<'_, Picker<Self>>,
+    ) -> Div {
+        div()
+            .child(Label::new(message))
+            .hover(|s| s.opacity(0.6))
+            .map(|div| match severity {
+                Severity::Other | Severity::Ok | Severity::Info => div,
+                Severity::Warning => div.border_1().border_color(Color::Warning.color(cx)),
+                Severity::Error => div.border_1().border_color(Color::Error.color(cx)),
+            })
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, {
+                let message = message.clone();
+                let severity = *severity;
+                cx.listener(move |picker, _, _, cx| {
+                    if let Some(server_state) =
+                        picker.delegate.language_servers.servers.get_mut(&server_id)
+                    {
+                        if server_state.message.as_ref().is_some_and(
+                            |(state_message, state_severity)| {
+                                state_message == &message && state_severity == &severity
+                            },
+                        ) {
+                            server_state.message = None;
+                        }
+                    }
+                    if let Some(state_message) =
+                        picker
+                            .delegate
+                            .items
+                            .iter_mut()
+                            .find_map(|item| match item {
+                                LspItem::Header {
+                                    server_id: state_server_id,
+                                    message: state_message,
+                                    ..
+                                } => {
+                                    if server_id == *state_server_id
+                                        && state_message.as_ref().is_some_and(
+                                            |(state_message, state_severity)| {
+                                                state_message == &message
+                                                    && state_severity == &severity
+                                            },
+                                        )
+                                    {
+                                        Some(state_message)
+                                    } else {
+                                        None
+                                    }
+                                }
+                                LspItem::Item { .. } => None,
+                            })
+                    {
+                        *state_message = None;
+                        cx.notify();
+                    }
+                })
             })
     }
 }
