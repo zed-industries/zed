@@ -1,5 +1,7 @@
 use crate::{
-    phypx, point, size, Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, ShapedGlyph, ShapedRun, SharedString, Size, SUBPIXEL_VARIANTS
+    Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
+    GlyphId, LineLayout, PhysicalPixels, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
+    SUBPIXEL_VARIANTS, ShapedGlyph, ShapedRun, SharedString, Size, phypx, point, size,
 };
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
@@ -296,7 +298,10 @@ impl CosmicTextSystemState {
             .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
         Ok(Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
-            size: size(image.placement.width.into(), image.placement.height.into()),
+            size: size(
+                PhysicalPixels::from_u32(image.placement.width),
+                PhysicalPixels::from_u32(image.placement.height),
+            ),
         })
     }
 
