@@ -86,7 +86,6 @@ enum Severity {
 enum LanguageServerStatus {
     Starting,
     Running,
-    // TODO kb is this status needed? Not used right now.
     Stopping,
     Stopped,
 }
@@ -731,7 +730,6 @@ impl LspTool {
                     },
                 );
             }
-            // TODO kb events are sent twice?
             project::LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 message: proto::update_language_server::Variant::RegisteredForBuffer(update),
@@ -831,7 +829,6 @@ impl StatusItemView for LspTool {
 }
 
 impl Render for LspTool {
-    // TODO kb add scrollbar + max width and height
     // TODO kb keyboard story: toggling the button; navigation inside it; showing keybindings (need new actions?) for each button
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let delegate = &self.lsp_picker.read(cx).delegate;

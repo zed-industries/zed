@@ -1073,29 +1073,86 @@ impl LocalLspStore {
             .language_servers
             .drain()
             .map(|(server_id, server_state)| {
-                use LanguageServerState::*;
+                let server_name = match &server_state {
+                    LanguageServerState::Starting { .. } => None,
+                    LanguageServerState::Running { adapter, .. } => Some(adapter.name()),
+                };
                 cx.emit(LspStoreEvent::LanguageServerUpdate {
                     language_server_id: server_id,
-                    name: None,
+                    name: server_name.clone(),
                     message: proto::update_language_server::Variant::StatusUpdate(
                         proto::StatusUpdate {
                             message: None,
-                            status: proto::status_update::Status::Stopped as i32,
+                            status: proto::status_update::Status::Stopping as i32,
                         },
                     ),
                 });
-                async move {
-                    match server_state {
-                        Running { server, .. } => server.shutdown()?.await,
-                        Starting { startup, .. } => startup.await?.shutdown()?.await,
+                cx.spawn(async move |lsp_store, cx| {
+                    match Self::shutdown_server(server_state).await {
+                        Ok(()) => {
+                            lsp_store
+                                .update(cx, |_, cx| {
+                                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                                        language_server_id: server_id,
+                                        name: server_name,
+                                        message:
+                                            proto::update_language_server::Variant::StatusUpdate(
+                                                proto::StatusUpdate {
+                                                    message: None,
+                                                    status: proto::status_update::Status::Stopped
+                                                        as i32,
+                                                },
+                                            ),
+                                    });
+                                })
+                                .ok();
+                        }
+                        Err(e) => {
+                            lsp_store
+                                .update(cx, |_, cx| {
+                                    cx.emit(LspStoreEvent::LanguageServerUpdate {
+                                        language_server_id: server_id,
+                                        name: server_name,
+                                        message:
+                                            proto::update_language_server::Variant::StatusUpdate(
+                                                proto::StatusUpdate {
+                                                    message: Some(format!(
+                                                        "Server {server_id} failed to stop: {e:#}"
+                                                    )),
+                                                    status: proto::status_update::Status::Error
+                                                        as i32,
+                                                },
+                                            ),
+                                    })
+                                })
+                                .ok();
+                        }
                     }
-                }
+                })
             })
             .collect::<Vec<_>>();
 
         async move {
             join_all(shutdown_futures).await;
         }
+    }
+
+    async fn shutdown_server(server_state: LanguageServerState) -> anyhow::Result<()> {
+        match server_state {
+            LanguageServerState::Running { server, .. } => {
+                if let Some(shutdown) = server.shutdown() {
+                    shutdown.await;
+                }
+            }
+            LanguageServerState::Starting { startup, .. } => {
+                if let Some(server) = startup.await {
+                    if let Some(shutdown) = server.shutdown() {
+                        shutdown.await;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn language_servers_for_worktree(
