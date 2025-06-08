@@ -50,7 +50,7 @@ use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
 pub use debugger::breakpoint_store::BreakpointWithPosition;
 use debugger::{
-    breakpoint_store::{ActiveStackFrame, BreakpointStore},
+    breakpoint_store::BreakpointStore,
     dap_store::{DapStore, DapStoreEvent},
     session::Session,
 };
@@ -1671,13 +1671,8 @@ impl Project {
         self.breakpoint_store.clone()
     }
 
-    pub fn active_debug_session(&self, cx: &App) -> Option<(Entity<Session>, ActiveStackFrame)> {
-        let active_position = self.breakpoint_store.read(cx).active_position()?;
-        let session = self
-            .dap_store
-            .read(cx)
-            .session_by_id(active_position.session_id)?;
-        Some((session, active_position.clone()))
+    pub fn active_debug_session(&self, cx: &App) -> Option<Entity<Session>> {
+        self.dap_store.read(cx).active_session().cloned()
     }
 
     pub fn lsp_store(&self) -> Entity<LspStore> {
@@ -3637,7 +3632,6 @@ impl Project {
     pub fn inline_values(
         &mut self,
         session: Entity<Session>,
-        active_stack_frame: ActiveStackFrame,
         buffer_handle: Entity<Buffer>,
         range: Range<text::Anchor>,
         cx: &mut Context<Self>,
@@ -3672,13 +3666,11 @@ impl Project {
             row,
         );
 
-        let stack_frame_id = active_stack_frame.stack_frame_id;
         cx.spawn(async move |this, cx| {
             this.update(cx, |project, cx| {
                 project.dap_store().update(cx, |dap_store, cx| {
                     dap_store.resolve_inline_value_locations(
                         session,
-                        stack_frame_id,
                         buffer_handle,
                         inline_value_locations,
                         cx,

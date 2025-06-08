@@ -157,7 +157,6 @@ pub struct ActiveStackFrame {
 pub struct BreakpointStore {
     breakpoints: BTreeMap<Arc<Path>, BreakpointsInFile>,
     downstream_client: Option<(AnyProtoClient, u64)>,
-    active_stack_frame: Option<ActiveStackFrame>,
     // E.g ssh
     mode: BreakpointStoreMode,
 }
@@ -175,7 +174,6 @@ impl BreakpointStore {
                 buffer_store,
             }),
             downstream_client: None,
-            active_stack_frame: Default::default(),
         }
     }
 
@@ -187,7 +185,6 @@ impl BreakpointStore {
                 _upstream_project_id: upstream_project_id,
             }),
             downstream_client: None,
-            active_stack_frame: Default::default(),
         }
     }
 
@@ -607,15 +604,12 @@ impl BreakpointStore {
         &'a self,
         buffer: &'a Entity<Buffer>,
         range: Option<Range<text::Anchor>>,
+        active_session_id: Option<SessionId>,
         buffer_snapshot: &'a BufferSnapshot,
         cx: &App,
     ) -> impl Iterator<Item = (&'a BreakpointWithPosition, Option<BreakpointSessionState>)> + 'a
     {
         let abs_path = Self::abs_path_from_buffer(buffer, cx);
-        let active_session_id = self
-            .active_stack_frame
-            .as_ref()
-            .map(|frame| frame.session_id);
         abs_path
             .and_then(|path| self.breakpoints.get(&path))
             .into_iter()
@@ -637,45 +631,6 @@ impl BreakpointStore {
                     }
                 })
             })
-    }
-
-    pub fn active_position(&self) -> Option<&ActiveStackFrame> {
-        self.active_stack_frame.as_ref()
-    }
-
-    pub fn remove_active_position(
-        &mut self,
-        session_id: Option<SessionId>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(session_id) = session_id {
-            self.active_stack_frame
-                .take_if(|active_stack_frame| active_stack_frame.session_id == session_id);
-        } else {
-            self.active_stack_frame.take();
-        }
-
-        cx.emit(BreakpointStoreEvent::ClearDebugLines);
-        cx.notify();
-    }
-
-    pub fn set_active_position(&mut self, position: ActiveStackFrame, cx: &mut Context<Self>) {
-        if self
-            .active_stack_frame
-            .as_ref()
-            .is_some_and(|active_position| active_position == &position)
-        {
-            return;
-        }
-
-        if self.active_stack_frame.is_some() {
-            cx.emit(BreakpointStoreEvent::ClearDebugLines);
-        }
-
-        self.active_stack_frame = Some(position);
-
-        cx.emit(BreakpointStoreEvent::SetDebugLine);
-        cx.notify();
     }
 
     pub fn breakpoint_at_row(

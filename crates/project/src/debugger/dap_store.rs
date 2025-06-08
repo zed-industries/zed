@@ -15,7 +15,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source, StackFrameId,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source,
     adapters::{
         DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
@@ -92,6 +92,7 @@ pub struct DapStore {
     breakpoint_store: Entity<BreakpointStore>,
     worktree_store: Entity<WorktreeStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
+    active_session: Option<Entity<Session>>,
     next_session_id: u32,
 }
 
@@ -173,6 +174,7 @@ impl DapStore {
             breakpoint_store,
             worktree_store,
             sessions: Default::default(),
+            active_session: None,
         }
     }
 
@@ -564,14 +566,14 @@ impl DapStore {
     pub fn resolve_inline_value_locations(
         &self,
         session: Entity<Session>,
-        stack_frame_id: StackFrameId,
         buffer_handle: Entity<Buffer>,
         inline_value_locations: Vec<dap::inline_value::InlineValueLocation>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
-        let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
 
+        let all_variables = session.read(cx).variables_for_active_stack_frame_id();
+        let id = session.read(cx).active_stack_frame();
         fn format_value(mut value: String) -> String {
             const LIMIT: usize = 100;
 
@@ -584,6 +586,9 @@ impl DapStore {
         }
 
         cx.spawn(async move |_, cx| {
+            let Some(stack_frame_id) = id else {
+                return Ok(vec![]);
+            };
             let mut inlay_hints = Vec::with_capacity(inline_value_locations.len());
             for inline_value_location in inline_value_locations.iter() {
                 let point = snapshot.point_to_point_utf16(language::Point::new(
@@ -797,6 +802,10 @@ impl DapStore {
                     .ok();
             })
         })
+    }
+
+    pub(crate) fn active_session(&self) -> Option<&Entity<Session>> {
+        self.active_session.as_ref()
     }
 }
 

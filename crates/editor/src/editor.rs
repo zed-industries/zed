@@ -2082,8 +2082,6 @@ impl Editor {
                 editor.start_git_blame_inline(false, window, cx);
             }
 
-            editor.go_to_active_debug_line(window, cx);
-
             if let Some(buffer) = buffer.read(cx).as_singleton() {
                 if let Some(project) = editor.project.as_ref() {
                     let handle = project.update(cx, |project, cx| {
@@ -7406,14 +7404,18 @@ impl Editor {
         let Some(breakpoint_store) = self.breakpoint_store.clone() else {
             return breakpoint_display_points;
         };
-
-        let snapshot = self.snapshot(window, cx);
-
-        let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
         let Some(project) = self.project.as_ref() else {
             return breakpoint_display_points;
         };
 
+        let snapshot = self.snapshot(window, cx);
+
+        let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
+
+        let active_session = project
+            .read(cx)
+            .active_debug_session(cx)
+            .map(|session| session.read(cx).session_id());
         let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
             ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
 
@@ -7432,6 +7434,7 @@ impl Editor {
                     buffer_snapshot.anchor_before(range.start)
                         ..buffer_snapshot.anchor_after(range.end),
                 ),
+                active_session,
                 buffer_snapshot,
                 cx,
             );
@@ -10039,7 +10042,10 @@ impl Editor {
                 .buffer_snapshot
                 .buffer_id_for_excerpt(breakpoint_position.excerpt_id)
         })?;
-
+        let active_session_id = project
+            .read(cx)
+            .active_debug_session(cx)
+            .map(|session| session.read(cx).session_id());
         let enclosing_excerpt = breakpoint_position.excerpt_id;
         let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
@@ -10061,6 +10067,7 @@ impl Editor {
                     .breakpoints(
                         &buffer,
                         Some(breakpoint_position.text_anchor..anchor_end.text_anchor),
+                        active_session_id,
                         &buffer_snapshot,
                         cx,
                     )
@@ -17610,10 +17617,9 @@ impl Editor {
     // Returns true if the editor handled a go-to-line request
     pub fn go_to_active_debug_line(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         maybe!({
-            let breakpoint_store = self.breakpoint_store.as_ref()?;
+            let project = self.project.as_ref()?;
 
-            let Some(active_stack_frame) = breakpoint_store.read(cx).active_position().cloned()
-            else {
+            let Some(active_stack_frame) = project.read(cx).active_debug_session(cx) else {
                 self.clear_row_highlights::<ActiveDebugLine>();
                 return None;
             };
@@ -21005,7 +21011,7 @@ impl SemanticsProvider for Entity<Project> {
         self.update(cx, |project, cx| {
             if project
                 .active_debug_session(cx)
-                .is_some_and(|(session, _)| session.read(cx).any_stopped_thread())
+                .is_some_and(|session| session.read(cx).any_stopped_thread())
             {
                 return true;
             }
@@ -21024,9 +21030,9 @@ impl SemanticsProvider for Entity<Project> {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
         self.update(cx, |project, cx| {
-            let (session, active_stack_frame) = project.active_debug_session(cx)?;
+            let session = project.active_debug_session(cx)?;
 
-            Some(project.inline_values(session, active_stack_frame, buffer_handle, range, cx))
+            Some(project.inline_values(session, buffer_handle, range, cx))
         })
     }
 
