@@ -420,12 +420,12 @@ impl EditAgent {
         cx: &mut AsyncApp,
     ) -> (
         Task<Result<(T, Vec<ResolvedOldText>)>>,
-        async_watch::Receiver<Option<Range<usize>>>,
+        watch::Receiver<Option<Range<usize>>>,
     )
     where
         T: 'static + Send + Unpin + Stream<Item = Result<EditParserEvent>>,
     {
-        let (old_range_tx, old_range_rx) = async_watch::channel(None);
+        let (mut old_range_tx, old_range_rx) = watch::channel(None);
         let task = cx.background_spawn(async move {
             let mut matcher = StreamingFuzzyMatcher::new(snapshot);
             while let Some(edit_event) = edit_events.next().await {
