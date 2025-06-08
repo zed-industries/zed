@@ -393,14 +393,9 @@ impl ThreadStore {
         self.threads.len()
     }
 
-    pub fn unordered_threads(&self) -> impl Iterator<Item = &SerializedThreadMetadata> {
+    pub fn reverse_chronological_threads(&self) -> impl Iterator<Item = &SerializedThreadMetadata> {
+        // ordering is from "ORDER BY" in `list_threads`
         self.threads.iter()
-    }
-
-    pub fn reverse_chronological_threads(&self) -> Vec<SerializedThreadMetadata> {
-        let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
-        threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
-        threads
     }
 
     pub fn create_thread(&mut self, cx: &mut Context<Self>) -> Entity<Thread> {
@@ -566,10 +561,14 @@ impl ThreadStore {
             };
 
             if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                if let Some(tools) = protocol.list_tools().await.log_err() {
+                if let Some(response) = protocol
+                    .request::<context_server::types::request::ListTools>(())
+                    .await
+                    .log_err()
+                {
                     let tool_ids = tool_working_set
                         .update(cx, |tool_working_set, _| {
-                            tools
+                            response
                                 .tools
                                 .into_iter()
                                 .map(|tool| {

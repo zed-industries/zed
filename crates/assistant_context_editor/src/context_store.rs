@@ -347,12 +347,6 @@ impl ContextStore {
         self.contexts_metadata.iter()
     }
 
-    pub fn reverse_chronological_contexts(&self) -> Vec<SavedContextMetadata> {
-        let mut contexts = self.contexts_metadata.iter().cloned().collect::<Vec<_>>();
-        contexts.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.mtime));
-        contexts
-    }
-
     pub fn create(&mut self, cx: &mut Context<Self>) -> Entity<AssistantContext> {
         let context = cx.new(|cx| {
             AssistantContext::local(
@@ -618,6 +612,16 @@ impl ContextStore {
             ContextEvent::SummaryChanged => {
                 self.advertise_contexts(cx);
             }
+            ContextEvent::PathChanged { old_path, new_path } => {
+                if let Some(old_path) = old_path.as_ref() {
+                    for metadata in &mut self.contexts_metadata {
+                        if &metadata.path == old_path {
+                            metadata.path = new_path.clone();
+                            break;
+                        }
+                    }
+                }
+            }
             ContextEvent::Operation(operation) => {
                 let context_id = context.read(cx).id().to_proto();
                 let operation = operation.to_proto();
@@ -792,7 +796,7 @@ impl ContextStore {
                         .next()
                     {
                         contexts.push(SavedContextMetadata {
-                            title: title.to_string(),
+                            title: title.to_string().into(),
                             path: path.into(),
                             mtime: metadata.mtime.timestamp_for_user().into(),
                         });
@@ -864,8 +868,13 @@ impl ContextStore {
             };
 
             if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
-                if let Some(prompts) = protocol.list_prompts().await.log_err() {
-                    let slash_command_ids = prompts
+                if let Some(response) = protocol
+                    .request::<context_server::types::request::PromptsList>(())
+                    .await
+                    .log_err()
+                {
+                    let slash_command_ids = response
+                        .prompts
                         .into_iter()
                         .filter(assistant_slash_commands::acceptable_prompt)
                         .map(|prompt| {

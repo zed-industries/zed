@@ -21933,14 +21933,16 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         });
 
     let ensure_result_id = |expected: Option<String>, cx: &mut TestAppContext| {
-        editor.update(cx, |editor, cx| {
-            let buffer_result_id = editor
+        project.update(cx, |project, cx| {
+            let buffer_id = editor
+                .read(cx)
                 .buffer()
                 .read(cx)
                 .as_singleton()
                 .expect("created a singleton buffer")
                 .read(cx)
-                .result_id();
+                .remote_id();
+            let buffer_result_id = project.lsp_store().read(cx).result_id(buffer_id);
             assert_eq!(expected, buffer_result_id);
         });
     };
@@ -22002,4 +22004,54 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         "Multiple rapid edits should be debounced (got {final_requests} requests)",
     );
     ensure_result_id(Some(final_requests.to_string()), cx);
+}
+
+#[gpui::test]
+async fn test_add_selection_after_moving_with_multiple_cursors(cx: &mut TestAppContext) {
+    // Regression test for issue #11671
+    // Previously, adding a cursor after moving multiple cursors would reset
+    // the cursor count instead of adding to the existing cursors.
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    // Create a simple buffer with cursor at start
+    cx.set_state(indoc! {"
+        ˇaaaa
+        bbbb
+        cccc
+        dddd
+        eeee
+        ffff
+        gggg
+        hhhh"});
+
+    // Add 2 cursors below (so we have 3 total)
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    // Verify we have 3 cursors
+    let initial_count = cx.update_editor(|editor, _, _| editor.selections.count());
+    assert_eq!(
+        initial_count, 3,
+        "Should have 3 cursors after adding 2 below"
+    );
+
+    // Move down one line
+    cx.update_editor(|editor, window, cx| {
+        editor.move_down(&MoveDown, window, cx);
+    });
+
+    // Add another cursor below
+    cx.update_editor(|editor, window, cx| {
+        editor.add_selection_below(&Default::default(), window, cx);
+    });
+
+    // Should now have 4 cursors (3 original + 1 new)
+    let final_count = cx.update_editor(|editor, _, _| editor.selections.count());
+    assert_eq!(
+        final_count, 4,
+        "Should have 4 cursors after moving and adding another"
+    );
 }
