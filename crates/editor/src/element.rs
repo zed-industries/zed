@@ -950,7 +950,7 @@ impl EditorElement {
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.mouse_cursor_hidden = false;
 
-        if gutter_hovered {
+        let breakpoint_indicator = if gutter_hovered {
             let new_point = position_map
                 .point_for_position(event.position)
                 .previous_valid;
@@ -964,7 +964,6 @@ impl EditorElement {
                 .buffer_for_excerpt(buffer_anchor.excerpt_id)
                 .and_then(|buffer| buffer.file().map(|file| (buffer, file)))
             {
-                let was_hovered = editor.gutter_breakpoint_indicator.0.is_some();
                 let as_point = text::ToPoint::to_point(&buffer_anchor.text_anchor, buffer_snapshot);
 
                 let is_visible = editor
@@ -992,38 +991,43 @@ impl EditorElement {
                             .is_some()
                     });
 
-                editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
-                    display_row: new_point.row(),
-                    is_active: is_visible,
-                    collides_with_existing_breakpoint: has_existing_breakpoint,
-                });
-
-                editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
-                    cx.spawn(async move |this, cx| {
-                        if !was_hovered {
+                if !is_visible {
+                    editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
+                        cx.spawn(async move |this, cx| {
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
                                 .await;
-                        }
 
-                        this.update(cx, |this, cx| {
-                            if let Some(indicator) = this.gutter_breakpoint_indicator.0.as_mut() {
-                                indicator.is_active = true;
-                            }
-
-                            cx.notify();
+                            this.update(cx, |this, cx| {
+                                if let Some(indicator) = this.gutter_breakpoint_indicator.0.as_mut()
+                                {
+                                    indicator.is_active = true;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
                         })
-                        .ok();
-                    })
-                });
+                    });
+                }
+
+                Some(PhantomBreakpointIndicator {
+                    display_row: new_point.row(),
+                    is_active: is_visible,
+                    collides_with_existing_breakpoint: has_existing_breakpoint,
+                })
             } else {
-                editor.gutter_breakpoint_indicator = (None, None);
+                editor.gutter_breakpoint_indicator.1 = None;
+                None
             }
         } else {
-            editor.gutter_breakpoint_indicator = (None, None);
-        }
+            editor.gutter_breakpoint_indicator.1 = None;
+            None
+        };
 
-        cx.notify();
+        if &breakpoint_indicator != &editor.gutter_breakpoint_indicator.0 {
+            editor.gutter_breakpoint_indicator.0 = breakpoint_indicator;
+            cx.notify();
+        }
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(window) {
