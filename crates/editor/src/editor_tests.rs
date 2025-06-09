@@ -21941,7 +21941,7 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
                 .expect("created a singleton buffer")
                 .read(cx)
                 .remote_id();
-            let buffer_result_id = project.lsp_store().read(cx).result_id(buffer_id);
+            let buffer_result_id = project.lsp_store().read(cx).result_id(buffer_id, cx);
             assert_eq!(expected, buffer_result_id);
         });
     };
