@@ -5,8 +5,8 @@ use std::time::Duration;
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, MouseButton, ScrollStrategy,
-    Stateful, Subscription, Task, UniformListScrollHandle, WeakEntity, uniform_list,
+    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, ListState, MouseButton, Stateful,
+    Subscription, Task, WeakEntity, list,
 };
 
 use crate::StackTraceView;
@@ -35,7 +35,7 @@ pub struct StackFrameList {
     selected_ix: Option<usize>,
     opened_stack_frame_id: Option<StackFrameId>,
     scrollbar_state: ScrollbarState,
-    scroll_handle: UniformListScrollHandle,
+    list_state: ListState,
     _refresh_task: Task<()>,
 }
 
@@ -54,7 +54,6 @@ impl StackFrameList {
         cx: &mut Context<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
-        let scroll_handle = UniformListScrollHandle::new();
 
         let _subscription =
             cx.subscribe_in(&session, window, |this, _, event, window, cx| match event {
@@ -67,8 +66,16 @@ impl StackFrameList {
                 _ => {}
             });
 
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.), {
+            let this = cx.weak_entity();
+            move |ix, _window, cx| {
+                this.update(cx, |this, cx| this.render_entry(ix, cx))
+                    .unwrap_or(div().into_any())
+            }
+        });
+        let scrollbar_state = ScrollbarState::new(list_state.clone());
+
         let mut this = Self {
-            scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
             session,
             workspace,
             focus_handle,
@@ -77,7 +84,8 @@ impl StackFrameList {
             entries: Default::default(),
             selected_ix: None,
             opened_stack_frame_id: None,
-            scroll_handle,
+            list_state,
+            scrollbar_state,
             _refresh_task: Task::ready(()),
         };
         this.schedule_refresh(true, window, cx);
@@ -214,6 +222,7 @@ impl StackFrameList {
             self.selected_ix = ix;
         }
 
+        self.list_state.reset(self.entries.len());
         cx.emit(StackFrameListEvent::BuiltEntries);
         cx.notify();
     }
@@ -555,10 +564,6 @@ impl StackFrameList {
 
     fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.selected_ix = ix;
-        if let Some(ix) = self.selected_ix {
-            self.scroll_handle
-                .scroll_to_item(ix, ScrollStrategy::Center);
-        }
         cx.notify();
     }
 
@@ -642,15 +647,8 @@ impl StackFrameList {
         self.activate_selected_entry(window, cx);
     }
 
-    fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        uniform_list(
-            cx.entity(),
-            "stack-frame-list",
-            self.entries.len(),
-            |this, range, _window, cx| range.map(|ix| this.render_entry(ix, cx)).collect(),
-        )
-        .track_scroll(self.scroll_handle.clone())
-        .size_full()
+    fn render_list(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        list(self.list_state.clone()).size_full()
     }
 }
 
