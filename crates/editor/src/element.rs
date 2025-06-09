@@ -856,8 +856,11 @@ impl EditorElement {
             SelectionDragState::Dragging { ref selection, .. } => {
                 let snapshot = editor.snapshot(window, cx);
                 let selection_display = selection.map(|anchor| anchor.to_display_point(&snapshot));
-                if !point_for_position.intersects_selection(&selection_display) {
-                    let is_cut = !event.modifiers.control;
+                if !point_for_position.intersects_selection(&selection_display)
+                    && text_hitbox.is_hovered(window)
+                {
+                    let is_cut = !(cfg!(target_os = "macos") && event.modifiers.alt
+                        || cfg!(not(target_os = "macos")) && event.modifiers.control);
                     editor.move_selection_on_drop(
                         &selection.clone(),
                         point_for_position.previous_valid,
@@ -866,6 +869,13 @@ impl EditorElement {
                         cx,
                     );
                     editor.selection_drag_state = SelectionDragState::None;
+                    cx.stop_propagation();
+                    return;
+                } else if !text_hitbox.is_hovered(window) {
+                    editor.selection_drag_state = SelectionDragState::ReadyToDrag {
+                        selection: selection.clone(),
+                        click_position: event.position,
+                    };
                     cx.stop_propagation();
                     return;
                 }
