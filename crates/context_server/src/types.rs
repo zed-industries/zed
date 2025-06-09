@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 pub const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
+pub const VERSION_2024_11_05: &str = "2024-11-05";
 
 pub mod request {
     use super::*;
