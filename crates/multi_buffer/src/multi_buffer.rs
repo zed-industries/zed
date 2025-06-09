@@ -2600,48 +2600,58 @@ impl MultiBuffer {
             return title.into();
         }
 
-        self.as_singleton()
-            .and_then(|buffer| {
-                let buffer = buffer.read(cx);
+        if let Some(buffer) = self.as_singleton() {
+            let buffer = buffer.read(cx);
 
-                if let Some(file) = buffer.file() {
-                    return Some(file.file_name(cx).to_string_lossy());
+            if let Some(file) = buffer.file() {
+                return file.file_name(cx).to_string_lossy();
+            }
+
+            if let Some(title) = self.buffer_based_title(buffer) {
+                return title;
+            }
+        };
+
+        "untitled".into()
+    }
+
+    fn buffer_based_title(&self, buffer: &Buffer) -> Option<Cow<str>> {
+        let mut is_leading_whitespace = false;
+        let mut count = 0;
+        let mut prev_was_space = false;
+        let mut title = String::new();
+
+        for ch in buffer.snapshot().chars() {
+            if !is_leading_whitespace && ch.is_whitespace() {
+                continue;
+            }
+
+            is_leading_whitespace = true;
+
+            if ch == '\n' || count >= 40 {
+                break;
+            }
+
+            if ch.is_whitespace() {
+                if !prev_was_space {
+                    title.push(' ');
+                    count += 1;
+                    prev_was_space = true;
                 }
+            } else {
+                title.push(ch);
+                count += 1;
+                prev_was_space = false;
+            }
+        }
 
-                let mut title = String::new();
-                let mut prev_was_space = false;
-                let mut count = 0;
-                let mut is_leading_whitespace = false;
+        let title = title.trim_end().to_string();
 
-                for ch in buffer.snapshot().chars() {
-                    if !is_leading_whitespace && ch.is_whitespace() {
-                        continue;
-                    }
+        if !title.is_empty() {
+            return Some(title.into());
+        }
 
-                    is_leading_whitespace = true;
-
-                    if ch == '\n' || count >= 40 {
-                        break;
-                    }
-
-                    if ch.is_whitespace() {
-                        if !prev_was_space {
-                            title.push(' ');
-                            count += 1;
-                            prev_was_space = true;
-                        }
-                    } else {
-                        title.push(ch);
-                        count += 1;
-                        prev_was_space = false;
-                    }
-                }
-
-                let title = title.trim_end().to_string();
-
-                (!title.is_empty()).then(|| title.into())
-            })
-            .unwrap_or("untitled".into())
+        None
     }
 
     pub fn set_title(&mut self, title: String, cx: &mut Context<Self>) {
