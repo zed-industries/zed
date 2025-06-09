@@ -1947,8 +1947,9 @@ impl Session {
         cx.notify();
     }
     pub fn active_stack_frame(&self) -> Option<StackFrameId> {
-        self.active_stack_frame.clone()
+        self.active_stack_frame
     }
+
     pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {
         if self.requests.contains_key(&TypeId::of::<ThreadsCommand>())
             && self
