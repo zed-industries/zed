@@ -910,7 +910,10 @@ enum SelectionDragState {
     /// State when no drag related activity is detected.
     None,
     /// State when the mouse is down on a selection that is about to be dragged.
-    ReadyToDrag { selection: Selection<Anchor> },
+    ReadyToDrag {
+        selection: Selection<Anchor>,
+        click_position: gpui::Point<Pixels>,
+    },
     /// State when the mouse is dragging the selection in the editor.
     Dragging {
         selection: Selection<Anchor>,
@@ -10601,54 +10604,42 @@ impl Editor {
         });
     }
 
-    pub fn drop_selection(
+    pub fn move_selection_on_drop(
         &mut self,
-        point_for_position: Option<PointForPosition>,
+        selection: &Selection<Anchor>,
+        target: DisplayPoint,
         is_cut: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
-        if let Some(point_for_position) = point_for_position {
-            match self.selection_drag_state {
-                SelectionDragState::Dragging { ref selection, .. } => {
-                    let snapshot = self.snapshot(window, cx);
-                    let selection_display =
-                        selection.map(|anchor| anchor.to_display_point(&snapshot));
-                    if !point_for_position.intersects_selection(&selection_display) {
-                        let point = point_for_position.previous_valid;
-                        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-                        let buffer = &display_map.buffer_snapshot;
-                        let mut edits = Vec::new();
-                        let insert_point = display_map
-                            .clip_point(point, Bias::Left)
-                            .to_point(&display_map);
-                        let text = buffer
-                            .text_for_range(selection.start..selection.end)
-                            .collect::<String>();
-                        if is_cut {
-                            edits.push(((selection.start..selection.end), String::new()));
-                        }
-                        let insert_anchor = buffer.anchor_before(insert_point);
-                        edits.push(((insert_anchor..insert_anchor), text));
-                        let last_edit_start = insert_anchor.bias_left(buffer);
-                        let last_edit_end = insert_anchor.bias_right(buffer);
-                        self.transact(window, cx, |this, window, cx| {
-                            this.buffer.update(cx, |buffer, cx| {
-                                buffer.edit(edits, None, cx);
-                            });
-                            this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                                s.select_anchor_ranges([last_edit_start..last_edit_end]);
-                            });
-                        });
-                        self.selection_drag_state = SelectionDragState::None;
-                        return true;
-                    }
-                }
-                _ => {}
-            }
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
+        let mut edits = Vec::new();
+        let insert_point = display_map
+            .clip_point(target, Bias::Left)
+            .to_point(&display_map);
+        let text = buffer
+            .text_for_range(selection.start..selection.end)
+            .collect::<String>();
+        if is_cut {
+            edits.push(((selection.start..selection.end), String::new()));
         }
+        let insert_anchor = buffer.anchor_before(insert_point);
+        edits.push(((insert_anchor..insert_anchor), text));
+        let last_edit_start = insert_anchor.bias_left(buffer);
+        let last_edit_end = insert_anchor.bias_right(buffer);
+        self.transact(window, cx, |this, window, cx| {
+            this.buffer.update(cx, |buffer, cx| {
+                buffer.edit(edits, None, cx);
+            });
+            this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                s.select_anchor_ranges([last_edit_start..last_edit_end]);
+            });
+        });
+    }
+
+    pub fn clear_selection_drag_state(&mut self) {
         self.selection_drag_state = SelectionDragState::None;
-        false
     }
 
     pub fn duplicate(
