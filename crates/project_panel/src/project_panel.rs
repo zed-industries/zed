@@ -771,6 +771,12 @@ impl ProjectPanel {
             let is_remote = project.is_via_collab();
             let is_local = project.is_local();
 
+            let settings = ProjectPanelSettings::get_global(cx);
+            let visible_worktrees_count = project.visible_worktrees(cx).count();
+            let should_hide_rename = is_root
+                && (cfg!(target_os = "windows")
+                    || (settings.hide_root && visible_worktrees_count == 1));
+
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
@@ -820,7 +826,7 @@ impl ProjectPanel {
                                 Box::new(zed_actions::workspace::CopyRelativePath),
                             )
                             .separator()
-                            .when(!is_root || !cfg!(target_os = "windows"), |menu| {
+                            .when(!should_hide_rename, |menu| {
                                 menu.action("Rename", Box::new(Rename))
                             })
                             .when(!is_root & !is_remote, |menu| {
@@ -1541,6 +1547,16 @@ impl ProjectPanel {
                     if Some(entry) == worktree.read(cx).root_entry() {
                         return;
                     }
+
+                    if Some(entry) == worktree.read(cx).root_entry() {
+                        let settings = ProjectPanelSettings::get_global(cx);
+                        let visible_worktrees_count =
+                            self.project.read(cx).visible_worktrees(cx).count();
+                        if settings.hide_root && visible_worktrees_count == 1 {
+                            return;
+                        }
+                    }
+
                     self.edit_state = Some(EditState {
                         worktree_id,
                         entry_id: sub_entry_id,

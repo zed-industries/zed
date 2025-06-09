@@ -2892,6 +2892,92 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "dir1": { "file1.txt": "content" },
+            "file2.txt": "content",
+        }),
+    )
+    .await;
+    fs.insert_tree("/root2", json!({ "file3.txt": "content" }))
+        .await;
+
+    // Test 1: Single worktree, hide_root=true - rename should be blocked
+    {
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    hide_root: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        panel.update(cx, |panel, cx| {
+            let project = panel.project.read(cx);
+            let worktree = project.visible_worktrees(cx).next().unwrap();
+            let root_entry = worktree.read(cx).root_entry().unwrap();
+            panel.selection = Some(SelectedEntry {
+                worktree_id: worktree.read(cx).id(),
+                entry_id: root_entry.id,
+            });
+        });
+
+        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+
+        assert!(
+            panel.read_with(cx, |panel, _| panel.edit_state.is_none()),
+            "Rename should be blocked when hide_root=true with single worktree"
+        );
+    }
+
+    // Test 2: Multiple worktrees, hide_root=true - rename should work
+    {
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    hide_root: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        select_path(&panel, "root1", cx);
+        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+
+        assert!(
+            panel.read_with(cx, |panel, _| panel.edit_state.is_some()),
+            "Rename should work with multiple worktrees even when hide_root=true"
+        );
+        panel.update_in(cx, |panel, window, cx| {
+            panel.cancel(&menu::Cancel, window, cx)
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     let fs = FakeFs::new(cx.executor().clone());
