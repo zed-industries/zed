@@ -392,7 +392,7 @@ jobs:
           Write-Output `
             "RUSTUP_HOME=C:\utils\.rustup" `
             "CARGO_HOME=C:\utils\.cargo" `
-            "PATH=C:\utils\.rustup\bin;$env:PATH" `
+            "PATH=C:\utils\.cargo\bin;$env:PATH" `
           >> $env:GITHUB_ENV
 
       - name: Checkout repo
