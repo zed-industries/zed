@@ -715,7 +715,7 @@ fn completion_replace_range(snapshot: &BufferSnapshot, anchor: &Anchor) -> Optio
 
     if end_in_line > start_in_line {
         let replace_start = snapshot.anchor_before(line_start + start_in_line);
-        let replace_end = snapshot.anchor_before(line_start + end_in_line);
+        let replace_end = snapshot.anchor_after(line_start + end_in_line);
         Some(replace_start..replace_end)
     } else {
         None

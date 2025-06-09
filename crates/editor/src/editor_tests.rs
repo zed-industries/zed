@@ -21933,14 +21933,16 @@ async fn test_pulling_diagnostics(cx: &mut TestAppContext) {
         });
 
     let ensure_result_id = |expected: Option<String>, cx: &mut TestAppContext| {
-        editor.update(cx, |editor, cx| {
-            let buffer_result_id = editor
+        project.update(cx, |project, cx| {
+            let buffer_id = editor
+                .read(cx)
                 .buffer()
                 .read(cx)
                 .as_singleton()
                 .expect("created a singleton buffer")
                 .read(cx)
-                .result_id();
+                .remote_id();
+            let buffer_result_id = project.lsp_store().read(cx).result_id(buffer_id);
             assert_eq!(expected, buffer_result_id);
         });
     };

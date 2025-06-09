@@ -132,9 +132,6 @@ pub fn expand_macro_recursively(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    if editor.selections.count() == 0 {
-        return;
-    }
     let Some(project) = &editor.project else {
         return;
     };

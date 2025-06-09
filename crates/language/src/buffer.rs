@@ -126,8 +126,6 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
-    /// The result id received last time when pulling diagnostics for this buffer.
-    pull_diagnostics_result_id: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -956,7 +954,6 @@ impl Buffer {
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
-            pull_diagnostics_result_id: None,
             change_bits: Default::default(),
             _subscriptions: Vec::new(),
         }
@@ -2762,14 +2759,6 @@ impl Buffer {
     /// Whether we should preserve the preview status of a tab containing this buffer.
     pub fn preserve_preview(&self) -> bool {
         !self.has_edits_since(&self.preview_version)
-    }
-
-    pub fn result_id(&self) -> Option<String> {
-        self.pull_diagnostics_result_id.clone()
-    }
-
-    pub fn set_result_id(&mut self, result_id: Option<String>) {
-        self.pull_diagnostics_result_id = result_id;
     }
 }
 

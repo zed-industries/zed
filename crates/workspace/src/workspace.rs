@@ -7411,7 +7411,7 @@ pub fn client_side_decorations(
                                     CursorStyle::ResizeUpRightDownLeft
                                 }
                             },
-                            Some(&hitbox),
+                            &hitbox,
                         );
                     },
                 )
