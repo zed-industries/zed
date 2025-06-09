@@ -89,7 +89,7 @@ pub fn init(cx: &mut App) {
 pub struct SharedProjectContext(Rc<RefCell<Option<ProjectContext>>>);
 
 impl SharedProjectContext {
-    pub fn borrow(&self) -> Ref<Option<ProjectContext>> {
+    pub fn borrow(&self) -> Ref<'_, Option<ProjectContext>> {
         self.0.borrow()
     }
 }
@@ -919,7 +919,7 @@ impl ThreadsDatabase {
 
             fn bytes_encode(
                 item: &Self::EItem,
-            ) -> Result<std::borrow::Cow<[u8]>, heed::BoxedError> {
+            ) -> Result<std::borrow::Cow<'_, [u8]>, heed::BoxedError> {
                 serde_json::to_vec(&item.0)
                     .map(std::borrow::Cow::Owned)
                     .map_err(Into::into)
