@@ -209,7 +209,12 @@ Custom models will be listed in the model dropdown in the Agent Panel. You can a
 > ✅ Supports tool use in some cases.
 > Visit [the Copilot Chat code](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset.
 
-You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use GitHub Copilot Chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+
+1. Open the settings view (`agent: open configuration`) and go to the GitHub Copilot Chat section
+2. Click on `Sign in to use GitHub Copilot`, follow the steps shown in the modal.
+
+Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environment variable.
 
 ### Google AI {#google-ai}
 

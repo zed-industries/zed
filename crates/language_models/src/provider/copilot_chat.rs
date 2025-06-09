@@ -863,6 +863,13 @@ impl Render for ConfigurationView {
                                         copilot::initiate_sign_in(window, cx)
                                     })),
                             )
+                            .child(
+                                Label::new(
+                                    format!("You can also assign the {} environment variable and restart Zed.", copilot::copilot_chat::COPILOT_OAUTH_ENV_VAR),
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                            )
                     }
                 },
                 None => v_flex().gap_6().child(Label::new(ERROR_LABEL)),
