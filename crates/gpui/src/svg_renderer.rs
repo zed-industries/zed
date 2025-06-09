@@ -1,5 +1,4 @@
 use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
-use anyhow::anyhow;
 use resvg::tiny_skia::Pixmap;
 use std::{
     hash::Hash,
@@ -56,9 +55,7 @@ impl SvgRenderer {
     }
 
     pub(crate) fn render(&self, params: &RenderSvgParams) -> Result<Option<Vec<u8>>> {
-        if params.size.is_zero() {
-            return Err(anyhow!("can't render at a zero size"));
-        }
+        anyhow::ensure!(!params.size.is_zero(), "can't render at a zero size");
 
         // Load the tree.
         let Some(bytes) = self.asset_source.load(&params.path)? else {

@@ -1,4 +1,4 @@
-use crate::agent_model_selector::{AgentModelSelector, ModelType};
+use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context::ContextCreasesAddon;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
@@ -7,10 +7,13 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::{extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::{TextThreadStore, ThreadStore};
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
+use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 use crate::{RemoveAllContext, ToggleContextPicker};
+use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::ErrorExt;
 use collections::VecDeque;
+use db::kvp::Dismissable;
+use editor::actions::Paste;
 use editor::display_map::EditorMargins;
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
@@ -23,17 +26,16 @@ use gpui::{
     Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window, anchored, deferred, point,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
-use language_model_selector::ToggleModelSelector;
 use parking_lot::Mutex;
 use settings::Settings;
 use std::cmp;
+use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
 use ui::{
     CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip, prelude::*,
 };
-use util::ResultExt;
 use workspace::Workspace;
 
 pub struct PromptEditor<T> {
@@ -98,8 +100,9 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         v_flex()
             .key_context("PromptEditor")
+            .capture_action(cx.listener(Self::paste))
             .bg(cx.theme().colors().editor_background)
-            .block_mouse_down()
+            .block_mouse_except_scroll()
             .gap_0p5()
             .border_y_1()
             .border_color(cx.theme().status().info_border)
@@ -302,6 +305,10 @@ impl<T: 'static> PromptEditor<T> {
         self.editor.read(cx).text(cx)
     }
 
+    fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
+        crate::active_thread::attach_pasted_images_as_context(&self.context_store, cx);
+    }
+
     fn toggle_rate_limit_notice(
         &mut self,
         _: &ClickEvent,
@@ -326,9 +333,7 @@ impl<T: 'static> PromptEditor<T> {
             EditorEvent::Edited { .. } => {
                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
-                        let is_via_ssh = workspace
-                            .project()
-                            .update(cx, |project, _| project.is_via_ssh());
+                        let is_via_ssh = workspace.project().read(cx).is_via_ssh();
 
                         workspace
                             .client()
@@ -373,7 +378,7 @@ impl<T: 'static> PromptEditor<T> {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_store.update(cx, |store, _cx| store.clear());
+        self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
     }
 
@@ -451,7 +456,7 @@ impl<T: 'static> PromptEditor<T> {
                     editor.move_to_end(&Default::default(), window, cx)
                 });
             }
-        } else {
+        } else if self.context_strip.read(cx).has_context_items(cx) {
             self.context_strip.focus_handle(cx).focus(window);
         }
     }
@@ -722,7 +727,7 @@ impl<T: 'static> PromptEditor<T> {
                         .child(CheckboxWithLabel::new(
                             "dont-show-again",
                             Label::new("Don't show again"),
-                            if dismissed_rate_limit_notice() {
+                            if RateLimitNotice::dismissed() {
                                 ui::ToggleState::Selected
                             } else {
                                 ui::ToggleState::Unselected
@@ -734,7 +739,7 @@ impl<T: 'static> PromptEditor<T> {
                                     ui::ToggleState::Selected => true,
                                 };
 
-                                set_rate_limit_notice_dismissed(is_dismissed, cx)
+                                RateLimitNotice::set_dismissed(is_dismissed, cx);
                             },
                         ))
                         .child(
@@ -892,7 +897,7 @@ impl PromptEditor<BufferCodegen> {
 
         let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
@@ -913,6 +918,7 @@ impl PromptEditor<BufferCodegen> {
                 text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
+                ModelUsageContext::InlineAssistant,
                 window,
                 cx,
             )
@@ -931,7 +937,7 @@ impl PromptEditor<BufferCodegen> {
                     fs,
                     model_selector_menu_handle,
                     prompt_editor.focus_handle(cx),
-                    ModelType::InlineAssistant,
+                    ModelUsageContext::InlineAssistant,
                     window,
                     cx,
                 )
@@ -974,7 +980,7 @@ impl PromptEditor<BufferCodegen> {
             CodegenStatus::Error(error) => {
                 if cx.has_flag::<ZedProFeatureFlag>()
                     && error.error_code() == proto::ErrorCode::RateLimitExceeded
-                    && !dismissed_rate_limit_notice()
+                    && !RateLimitNotice::dismissed()
                 {
                     self.show_rate_limit_notice = true;
                     cx.notify();
@@ -1063,7 +1069,7 @@ impl PromptEditor<TerminalCodegen> {
 
         let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
@@ -1084,6 +1090,7 @@ impl PromptEditor<TerminalCodegen> {
                 text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
+                ModelUsageContext::InlineAssistant,
                 window,
                 cx,
             )
@@ -1102,7 +1109,7 @@ impl PromptEditor<TerminalCodegen> {
                     fs,
                     model_selector_menu_handle.clone(),
                     prompt_editor.focus_handle(cx),
-                    ModelType::InlineAssistant,
+                    ModelUsageContext::InlineAssistant,
                     window,
                     cx,
                 )
@@ -1180,27 +1187,10 @@ impl PromptEditor<TerminalCodegen> {
     }
 }
 
-const DISMISSED_RATE_LIMIT_NOTICE_KEY: &str = "dismissed-rate-limit-notice";
+struct RateLimitNotice;
 
-fn dismissed_rate_limit_notice() -> bool {
-    db::kvp::KEY_VALUE_STORE
-        .read_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY)
-        .log_err()
-        .map_or(false, |s| s.is_some())
-}
-
-fn set_rate_limit_notice_dismissed(is_dismissed: bool, cx: &mut App) {
-    db::write_and_log(cx, move || async move {
-        if is_dismissed {
-            db::kvp::KEY_VALUE_STORE
-                .write_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into(), "1".into())
-                .await
-        } else {
-            db::kvp::KEY_VALUE_STORE
-                .delete_kvp(DISMISSED_RATE_LIMIT_NOTICE_KEY.into())
-                .await
-        }
-    })
+impl Dismissable for RateLimitNotice {
+    const KEY: &'static str = "dismissed-rate-limit-notice";
 }
 
 pub enum CodegenStatus {

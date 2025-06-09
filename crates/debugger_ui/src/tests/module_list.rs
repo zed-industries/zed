@@ -1,5 +1,6 @@
 use crate::{
     debugger_panel::DebugPanel,
+    persistence::DebuggerPaneItem,
     tests::{active_debug_session_panel, init_test, init_test_workspace, start_debug_session},
 };
 use dap::{
@@ -110,7 +111,8 @@ async fn test_module_list(executor: BackgroundExecutor, cx: &mut TestAppContext)
         });
 
     running_state.update_in(cx, |this, window, cx| {
-        this.activate_item(crate::persistence::DebuggerPaneItem::Modules, window, cx);
+        this.ensure_pane_item(DebuggerPaneItem::Modules, window, cx);
+        this.activate_item(DebuggerPaneItem::Modules, window, cx);
         cx.refresh_windows();
     });
 

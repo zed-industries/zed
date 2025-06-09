@@ -433,6 +433,12 @@ impl Vim {
     fn activate(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
         let vim = Vim::new(window, cx);
 
+        if !editor.mode().is_full() {
+            vim.update(cx, |vim, _| {
+                vim.mode = Mode::Insert;
+            });
+        }
+
         editor.register_addon(VimAddon {
             entity: vim.clone(),
         });
@@ -909,6 +915,9 @@ impl Vim {
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
+            self.update_editor(window, cx, |_, editor, _, _| {
+                editor.clear_selection_drag_state();
+            });
         }
         Vim::take_forced_motion(cx);
         if mode != Mode::Insert && mode != Mode::Replace {

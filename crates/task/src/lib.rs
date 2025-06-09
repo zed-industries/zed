@@ -1,5 +1,6 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
 
+mod adapter_schema;
 mod debug_format;
 mod serde_helpers;
 pub mod static_source;
@@ -15,14 +16,14 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+pub use adapter_schema::{AdapterSchema, AdapterSchemas};
 pub use debug_format::{
     AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, DebugTaskFile, LaunchRequest,
-    TcpArgumentsTemplate,
+    Request, TcpArgumentsTemplate, ZedDebugConfig,
 };
 pub use task_template::{
     DebugArgsRequest, HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates,
-    substitute_all_template_variables_in_str, substitute_variables_in_map,
-    substitute_variables_in_str,
+    substitute_variables_in_map, substitute_variables_in_str,
 };
 pub use vscode_debug_format::VsCodeDebugTaskFile;
 pub use vscode_format::VsCodeTaskFile;
@@ -150,6 +151,8 @@ pub enum VariableName {
     File,
     /// A path of the currently opened file (relative to worktree root).
     RelativeFile,
+    /// A path of the currently opened file's directory (relative to worktree root).
+    RelativeDir,
     /// The currently opened filename.
     Filename,
     /// The path to a parent directory of a currently opened file.
@@ -193,6 +196,7 @@ impl FromStr for VariableName {
             "FILE" => Self::File,
             "FILENAME" => Self::Filename,
             "RELATIVE_FILE" => Self::RelativeFile,
+            "RELATIVE_DIR" => Self::RelativeDir,
             "DIRNAME" => Self::Dirname,
             "STEM" => Self::Stem,
             "WORKTREE_ROOT" => Self::WorktreeRoot,
@@ -225,6 +229,7 @@ impl std::fmt::Display for VariableName {
             Self::File => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILE"),
             Self::Filename => write!(f, "{ZED_VARIABLE_NAME_PREFIX}FILENAME"),
             Self::RelativeFile => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_FILE"),
+            Self::RelativeDir => write!(f, "{ZED_VARIABLE_NAME_PREFIX}RELATIVE_DIR"),
             Self::Dirname => write!(f, "{ZED_VARIABLE_NAME_PREFIX}DIRNAME"),
             Self::Stem => write!(f, "{ZED_VARIABLE_NAME_PREFIX}STEM"),
             Self::WorktreeRoot => write!(f, "{ZED_VARIABLE_NAME_PREFIX}WORKTREE_ROOT"),

@@ -80,4 +80,21 @@
     )
 ) @item
 
+; Add support for parameterized tests
+(
+    (call_expression
+        function: (call_expression
+            function: (member_expression
+                object: [(identifier) @_name (member_expression object: (identifier) @_name)]
+                property: (property_identifier) @_property
+            )
+            (#any-of? @_name "it" "test" "describe" "context" "suite")
+            (#eq? @_property "each")
+        )
+        arguments: (
+            arguments . (string (string_fragment) @name)
+        )
+    )
+) @item
+
 (comment) @annotation

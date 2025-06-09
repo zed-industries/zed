@@ -35,5 +35,4 @@ toml.workspace = true
 util.workspace = true
 wasm-encoder.workspace = true
 wasmparser.workspace = true
-wit-component.workspace = true
 workspace-hack.workspace = true

@@ -7,7 +7,7 @@ use editor::{
     Editor, RowInfo,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
-        ExpandMacroRecursively, Redo, Rename, ToggleCodeActions, Undo,
+        ExpandMacroRecursively, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
     },
     test::{
         editor_test_context::{AssertionContextManager, EditorTestContext},
@@ -679,7 +679,7 @@ async fn test_collaborating_with_code_actions(
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.toggle_code_actions(
             &ToggleCodeActions {
-                deployed_from_indicator: None,
+                deployed_from: None,
                 quick_launch: false,
             },
             window,
@@ -2517,7 +2517,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2526,7 +2526,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2550,7 +2550,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2559,7 +2559,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2583,7 +2583,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2592,7 +2592,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2616,7 +2616,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
     let breakpoints_b = editor_b.update(cx_b, |editor, cx| {
@@ -2625,7 +2625,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
             .clone()
             .unwrap()
             .read(cx)
-            .all_breakpoints(cx)
+            .all_source_breakpoints(cx)
             .clone()
     });
 
@@ -2712,7 +2712,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
-            assert_eq!(params.position, lsp::Position::new(0, 0),);
+            assert_eq!(params.position, lsp::Position::new(0, 0));
             Ok(Some(ExpandedMacro {
                 name: "test_macro_name".to_string(),
                 expansion: "test_macro_expansion on the host".to_string(),
@@ -2747,7 +2747,11 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
                 params.text_document.uri,
                 lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
             );
-            assert_eq!(params.position, lsp::Position::new(0, 0),);
+            assert_eq!(
+                params.position,
+                lsp::Position::new(0, 12),
+                "editor_b has selected the entire text and should query for a different position"
+            );
             Ok(Some(ExpandedMacro {
                 name: "test_macro_name".to_string(),
                 expansion: "test_macro_expansion on the client".to_string(),
@@ -2756,6 +2760,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
     );
 
     editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
         expand_macro_recursively(editor, &ExpandMacroRecursively, window, cx)
     });
     expand_request_b.next().await.unwrap();

@@ -1,3 +1,7 @@
+(_ "(" ")" @end) @indent
+(_ "[" "]" @end) @indent
+(_ "{" "}" @end) @indent
+
 (function_definition
   ":" @start
   body: (block) @indent

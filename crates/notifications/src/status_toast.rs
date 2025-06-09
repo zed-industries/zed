@@ -3,6 +3,7 @@ use std::rc::Rc;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, IntoElement};
 use ui::{Tooltip, prelude::*};
 use workspace::{ToastAction, ToastView};
+use zed_actions::toast;
 
 #[derive(Clone, Copy)]
 pub struct ToastIcon {
@@ -109,7 +110,7 @@ impl Render for StatusToast {
                     Button::new(action.id.clone(), action.label.clone())
                         .tooltip(Tooltip::for_action_title(
                             action.label.clone(),
-                            &workspace::RunAction,
+                            &toast::RunAction,
                         ))
                         .color(Color::Muted)
                         .when_some(action.on_click.clone(), |el, handler| {

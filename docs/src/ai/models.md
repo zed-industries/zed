@@ -1,39 +1,57 @@
 # Models
 
-Zed’s plans offer hosted versions of major LLM’s, generally with higher rate limits than individual API keys. We’re working hard to expand the models supported by Zed’s subscription offerings, so please check back often.
+Zed’s plans offer hosted versions of major LLM’s, generally with higher rate limits than individual API keys.
+We’re working hard to expand the models supported by Zed’s subscription offerings, so please check back often.
 
-| Model             | Provider  | Max Mode | Context Window | Price per Prompt | Price per Request |
-| ----------------- | --------- | -------- | -------------- | ---------------- | ----------------- |
-| Claude 3.5 Sonnet | Anthropic | ❌       | 120k           | $0.04            | N/A               |
-| Claude 3.7 Sonnet | Anthropic | ❌       | 120k           | $0.04            | N/A               |
-| Claude 3.7 Sonnet | Anthropic | ✅       | 200k           | N/A              | $0.05             |
+| Model             | Provider  | Burn Mode | Context Window | Price per Prompt | Price per Request |
+| ----------------- | --------- | --------- | -------------- | ---------------- | ----------------- |
+| Claude 3.5 Sonnet | Anthropic | ❌        | 60k            | $0.04            | N/A               |
+| Claude 3.7 Sonnet | Anthropic | ❌        | 120k           | $0.04            | N/A               |
+| Claude 3.7 Sonnet | Anthropic | ✅        | 200k           | N/A              | $0.05             |
+| Claude Sonnet 4   | Anthropic | ❌        | 120k           | $0.04            | N/A               |
+| Claude Sonnet 4   | Anthropic | ✅        | 200k           | N/A              | $0.05             |
+| Claude Opus 4     | Anthropic | ❌        | 120k           | $0.20            | N/A               |
+| Claude Opus 4     | Anthropic | ✅        | 200k           | N/A              | $0.25             |
 
 ## Usage {#usage}
 
-The models above can be used with the prompts included in your plan. For models not marked with [“Max Mode”](#max-mode), each prompt is counted against the monthly limit of your plan.
+The models above can be used with the prompts included in your plan. For models not marked with [“Burn Mode”](#burn-mode), each prompt is counted against the monthly limit of your plan.
 
 If you’ve exceeded your limit for the month, and are on a paid plan, you can enable usage-based pricing to continue using models for the rest of the month. See [Plans and Usage](./plans-and-usage.md) for more information.
 
-Non-[Max Mode](#max-mode) will use up to 25 tool calls per one prompt. If your prompt extends beyond 25 tool calls, Zed will ask if you’d like to continue which will consume a second prompt. See [Max Mode](#max-mode) for more information on tool calls in [Max Mode](#max-mode).
+Non-Burn Mode usage will use up to 25 tool calls per one prompt. If your prompt extends beyond 25 tool calls, Zed will ask if you’d like to continue, which will consume a second prompt.
 
-## Max Mode {#max-mode}
+## Burn Mode {#burn-mode}
 
-In Max Mode, we enable models to use [large context windows](#context-windows), unlimited tool calls, and other capabilities for expanded reasoning, to allow an unfettered agentic experience. Because of the increased cost to Zed, each subsequent request beyond the initial user prompt in [Max Mode](#max-mode) models is counted as a prompt for metering. In addition, usage-based pricing per request is slightly more expensive for [Max Mode](#max-mode) models than usage-based pricing per prompt for regular models.
+> Note: "Burn Mode" is the new name for what was previously called "Max Mode".
 
-Note that the Agent Panel using a Max Mode model may consume a good bit of your monthly prompt capacity, if many tool calls are used. We encourage you to think through what model is best for your needs before leaving the Agent Panel to work.
+In Burn Mode, we enable models to use [large context windows](#context-windows), unlimited tool calls, and other capabilities for expanded reasoning, to allow an unfettered agentic experience.
 
-By default, all Agent threads start in normal mode, however you can use the agent setting `preferred_completion_mode` to start new Agent threads in max mode.
+Because of the increased cost to Zed, each subsequent request beyond the initial user prompt in Burn Mode models is counted as a prompt for metering.
+
+In addition, usage-based pricing per request is slightly more expensive for Burn Mode models than usage-based pricing per prompt for regular models.
+
+> Note that the Agent Panel using a Burn Mode model may consume a good bit of your monthly prompt capacity, if many tool calls are used.
+> We encourage you to think through what model is best for your needs before leaving the Agent Panel to work.
+
+By default, all threads and [text threads](./text-threads.md) start in normal mode.
+However, you can use the `agent.preferred_completion_mode` setting to have Burn Mode activated by default.
 
 ## Context Windows {#context-windows}
 
 A context window is the maximum span of text and code an LLM can consider at once, including both the input prompt and output generated by the model.
 
-In [Max Mode](#max-mode), we increase context window size to allow models to have enhanced reasoning capabilities.
+In [Burn Mode](#burn-mode), we increase context window size to allow models to have enhanced reasoning capabilities.
 
-Each Agent thread in Zed maintains its own context window. The more prompts, attached files, and responses included in a session, the larger the context window grows.
+Each Agent thread and text thread in Zed maintains its own context window.
+The more prompts, attached files, and responses included in a session, the larger the context window grows.
 
 For best results, it’s recommended you take a purpose-based approach to Agent thread management, starting a new thread for each unique task.
 
 ## Tool Calls {#tool-calls}
 
-Models can use [tools](./tools.md) to interface with your code, search the web, and perform other useful functions. In [Max Mode](#max-mode), models can use an unlimited number of tools per prompt, with each tool call counting as a prompt for metering purposes. For non-Max Mode models, you'll need to interact with the model every 25 tool calls to continue, at which point a new prompt will be counted against your plan limit.
+Models can use [tools](./tools.md) to interface with your code, search the web, and perform other useful functions.
+
+In [Burn Mode](#burn-mode), models can use an unlimited number of tools per prompt, with each tool call counting as a prompt for metering purposes.
+
+For non-Burn Mode models, you'll need to interact with the model every 25 tool calls to continue, at which point a new prompt will be counted against your plan limit.

@@ -50,8 +50,8 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
-    SettingsStore, VIM_KEYMAP_PATH, initial_debug_tasks_content, initial_project_settings_content,
-    initial_tasks_content, update_settings_file,
+    SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
+    initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{self, AtomicBool};
@@ -70,7 +70,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
-use workspace::{CloseIntent, RestoreBanner};
+use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
@@ -111,6 +111,98 @@ pub fn init(cx: &mut App) {
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
+
+    cx.on_action(|_: &OpenLog, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_log_file(workspace, window, cx);
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                asset_str::<Assets>("licenses.md"),
+                "Open Source License Attribution",
+                "Markdown",
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_telemetry_log_file(workspace, window, cx);
+        });
+    });
+    cx.on_action(|&zed_actions::OpenKeymap, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::keymap_file(),
+                || settings::initial_keymap_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenSettings, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::settings_file(),
+                || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenAccountSettings, cx| {
+        with_active_or_new_workspace(cx, |_, _, cx| {
+            cx.open_url(&zed_urls::account_url(cx));
+        });
+    });
+    cx.on_action(|_: &OpenTasks, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::tasks_file(),
+                || settings::initial_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenDebugTasks, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::debug_scenarios_file(),
+                || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenDefaultSettings, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_settings(),
+                "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_keymap(),
+                "Default Key Bindings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
@@ -255,7 +347,7 @@ pub fn initialize_workspace(
             handle
                 .update(cx, |workspace, cx| {
                     // We'll handle closing asynchronously
-                    workspace.close_window(&Default::default(), window, cx);
+                    workspace.close_window(&CloseWindow, window, cx);
                     false
                 })
                 .unwrap_or(true)
@@ -380,6 +472,7 @@ fn initialize_panels(
         let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
         let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());
         let terminal_panel = TerminalPanel::load(workspace_handle.clone(), cx.clone());
+        let git_panel = GitPanel::load(workspace_handle.clone(), cx.clone());
         let channels_panel =
             collab_ui::collab_panel::CollabPanel::load(workspace_handle.clone(), cx.clone());
         let chat_panel =
@@ -393,12 +486,14 @@ fn initialize_panels(
             project_panel,
             outline_panel,
             terminal_panel,
+            git_panel,
             channels_panel,
             chat_panel,
             notification_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
+            git_panel,
             terminal_panel,
             channels_panel,
             chat_panel,
@@ -409,6 +504,7 @@ fn initialize_panels(
             workspace.add_panel(project_panel, window, cx);
             workspace.add_panel(outline_panel, window, cx);
             workspace.add_panel(terminal_panel, window, cx);
+            workspace.add_panel(git_panel, window, cx);
             workspace.add_panel(channels_panel, window, cx);
             workspace.add_panel(chat_panel, window, cx);
             workspace.add_panel(notification_panel, window, cx);
@@ -421,17 +517,11 @@ fn initialize_panels(
                         workspace.update_in(cx, |workspace, window, cx| {
                             workspace.add_panel(debug_panel, window, cx);
                         })?;
-                        Result::<_, anyhow::Error>::Ok(())
+                        anyhow::Ok(())
                     },
                 )
                 .detach()
             });
-
-            let entity = cx.entity();
-            let project = workspace.project().clone();
-            let app_state = workspace.app_state().clone();
-            let git_panel = cx.new(|cx| GitPanel::new(entity, project, app_state, window, cx));
-            workspace.add_panel(git_panel, window, cx);
         })?;
 
         let is_assistant2_enabled = !cfg!(test);
@@ -503,7 +593,10 @@ fn register_actions(
                     directories: true,
                     multiple: true,
                 },
-                DirectoryLister::Project(workspace.project().clone()),
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                ),
                 window,
                 cx,
             );
@@ -515,11 +608,42 @@ fn register_actions(
 
                 if let Some(task) = this
                     .update_in(cx, |this, window, cx| {
-                        if this.project().read(cx).is_local() {
-                            this.open_workspace_for_paths(false, paths, window, cx)
-                        } else {
-                            open_new_ssh_project_from_project(this, paths, window, cx)
-                        }
+                        this.open_workspace_for_paths(false, paths, window, cx)
+                    })
+                    .log_err()
+                {
+                    task.await.log_err();
+                }
+            })
+            .detach()
+        })
+        .register_action(|workspace, action: &zed_actions::OpenRemote, window, cx| {
+            if !action.from_existing_connection {
+                cx.propagate();
+                return;
+            }
+            // You need existing remote connection to open it this way
+            if workspace.project().read(cx).is_local() {
+                return;
+            }
+            telemetry::event!("Project Opened");
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: true,
+                },
+                DirectoryLister::Project(workspace.project().clone()),
+                window,
+                cx,
+            );
+            cx.spawn_in(window, async move |this, cx| {
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+                if let Some(task) = this
+                    .update_in(cx, |this, window, cx| {
+                        open_new_ssh_project_from_project(this, paths, window, cx)
                     })
                     .log_err()
                 {
@@ -649,91 +773,9 @@ fn register_actions(
                 |_, _, _| None,
             );
         })
-        .register_action(|workspace, _: &OpenLog, window, cx| {
-            open_log_file(workspace, window, cx);
-        })
-        .register_action(|workspace, _: &zed_actions::OpenLicenses, window, cx| {
-            open_bundled_file(
-                workspace,
-                asset_str::<Assets>("licenses.md"),
-                "Open Source License Attribution",
-                "Markdown",
-                window,
-                cx,
-            );
-        })
-        .register_action(
-            move |workspace: &mut Workspace,
-                  _: &zed_actions::OpenTelemetryLog,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_telemetry_log_file(workspace, window, cx);
-            },
-        )
-        .register_action(
-            move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
-                open_settings_file(
-                    paths::keymap_file(),
-                    || settings::initial_keymap_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
-            open_settings_file(
-                paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(
-            |_: &mut Workspace, _: &OpenAccountSettings, _: &mut Window, cx| {
-                cx.open_url(&zed_urls::account_url(cx));
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenTasks, window, cx| {
-            open_settings_file(
-                paths::tasks_file(),
-                || settings::initial_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
-            open_settings_file(
-                paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
         .register_action(open_project_debug_tasks_file)
-        .register_action(
-            move |workspace, _: &zed_actions::OpenDefaultKeymap, window, cx| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_keymap(),
-                    "Default Key Bindings",
-                    "JSON",
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
-            open_bundled_file(
-                workspace,
-                settings::default_settings(),
-                "Default Settings",
-                "JSON",
-                window,
-                cx,
-            );
-        })
         .register_action(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,
@@ -909,7 +951,7 @@ fn about(
         ""
     };
     let message = format!("{release_channel} {version} {debug}");
-    let detail = AppCommitSha::try_global(cx).map(|sha| sha.0.clone());
+    let detail = AppCommitSha::try_global(cx).map(|sha| sha.full());
 
     let prompt = window.prompt(PromptLevel::Info, &message, detail.as_deref(), &["OK"], cx);
     cx.foreground_executor()
@@ -1152,19 +1194,15 @@ pub fn handle_settings_file_changes(
             };
 
             let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let content_migrated = process_settings(content, is_user, store, cx);
-
-                if content_migrated {
-                    if let Some(notifier) = MigrationNotification::try_global(cx) {
-                        notifier.update(cx, |_, cx| {
-                            cx.emit(MigrationEvent::ContentChanged {
-                                migration_type: MigrationType::Settings,
-                                migrated: true,
-                            });
+                let migrating_in_memory = process_settings(content, is_user, store, cx);
+                if let Some(notifier) = MigrationNotification::try_global(cx) {
+                    notifier.update(cx, |_, cx| {
+                        cx.emit(MigrationEvent::ContentChanged {
+                            migration_type: MigrationType::Settings,
+                            migrating_in_memory,
                         });
-                    }
+                    });
                 }
-
                 cx.refresh_windows();
             });
 
@@ -1216,7 +1254,7 @@ pub fn handle_keymap_file_changes(
 
     cx.spawn(async move |cx| {
         let mut user_keymap_content = String::new();
-        let mut content_migrated = false;
+        let mut migrating_in_memory = false;
         loop {
             select_biased! {
                 _ = base_keymap_rx.next() => {},
@@ -1225,10 +1263,10 @@ pub fn handle_keymap_file_changes(
                     if let Some(content) = content {
                         if let Ok(Some(migrated_content)) = migrate_keymap(&content) {
                             user_keymap_content = migrated_content;
-                            content_migrated = true;
+                            migrating_in_memory = true;
                         } else {
                             user_keymap_content = content;
-                            content_migrated = false;
+                            migrating_in_memory = false;
                         }
                     }
                 }
@@ -1238,7 +1276,7 @@ pub fn handle_keymap_file_changes(
                     notifier.update(cx, |_, cx| {
                         cx.emit(MigrationEvent::ContentChanged {
                             migration_type: MigrationType::Keymap,
-                            migrated: content_migrated,
+                            migrating_in_memory,
                         });
                     });
                 }
@@ -1481,7 +1519,7 @@ fn open_project_debug_tasks_file(
     open_local_file(
         workspace,
         local_debug_file_relative_path(),
-        initial_debug_tasks_content(),
+        initial_local_debug_tasks_content(),
         window,
         cx,
     )
@@ -1504,10 +1542,10 @@ fn open_local_file(
         cx.spawn_in(window, async move |workspace, cx| {
             // Check if the file actually exists on disk (even if it's excluded from worktree)
             let file_exists = {
-                let full_path =
-                    worktree.update(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
+                let full_path = worktree
+                    .read_with(cx, |tree, _| tree.abs_path().join(settings_relative_path))?;
 
-                let fs = project.update(cx, |project, _| project.fs().clone())?;
+                let fs = project.read_with(cx, |project, _| project.fs().clone())?;
                 let file_exists = fs
                     .metadata(&full_path)
                     .await
@@ -1519,7 +1557,7 @@ fn open_local_file(
 
             if !file_exists {
                 if let Some(dir_path) = settings_relative_path.parent() {
-                    if worktree.update(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
+                    if worktree.read_with(cx, |tree, _| tree.entry_for_path(dir_path).is_none())? {
                         project
                             .update(cx, |project, cx| {
                                 project.create_entry((tree_id, dir_path), true, cx)
@@ -1529,7 +1567,7 @@ fn open_local_file(
                     }
                 }
 
-                if worktree.update(cx, |tree, _| {
+                if worktree.read_with(cx, |tree, _| {
                     tree.entry_for_path(settings_relative_path).is_none()
                 })? {
                     project
@@ -2099,7 +2137,6 @@ mod tests {
                 pane.update(cx, |pane, cx| {
                     drop(editor);
                     pane.close_active_item(&Default::default(), window, cx)
-                        .unwrap()
                 })
             })
             .unwrap();
@@ -2988,7 +3025,7 @@ mod tests {
         });
         cx.read(|cx| {
             assert!(editor.is_dirty(cx));
-            assert_eq!(editor.read(cx).title(cx), "untitled");
+            assert_eq!(editor.read(cx).title(cx), "hi");
         });
 
         // When the save completes, the buffer's title is updated and the language is assigned based
@@ -4264,6 +4301,7 @@ mod tests {
                 app_state.client.clone(),
                 prompt_builder.clone(),
                 app_state.languages.clone(),
+                false,
                 cx,
             );
             repl::init(app_state.fs.clone(), cx);

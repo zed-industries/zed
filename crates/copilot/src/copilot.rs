@@ -133,21 +133,20 @@ enum CopilotServer {
 impl CopilotServer {
     fn as_authenticated(&mut self) -> Result<&mut RunningCopilotServer> {
         let server = self.as_running()?;
-        if matches!(server.sign_in_status, SignInStatus::Authorized { .. }) {
-            Ok(server)
-        } else {
-            Err(anyhow!("must sign in before using copilot"))
-        }
+        anyhow::ensure!(
+            matches!(server.sign_in_status, SignInStatus::Authorized { .. }),
+            "must sign in before using copilot"
+        );
+        Ok(server)
     }
 
     fn as_running(&mut self) -> Result<&mut RunningCopilotServer> {
         match self {
-            CopilotServer::Starting { .. } => Err(anyhow!("copilot is still starting")),
-            CopilotServer::Disabled => Err(anyhow!("copilot is disabled")),
-            CopilotServer::Error(error) => Err(anyhow!(
-                "copilot was not started because of an error: {}",
-                error
-            )),
+            CopilotServer::Starting { .. } => anyhow::bail!("copilot is still starting"),
+            CopilotServer::Disabled => anyhow::bail!("copilot is disabled"),
+            CopilotServer::Error(error) => {
+                anyhow::bail!("copilot was not started because of an error: {error}")
+            }
             CopilotServer::Running(server) => Ok(server),
         }
     }
@@ -233,7 +232,7 @@ impl RegisteredBuffer {
                         Some(buffer.snapshot.version.clone())
                     })
                     .ok()??;
-                let new_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot()).ok()?;
+                let new_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot()).ok()?;
 
                 let content_changes = cx
                     .background_spawn({
@@ -409,24 +408,30 @@ impl Copilot {
         let proxy_url = copilot_settings.proxy.clone()?;
         let no_verify = copilot_settings.proxy_no_verify;
         let http_or_https_proxy = if proxy_url.starts_with("http:") {
-            "HTTP_PROXY"
+            Some("HTTP_PROXY")
         } else if proxy_url.starts_with("https:") {
-            "HTTPS_PROXY"
+            Some("HTTPS_PROXY")
         } else {
             log::error!(
                 "Unsupported protocol scheme for language server proxy (must be http or https)"
             );
-            return None;
+            None
         };
 
         let mut env = HashMap::default();
-        env.insert(http_or_https_proxy.to_string(), proxy_url);
 
-        if let Some(true) = no_verify {
-            env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
-        };
+        if let Some(proxy_type) = http_or_https_proxy {
+            env.insert(proxy_type.to_string(), proxy_url);
+            if let Some(true) = no_verify {
+                env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
+            };
+        }
 
-        Some(env)
+        if let Ok(oauth_token) = env::var(copilot_chat::COPILOT_OAUTH_ENV_VAR) {
+            env.insert(copilot_chat::COPILOT_OAUTH_ENV_VAR.to_string(), oauth_token);
+        }
+
+        if env.is_empty() { None } else { Some(env) }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -521,7 +526,7 @@ impl Copilot {
 
             let server = cx
                 .update(|cx| {
-                    let mut params = server.default_initialize_params(cx);
+                    let mut params = server.default_initialize_params(false, cx);
                     params.initialization_options = Some(editor_info_json);
                     server.initialize(params, configuration.into(), cx)
                 })?
@@ -648,7 +653,7 @@ impl Copilot {
                 }
             };
 
-            cx.background_spawn(task.map_err(|err| anyhow!("{:?}", err)))
+            cx.background_spawn(task.map_err(|err| anyhow!("{err:?}")))
         } else {
             // If we're downloading, wait until download is finished
             // If we're in a stuck state, display to the user
@@ -1330,7 +1335,5 @@ mod tests {
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
