@@ -25,6 +25,7 @@ use crate::{LogStore, lsp_log::GlobalLogStore};
 
 pub struct LspTool {
     workspace: WeakEntity<Workspace>,
+    lsp_store: Entity<LspStore>,
     active_editor: Option<ActiveEditor>,
     language_servers: LanguageServers,
     lsp_picker: Option<Entity<Picker<LspPickerDelegate>>>,
@@ -65,6 +66,7 @@ enum LspItem {
 #[derive(Debug, Default, Clone)]
 struct LanguageServers {
     servers: HashMap<LanguageServerId, LanguageServerState>,
+    // TODO kb all wrong: `BufferId` is not persistent across e.g. file reopens; need to use PathBuf
     servers_per_worktree: HashMap<WorktreeId, HashMap<BufferId, HashSet<LanguageServerId>>>,
 }
 
@@ -677,6 +679,7 @@ impl LspTool {
 
         Self {
             workspace: workspace.weak_handle(),
+            lsp_store,
             active_editor: None,
             lsp_picker: None,
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
@@ -997,16 +1000,9 @@ impl StatusItemView for LspTool {
                         editor_buffers: editor_buffers.clone(),
                     });
 
-                    let Ok(lsp_store) = self
-                        .workspace
-                        .update(cx, |workspace, cx| workspace.project().read(cx).lsp_store())
-                    else {
-                        return;
-                    };
-
                     let lsp_picker = Self::new_lsp_picker(
                         self.workspace.clone(),
-                        lsp_store,
+                        self.lsp_store.clone(),
                         editor.downgrade(),
                         editor_buffers,
                         self.language_servers.clone(),
