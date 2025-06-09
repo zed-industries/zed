@@ -400,9 +400,6 @@ jobs:
         with:
           clean: false
 
-      - name: Rustup
-        run: script/install-rustup.ps1
-
       - name: Setup Cargo config.toml
         run: |
           mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
@@ -410,8 +407,6 @@ jobs:
 
       - name: cargo clippy
         run: |
-          echo "Current user: $env:USERNAME"
-          echo "Current directory: $pwd.Path"
           .\script\clippy.ps1
 
       - name: Run tests
