@@ -28,7 +28,7 @@ use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::{
     any::TypeId,
-    env,
+    env::home_dir,
     ffi::OsString,
     mem,
     ops::Range,
@@ -486,11 +486,14 @@ impl Copilot {
                 env,
             };
 
-            let root_path = if cfg!(target_os = "windows") {
-                Path::new("C:/")
-            } else {
-                Path::new("/")
-            };
+            let root_path = home_dir();
+            let root_path = root_path.as_deref().unwrap_or_else(|| {
+                if cfg!(target_os = "windows") {
+                    Path::new("C:/")
+                } else {
+                    Path::new("/")
+                }
+            });
 
             let server_name = LanguageServerName("copilot".into());
             let server = LanguageServer::new(
