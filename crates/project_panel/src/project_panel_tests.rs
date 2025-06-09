@@ -309,6 +309,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
+    // Test 1: Multiple worktrees with auto_fold_dirs = true
     let project = Project::test(
         fs.clone(),
         [path!("/root1").as_ref(), path!("/root2").as_ref()],
@@ -392,6 +393,66 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
             separator!("          file_1.java"),
         ]
     );
+
+    // Test 2: Single worktree with auto_fold_dirs = true and hide_root = true
+    {
+        let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    auto_fold_dirs: true,
+                    hide_root: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[separator!("> dir_1/nested_dir_1/nested_dir_2/nested_dir_3")],
+            "Single worktree with hide_root=true should hide root and show auto-folded paths"
+        );
+
+        toggle_expand_dir(
+            &panel,
+            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+            cx,
+        );
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                separator!("v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"),
+                separator!("    > nested_dir_4/nested_dir_5"),
+                separator!("      file_a.java"),
+                separator!("      file_b.java"),
+                separator!("      file_c.java"),
+            ],
+            "Expanded auto-folded path with hidden root should show contents without root prefix"
+        );
+
+        toggle_expand_dir(
+            &panel,
+            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3/nested_dir_4/nested_dir_5",
+            cx,
+        );
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                separator!("v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
+                separator!("    v nested_dir_4/nested_dir_5  <== selected"),
+                separator!("          file_d.java"),
+                separator!("      file_a.java"),
+                separator!("      file_b.java"),
+                separator!("      file_c.java"),
+            ],
+            "Nested expansion with hidden root should maintain proper indentation"
+        );
+    }
 }
 
 #[gpui::test(iterations = 30)]

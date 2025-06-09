@@ -3732,7 +3732,7 @@ impl ProjectPanel {
                     None
                 }
             })
-            .unwrap_or((0, 0));
+            .unwrap_or_else(|| (0, entry.path.components().count()));
 
         (depth, difference)
     }
