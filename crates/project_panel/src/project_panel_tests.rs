@@ -2619,9 +2619,15 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
 
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
+    #[rustfmt::skip]
     assert_eq!(
         visible_entries_as_strings(&panel, 0..10, cx),
-        &["> dir_1", "> zdir_2", "  file_1.py", "  file_2.py",],
+        &[
+            "> dir_1",
+            "> zdir_2",
+            "  file_1.py",
+            "  file_2.py",
+        ],
         "With hide_root=true, root should be hidden"
     );
 
@@ -5195,6 +5201,155 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "existing_dir": {
+                "existing_file.txt": "",
+            },
+            "existing_file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> existing_dir",
+            "  existing_file.txt",
+        ],
+        "Initial state with hide_root=true, root should be hidden and nothing selected"
+    );
+
+    panel.update(cx, |panel, _| {
+        assert!(
+            panel.selection.is_none(),
+            "Should have no selection initially"
+        );
+    });
+
+    // Test 1: Create new file when no entry is selected
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> existing_dir",
+            "  [EDITOR: '']  <== selected",
+            "  existing_file.txt",
+        ],
+        "Editor should appear at root level when hide_root=true and no selection"
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("new_file_at_root.txt", window, cx)
+        });
+        panel.confirm_edit(window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> existing_dir",
+            "  existing_file.txt",
+            "  new_file_at_root.txt  <== selected  <== marked",
+        ],
+        "New file should be created at root level and visible without root prefix"
+    );
+
+    assert!(
+        fs.is_file(Path::new("/root/new_file_at_root.txt")).await,
+        "File should be created in the actual root directory"
+    );
+
+    // Test 2: Create new directory when no entry is selected
+    panel.update(cx, |panel, _| {
+        panel.selection = None;
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_directory(&NewDirectory, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> [EDITOR: '']  <== selected",
+            "> existing_dir",
+            "  existing_file.txt",
+            "  new_file_at_root.txt",
+        ],
+        "Directory editor should appear at root level when hide_root=true and no selection"
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("new_dir_at_root", window, cx)
+        });
+        panel.confirm_edit(window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> existing_dir",
+            "v new_dir_at_root  <== selected",
+            "  existing_file.txt",
+            "  new_file_at_root.txt",
+        ],
+        "New directory should be created at root level and visible without root prefix"
+    );
+
+    assert!(
+        fs.is_dir(Path::new("/root/new_dir_at_root")).await,
+        "Directory should be created in the actual root directory"
+    );
+}
+
+#[gpui::test]
 async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -5444,9 +5599,15 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
 
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
+        #[rustfmt::skip]
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v root1", "    > dir1", "    > dir2", "      file4.txt",],
+            &[
+                "v root1",
+                "    > dir1",
+                "    > dir2",
+                "      file4.txt",
+            ],
             "With hide_root=false and single worktree, root should be visible"
         );
     }

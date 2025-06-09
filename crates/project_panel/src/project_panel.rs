@@ -2766,6 +2766,31 @@ impl ProjectPanel {
         Some(())
     }
 
+    fn create_new_git_entry(
+        parent_entry: &Entry,
+        git_summary: GitSummary,
+        new_entry_kind: EntryKind,
+    ) -> GitEntry {
+        GitEntry {
+            entry: Entry {
+                id: NEW_ENTRY_ID,
+                kind: new_entry_kind,
+                path: parent_entry.path.join("\0").into(),
+                inode: 0,
+                mtime: parent_entry.mtime,
+                size: parent_entry.size,
+                is_ignored: parent_entry.is_ignored,
+                is_external: false,
+                is_private: false,
+                is_always_included: parent_entry.is_always_included,
+                canonical_path: parent_entry.canonical_path.clone(),
+                char_bag: parent_entry.char_bag,
+                is_fifo: parent_entry.is_fifo,
+            },
+            git_summary,
+        }
+    }
+
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
@@ -2824,10 +2849,17 @@ impl ProjectPanel {
             let mut auto_folded_ancestors = vec![];
             while let Some(entry) = entry_iter.entry() {
                 if hide_root && Some(entry.entry) == worktree.read(cx).root_entry() {
+                    if new_entry_parent_id == Some(entry.id) {
+                        visible_worktree_entries.push(Self::create_new_git_entry(
+                            &entry.entry,
+                            entry.git_summary,
+                            new_entry_kind,
+                        ));
+                        new_entry_parent_id = None;
+                    }
                     entry_iter.advance();
                     continue;
                 }
-
                 if auto_collapse_dirs && entry.kind.is_dir() {
                     auto_folded_ancestors.push(entry.id);
                     if !self.unfolded_dir_ids.contains(&entry.id) {
@@ -2881,24 +2913,11 @@ impl ProjectPanel {
                     false
                 };
                 if precedes_new_entry && (!hide_gitignore || !entry.is_ignored) {
-                    visible_worktree_entries.push(GitEntry {
-                        entry: Entry {
-                            id: NEW_ENTRY_ID,
-                            kind: new_entry_kind,
-                            path: entry.path.join("\0").into(),
-                            inode: 0,
-                            mtime: entry.mtime,
-                            size: entry.size,
-                            is_ignored: entry.is_ignored,
-                            is_external: false,
-                            is_private: false,
-                            is_always_included: entry.is_always_included,
-                            canonical_path: entry.canonical_path.clone(),
-                            char_bag: entry.char_bag,
-                            is_fifo: entry.is_fifo,
-                        },
-                        git_summary: entry.git_summary,
-                    });
+                    visible_worktree_entries.push(Self::create_new_git_entry(
+                        &entry.entry,
+                        entry.git_summary,
+                        new_entry_kind,
+                    ));
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
                 let (depth, path) = if Some(entry.entry) == worktree.read(cx).root_entry() {
