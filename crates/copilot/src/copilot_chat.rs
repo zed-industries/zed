@@ -16,6 +16,8 @@ use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_dir;
 
+pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct CopilotChatSettings {
     pub api_url: Arc<str>,
@@ -405,13 +407,19 @@ impl CopilotChat {
         })
         .detach_and_log_err(cx);
 
-        Self {
-            oauth_token: None,
+        let this = Self {
+            oauth_token: std::env::var(COPILOT_OAUTH_ENV_VAR).ok(),
             api_token: None,
             models: None,
             settings,
             client,
+        };
+        if this.oauth_token.is_some() {
+            cx.spawn(async move |this, mut cx| Self::update_models(&this, &mut cx).await)
+                .detach_and_log_err(cx);
         }
+
+        this
     }
 
     async fn update_models(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
