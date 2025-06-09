@@ -30,7 +30,7 @@ In any case, here are some of the ones available:
 - [Prisma](https://github.com/aqrln/prisma-mcp-zed)
 - [Framelink Figma](https://github.com/LoamStudios/zed-mcp-server-figma)
 - [Linear](https://github.com/LoamStudios/zed-mcp-server-linear)
-- [Resend](https://github.com/danilo-leal/zed-mcp-server-resend)
+- [Resend](https://github.com/danilo-leal/zed-resend-mcp-server)
 
 ## Add your own MCP server
 
