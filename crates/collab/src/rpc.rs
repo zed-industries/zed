@@ -773,14 +773,6 @@ impl Server {
                 return
             }
 
-            // Use provided connection guard or acquire a new one
-            let _connection_guard = match connection_guard {
-                Some(guard) => guard,
-                None => match ConnectionGuard::try_acquire() {
-                    Ok(guard) => guard,
-                    Err(()) => return,
-                }
-            };
             let (connection_id, handle_io, mut incoming_rx) = this
                 .peer
                 .add_connection(connection, {
@@ -822,7 +814,7 @@ impl Server {
                 tracing::error!(?error, "failed to send initial client update");
                 return;
             }
-            drop(_connection_guard);
+            drop(connection_guard);
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
