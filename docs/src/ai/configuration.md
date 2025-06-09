@@ -302,7 +302,8 @@ The Zed Assistant comes pre-configured with several Mistral models (codestral-la
           "max_tokens": 32000,
           "max_output_tokens": 4096,
           "max_completion_tokens": 1024,
-          "supports_tools": true
+          "supports_tools": true,
+          "supports_images": false
         }
       ]
     }
@@ -374,10 +375,10 @@ The `supports_tools` option controls whether or not the model will use additiona
 If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
 If the model is not tagged with `tools` in the Ollama catalog, this option can still be supplied with value `true`; however be aware that only the `Minimal` built in profile will work.
 
-The `supports_thinking` option controls whether or not the model will perform an explicit “thinking” (reasoning) pass before producing its final answer.  
+The `supports_thinking` option controls whether or not the model will perform an explicit “thinking” (reasoning) pass before producing its final answer.
 If the model is tagged with `thinking` in the Ollama catalog, set this option and you can use it in zed.
 
-The `supports_images` option enables the model’s vision capabilities, allowing it to process images included in the conversation context.  
+The `supports_images` option enables the model’s vision capabilities, allowing it to process images included in the conversation context.
 If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in zed.
 
 ### OpenAI {#openai}
