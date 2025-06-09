@@ -317,21 +317,6 @@ impl MessageContent {
     }
 }
 
-impl From<Vec<MessagePart>> for MessageContent {
-    fn from(parts: Vec<MessagePart>) -> Self {
-        if parts.len() == 1 {
-            match &parts[0] {
-                MessagePart::Text { text } => Self::Plain {
-                    content: text.clone(),
-                },
-                _ => Self::Multipart { content: parts },
-            }
-        } else {
-            Self::Multipart { content: parts }
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessagePart {
