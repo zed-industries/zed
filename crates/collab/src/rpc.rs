@@ -313,6 +313,7 @@ impl Server {
                 forward_read_only_project_request::<proto::LanguageServerIdForName>,
             )
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
+            .add_request_handler(forward_read_only_project_request::<proto::ShowDocument>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )

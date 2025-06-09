@@ -351,6 +351,19 @@ impl HeadlessProject {
                 })
                 .detach();
             }
+            LspStoreEvent::ShowDocument {
+                uri,
+                take_focus: _,
+                selection: _,
+                external: _,
+            } => {
+                self.session
+                    .send(proto::ShowDocument {
+                        project_id: SSH_PROJECT_ID,
+                        uri: uri.to_string(),
+                    })
+                    .log_err();
+            }
 
             _ => {}
         }
