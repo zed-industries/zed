@@ -3,7 +3,6 @@ mod collab;
 mod onboarding_banner;
 mod platforms;
 mod title_bar_settings;
-mod window_controls;
 
 #[cfg(feature = "stories")]
 mod stories;
