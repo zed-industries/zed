@@ -35,7 +35,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
     // so file descriptor 0 is used instead.
     const ENV_OUTPUT_FD: std::os::fd::RawFd = 0;
-    command_string.push_str(&format!("sh -c 'export -p' >&{ENV_OUTPUT_FD};"));
+    command_string.push_str(&format!("sh -c 'export -p >&{ENV_OUTPUT_FD}';"));
 
     // For csh/tcsh, the login shell option is set by passing `-` as
     // the 0th argument instead of using `-l`.
