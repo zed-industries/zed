@@ -1,6 +1,6 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use async_trait::async_trait;
-use collections::{FxHashMap, HashMap};
+use collections::FxHashMap;
 use dap::{
     DebugRequest, StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest,
     adapters::{
@@ -51,143 +51,35 @@ impl DebugAdapter for RubyDebugAdapter {
 
     async fn dap_schema(&self) -> serde_json::Value {
         json!({
-            "oneOf": [
-                {
-                    "allOf": [
-                        {
-                            "type": "object",
-                            "required": ["request"],
-                            "properties": {
-                                "request": {
-                                    "type": "string",
-                                    "enum": ["launch"],
-                                    "description": "Request to launch a new process"
-                                }
-                            }
-                        },
-                        {
-                            "type": "object",
-                            "required": ["script"],
-                            "properties": {
-                                "command": {
-                                    "type": "string",
-                                    "description": "Command name (ruby, rake, bin/rails, bundle exec ruby, etc)",
-                                    "default": "ruby"
-                                },
-                                "script": {
-                                    "type": "string",
-                                    "description": "Absolute path to a Ruby file."
-                                },
-                                "cwd": {
-                                    "type": "string",
-                                    "description": "Directory to execute the program in",
-                                    "default": "${ZED_WORKTREE_ROOT}"
-                                },
-                                "args": {
-                                    "type": "array",
-                                    "description": "Command line arguments passed to the program",
-                                    "items": {
-                                        "type": "string"
-                                    },
-                                    "default": []
-                                },
-                                "env": {
-                                    "type": "object",
-                                    "description": "Additional environment variables to pass to the debugging (and debugged) process",
-                                    "default": {}
-                                },
-                                // "showProtocolLog": {
-                                //     "type": "boolean",
-                                //     "description": "Show a log of DAP requests, events, and responses",
-                                //     "default": false
-                                // },
-                                // "useBundler": {
-                                //     "type": "boolean",
-                                //     "description": "Execute Ruby programs with `bundle exec` instead of directly",
-                                //     "default": false
-                                // },
-                                // "bundlePath": {
-                                //     "type": "string",
-                                //     "description": "Location of the bundle executable"
-                                // },
-                                // "rdbgPath": {
-                                //     "type": "string",
-                                //     "description": "Location of the rdbg executable"
-                                // },
-                                // "askParameters": {
-                                //     "type": "boolean",
-                                //     "description": "Ask parameters at first."
-                                // },
-                                // "debugPort": {
-                                //     "type": "string",
-                                //     "description": "UNIX domain socket name or TPC/IP host:port"
-                                // },
-                                // "waitLaunchTime": {
-                                //     "type": "number",
-                                //     "description": "Wait time before connection in milliseconds"
-                                // },
-                                // "localfs": {
-                                //     "type": "boolean",
-                                //     "description": "true if the zed and debugger run on a same machine",
-                                //     "default": false
-                                // },
-                                // "useTerminal": {
-                                //     "type": "boolean",
-                                //     "description": "Create a new terminal and then execute commands there",
-                                //     "default": false
-                                // }
-                            }
-                        }
-                    ]
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "Command name (ruby, rake, bin/rails, bundle exec ruby, etc)",
                 },
-                // {
-                //     "allOf": [
-                //         {
-                //             "type": "object",
-                //             "required": ["request"],
-                //             "properties": {
-                //                 "request": {
-                //                     "type": "string",
-                //                     "enum": ["attach"],
-                //                     "description": "Request to attach to an existing process"
-                //                 }
-                //             }
-                //         },
-                //         {
-                //             "type": "object",
-                //             "properties": {
-                //                 "rdbgPath": {
-                //                     "type": "string",
-                //                     "description": "Location of the rdbg executable"
-                //                 },
-                //                 "debugPort": {
-                //                     "type": "string",
-                //                     "description": "UNIX domain socket name or TPC/IP host:port"
-                //                 },
-                //                 "showProtocolLog": {
-                //                     "type": "boolean",
-                //                     "description": "Show a log of DAP requests, events, and responses",
-                //                     "default": false
-                //                 },
-                //                 "localfs": {
-                //                     "type": "boolean",
-                //                     "description": "true if the VSCode and debugger run on a same machine",
-                //                     "default": false
-                //                 },
-                //                 "localfsMap": {
-                //                     "type": "string",
-                //                     "description": "Specify pairs of remote root path and local root path like `/remote_dir:/local_dir`. You can specify multiple pairs like `/rem1:/loc1,/rem2:/loc2` by concatenating with `,`."
-                //                 },
-                //                 "env": {
-                //                     "type": "object",
-                //                     "description": "Additional environment variables to pass to the rdbg process",
-                //                     "default": {}
-                //                 }
-                //             }
-                //         }
-                //     ]
-                // }
-            ]
+                "script": {
+                    "type": "string",
+                    "description": "Absolute path to a Ruby file."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Directory to execute the program in",
+                    "default": "${ZED_WORKTREE_ROOT}"
+                },
+                "args": {
+                    "type": "array",
+                    "description": "Command line arguments passed to the program",
+                    "items": {
+                        "type": "string"
+                    },
+                    "default": []
+                },
+                "env": {
+                    "type": "object",
+                    "description": "Additional environment variables to pass to the debugging (and debugged) process",
+                    "default": {}
+                },
+            }
         })
     }
 
@@ -256,10 +148,6 @@ impl DebugAdapter for RubyDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
         let ruby_config = serde_json::from_value::<RubyDebugConfig>(definition.config.clone())?;
 
-        // let DebugRequest::Launch(launch) = definition.request.clone() else {
-        //     anyhow::bail!("rdbg does not yet support attaching");
-        // };
-
         let mut arguments = vec![
             "--open".to_string(),
             format!("--port={}", port),
@@ -294,7 +182,11 @@ impl DebugAdapter for RubyDebugAdapter {
                 port,
                 timeout,
             }),
-            cwd: ruby_config.cwd,
+            cwd: Some(
+                ruby_config
+                    .cwd
+                    .unwrap_or(delegate.worktree_root_path().to_owned()),
+            ),
             envs: ruby_config.env.into_iter().collect(),
             request_args: StartDebuggingRequestArguments {
                 request: self.request_kind(&definition.config)?,

@@ -53,7 +53,7 @@ impl VsCodeDebugTaskDefinition {
                 host: None,
                 timeout: None,
             }),
-            config: self.other_attributes,
+            config: replacer.replace_value(self.other_attributes),
         };
         Ok(definition)
     }
@@ -75,7 +75,7 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
                 "workspaceFolder".to_owned(),
                 VariableName::WorktreeRoot.to_string(),
             ),
-            // TODO other interesting variables?
+            ("file".to_owned(), VariableName::Filename.to_string()), // TODO other interesting variables?
         ]));
         let templates = file
             .configurations
@@ -94,6 +94,7 @@ fn task_type_to_adapter_name(task_type: &str) -> SharedString {
         "php" => "PHP",
         "cppdbg" | "lldb" => "CodeLLDB",
         "debugpy" => "Debugpy",
+        "rdbg" => "Ruby",
         _ => task_type,
     }
     .to_owned()
