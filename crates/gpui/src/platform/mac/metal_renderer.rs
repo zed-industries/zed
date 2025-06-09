@@ -820,20 +820,20 @@ impl MetalRenderer {
             command_encoder.set_vertex_buffer(
                 PathInputIndex::Sprites as u64,
                 Some(&instance_buffer.metal_buffer),
-                sprites_offset as u64,
+                sprites_offset,
             );
 
             command_encoder.set_fragment_buffer(
                 PathInputIndex::Sprites as u64,
                 Some(&instance_buffer.metal_buffer),
-                sprites_offset as u64,
+                sprites_offset,
             );
 
             for i in 0..paths.len() {
                 command_encoder.draw_primitives_indirect(
                     metal::MTLPrimitiveType::Triangle,
                     &instance_buffer.metal_buffer,
-                    icb_offset as u64
+                    icb_offset
                         + (i * std::mem::size_of::<MTLDrawPrimitivesIndirectArguments>()) as u64,
                 );
             }
