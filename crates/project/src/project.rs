@@ -4798,7 +4798,9 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             match lsp::Url::parse(&envelope.payload.uri) {
                 Ok(uri) => {
-                    this.open_show_document_url(&uri, true, cx);
+                    if !this.is_localhost_url(&uri){
+                        this.open_show_document_url(&uri, true, cx);
+                    }
                 }
                 Err(e) => {
                     log::warn!(
@@ -4812,10 +4814,21 @@ impl Project {
         Ok(proto::ShowDocumentResponse { buffer_id: None })
     }
 
+    // TODO: This is a temporary workaround for the fact that we don't
+    // have a way to determine if a URL is localhost or not in the LSP spec.
+    /// Checks if the given URL is a localhost URL.
+    ///
+    /// A URL is considered a localhost URL if its host is "localhost", "127.0.0.1", or "::1".
+    fn is_localhost_url(&self, uri: &lsp::Url) -> bool {
+        if let Some(host) = uri.host_str() {
+            host == "localhost" || host == "127.0.0.1" || host == "::1"
+        } else {
+            false
+        }
+    }
+
     fn open_show_document_url(&mut self, uri: &lsp::Url, external: bool, cx: &mut Context<Self>) {
         if external || uri.scheme() != "file" {
-            // TODO: make sure to handle external urls for docs which are served by lsp for remote development scenarios.
-            // Because in remote development the host can't access the url sent by lsp which is running on lsp.
             cx.open_url(uri.as_str());
         } else {
             match uri.to_file_path() {
