@@ -202,6 +202,7 @@ impl TerminalElement {
 
     pub fn layout_grid(
         grid: impl Iterator<Item = IndexedCell>,
+        start_line_offset: i32,
         text_style: &TextStyle,
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
@@ -218,6 +219,8 @@ impl TerminalElement {
 
         let linegroups = grid.into_iter().chunk_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
+            let alac_line = start_line_offset + line_index as i32;
+
             for cell in line {
                 let mut fg = cell.fg;
                 let mut bg = cell.bg;
@@ -245,7 +248,7 @@ impl TerminalElement {
                                         || {
                                             Some(LayoutRect::new(
                                                 AlacPoint::new(
-                                                    line_index as i32,
+                                                    alac_line,
                                                     cell.point.column.0 as i32,
                                                 ),
                                                 1,
@@ -260,10 +263,7 @@ impl TerminalElement {
                                         rects.push(cur_rect.take().unwrap());
                                     }
                                     cur_rect = Some(LayoutRect::new(
-                                        AlacPoint::new(
-                                            line_index as i32,
-                                            cell.point.column.0 as i32,
-                                        ),
+                                        AlacPoint::new(alac_line, cell.point.column.0 as i32),
                                         1,
                                         convert_color(&bg, theme),
                                     ));
@@ -272,7 +272,7 @@ impl TerminalElement {
                             None => {
                                 cur_alac_color = Some(bg);
                                 cur_rect = Some(LayoutRect::new(
-                                    AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
+                                    AlacPoint::new(alac_line, cell.point.column.0 as i32),
                                     1,
                                     convert_color(&bg, theme),
                                 ));
@@ -295,7 +295,7 @@ impl TerminalElement {
                         );
 
                         cells.push(LayoutCell::new(
-                            AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
+                            AlacPoint::new(alac_line, cell.point.column.0 as i32),
                             layout_cell,
                         ))
                     };
@@ -733,7 +733,7 @@ impl Element for TerminalElement {
                 let player_color = theme.players().local();
                 let match_color = theme.colors().search_match_background;
                 let gutter;
-                let dimensions = {
+                let (dimensions, visible_line_range) = {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
                     // TODO: line_height should be an f32 not an AbsoluteLength.
@@ -759,7 +759,20 @@ impl Element for TerminalElement {
                     let mut origin = bounds.origin;
                     origin.x += gutter;
 
-                    TerminalBounds::new(line_height, cell_width, Bounds { origin, size })
+                    let visible_line_range = match &self.mode {
+                        TerminalMode::Embedded { .. } => {
+                            let intersection = window.content_mask().bounds.intersect(&bounds);
+                            let start_row = (intersection.top() - bounds.top()) / line_height;
+                            let end_row = start_row + intersection.size.height / line_height;
+                            Some((start_row as i32)..=(end_row as i32))
+                        }
+                        TerminalMode::Scrollable => None,
+                    };
+
+                    let term_bounds =
+                        TerminalBounds::new(line_height, cell_width, Bounds { origin, size });
+
+                    (term_bounds, visible_line_range)
                 };
 
                 let search_matches = self.terminal.read(cx).matches.clone();
@@ -827,16 +840,34 @@ impl Element for TerminalElement {
 
                 // then have that representation be converted to the appropriate highlight data structure
 
-                let (cells, rects) = TerminalElement::layout_grid(
-                    cells.iter().cloned(),
-                    &text_style,
-                    window.text_system(),
-                    last_hovered_word
-                        .as_ref()
-                        .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
-                    window,
-                    cx,
-                );
+                let (cells, rects) = match visible_line_range {
+                    None => TerminalElement::layout_grid(
+                        cells.iter().cloned(),
+                        0,
+                        &text_style,
+                        window.text_system(),
+                        last_hovered_word
+                            .as_ref()
+                            .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                        window,
+                        cx,
+                    ),
+                    Some(line_range) => TerminalElement::layout_grid(
+                        cells
+                            .iter()
+                            .skip_while(|i| &i.point.line < line_range.start())
+                            .take_while(|i| &i.point.line <= line_range.end())
+                            .cloned(),
+                        *line_range.start(),
+                        &text_style,
+                        window.text_system(),
+                        last_hovered_word
+                            .as_ref()
+                            .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                        window,
+                        cx,
+                    ),
+                };
 
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
