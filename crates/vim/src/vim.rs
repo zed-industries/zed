@@ -915,6 +915,9 @@ impl Vim {
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
+            self.update_editor(window, cx, |_, editor, _, _| {
+                editor.clear_selection_drag_state();
+            });
         }
         Vim::take_forced_motion(cx);
         if mode != Mode::Insert && mode != Mode::Replace {

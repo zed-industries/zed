@@ -5,6 +5,7 @@ pub mod fs;
 pub mod markdown;
 pub mod paths;
 pub mod serde;
+pub mod shell_env;
 pub mod size;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -26,9 +27,6 @@ use std::{
     time::Instant,
 };
 use unicase::UniCase;
-
-#[cfg(unix)]
-use anyhow::Context as _;
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -312,45 +310,20 @@ fn load_shell_from_passwd() -> Result<()> {
 pub fn load_login_shell_environment() -> Result<()> {
     load_shell_from_passwd().log_err();
 
-    let marker = "ZED_LOGIN_SHELL_START";
-    let shell = env::var("SHELL").context(
-        "SHELL environment variable is not assigned so we can't source login environment variables",
-    )?;
-
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
     // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    let shell_cmd_prefix = std::env::var_os("HOME")
-        .and_then(|home| home.into_string().ok())
-        .map(|home| format!("cd '{home}';"));
-
-    let shell_cmd = format!(
-        "{}printf '%s' {marker}; /usr/bin/env;",
-        shell_cmd_prefix.as_deref().unwrap_or("")
-    );
-
-    let output = set_pre_exec_to_start_new_session(
-        std::process::Command::new(&shell).args(["-l", "-i", "-c", &shell_cmd]),
-    )
-    .output()
-    .context("failed to spawn login shell to source login environment variables")?;
-    anyhow::ensure!(output.status.success(), "login shell exited with error");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    if let Some(env_output_start) = stdout.find(marker) {
-        let env_output = &stdout[env_output_start + marker.len()..];
-
-        parse_env_output(env_output, |key, value| unsafe { env::set_var(key, value) });
-
-        log::info!(
-            "set environment variables from shell:{}, path:{}",
-            shell,
-            env::var("PATH").unwrap_or_default(),
-        );
+    for (name, value) in shell_env::capture(Some(paths::home_dir()))? {
+        unsafe { env::set_var(&name, &value) };
     }
+
+    log::info!(
+        "set environment variables from shell:{}, path:{}",
+        std::env::var("SHELL").unwrap_or_default(),
+        std::env::var("PATH").unwrap_or_default(),
+    );
 
     Ok(())
 }
@@ -373,32 +346,6 @@ pub fn set_pre_exec_to_start_new_session(
         });
     };
     command
-}
-
-/// Parse the result of calling `usr/bin/env` with no arguments
-pub fn parse_env_output(env: &str, mut f: impl FnMut(String, String)) {
-    let mut current_key: Option<String> = None;
-    let mut current_value: Option<String> = None;
-
-    for line in env.split_terminator('\n') {
-        if let Some(separator_index) = line.find('=') {
-            if !line[..separator_index].is_empty() {
-                if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
-                    f(key, value)
-                }
-                current_key = Some(line[..separator_index].to_string());
-                current_value = Some(line[separator_index + 1..].to_string());
-                continue;
-            };
-        }
-        if let Some(value) = current_value.as_mut() {
-            value.push('\n');
-            value.push_str(line);
-        }
-    }
-    if let Some((key, value)) = Option::zip(current_key.take(), current_value.take()) {
-        f(key, value)
-    }
 }
 
 pub fn merge_json_lenient_value_into(

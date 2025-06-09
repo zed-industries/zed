@@ -15,7 +15,7 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{
-    ChatCompletionRequest, ChatMessage, ModelType, ResponseStreamEvent, get_models, preload_model,
+    ChatCompletionRequest, ChatMessage, ModelType, ResponseStreamEvent, get_models,
     stream_chat_completion,
 };
 use schemars::JsonSchema;
@@ -84,7 +84,9 @@ impl State {
                     lmstudio::Model::new(
                         &model.id,
                         None,
-                        None,
+                        model
+                            .loaded_context_length
+                            .or_else(|| model.max_context_length),
                         model.capabilities.supports_tool_calls(),
                     )
                 })
@@ -216,15 +218,6 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
             .collect()
     }
 
-    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
-        let settings = &AllLanguageModelSettings::get_global(cx).lmstudio;
-        let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
-        let id = model.id().0.to_string();
-        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
-            .detach_and_log_err(cx);
-    }
-
     fn is_authenticated(&self, cx: &App) -> bool {
         self.state.read(cx).is_authenticated()
     }
@@ -257,15 +250,15 @@ impl LmStudioLanguageModel {
         for message in request.messages {
             for content in message.content {
                 match content {
-                    MessageContent::Text(text) | MessageContent::Thinking { text, .. } => messages
-                        .push(match message.role {
-                            Role::User => ChatMessage::User { content: text },
-                            Role::Assistant => ChatMessage::Assistant {
-                                content: Some(text),
-                                tool_calls: Vec::new(),
-                            },
-                            Role::System => ChatMessage::System { content: text },
-                        }),
+                    MessageContent::Text(text) => messages.push(match message.role {
+                        Role::User => ChatMessage::User { content: text },
+                        Role::Assistant => ChatMessage::Assistant {
+                            content: Some(text),
+                            tool_calls: Vec::new(),
+                        },
+                        Role::System => ChatMessage::System { content: text },
+                    }),
+                    MessageContent::Thinking { .. } => {}
                     MessageContent::RedactedThinking(_) => {}
                     MessageContent::Image(_) => {}
                     MessageContent::ToolUse(tool_use) => {
@@ -476,6 +469,13 @@ impl LmStudioEventMapper {
         let mut events = Vec::new();
         if let Some(content) = choice.delta.content {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+        }
+
+        if let Some(reasoning_content) = choice.delta.reasoning_content {
+            events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                text: reasoning_content,
+                signature: None,
+            }));
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls {

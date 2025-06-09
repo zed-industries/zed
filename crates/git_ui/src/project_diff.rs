@@ -1387,6 +1387,7 @@ mod tests {
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
             &[("foo.txt".into(), "foo\n".into())],
+            "deadbeef",
         );
         fs.set_index_for_repo(
             path!("/project/.git").as_ref(),
@@ -1523,6 +1524,7 @@ mod tests {
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
             &[("foo".into(), "original\n".into())],
+            "deadbeef",
         );
         cx.run_until_parked();
 

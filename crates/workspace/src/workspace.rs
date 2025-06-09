@@ -15,7 +15,7 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
+pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
 use call::{ActiveCall, call_settings::CallSettings};
@@ -2401,7 +2401,7 @@ impl Workspace {
                                 })
                             }
                         })
-                        .log_err()?;
+                        .ok()?;
                         None
                     } else {
                         Some(
@@ -2414,7 +2414,7 @@ impl Workspace {
                                     cx,
                                 )
                             })
-                            .log_err()?
+                            .ok()?
                             .await,
                         )
                     }
@@ -3111,7 +3111,7 @@ impl Workspace {
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
-                let result = pane.open_item(
+                pane.open_item(
                     project_entry_id,
                     project_path,
                     focus_item,
@@ -3121,9 +3121,7 @@ impl Workspace {
                     window,
                     cx,
                     build_item,
-                );
-
-                result
+                )
             });
             result
         })
@@ -6240,7 +6238,14 @@ fn resize_bottom_dock(
     let size =
         new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        bottom_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Bottom)
+        {
+            bottom_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            bottom_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6252,7 +6257,14 @@ fn resize_right_dock(
 ) {
     let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
     workspace.right_dock.update(cx, |right_dock, cx| {
-        right_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Right)
+        {
+            right_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            right_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6265,7 +6277,14 @@ fn resize_left_dock(
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
 
     workspace.left_dock.update(cx, |left_dock, cx| {
-        left_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Left)
+        {
+            left_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            left_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -7392,7 +7411,7 @@ pub fn client_side_decorations(
                                     CursorStyle::ResizeUpRightDownLeft
                                 }
                             },
-                            Some(&hitbox),
+                            &hitbox,
                         );
                     },
                 )
@@ -7640,6 +7659,33 @@ pub fn ssh_workspace_position_from_db(
             centered_layout,
         })
     })
+}
+
+pub fn with_active_or_new_workspace(
+    cx: &mut App,
+    f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + 'static,
+) {
+    match cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
+        Some(workspace) => {
+            cx.defer(move |cx| {
+                workspace
+                    .update(cx, |workspace, window, cx| f(workspace, window, cx))
+                    .log_err();
+            });
+        }
+        None => {
+            let app_state = AppState::global(cx);
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(
+                    OpenOptions::default(),
+                    app_state,
+                    cx,
+                    move |workspace, window, cx| f(workspace, window, cx),
+                )
+                .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

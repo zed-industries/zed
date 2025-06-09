@@ -49,6 +49,7 @@ pub struct EditorSettings {
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
+    pub drag_and_drop_selection: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -422,7 +423,7 @@ pub struct EditorSettingsContent {
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
     pub use_smartcase_search: Option<bool>,
-    /// The key to use for adding multiple cursors
+    /// Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
     ///
     /// Default: alt
     pub multi_cursor_modifier: Option<MultiCursorModifier>,
@@ -495,6 +496,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub inline_code_actions: Option<bool>,
+
+    /// Whether to allow drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    pub drag_and_drop_selection: Option<bool>,
 }
 
 // Toolbar related settings

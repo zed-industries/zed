@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::agent_model_selector::{AgentModelSelector, ModelType};
+use crate::agent_model_selector::AgentModelSelector;
 use crate::context::{AgentContextKey, ContextCreasesAddon, ContextLoadResult, load_context};
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
@@ -24,8 +24,8 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt as _, future};
 use gpui::{
-    Animation, AnimationExt, App, ClipboardEntry, Entity, EventEmitter, Focusable, Subscription,
-    Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
+    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
 };
 use language::{Buffer, Language, Point};
 use language_model::{
@@ -52,8 +52,8 @@ use crate::thread::{MessageCrease, Thread, TokenUsageRatio};
 use crate::thread_store::{TextThreadStore, ThreadStore};
 use crate::{
     ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
-    NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode, ToggleContextPicker,
-    ToggleProfileSelector, register_agent_preview,
+    ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
+    ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
 
 #[derive(RegisterComponent)]
@@ -169,13 +169,13 @@ impl MessageEditor {
                 Some(text_thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
+                ModelUsageContext::Thread(thread.clone()),
                 window,
                 cx,
             )
         });
 
-        let incompatible_tools =
-            cx.new(|cx| IncompatibleToolsState::new(thread.read(cx).tools().clone(), cx));
+        let incompatible_tools = cx.new(|cx| IncompatibleToolsState::new(thread.clone(), cx));
 
         let subscriptions = vec![
             cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
@@ -197,21 +197,14 @@ impl MessageEditor {
                 fs.clone(),
                 model_selector_menu_handle,
                 editor.focus_handle(cx),
-                ModelType::Default(thread.clone()),
+                ModelUsageContext::Thread(thread.clone()),
                 window,
                 cx,
             )
         });
 
-        let profile_selector = cx.new(|cx| {
-            ProfileSelector::new(
-                fs,
-                thread.clone(),
-                thread_store,
-                editor.focus_handle(cx),
-                cx,
-            )
-        });
+        let profile_selector =
+            cx.new(|cx| ProfileSelector::new(fs, thread.clone(), editor.focus_handle(cx), cx));
 
         Self {
             editor: editor.clone(),
@@ -431,31 +424,7 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        let images = cx
-            .read_from_clipboard()
-            .map(|item| {
-                item.into_entries()
-                    .filter_map(|entry| {
-                        if let ClipboardEntry::Image(image) = entry {
-                            Some(image)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
-        if images.is_empty() {
-            return;
-        }
-        cx.stop_propagation();
-
-        self.context_store.update(cx, |store, cx| {
-            for image in images {
-                store.add_image_instance(Arc::new(image), cx);
-            }
-        });
+        crate::active_thread::attach_pasted_images_as_context(&self.context_store, cx);
     }
 
     fn handle_review_click(&mut self, window: &mut Window, cx: &mut Context<Self>) {
