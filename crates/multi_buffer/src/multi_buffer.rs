@@ -17,7 +17,7 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, FoldType, IndentSize, Language,
+    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
     LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
     TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
     Unclipped,
@@ -5463,16 +5463,16 @@ impl MultiBufferSnapshot {
         &self,
         range: Range<T>,
         options: TreeSitterOptions,
-    ) -> impl Iterator<Item = (Range<usize>, FoldType)> + '_ {
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.excerpt_containing(range.clone())
             .map(|mut excerpt| {
                 excerpt
                     .buffer()
                     .get_fold_ranges(excerpt.map_range_to_buffer(range), options)
-                    .filter_map(move |(range, text_object)| {
+                    .filter_map(move |range| {
                         if excerpt.contains_buffer_range(range.clone()) {
-                            Some((excerpt.map_range_from_buffer(range), text_object))
+                            Some(excerpt.map_range_from_buffer(range))
                         } else {
                             None
                         }
@@ -5495,7 +5495,7 @@ impl MultiBufferSnapshot {
             (0, self.point_to_offset(self.max_point()))
         };
         self.get_fold_ranges(start_offset..end_offset, TreeSitterOptions::default())
-            .filter_map(|(range, _fold_type)| {
+            .filter_map(|range| {
                 let fold_start_point = self::ToPoint::to_point(&range.start, self);
                 let fold_end_point = self::ToPoint::to_point(&range.end, self);
                 if fold_start_point.row != fold_end_point.row {

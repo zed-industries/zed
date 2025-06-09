@@ -1041,7 +1041,7 @@ fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_fold_action_tsx_multiline_comment(cx: &mut TestAppContext) {
+async fn test_syntactic_fold_action_tsx(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let language = Language::new(
@@ -1063,7 +1063,34 @@ async fn test_fold_action_tsx_multiline_comment(cx: &mut TestAppContext) {
     )
     .with_fold_query(
         r#"
-            (comment)+ @comment.around
+            (arguments) @fold
+            (for_in_statement body: (_) @fold)
+            (for_statement body: (_) @fold)
+            (while_statement body: (_) @fold)
+            (arrow_function body: (_) @fold)
+            (function_expression body: (statement_block) @fold)
+            (function_declaration body: (statement_block) @fold)
+            (class_declaration body: (class_body) @fold)
+            (method_definition body: (statement_block) @fold)
+            (do_statement body: (_) @fold)
+            (with_statement body: (_) @fold)
+            (switch_statement body: (switch_body) @fold)
+            (switch_case) @fold
+            (switch_default) @fold
+            ((import_statement)+ @fold)
+            (if_statement consequence: (_) @fold)
+            (try_statement body: (statement_block) @fold)
+            (catch_clause body: (statement_block) @fold)
+            (array) @fold
+            (object) @fold
+            (generator_function body: (statement_block) @fold)
+            (generator_function_declaration body: (statement_block) @fold)
+            (comment)+ @fold
+            (interface_declaration body: (_) @fold)
+            (internal_module body: (statement_block) @fold)
+            (type_alias_declaration value: (_) @fold)
+            (enum_declaration body: (enum_body) @fold)
+            (jsx_element) @fold
         "#,
     )
     .unwrap();
@@ -1071,139 +1098,559 @@ async fn test_fold_action_tsx_multiline_comment(cx: &mut TestAppContext) {
     let mut editor_cx = EditorTestContext::new(cx).await;
     editor_cx.update_buffer(|buffer, cx| buffer.set_language(Some(Arc::new(language)), cx));
 
-    editor_cx.set_state(indoc! {"
-        // line_comment
-        const Component = () => (
-          <div>
-            <p>Some text before</p>
-            {/* 
-            first line
-            second lineˇ
-            */}
-            <p>Some text after</p>
-          </div>
-        );
+    editor_cx.set_state(indoc! {r#"
+        import {
+        something,
+        another
+        } from 'some-module';
+        import * as All from 'another-module';
+
         /*
-        abcde
+        A multi-line
+        block comment.
         */
-    "});
+        // A single line comment
+        // followed by another.
+
+        class MyClass {
+        constructor(
+        arg1,
+        arg2
+        ) {
+        this.prop = arg1;
+        }
+        anotherMethod() {
+        if (ˇ
+        true
+        ) {
+        console.log('hello');
+        }
+        }
+        }
+
+        function aFunction(
+        param1,
+        param2
+        ) {
+        for (
+        let i = 0;
+        i < 10;
+        i++
+        ) {
+        // body
+        }
+        while (
+        true
+        ) {
+        break;
+        }
+        do {
+        // body
+        } while (false);
+        for (
+        const key in
+        {}
+        ) {
+        // body
+        }
+        switch (
+        'value'
+        ) {
+        case 'value':
+        break;
+        default:
+        break;
+        }
+        try {
+        // do something
+        }
+        catch (
+        e
+        ) {
+        // handle error
+        }
+        }
+
+        const arrowFn = (
+        arg1,
+        arg2
+        ) => {
+        return arg1 + arg2;
+        };
+
+        function* generatorFn(
+        i
+        ) {
+        yield i;
+        yield i + 10;
+        }
+
+        const myObject = {
+        key1: 'value1',
+        key2: 'value2',
+        };
+
+        const myArray = [
+        1,
+        2,
+        3,
+        ];
+
+        const Component = () => (
+        <div>
+        <p>Some text</p>
+        </div>
+        );
+
+        with (
+        myObject
+        ) {
+        console.log(key1);
+        }
+
+        const funcExpr = function(
+        a,
+        b
+        ) {
+        return a + b;
+        };
+
+        const genExpr = function*(
+        i
+        ) {
+        yield i;
+        };
+
+        interface MyInterface {
+        prop1: string;
+        prop2: number;
+        }
+
+        namespace MyNamespace {
+        export const x = 1;
+        }
+
+        type MyType = {
+        foo: 'bar';
+        };
+
+        enum MyEnum {
+        A,
+        B,
+        }
+    "#});
     cx.executor().run_until_parked();
 
     editor_cx.update_editor(|editor, window, cx| {
         editor.fold(&Fold, window, cx);
         assert_eq!(
             editor.display_text(cx),
-            indoc! {"
-                // line_comment
-                const Component = () => (
-                  <div>
-                    <p>Some text before</p>
-                    {⋯}
-                    <p>Some text after</p>
-                  </div>
-                );
+            indoc! {r#"
+                import {
+                something,
+                another
+                } from 'some-module';
+                import * as All from 'another-module';
+
                 /*
-                abcde
+                A multi-line
+                block comment.
                 */
-            "}
-        );
+                // A single line comment
+                // followed by another.
 
-        editor.change_selections(None, window, cx, |s| {
-            s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(7), 0)..DisplayPoint::new(DisplayRow(8), 0)
-            ]);
-        });
-        editor.fold(&Fold, window, cx);
-        assert_eq!(
-            editor.display_text(cx),
-            indoc! {"
-                // line_comment
+                class MyClass {
+                constructor(
+                arg1,
+                arg2
+                ) {
+                this.prop = arg1;
+                }
+                anotherMethod() ⋯
+                }
+
+                function aFunction(
+                param1,
+                param2
+                ) {
+                for (
+                let i = 0;
+                i < 10;
+                i++
+                ) {
+                // body
+                }
+                while (
+                true
+                ) {
+                break;
+                }
+                do {
+                // body
+                } while (false);
+                for (
+                const key in
+                {}
+                ) {
+                // body
+                }
+                switch (
+                'value'
+                ) {
+                case 'value':
+                break;
+                default:
+                break;
+                }
+                try {
+                // do something
+                }
+                catch (
+                e
+                ) {
+                // handle error
+                }
+                }
+
+                const arrowFn = (
+                arg1,
+                arg2
+                ) => {
+                return arg1 + arg2;
+                };
+
+                function* generatorFn(
+                i
+                ) {
+                yield i;
+                yield i + 10;
+                }
+
+                const myObject = {
+                key1: 'value1',
+                key2: 'value2',
+                };
+
+                const myArray = [
+                1,
+                2,
+                3,
+                ];
+
                 const Component = () => (
-                  <div>
-                    <p>Some text before</p>
-                    {⋯}
-                    <p>Some text after</p>
-                  </div>
+                <div>
+                <p>Some text</p>
+                </div>
                 );
-                ⋯
-            "}
-        );
 
-        editor.unfold_lines(&UnfoldLines, window, cx);
-        assert_eq!(
-            editor.display_text(cx),
-            indoc! {"
-                // line_comment
-                const Component = () => (
-                  <div>
-                    <p>Some text before</p>
-                    {⋯}
-                    <p>Some text after</p>
-                  </div>
-                );
-                /*
-                abcde
-                */
-            "}
-        );
+                with (
+                myObject
+                ) {
+                console.log(key1);
+                }
 
-        editor.change_selections(None, window, cx, |s| {
-            s.select_display_ranges([
-                DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(4), 0)
-            ]);
-        });
+                const funcExpr = function(
+                a,
+                b
+                ) {
+                return a + b;
+                };
 
-        editor.unfold_lines(&UnfoldLines, window, cx);
-        assert_eq!(
-            editor.display_text(cx),
-            indoc! {"
-                // line_comment
-                const Component = () => (
-                  <div>
-                    <p>Some text before</p>
-                    {/* 
-                    first line
-                    second line
-                    */}
-                    <p>Some text after</p>
-                  </div>
-                );
-                /*
-                abcde
-                */
-            "}
+                const genExpr = function*(
+                i
+                ) {
+                yield i;
+                };
+
+                interface MyInterface {
+                prop1: string;
+                prop2: number;
+                }
+
+                namespace MyNamespace {
+                export const x = 1;
+                }
+
+                type MyType = {
+                foo: 'bar';
+                };
+
+                enum MyEnum {
+                A,
+                B,
+                }
+            "#}
         );
 
         editor.fold_all(&FoldAll, window, cx);
         assert_eq!(
             editor.display_text(cx),
-            indoc! {"
-                // line_comment
-                const Component = () => (⋯
-                );
+            indoc! {r#"
                 ⋯
-            "}
+
+                ⋯
+
+                class MyClass ⋯
+
+                function aFunction(
+                param1,
+                param2
+                ) ⋯
+
+                const arrowFn = (
+                arg1,
+                arg2
+                ) => ⋯;
+
+                function* generatorFn(
+                i
+                ) ⋯
+
+                const myObject = ⋯;
+
+                const myArray = ⋯;
+
+                const Component = () => ⋯;
+
+                with (
+                myObject
+                ) ⋯
+
+                const funcExpr = function(
+                a,
+                b
+                ) ⋯;
+
+                const genExpr = function*(
+                i
+                ) ⋯;
+
+                interface MyInterface ⋯
+
+                namespace MyNamespace ⋯
+
+                type MyType = ⋯;
+
+                enum MyEnum ⋯
+            "#}
+        );
+
+        editor.change_selections(None, window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(4), 0)..DisplayPoint::new(DisplayRow(5), 0)
+            ]);
+        });
+        editor.unfold_lines(&UnfoldLines, window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {r#"
+                ⋯
+
+                ⋯
+
+                class MyClass {
+                constructor(
+                arg1,
+                arg2
+                ) {
+                this.prop = arg1;
+                }
+                anotherMethod() {
+                if (
+                true
+                ) {
+                console.log('hello');
+                }
+                }
+                }
+
+                function aFunction(
+                param1,
+                param2
+                ) ⋯
+
+                const arrowFn = (
+                arg1,
+                arg2
+                ) => ⋯;
+
+                function* generatorFn(
+                i
+                ) ⋯
+
+                const myObject = ⋯;
+
+                const myArray = ⋯;
+
+                const Component = () => ⋯;
+
+                with (
+                myObject
+                ) ⋯
+
+                const funcExpr = function(
+                a,
+                b
+                ) ⋯;
+
+                const genExpr = function*(
+                i
+                ) ⋯;
+
+                interface MyInterface ⋯
+
+                namespace MyNamespace ⋯
+
+                type MyType = ⋯;
+
+                enum MyEnum ⋯
+            "#}
         );
 
         editor.unfold_all(&UnfoldAll, window, cx);
         assert_eq!(
             editor.display_text(cx),
-            indoc! {"
-                // line_comment
-                const Component = () => (
-                  <div>
-                    <p>Some text before</p>
-                    {/* 
-                    first line
-                    second line
-                    */}
-                    <p>Some text after</p>
-                  </div>
-                );
+            indoc! {r#"
+                import {
+                something,
+                another
+                } from 'some-module';
+                import * as All from 'another-module';
+
                 /*
-                abcde
+                A multi-line
+                block comment.
                 */
-            "}
+                // A single line comment
+                // followed by another.
+
+                class MyClass {
+                constructor(
+                arg1,
+                arg2
+                ) {
+                this.prop = arg1;
+                }
+                anotherMethod() {
+                if (
+                true
+                ) {
+                console.log('hello');
+                }
+                }
+                }
+
+                function aFunction(
+                param1,
+                param2
+                ) {
+                for (
+                let i = 0;
+                i < 10;
+                i++
+                ) {
+                // body
+                }
+                while (
+                true
+                ) {
+                break;
+                }
+                do {
+                // body
+                } while (false);
+                for (
+                const key in
+                {}
+                ) {
+                // body
+                }
+                switch (
+                'value'
+                ) {
+                case 'value':
+                break;
+                default:
+                break;
+                }
+                try {
+                // do something
+                }
+                catch (
+                e
+                ) {
+                // handle error
+                }
+                }
+
+                const arrowFn = (
+                arg1,
+                arg2
+                ) => {
+                return arg1 + arg2;
+                };
+
+                function* generatorFn(
+                i
+                ) {
+                yield i;
+                yield i + 10;
+                }
+
+                const myObject = {
+                key1: 'value1',
+                key2: 'value2',
+                };
+
+                const myArray = [
+                1,
+                2,
+                3,
+                ];
+
+                const Component = () => (
+                <div>
+                <p>Some text</p>
+                </div>
+                );
+
+                with (
+                myObject
+                ) {
+                console.log(key1);
+                }
+
+                const funcExpr = function(
+                a,
+                b
+                ) {
+                return a + b;
+                };
+
+                const genExpr = function*(
+                i
+                ) {
+                yield i;
+                };
+
+                interface MyInterface {
+                prop1: string;
+                prop2: number;
+                }
+
+                namespace MyNamespace {
+                export const x = 1;
+                }
+
+                type MyType = {
+                foo: 'bar';
+                };
+
+                enum MyEnum {
+                A,
+                B,
+                }
+            "#}
         );
     });
 }
@@ -18238,7 +18685,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
+async fn test_render_syntactic_crease_toggle_for_tsx(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let language = Language::new(
         LanguageConfig {
@@ -18259,7 +18706,34 @@ async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
     )
     .with_fold_query(
         r#"
-            (comment)+ @comment.around
+            (arguments) @fold
+            (for_in_statement body: (_) @fold)
+            (for_statement body: (_) @fold)
+            (while_statement body: (_) @fold)
+            (arrow_function body: (_) @fold)
+            (function_expression body: (statement_block) @fold)
+            (function_declaration body: (statement_block) @fold)
+            (class_declaration body: (class_body) @fold)
+            (method_definition body: (statement_block) @fold)
+            (do_statement body: (_) @fold)
+            (with_statement body: (_) @fold)
+            (switch_statement body: (switch_body) @fold)
+            (switch_case) @fold
+            (switch_default) @fold
+            ((import_statement)+ @fold)
+            (if_statement consequence: (_) @fold)
+            (try_statement body: (statement_block) @fold)
+            (catch_clause body: (statement_block) @fold)
+            (array) @fold
+            (object) @fold
+            (generator_function body: (statement_block) @fold)
+            (generator_function_declaration body: (statement_block) @fold)
+            (comment)+ @fold
+            (interface_declaration body: (_) @fold)
+            (internal_module body: (statement_block) @fold)
+            (type_alias_declaration value: (_) @fold)
+            (enum_declaration body: (enum_body) @fold)
+            (jsx_element) @fold
         "#,
     )
     .unwrap();
@@ -18278,20 +18752,41 @@ async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
         // Sequences of line comments are
         // foldable.
         const Component = () => (
-          <div> 
-                {/* Start of JSX block comment.
-                Line inside JSX comment.
-                */}
-          </div>
+        <div> 
+        {/* Start of JSX block comment.
+        Line inside JSX comment.
+        */}
+        </div>
         );
         // A single line comment is not foldable.
+        class MyClass {
+        constructor() {
+        this.prop = 1;
+        }
+        }
+        function myFunc() {
+        if (true) {
+        console.log(\"hello\");
+        }
+        }
+        const my_array = [
+        1,
+        2
+        ];
+        const my_object = {
+        a: 1,
+        b: 2
+        };
+        interface MyInterface {
+        prop: string;
+        }
     "});
     cx.executor().run_until_parked();
 
     fn check_foldability(
         cx: &mut EditorTestContext,
         row: MultiBufferRow,
-        should_be_foldable_by_block_comment: bool,
+        should_be_foldable: bool,
         description: &str,
     ) {
         cx.update_editor(|editor, window, inner_cx| {
@@ -18313,7 +18808,7 @@ async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
                 &syntactic_folds_map,
             );
 
-            if should_be_foldable_by_block_comment {
+            if should_be_foldable {
                 assert!(
                     toggle_element.is_some(),
                     "Toggle SHOULD be rendered for: {} (line content: '{}')",
@@ -18347,6 +18842,7 @@ async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
         false,
         "inside sequence of line comments",
     );
+    check_foldability(&mut cx, MultiBufferRow(8), true, "jsx element");
     check_foldability(&mut cx, MultiBufferRow(9), true, "JSX block comment start");
     check_foldability(
         &mut cx,
@@ -18355,6 +18851,14 @@ async fn test_render_crease_toggle_for_tsx_comments(cx: &mut TestAppContext) {
         "inside JSX block comment",
     );
     check_foldability(&mut cx, MultiBufferRow(14), false, "single line comment");
+    check_foldability(&mut cx, MultiBufferRow(15), true, "class declaration");
+    check_foldability(&mut cx, MultiBufferRow(16), true, "method definition");
+    check_foldability(&mut cx, MultiBufferRow(20), true, "function declaration");
+    check_foldability(&mut cx, MultiBufferRow(21), true, "if statement");
+    check_foldability(&mut cx, MultiBufferRow(22), false, "inside if statement");
+    check_foldability(&mut cx, MultiBufferRow(25), true, "array literal");
+    check_foldability(&mut cx, MultiBufferRow(29), true, "object literal");
+    check_foldability(&mut cx, MultiBufferRow(33), true, "interface declaration");
 }
 
 #[gpui::test]

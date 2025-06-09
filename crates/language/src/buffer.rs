@@ -1,5 +1,11 @@
+pub use crate::{
+    Grammar, Language, LanguageRegistry,
+    diagnostic_set::DiagnosticSet,
+    highlight_map::{HighlightId, HighlightMap},
+    proto,
+};
 use crate::{
-    FoldType, LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
+    LanguageScope, Outline, OutlineConfig, RunnableCapture, RunnableTag, TextObject,
     TreeSitterOptions,
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     language_settings::{LanguageSettings, language_settings},
@@ -10,12 +16,6 @@ use crate::{
     },
     task_context::RunnableRange,
     text_diff::text_diff,
-};
-pub use crate::{
-    Grammar, Language, LanguageRegistry,
-    diagnostic_set::DiagnosticSet,
-    highlight_map::{HighlightId, HighlightMap},
-    proto,
 };
 use anyhow::{Context as _, Result};
 use async_watch as watch;
@@ -3868,7 +3868,7 @@ impl BufferSnapshot {
         &self,
         range: Range<T>,
         options: TreeSitterOptions,
-    ) -> impl Iterator<Item = (Range<usize>, FoldType)> + '_ {
+    ) -> impl Iterator<Item = Range<usize>> + '_ {
         let range = range.start.to_offset(self).saturating_sub(1)
             ..self.len().min(range.end.to_offset(self) + 1);
 
@@ -3884,16 +3884,8 @@ impl BufferSnapshot {
             .map(|grammar| grammar.fold_config.as_ref())
             .collect::<Vec<_>>();
 
-        let mut captures = Vec::<(Range<usize>, FoldType)>::new();
-
         iter::from_fn(move || {
             loop {
-                while let Some(capture) = captures.pop() {
-                    if capture.0.overlaps(&range) {
-                        return Some(capture);
-                    }
-                }
-
                 let mat = matches.peek()?;
 
                 let Some(config) = configs[mat.grammar_index].as_ref() else {
@@ -3901,33 +3893,25 @@ impl BufferSnapshot {
                     continue;
                 };
 
+                let mut byte_range: Option<Range<usize>> = None;
+
                 for capture in mat.captures {
-                    let Some(ix) = config
-                        .fold_types_by_capture_ix
-                        .binary_search_by_key(&capture.index, |e| e.0)
-                        .ok()
-                    else {
-                        continue;
-                    };
-                    let fold_type = config.fold_types_by_capture_ix[ix].1;
-                    let byte_range = capture.node.byte_range();
-
-                    let mut found = false;
-                    for (range, existing) in captures.iter_mut() {
-                        if existing == &fold_type {
-                            range.start = range.start.min(byte_range.start);
-                            range.end = range.end.max(byte_range.end);
-                            found = true;
-                            break;
+                    if config.fold_capture_ix.contains(&capture.index) {
+                        let capture_range = capture.node.byte_range();
+                        if let Some(range) = byte_range.as_mut() {
+                            range.start = range.start.min(capture_range.start);
+                            range.end = range.end.max(capture_range.end);
+                        } else {
+                            byte_range = Some(capture_range);
                         }
-                    }
-
-                    if !found {
-                        captures.push((byte_range, fold_type));
                     }
                 }
 
                 matches.advance();
+
+                if byte_range.is_some() {
+                    return byte_range;
+                }
             }
         })
     }

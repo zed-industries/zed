@@ -1141,23 +1141,9 @@ pub struct TextObjectConfig {
     pub text_objects_by_capture_ix: Vec<(u32, TextObject)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum FoldType {
-    AroundComment,
-}
-
-impl FoldType {
-    pub fn from_capture_name(name: &str) -> Option<FoldType> {
-        match name {
-            "comment.around" => Some(FoldType::AroundComment),
-            _ => None,
-        }
-    }
-}
-
 pub struct FoldConfig {
     pub query: Query,
-    pub fold_types_by_capture_ix: Vec<(u32, FoldType)>,
+    pub fold_capture_ix: Range<u32>,
 }
 
 #[derive(Debug)]
@@ -1678,16 +1664,11 @@ impl Language {
         let grammar = self.grammar_mut().context("cannot mutate grammar")?;
         let query = Query::new(&grammar.ts_language, source)?;
 
-        let mut fold_types_by_capture_ix = Vec::new();
-        for (ix, name) in query.capture_names().iter().enumerate() {
-            if let Some(fold_type) = FoldType::from_capture_name(name) {
-                fold_types_by_capture_ix.push((ix as u32, fold_type));
-            }
-        }
+        let fold_capture_ix = 0..query.capture_names().len() as u32;
 
         grammar.fold_config = Some(FoldConfig {
             query,
-            fold_types_by_capture_ix,
+            fold_capture_ix,
         });
         Ok(self)
     }
