@@ -833,7 +833,7 @@ impl EditorElement {
         let point_for_position = position_map.point_for_position(event.position);
 
         let is_cut = !event.modifiers.control;
-        if editor.drop_selection(point_for_position, is_cut, window, cx) {
+        if editor.drop_selection(Some(point_for_position), is_cut, window, cx) {
             return;
         }
 
