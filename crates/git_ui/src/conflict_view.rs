@@ -248,6 +248,8 @@ fn conflicts_updated(
             removed_block_ids.insert(block_id);
         }
 
+        editor.remove_gutter_highlights::<ConflictsOuter>(removed_highlighted_ranges.clone(), cx);
+
         editor.remove_highlighted_rows::<ConflictsOuter>(removed_highlighted_ranges.clone(), cx);
         editor.remove_highlighted_rows::<ConflictsOurs>(removed_highlighted_ranges.clone(), cx);
         editor
