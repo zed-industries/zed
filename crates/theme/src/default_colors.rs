@@ -150,7 +150,6 @@ impl ThemeColors {
             version_control_ignored: gray().light().step_12(),
             version_control_conflict_marker_ours: green().light().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().light().step_10().alpha(0.5),
-            version_control_conflict_marker_border: Hsla::default(),
         }
     }
 
@@ -273,7 +272,6 @@ impl ThemeColors {
             version_control_ignored: gray().dark().step_12(),
             version_control_conflict_marker_ours: green().dark().step_10().alpha(0.5),
             version_control_conflict_marker_theirs: blue().dark().step_10().alpha(0.5),
-            version_control_conflict_marker_border: Hsla::default(),
         }
     }
 }

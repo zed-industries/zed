@@ -213,7 +213,6 @@ pub(crate) fn zed_default_dark() -> Theme {
                 version_control_ignored: crate::gray().light().step_12(),
                 version_control_conflict_marker_ours: crate::green().light().step_12().alpha(0.5),
                 version_control_conflict_marker_theirs: crate::blue().light().step_12().alpha(0.5),
-                version_control_conflict_marker_border: Hsla::default(),
             },
             status: StatusColors {
                 conflict: yellow,

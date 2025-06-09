@@ -627,9 +627,13 @@ pub struct ThemeColorsContent {
     #[serde(rename = "version_control.conflict_marker.theirs")]
     pub version_control_conflict_marker_theirs: Option<String>,
 
-    /// Background color for row highlights of the "ours"/"theirs" divider in merge conflicts.
-    #[serde(rename = "version_control.conflict_marker.border")]
-    pub version_control_conflict_marker_border: Option<String>,
+    /// Deprecated in favor of `version_control_conflict_marker_ours`.
+    #[deprecated]
+    pub version_control_conflict_ours_background: Option<String>,
+
+    /// Deprecated in favor of `version_control_conflict_marker_theirs`.
+    #[deprecated]
+    pub version_control_conflict_theirs_background: Option<String>,
 }
 
 impl ThemeColorsContent {
@@ -1110,17 +1114,17 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok())
                 // Fall back to `conflict`, for backwards compatibility.
                 .or(status_colors.ignored),
+            #[allow(deprecated)]
             version_control_conflict_marker_ours: self
                 .version_control_conflict_marker_ours
                 .as_ref()
+                .or(self.version_control_conflict_ours_background.as_ref())
                 .and_then(|color| try_parse_color(color).ok()),
+            #[allow(deprecated)]
             version_control_conflict_marker_theirs: self
                 .version_control_conflict_marker_theirs
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_marker_border: self
-                .version_control_conflict_marker_border
-                .as_ref()
+                .or(self.version_control_conflict_theirs_background.as_ref())
                 .and_then(|color| try_parse_color(color).ok()),
         }
     }
