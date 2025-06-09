@@ -17577,6 +17577,65 @@ impl Editor {
         self.gutter_highlights.remove(&TypeId::of::<T>())
     }
 
+    pub fn insert_gutter_highlight<T: 'static>(
+        &mut self,
+        range: Range<Anchor>,
+        color_fetcher: fn(&App) -> Hsla,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let mut highlights = self
+            .gutter_highlights
+            .remove(&TypeId::of::<T>())
+            .map(|(_, highlights)| highlights)
+            .unwrap_or_default();
+        let ix = highlights.binary_search_by(|highlight| {
+            Ordering::Equal
+                .then_with(|| highlight.start.cmp(&range.start, &snapshot))
+                .then_with(|| highlight.end.cmp(&range.end, &snapshot))
+        });
+        if let Err(ix) = ix {
+            highlights.insert(ix, range);
+        }
+        self.gutter_highlights
+            .insert(TypeId::of::<T>(), (color_fetcher, highlights));
+    }
+
+    pub fn remove_gutter_highlights<T: 'static>(
+        &mut self,
+        ranges_to_remove: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let Some((color_fetcher, mut gutter_highlights)) =
+            self.gutter_highlights.remove(&TypeId::of::<T>())
+        else {
+            return;
+        };
+        let mut ranges_to_remove = ranges_to_remove.iter().peekable();
+        gutter_highlights.retain(|highlight| {
+            while let Some(range_to_remove) = ranges_to_remove.peek() {
+                match range_to_remove.end.cmp(&highlight.start, &snapshot) {
+                    Ordering::Less | Ordering::Equal => {
+                        ranges_to_remove.next();
+                    }
+                    Ordering::Greater => {
+                        match range_to_remove.start.cmp(&highlight.end, &snapshot) {
+                            Ordering::Less | Ordering::Equal => {
+                                return false;
+                            }
+                            Ordering::Greater => break,
+                        }
+                    }
+                }
+            }
+
+            true
+        });
+        self.gutter_highlights
+            .insert(TypeId::of::<T>(), (color_fetcher, gutter_highlights));
+    }
+
     #[cfg(feature = "test-support")]
     pub fn all_text_background_highlights(
         &self,

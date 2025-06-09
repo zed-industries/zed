@@ -346,23 +346,17 @@ fn update_conflict_highlighting(
 
     let ours_background = cx.theme().colors().version_control_conflict_marker_ours;
     let theirs_background = cx.theme().colors().version_control_conflict_marker_theirs;
-    let divider_background = cx.theme().colors().version_control_conflict_marker_border;
 
     let options = RowHighlightOptions {
         include_gutter: true,
         ..Default::default()
     };
 
-    let mut gutter_highlights = editor
-        .clear_gutter_highlights::<ConflictsOuter>(cx)
-        .map(|(_, highlights)| highlights)
-        .unwrap_or_default();
-    let ix = match gutter_highlights.binary_search_by(|probe| probe.start.cmp(&outer_start, buffer))
-    {
-        Ok(ix) | Err(ix) => ix,
-    };
-    gutter_highlights.insert(ix, outer_start..their_end);
-    editor.highlight_gutter::<ConflictsOuter>(gutter_highlights, |_| gpui::blue(), cx);
+    editor.insert_gutter_highlight::<ConflictsOuter>(
+        outer_start..their_end,
+        |cx| cx.theme().colors().editor_background,
+        cx,
+    );
 
     // Prevent diff hunk highlighting within the entire conflict region.
     editor.highlight_rows::<ConflictsOuter>(outer_start..outer_end, theirs_background, options, cx);
@@ -514,18 +508,7 @@ fn resolve_conflict(
             .anchor_in_excerpt(excerpt_id, resolved_conflict.range.end)
             .unwrap();
 
-        if let Some((color, mut gutter_highlights)) =
-            editor.clear_gutter_highlights::<ConflictsOuter>(cx)
-        {
-            let ix = match gutter_highlights
-                .binary_search_by(|probe| probe.start.cmp(&start, &snapshot))
-            {
-                Ok(ix) => ix,
-                Err(ix) => ix,
-            };
-            gutter_highlights.remove(ix);
-            editor.highlight_gutter::<ConflictsOuter>(gutter_highlights, color, cx);
-        }
+        editor.remove_gutter_highlights::<ConflictsOuter>(vec![start..end], cx);
 
         editor.remove_highlighted_rows::<ConflictsOuter>(vec![start..end], cx);
         editor.remove_highlighted_rows::<ConflictsOurs>(vec![start..end], cx);
