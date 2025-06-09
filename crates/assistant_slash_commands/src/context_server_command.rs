@@ -87,7 +87,7 @@ impl SlashCommand for ContextServerSlashCommand {
                 let protocol = server.client().context("Context server not initialized")?;
 
                 let response = protocol
-                    .request::<context_server::types::request::CompletionComplete>(
+                    .request::<context_server::types::requests::CompletionComplete>(
                         context_server::types::CompletionCompleteParams {
                             reference: context_server::types::CompletionReference::Prompt(
                                 context_server::types::PromptReference {
@@ -145,7 +145,7 @@ impl SlashCommand for ContextServerSlashCommand {
             cx.foreground_executor().spawn(async move {
                 let protocol = server.client().context("Context server not initialized")?;
                 let response = protocol
-                    .request::<context_server::types::request::PromptsGet>(
+                    .request::<context_server::types::requests::PromptsGet>(
                         context_server::types::PromptsGetParams {
                             name: prompt_name.clone(),
                             arguments: Some(prompt_args),
