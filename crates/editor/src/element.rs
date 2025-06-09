@@ -78,10 +78,11 @@ use std::{
     time::Duration,
 };
 use sum_tree::Bias;
-use text::BufferId;
+use text::{BufferId, SelectionGoal};
 use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::{ButtonLike, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*};
 use unicode_segmentation::UnicodeSegmentation;
+use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace, item::Item, notifications::NotifyTaskExt};
 
@@ -939,14 +940,28 @@ impl EditorElement {
         }
 
         if !editor.has_pending_selection() {
+            let drop_anchor = position_map
+                .snapshot
+                .display_point_to_anchor(point_for_position.previous_valid, Bias::Left);
             match editor.selection_drag_state {
-                SelectionDragState::Dragging { ref mut head, .. } => {
-                    *head = point_for_position.previous_valid;
+                SelectionDragState::Dragging {
+                    ref mut drop_cursor,
+                    ..
+                } => {
+                    drop_cursor.start = drop_anchor;
+                    drop_cursor.end = drop_anchor;
                 }
                 SelectionDragState::ReadyToDrag { ref selection } => {
+                    let drop_cursor = Selection {
+                        id: post_inc(&mut editor.selections.next_selection_id),
+                        start: drop_anchor,
+                        end: drop_anchor,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    };
                     editor.selection_drag_state = SelectionDragState::Dragging {
                         selection: selection.clone(),
-                        head: point_for_position.previous_valid,
+                        drop_cursor,
                     };
                 }
                 _ => {}
@@ -1192,6 +1207,34 @@ impl EditorElement {
 
                 let player = editor.current_user_player_color(cx);
                 selections.push((player, layouts));
+
+                if let SelectionDragState::Dragging {
+                    ref selection,
+                    ref drop_cursor,
+                } = editor.selection_drag_state
+                {
+                    if drop_cursor
+                        .start
+                        .cmp(&selection.start, &snapshot.buffer_snapshot)
+                        .eq(&Ordering::Less)
+                        || drop_cursor
+                            .end
+                            .cmp(&selection.end, &snapshot.buffer_snapshot)
+                            .eq(&Ordering::Greater)
+                    {
+                        let drag_cursor_layout = SelectionLayout::new(
+                            drop_cursor.clone(),
+                            false,
+                            CursorShape::Bar,
+                            &snapshot.display_snapshot,
+                            false,
+                            false,
+                            None,
+                        );
+                        let absent_color = cx.theme().players().absent();
+                        selections.push((absent_color, vec![drag_cursor_layout]));
+                    }
+                }
             }
 
             if let Some(collaboration_hub) = &editor.collaboration_hub {
@@ -1469,49 +1512,6 @@ impl EditorElement {
                         is_top_row: cursor_position.row().0 == 0,
                     });
                     cursor.layout(content_origin, cursor_name, window, cx);
-                    cursors.push(cursor);
-                }
-            }
-
-            if let SelectionDragState::Dragging {
-                ref selection,
-                ref head,
-            } = editor.selection_drag_state
-            {
-                let cursor_position = head;
-                let in_range = visible_display_row_range.contains(&cursor_position.row());
-                if in_range
-                    && (cursor_position < &selection.start.to_display_point(&snapshot)
-                        || cursor_position > &selection.end.to_display_point(&snapshot))
-                {
-                    let cursor_row_layout = &line_layouts
-                        [cursor_position.row().minus(visible_display_row_range.start) as usize];
-                    let cursor_column = cursor_position.column() as usize;
-
-                    let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-                    let mut block_width =
-                        cursor_row_layout.x_for_index(cursor_column + 1) - cursor_character_x;
-                    if block_width == Pixels::ZERO {
-                        block_width = em_advance;
-                    }
-
-                    let x = cursor_character_x - scroll_pixel_position.x;
-                    let y = (cursor_position.row().as_f32()
-                        - scroll_pixel_position.y / line_height)
-                        * line_height;
-
-                    let color = cx.theme().players().absent().cursor;
-                    let mut cursor = CursorLayout {
-                        color,
-                        block_width,
-                        origin: point(x, y),
-                        line_height,
-                        shape: CursorShape::Bar,
-                        block_text: None,
-                        cursor_name: None,
-                    };
-
-                    cursor.layout(content_origin, None, window, cx);
                     cursors.push(cursor);
                 }
             }

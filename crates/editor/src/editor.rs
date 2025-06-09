@@ -914,7 +914,7 @@ enum SelectionDragState {
     /// State when the mouse is dragging the selection in the editor.
     Dragging {
         selection: Selection<Anchor>,
-        head: DisplayPoint,
+        drop_cursor: Selection<Anchor>,
     },
 }
 
