@@ -105,7 +105,7 @@ impl Tool for ContextServerTool {
                     arguments
                 );
                 let response = protocol
-                    .request::<context_server::types::request::CallTool>(
+                    .request::<context_server::types::requests::CallTool>(
                         context_server::types::CallToolParams {
                             name: tool_name,
                             arguments,
