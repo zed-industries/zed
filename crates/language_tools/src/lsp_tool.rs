@@ -489,21 +489,24 @@ impl PickerDelegate for LspPickerDelegate {
                     lsp_picker.delegate.selected_index = 0;
                     lsp_picker.delegate.items = lsp_picker
                         .delegate
-                        .editor_buffers
-                        .iter()
-                        .filter_map(|(worktree_id, buffer_id)| {
-                            Some(
-                                lsp_picker
-                                    .delegate
-                                    .language_servers
-                                    .servers_per_worktree
-                                    .get(worktree_id)?
-                                    .get(buffer_id)?,
-                            )
-                        })
-                        .flatten()
-                        .unique()
-                        .filter_map(|id| lsp_picker.delegate.language_servers.servers.get(id))
+                        .language_servers
+                        .servers
+                        .values()
+                        // TODO kb return back when stable IDs are back
+                        // .iter()
+                        // .filter_map(|(worktree_id, buffer_id)| {
+                        //     Some(
+                        //         lsp_picker
+                        //             .delegate
+                        //             .language_servers
+                        //             .servers_per_worktree
+                        //             .get(worktree_id)?
+                        //             .get(buffer_id)?,
+                        //     )
+                        // })
+                        // .flatten()
+                        // .unique()
+                        // .filter_map(|id| lsp_picker.delegate.language_servers.servers.get(id))
                         .sorted_by_key(|state| state.name.clone())
                         .flat_map(|state| {
                             [
@@ -870,9 +873,10 @@ impl LspTool {
                 state.name = name;
             }
         } else if let Some(message) = message {
-            debug_panic!(
-                "No server state for {id}, but got a message: {message} with severity: {severity:?}"
-            );
+            // TODO kb return back?
+            // debug_panic!(
+            //     "No server state for {id}, but got a message: {message} with severity: {severity:?}"
+            // );
         }
 
         if let Some(picker) = &self.lsp_picker {
