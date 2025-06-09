@@ -595,6 +595,7 @@ impl TitleBar {
                             .icon(IconName::GitBranch)
                             .icon_position(IconPosition::Start)
                             .icon_color(Color::Muted)
+                            .icon_size(IconSize::Indicator)
                     },
                 ),
         )
