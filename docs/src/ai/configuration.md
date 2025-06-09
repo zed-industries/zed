@@ -220,7 +220,7 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 
 > ✅ Supports tool use
 
-You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use Gemini models with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
 
 1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the settings view (`agent: open configuration`) and go to the Google AI section
