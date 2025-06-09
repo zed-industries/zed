@@ -107,7 +107,10 @@ fn parse_name_and_terminator(input: &str, terminator: char) -> Option<(Cow<'_, s
 }
 
 fn parse_literal_and_terminator(input: &str, terminator: char) -> Option<(Cow<'_, str>, &str)> {
-    if let Some((literal, rest)) = parse_literal_single_quoted(input) {
+    if let Some((literal, rest)) = parse_literal_ansi_c_quoted(input) {
+        let rest = rest.strip_prefix(terminator)?;
+        Some((Cow::Owned(literal), rest))
+    } else if let Some((literal, rest)) = parse_literal_single_quoted(input) {
         let rest = rest.strip_prefix(terminator)?;
         Some((Cow::Borrowed(literal), rest))
     } else if let Some((literal, rest)) = parse_literal_double_quoted(input) {
@@ -118,6 +121,52 @@ fn parse_literal_and_terminator(input: &str, terminator: char) -> Option<(Cow<'_
         (!literal.contains(|c: char| c.is_ascii_whitespace()))
             .then_some((Cow::Borrowed(literal), rest))
     }
+}
+
+/// https://www.gnu.org/software/bash/manual/html_node/ANSI_002dC-Quoting.html
+fn parse_literal_ansi_c_quoted(input: &str) -> Option<(String, &str)> {
+    let rest = input.strip_prefix("$'")?;
+
+    let mut char_indices = rest.char_indices();
+    let mut escaping = false;
+    let (literal, rest) = loop {
+        let (index, char) = char_indices.next()?;
+        if char == '\'' && !escaping {
+            break (&rest[..index], &rest[index + 1..]);
+        } else {
+            escaping = !escaping && char == '\\';
+        }
+    };
+
+    let mut result = String::new();
+    let mut chars = literal.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('t') => result.push('\t'),
+                Some('r') => result.push('\r'),
+                Some('\\') => result.push('\\'),
+                Some('\'') => result.push('\''),
+                Some('"') => result.push('"'),
+                Some('a') => result.push('\x07'), // bell
+                Some('b') => result.push('\x08'), // backspace
+                Some('f') => result.push('\x0C'), // form feed
+                Some('v') => result.push('\x0B'), // vertical tab
+                Some('0') => result.push('\0'),   // null
+                Some(other) => {
+                    // For unknown escape sequences, keep the backslash and character
+                    result.push('\\');
+                    result.push(other);
+                }
+                None => result.push('\\'), // trailing backslash
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    Some((result, rest))
 }
 
 /// https://www.gnu.org/software/bash/manual/html_node/Single-Quotes.html
@@ -186,6 +235,7 @@ mod tests {
         \"wo\
         rld\"\n!\\
         !"
+        export foo=$'hello\nworld'
         "#};
 
         let expected_values = [
@@ -210,6 +260,7 @@ mod tests {
             Some(indoc::indoc! {r#"
             `Hello`
             "world"\n!\!"#}),
+            Some("hello\nworld"),
         ];
         let expected = expected_values
             .into_iter()
@@ -269,5 +320,44 @@ mod tests {
         let (actual, rest) = parse_literal_double_quoted(input).unwrap();
         assert_eq!(expected, actual);
         assert_eq!(rest, "\nrest");
+    }
+
+    #[test]
+    fn test_parse_literal_ansi_c_quoted() {
+        let (actual, rest) = parse_literal_ansi_c_quoted("$'hello\\nworld'\nrest").unwrap();
+        assert_eq!(actual, "hello\nworld");
+        assert_eq!(rest, "\nrest");
+
+        let (actual, rest) = parse_literal_ansi_c_quoted("$'tab\\there'\nrest").unwrap();
+        assert_eq!(actual, "tab\there");
+        assert_eq!(rest, "\nrest");
+
+        let (actual, rest) = parse_literal_ansi_c_quoted("$'quote\\'\\'end'\nrest").unwrap();
+        assert_eq!(actual, "quote''end");
+        assert_eq!(rest, "\nrest");
+
+        let (actual, rest) = parse_literal_ansi_c_quoted("$'backslash\\\\end'\nrest").unwrap();
+        assert_eq!(actual, "backslash\\end");
+        assert_eq!(rest, "\nrest");
+    }
+
+    #[test]
+    fn test_parse_buildphase_export() {
+        let input = r#"export buildPhase=$'{ echo "------------------------------------------------------------";\n  echo " WARNING: the existence of this path is not guaranteed.";\n  echo " It is an internal implementation detail for pkgs.mkShell.";\n  echo "------------------------------------------------------------";\n  echo;\n  # Record all build inputs as runtime dependencies\n  export;\n} >> "$out"\n'
+"#;
+
+        let expected_value = r#"{ echo "------------------------------------------------------------";
+  echo " WARNING: the existence of this path is not guaranteed.";
+  echo " It is an internal implementation detail for pkgs.mkShell.";
+  echo "------------------------------------------------------------";
+  echo;
+  # Record all build inputs as runtime dependencies
+  export;
+} >> "$out"
+"#;
+
+        let ((name, value), _rest) = parse_declaration(input).unwrap();
+        assert_eq!(name, "buildPhase");
+        assert_eq!(value.as_deref(), Some(expected_value));
     }
 }
