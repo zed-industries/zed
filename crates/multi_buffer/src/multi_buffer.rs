@@ -2616,17 +2616,17 @@ impl MultiBuffer {
     }
 
     fn buffer_based_title(&self, buffer: &Buffer) -> Option<Cow<str>> {
-        let mut is_leading_whitespace = false;
+        let mut is_leading_whitespace = true;
         let mut count = 0;
         let mut prev_was_space = false;
         let mut title = String::new();
 
         for ch in buffer.snapshot().chars() {
-            if !is_leading_whitespace && ch.is_whitespace() {
+            if is_leading_whitespace && ch.is_whitespace() {
                 continue;
             }
 
-            is_leading_whitespace = true;
+            is_leading_whitespace = false;
 
             if ch == '\n' || count >= 40 {
                 break;
