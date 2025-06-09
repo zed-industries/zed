@@ -3098,7 +3098,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "show_diagnostics": "all",
     "indent_guides": {
       "show": "always"
-    }
+    },
+    "hide_root": false,
   }
 }
 ```
