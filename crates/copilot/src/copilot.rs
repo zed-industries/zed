@@ -1056,6 +1056,7 @@ impl Copilot {
                     }
                 }
             }
+
             cx.notify();
         }
     }

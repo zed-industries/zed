@@ -865,7 +865,7 @@ impl Render for ConfigurationView {
                             )
                             .child(
                                 Label::new(
-                                    format!("You can also assign the {} environment variable and restart Zed.",copilot::copilot_chat::COPILOT_OAUTH_ENV_VAR),
+                                    format!("You can also assign the {} environment variable and restart Zed.", copilot::copilot_chat::COPILOT_OAUTH_ENV_VAR),
                                 )
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
