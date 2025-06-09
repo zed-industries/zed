@@ -18791,7 +18791,7 @@ impl Editor {
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
                 if *singleton_buffer_edited {
-                    if let Some(buffer) = multibuffer.read(cx).as_singleton() {
+                    if let Some(buffer) = edited_buffer {
                         if buffer.read(cx).file().is_none() {
                             cx.emit(EditorEvent::TitleChanged);
                         }
