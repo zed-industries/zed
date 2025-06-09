@@ -382,33 +382,6 @@ impl LanguageModel for MistralLanguageModel {
     }
 }
 
-fn add_message_content_part(
-    message_content: &mut mistral::MessageContent,
-    part: mistral::MessagePart,
-) {
-    match part {
-        mistral::MessagePart::Text { text } => match message_content {
-            mistral::MessageContent::Plain { content } => {
-                if content.is_empty() {
-                    *content = text;
-                } else {
-                    let mut parts = vec![mistral::MessagePart::Text {
-                        text: content.clone(),
-                    }];
-                    parts.push(mistral::MessagePart::Text { text });
-                    *message_content = mistral::MessageContent::Multipart { content: parts };
-                }
-            }
-            mistral::MessageContent::Multipart { content } => {
-                content.push(mistral::MessagePart::Text { text });
-            }
-        },
-        image_part => {
-            message_content.push_part(image_part);
-        }
-    }
-}
-
 pub fn into_mistral(
     request: LanguageModelRequest,
     model: String,
@@ -424,24 +397,17 @@ pub fn into_mistral(
                 for content in &message.content {
                     match content {
                         MessageContent::Text(text) => {
-                            add_message_content_part(
-                                &mut message_content,
-                                mistral::MessagePart::Text { text: text.clone() },
-                            );
+                            message_content
+                                .push_part(mistral::MessagePart::Text { text: text.clone() });
                         }
                         MessageContent::Image(image_content) => {
-                            add_message_content_part(
-                                &mut message_content,
-                                mistral::MessagePart::ImageUrl {
-                                    image_url: image_content.to_base64_url(),
-                                },
-                            );
+                            message_content.push_part(mistral::MessagePart::ImageUrl {
+                                image_url: image_content.to_base64_url(),
+                            });
                         }
                         MessageContent::Thinking { text, .. } => {
-                            add_message_content_part(
-                                &mut message_content,
-                                mistral::MessagePart::Text { text: text.clone() },
-                            );
+                            message_content
+                                .push_part(mistral::MessagePart::Text { text: text.clone() });
                         }
                         MessageContent::RedactedThinking(_) => {}
                         MessageContent::ToolUse(_) | MessageContent::ToolResult(_) => {

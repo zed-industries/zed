@@ -294,13 +294,22 @@ impl MessageContent {
 
     pub fn push_part(&mut self, part: MessagePart) {
         match self {
-            Self::Plain { content } => {
-                let mut parts = vec![MessagePart::Text {
-                    text: content.clone(),
-                }];
-                parts.push(part);
-                *self = Self::Multipart { content: parts };
-            }
+            Self::Plain { content } => match part {
+                MessagePart::Text { text } => {
+                    content.push_str(&text);
+                }
+                part => {
+                    let mut parts = if content.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![MessagePart::Text {
+                            text: content.clone(),
+                        }]
+                    };
+                    parts.push(part);
+                    *self = Self::Multipart { content: parts };
+                }
+            },
             Self::Multipart { content } => {
                 content.push(part);
             }
