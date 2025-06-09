@@ -155,6 +155,7 @@ pub enum IconName {
     LineHeight,
     Link,
     ListCollapse,
+    ListTodo,
     ListTree,
     ListX,
     LoadCircle,

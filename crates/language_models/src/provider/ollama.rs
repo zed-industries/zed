@@ -12,7 +12,7 @@ use language_model::{
 };
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionTool,
-    OllamaToolCall, get_models, preload_model, show_model, stream_chat_completion,
+    OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -243,15 +243,6 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         models
     }
 
-    fn load_model(&self, model: Arc<dyn LanguageModel>, cx: &App) {
-        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-        let http_client = self.http_client.clone();
-        let api_url = settings.api_url.clone();
-        let id = model.id().0.to_string();
-        cx.spawn(async move |_| preload_model(http_client, &api_url, &id).await)
-            .detach_and_log_err(cx);
-    }
-
     fn is_authenticated(&self, cx: &App) -> bool {
         self.state.read(cx).is_authenticated()
     }
@@ -415,6 +406,7 @@ impl LanguageModel for OllamaLanguageModel {
         'static,
         Result<
             BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
         >,
     > {
         let request = self.to_ollama_request(request);
@@ -424,7 +416,7 @@ impl LanguageModel for OllamaLanguageModel {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
             settings.api_url.clone()
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let future = self.request_limiter.stream(async move {

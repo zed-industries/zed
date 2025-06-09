@@ -28,7 +28,6 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-async-watch.workspace = true
 clock.workspace = true
 collections.workspace = true
 ec4rs.workspace = true
@@ -66,6 +65,7 @@ tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter.workspace = true
 unicase = "2.6"
 util.workspace = true
+watch.workspace = true
 workspace-hack.workspace = true
 diffy = "0.4.2"
 

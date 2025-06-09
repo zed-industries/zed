@@ -15,7 +15,6 @@ use language::{
 use project::{Completion, CompletionResponse, CompletionSource, search::SearchQuery};
 use settings::Settings;
 use std::{
-    cell::RefCell,
     ops::Range,
     rc::Rc,
     sync::{Arc, LazyLock},
@@ -73,22 +72,13 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         })
     }
 
-    fn resolve_completions(
-        &self,
-        _buffer: Entity<Buffer>,
-        _completion_indices: Vec<usize>,
-        _completions: Rc<RefCell<Box<[Completion]>>>,
-        _cx: &mut Context<Editor>,
-    ) -> Task<anyhow::Result<bool>> {
-        Task::ready(Ok(false))
-    }
-
     fn is_completion_trigger(
         &self,
         _buffer: &Entity<Buffer>,
         _position: language::Anchor,
         text: &str,
         _trigger_in_words: bool,
+        _menu_is_open: bool,
         _cx: &mut Context<Editor>,
     ) -> bool {
         text == "@"
@@ -254,7 +244,7 @@ impl MessageEditor {
         {
             if !candidates.is_empty() {
                 return cx.spawn(async move |_, cx| {
-                    let completion_response = Self::resolve_completions_for_candidates(
+                    let completion_response = Self::completions_for_candidates(
                         &cx,
                         query.as_str(),
                         &candidates,
@@ -272,7 +262,7 @@ impl MessageEditor {
         {
             if !candidates.is_empty() {
                 return cx.spawn(async move |_, cx| {
-                    let completion_response = Self::resolve_completions_for_candidates(
+                    let completion_response = Self::completions_for_candidates(
                         &cx,
                         query.as_str(),
                         candidates,
@@ -291,7 +281,7 @@ impl MessageEditor {
         }]))
     }
 
-    async fn resolve_completions_for_candidates(
+    async fn completions_for_candidates(
         cx: &AsyncApp,
         query: &str,
         candidates: &[StringMatchCandidate],

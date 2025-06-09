@@ -8,6 +8,7 @@ message Channel {
     uint64 id = 1;
     string name = 2;
     ChannelVisibility visibility = 3;
+    int32 channel_order = 4;
     repeated uint64 parent_path = 5;
 }
 
@@ -205,6 +206,15 @@ message GetChannelMessagesById {
 message MoveChannel {
     uint64 channel_id = 1;
     uint64 to = 2;
+}
+
+message ReorderChannel {
+    uint64 channel_id = 1;
+    enum Direction {
+        Up = 0;
+        Down = 1;
+    }
+    Direction direction = 2;
 }
 
 message JoinChannelBuffer {

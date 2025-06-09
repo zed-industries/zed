@@ -38,22 +38,11 @@ Extensions that provide language servers may also provide default settings for t
 ```json
 {
   "active_pane_modifiers": {
-    "magnification": 1.0,
     "border_size": 0.0,
     "inactive_opacity": 1.0
   }
 }
 ```
-
-### Magnification
-
-- Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `magnification`
-- Default: `1.0`
-
-**Options**
-
-`float` values
 
 ### Border size
 
@@ -123,7 +112,7 @@ Non-negative `float` values
 
 **Options**
 
-You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
 On MacOS:
 
@@ -1227,6 +1216,16 @@ or
 
 `boolean` values
 
+### Drag And Drop Selection
+
+- Description: Whether to allow drag and drop text selection in buffer.
+- Setting: `drag_and_drop_selection`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
@@ -1934,6 +1933,30 @@ Example:
 **Options**
 
 `boolean` values
+
+## Multi Cursor Modifier
+
+- Description: Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+- Setting: `multi_cursor_modifier`
+- Default: `alt`
+
+**Options**
+
+1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+
+```jsonc
+{
+  "multi_cursor_modifier": "alt",
+}
+```
+
+2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+
+```jsonc
+{
+  "multi_cursor_modifier": "cmd_or_ctrl", // alias: "cmd", "ctrl"
+}
+```
 
 ## Hover Popover Enabled
 
@@ -3075,7 +3098,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "show_diagnostics": "all",
     "indent_guides": {
       "show": "always"
-    }
+    },
+    "hide_root": false
   }
 }
 ```

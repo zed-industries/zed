@@ -22,9 +22,9 @@ Zed supports a variety of debug adapters for different programming languages:
 
 - PHP (xdebug): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
 
-- Ruby (rdbg): Provides debugging capabilities for Ruby applications
-
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
+
+Additionally, Ruby support (via rdbg) is being actively worked on.
 
 ## Getting Started
 
@@ -108,6 +108,20 @@ Given a Zed task, Zed can automatically create a scenario for you. Automatic sce
 Automatic scenario creation is currently supported for Rust, Go and Python. Javascript/TypeScript support being worked on.
 
 ### Example Configurations
+
+#### Go
+
+```json
+[
+  {
+    "label": "Go (Delve)",
+    "adapter": "Delve",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "mode": "debug"
+  }
+]
+```
 
 #### JavaScript
 
@@ -264,7 +278,7 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 ## Breakpoints
 
 To set a breakpoint, simply click next to the line number in the editor gutter.
-Breakpoints can be tweaked dependending on your needs; to access additional options of a given breakpoint, right-click on the breakpoint icon in the gutter and select the desired option.
+Breakpoints can be tweaked depending on your needs; to access additional options of a given breakpoint, right-click on the breakpoint icon in the gutter and select the desired option.
 At present, you can:
 
 - Add a log to a breakpoint, which will output a log message whenever that breakpoint is hit.
@@ -279,12 +293,31 @@ The debug adapter will then stop whenever an exception of a given kind occurs. W
 
 ## Settings
 
+- `dock`: Determines the position of the debug panel in the UI.
 - `stepping_granularity`: Determines the stepping granularity.
 - `save_breakpoints`: Whether the breakpoints should be reused across Zed sessions.
 - `button`: Whether to show the debug button in the status bar.
 - `timeout`: Time in milliseconds until timeout error when connecting to a TCP debug adapter.
 - `log_dap_communications`: Whether to log messages between active debug adapters and Zed.
 - `format_dap_log_messages`: Whether to format DAP messages when adding them to the debug adapter logger.
+
+### Dock
+
+- Description: The position of the debug panel in the UI.
+- Default: `bottom`
+- Setting: debugger.dock
+
+**Options**
+
+1. `left` - The debug panel will be docked to the left side of the UI.
+2. `right` - The debug panel will be docked to the right side of the UI.
+3. `bottom` - The debug panel will be docked to the bottom of the UI.
+
+```json
+"debugger": {
+  "dock": "bottom"
+},
+```
 
 ### Stepping granularity
 

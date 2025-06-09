@@ -1,9 +1,9 @@
 use editor::{CursorLayout, HighlightedRange, HighlightedRangeLine};
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, Context, DispatchPhase, Element,
-    ElementId, Entity, FocusHandle, Focusable, Font, FontStyle, FontWeight, GlobalElementId,
-    HighlightStyle, Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement,
-    LayoutId, ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
+    ElementId, Entity, FocusHandle, Font, FontStyle, FontWeight, GlobalElementId, HighlightStyle,
+    Hitbox, Hsla, InputHandler, InteractiveElement, Interactivity, IntoElement, LayoutId, Length,
+    ModifiersChangedEvent, MouseButton, MouseMoveEvent, Pixels, Point, ShapedLine,
     StatefulInteractiveElement, StrikethroughStyle, Styled, TextRun, TextStyle, UTF16Selection,
     UnderlineStyle, WeakEntity, WhiteSpace, Window, WindowTextSystem, div, fill, point, px,
     relative, size,
@@ -32,7 +32,7 @@ use workspace::Workspace;
 use std::mem;
 use std::{fmt::Debug, ops::RangeInclusive, rc::Rc};
 
-use crate::{BlockContext, BlockProperties, TerminalView};
+use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalView};
 
 /// The information generated during layout that is necessary for painting.
 pub struct LayoutState {
@@ -49,6 +49,7 @@ pub struct LayoutState {
     gutter: Pixels,
     block_below_cursor_element: Option<AnyElement>,
     base_text_style: TextStyle,
+    content_mode: ContentMode,
 }
 
 /// Helper struct for converting data between Alacritty's cursor points, and displayed cursor points.
@@ -160,7 +161,7 @@ pub struct TerminalElement {
     focused: bool,
     cursor_visible: bool,
     interactivity: Interactivity,
-    embedded: bool,
+    mode: TerminalMode,
     block_below_cursor: Option<Rc<BlockProperties>>,
 }
 
@@ -181,7 +182,7 @@ impl TerminalElement {
         focused: bool,
         cursor_visible: bool,
         block_below_cursor: Option<Rc<BlockProperties>>,
-        embedded: bool,
+        mode: TerminalMode,
     ) -> TerminalElement {
         TerminalElement {
             terminal,
@@ -191,7 +192,7 @@ impl TerminalElement {
             focus: focus.clone(),
             cursor_visible,
             block_below_cursor,
-            embedded,
+            mode,
             interactivity: Default::default(),
         }
         .track_focus(&focus)
@@ -202,6 +203,7 @@ impl TerminalElement {
 
     pub fn layout_grid(
         grid: impl Iterator<Item = IndexedCell>,
+        start_line_offset: i32,
         text_style: &TextStyle,
         // terminal_theme: &TerminalStyle,
         text_system: &WindowTextSystem,
@@ -218,6 +220,8 @@ impl TerminalElement {
 
         let linegroups = grid.into_iter().chunk_by(|i| i.point.line);
         for (line_index, (_, line)) in linegroups.into_iter().enumerate() {
+            let alac_line = start_line_offset + line_index as i32;
+
             for cell in line {
                 let mut fg = cell.fg;
                 let mut bg = cell.bg;
@@ -245,7 +249,7 @@ impl TerminalElement {
                                         || {
                                             Some(LayoutRect::new(
                                                 AlacPoint::new(
-                                                    line_index as i32,
+                                                    alac_line,
                                                     cell.point.column.0 as i32,
                                                 ),
                                                 1,
@@ -260,10 +264,7 @@ impl TerminalElement {
                                         rects.push(cur_rect.take().unwrap());
                                     }
                                     cur_rect = Some(LayoutRect::new(
-                                        AlacPoint::new(
-                                            line_index as i32,
-                                            cell.point.column.0 as i32,
-                                        ),
+                                        AlacPoint::new(alac_line, cell.point.column.0 as i32),
                                         1,
                                         convert_color(&bg, theme),
                                     ));
@@ -272,7 +273,7 @@ impl TerminalElement {
                             None => {
                                 cur_alac_color = Some(bg);
                                 cur_rect = Some(LayoutRect::new(
-                                    AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
+                                    AlacPoint::new(alac_line, cell.point.column.0 as i32),
                                     1,
                                     convert_color(&bg, theme),
                                 ));
@@ -295,7 +296,7 @@ impl TerminalElement {
                         );
 
                         cells.push(LayoutCell::new(
-                            AlacPoint::new(line_index as i32, cell.point.column.0 as i32),
+                            AlacPoint::new(alac_line, cell.point.column.0 as i32),
                             layout_cell,
                         ))
                     };
@@ -430,7 +431,13 @@ impl TerminalElement {
         }
     }
 
-    fn register_mouse_listeners(&mut self, mode: TermMode, hitbox: &Hitbox, window: &mut Window) {
+    fn register_mouse_listeners(
+        &mut self,
+        mode: TermMode,
+        hitbox: &Hitbox,
+        content_mode: &ContentMode,
+        window: &mut Window,
+    ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
         let terminal_view = self.terminal_view.clone();
@@ -511,21 +518,24 @@ impl TerminalElement {
                 },
             ),
         );
-        self.interactivity.on_scroll_wheel({
-            let terminal_view = self.terminal_view.downgrade();
-            move |e, window, cx| {
-                terminal_view
-                    .update(cx, |terminal_view, cx| {
-                        if !terminal_view.embedded
-                            || terminal_view.focus_handle(cx).is_focused(window)
-                        {
-                            terminal_view.scroll_wheel(e, cx);
-                            cx.notify();
-                        }
-                    })
-                    .ok();
-            }
-        });
+
+        if content_mode.is_scrollable() {
+            self.interactivity.on_scroll_wheel({
+                let terminal_view = self.terminal_view.downgrade();
+                move |e, window, cx| {
+                    terminal_view
+                        .update(cx, |terminal_view, cx| {
+                            if matches!(terminal_view.mode, TerminalMode::Standalone)
+                                || terminal_view.focus_handle.is_focused(window)
+                            {
+                                terminal_view.scroll_wheel(e, cx);
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                }
+            });
+        }
 
         // Mouse mode handlers:
         // All mouse modes need the extra click handlers
@@ -606,15 +616,31 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        if self.embedded {
-            let scrollable = {
-                let term = self.terminal.read(cx);
-                !term.scrolled_to_top() && !term.scrolled_to_bottom() && self.focused
-            };
-            if scrollable {
-                self.interactivity.occlude_mouse();
+        let height: Length = match self.terminal_view.read(cx).content_mode(window, cx) {
+            ContentMode::Inline {
+                displayed_lines,
+                total_lines: _,
+            } => {
+                let rem_size = window.rem_size();
+                let line_height = window.text_style().font_size.to_pixels(rem_size)
+                    * TerminalSettings::get_global(cx)
+                        .line_height
+                        .value()
+                        .to_pixels(rem_size)
+                        .0;
+                (displayed_lines * line_height).into()
             }
-        }
+            ContentMode::Scrollable => {
+                if let TerminalMode::Embedded { .. } = &self.mode {
+                    let term = self.terminal.read(cx);
+                    if !term.scrolled_to_top() && !term.scrolled_to_bottom() && self.focused {
+                        self.interactivity.occlude_mouse();
+                    }
+                }
+
+                relative(1.).into()
+            }
+        };
 
         let layout_id = self.interactivity.request_layout(
             global_id,
@@ -623,8 +649,7 @@ impl Element for TerminalElement {
             cx,
             |mut style, window, cx| {
                 style.size.width = relative(1.).into();
-                style.size.height = relative(1.).into();
-                // style.overflow = point(Overflow::Hidden, Overflow::Hidden);
+                style.size.height = height;
 
                 window.request_layout(style, None, cx)
             },
@@ -679,12 +704,13 @@ impl Element for TerminalElement {
 
                 let line_height = terminal_settings.line_height.value();
 
-                let font_size = if self.embedded {
-                    window.text_style().font_size.to_pixels(window.rem_size())
-                } else {
-                    terminal_settings
+                let font_size = match &self.mode {
+                    TerminalMode::Embedded { .. } => {
+                        window.text_style().font_size.to_pixels(window.rem_size())
+                    }
+                    TerminalMode::Standalone => terminal_settings
                         .font_size
-                        .map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx))
+                        .map_or(buffer_font_size, |size| theme::adjusted_font_size(size, cx)),
                 };
 
                 let theme = cx.theme().clone();
@@ -722,7 +748,7 @@ impl Element for TerminalElement {
                 let player_color = theme.players().local();
                 let match_color = theme.colors().search_match_background;
                 let gutter;
-                let dimensions = {
+                let (dimensions, line_height_px) = {
                     let rem_size = window.rem_size();
                     let font_pixels = text_style.font_size.to_pixels(rem_size);
                     // TODO: line_height should be an f32 not an AbsoluteLength.
@@ -748,7 +774,10 @@ impl Element for TerminalElement {
                     let mut origin = bounds.origin;
                     origin.x += gutter;
 
-                    TerminalBounds::new(line_height, cell_width, Bounds { origin, size })
+                    (
+                        TerminalBounds::new(line_height, cell_width, Bounds { origin, size }),
+                        line_height,
+                    )
                 };
 
                 let search_matches = self.terminal.read(cx).matches.clone();
@@ -816,16 +845,42 @@ impl Element for TerminalElement {
 
                 // then have that representation be converted to the appropriate highlight data structure
 
-                let (cells, rects) = TerminalElement::layout_grid(
-                    cells.iter().cloned(),
-                    &text_style,
-                    window.text_system(),
-                    last_hovered_word
-                        .as_ref()
-                        .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
-                    window,
-                    cx,
-                );
+                let content_mode = self.terminal_view.read(cx).content_mode(window, cx);
+                let (cells, rects) = match content_mode {
+                    ContentMode::Scrollable => TerminalElement::layout_grid(
+                        cells.iter().cloned(),
+                        0,
+                        &text_style,
+                        window.text_system(),
+                        last_hovered_word
+                            .as_ref()
+                            .map(|last_hovered_word| (link_style, &last_hovered_word.word_match)),
+                        window,
+                        cx,
+                    ),
+                    ContentMode::Inline { .. } => {
+                        let intersection = window.content_mask().bounds.intersect(&bounds);
+                        let start_row = (intersection.top() - bounds.top()) / line_height_px;
+                        let end_row = start_row + intersection.size.height / line_height_px;
+                        let line_range = (start_row as i32)..=(end_row as i32);
+
+                        TerminalElement::layout_grid(
+                            cells
+                                .iter()
+                                .skip_while(|i| &i.point.line < line_range.start())
+                                .take_while(|i| &i.point.line <= line_range.end())
+                                .cloned(),
+                            *line_range.start(),
+                            &text_style,
+                            window.text_system(),
+                            last_hovered_word.as_ref().map(|last_hovered_word| {
+                                (link_style, &last_hovered_word.word_match)
+                            }),
+                            window,
+                            cx,
+                        )
+                    }
+                };
 
                 // Layout cursor. Rectangle is used for IME, so we should lay it out even
                 // if we don't end up showing it.
@@ -921,6 +976,7 @@ impl Element for TerminalElement {
                     gutter,
                     block_below_cursor_element,
                     base_text_style: text_style,
+                    content_mode,
                 }
             },
         )
@@ -958,14 +1014,19 @@ impl Element for TerminalElement {
                 workspace: self.workspace.clone(),
             };
 
-            self.register_mouse_listeners(layout.mode, &layout.hitbox, window);
+            self.register_mouse_listeners(
+                layout.mode,
+                &layout.hitbox,
+                &layout.content_mode,
+                window,
+            );
             if window.modifiers().secondary()
                 && bounds.contains(&window.mouse_position())
                 && self.terminal_view.read(cx).hover.is_some()
             {
-                window.set_cursor_style(gpui::CursorStyle::PointingHand, Some(&layout.hitbox));
+                window.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
             } else {
-                window.set_cursor_style(gpui::CursorStyle::IBeam, Some(&layout.hitbox));
+                window.set_cursor_style(gpui::CursorStyle::IBeam, &layout.hitbox);
             }
 
             let original_cursor = layout.cursor.take();

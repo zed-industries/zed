@@ -71,20 +71,22 @@ pub enum Model {
     // DeepSeek
     DeepSeekR1,
     // Meta models
-    MetaLlama3_8BInstruct,
-    MetaLlama3_70BInstruct,
-    MetaLlama31_8BInstruct,
-    MetaLlama31_70BInstruct,
-    MetaLlama31_405BInstruct,
-    MetaLlama32_1BInstruct,
-    MetaLlama32_3BInstruct,
-    MetaLlama32_11BMultiModal,
-    MetaLlama32_90BMultiModal,
-    MetaLlama33_70BInstruct,
+    MetaLlama38BInstructV1,
+    MetaLlama370BInstructV1,
+    MetaLlama318BInstructV1_128k,
+    MetaLlama318BInstructV1,
+    MetaLlama3170BInstructV1_128k,
+    MetaLlama3170BInstructV1,
+    MetaLlama31405BInstructV1,
+    MetaLlama321BInstructV1,
+    MetaLlama323BInstructV1,
+    MetaLlama3211BInstructV1,
+    MetaLlama3290BInstructV1,
+    MetaLlama3370BInstructV1,
     #[allow(non_camel_case_types)]
-    MetaLlama4Scout_17BInstruct,
+    MetaLlama4Scout17BInstructV1,
     #[allow(non_camel_case_types)]
-    MetaLlama4Maverick_17BInstruct,
+    MetaLlama4Maverick17BInstructV1,
     // Mistral models
     MistralMistral7BInstructV0,
     MistralMixtral8x7BInstructV0,
@@ -130,6 +132,64 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
+            Model::ClaudeSonnet4 => "claude-4-sonnet",
+            Model::ClaudeSonnet4Thinking => "claude-4-sonnet-thinking",
+            Model::ClaudeOpus4 => "claude-4-opus",
+            Model::ClaudeOpus4Thinking => "claude-4-opus-thinking",
+            Model::Claude3_5SonnetV2 => "claude-3-5-sonnet-v2",
+            Model::Claude3_5Sonnet => "claude-3-5-sonnet",
+            Model::Claude3Opus => "claude-3-opus",
+            Model::Claude3Sonnet => "claude-3-sonnet",
+            Model::Claude3Haiku => "claude-3-haiku",
+            Model::Claude3_5Haiku => "claude-3-5-haiku",
+            Model::Claude3_7Sonnet => "claude-3-7-sonnet",
+            Model::Claude3_7SonnetThinking => "claude-3-7-sonnet-thinking",
+            Model::AmazonNovaLite => "amazon-nova-lite",
+            Model::AmazonNovaMicro => "amazon-nova-micro",
+            Model::AmazonNovaPro => "amazon-nova-pro",
+            Model::AmazonNovaPremier => "amazon-nova-premier",
+            Model::DeepSeekR1 => "deepseek-r1",
+            Model::AI21J2GrandeInstruct => "ai21-j2-grande-instruct",
+            Model::AI21J2JumboInstruct => "ai21-j2-jumbo-instruct",
+            Model::AI21J2Mid => "ai21-j2-mid",
+            Model::AI21J2MidV1 => "ai21-j2-mid-v1",
+            Model::AI21J2Ultra => "ai21-j2-ultra",
+            Model::AI21J2UltraV1_8k => "ai21-j2-ultra-v1-8k",
+            Model::AI21J2UltraV1 => "ai21-j2-ultra-v1",
+            Model::AI21JambaInstructV1 => "ai21-jamba-instruct-v1",
+            Model::AI21Jamba15LargeV1 => "ai21-jamba-1-5-large-v1",
+            Model::AI21Jamba15MiniV1 => "ai21-jamba-1-5-mini-v1",
+            Model::CohereCommandTextV14_4k => "cohere-command-text-v14-4k",
+            Model::CohereCommandRV1 => "cohere-command-r-v1",
+            Model::CohereCommandRPlusV1 => "cohere-command-r-plus-v1",
+            Model::CohereCommandLightTextV14_4k => "cohere-command-light-text-v14-4k",
+            Model::MetaLlama38BInstructV1 => "meta-llama3-8b-instruct-v1",
+            Model::MetaLlama370BInstructV1 => "meta-llama3-70b-instruct-v1",
+            Model::MetaLlama318BInstructV1_128k => "meta-llama3-1-8b-instruct-v1-128k",
+            Model::MetaLlama318BInstructV1 => "meta-llama3-1-8b-instruct-v1",
+            Model::MetaLlama3170BInstructV1_128k => "meta-llama3-1-70b-instruct-v1-128k",
+            Model::MetaLlama3170BInstructV1 => "meta-llama3-1-70b-instruct-v1",
+            Model::MetaLlama31405BInstructV1 => "meta-llama3-1-405b-instruct-v1",
+            Model::MetaLlama321BInstructV1 => "meta-llama3-2-1b-instruct-v1",
+            Model::MetaLlama323BInstructV1 => "meta-llama3-2-3b-instruct-v1",
+            Model::MetaLlama3211BInstructV1 => "meta-llama3-2-11b-instruct-v1",
+            Model::MetaLlama3290BInstructV1 => "meta-llama3-2-90b-instruct-v1",
+            Model::MetaLlama3370BInstructV1 => "meta-llama3-3-70b-instruct-v1",
+            Model::MetaLlama4Scout17BInstructV1 => "meta-llama4-scout-17b-instruct-v1",
+            Model::MetaLlama4Maverick17BInstructV1 => "meta-llama4-maverick-17b-instruct-v1",
+            Model::MistralMistral7BInstructV0 => "mistral-7b-instruct-v0",
+            Model::MistralMixtral8x7BInstructV0 => "mistral-mixtral-8x7b-instruct-v0",
+            Model::MistralMistralLarge2402V1 => "mistral-large-2402-v1",
+            Model::MistralMistralSmall2402V1 => "mistral-small-2402-v1",
+            Model::MistralPixtralLarge2502V1 => "mistral-pixtral-large-2502-v1",
+            Model::PalmyraWriterX4 => "palmyra-writer-x4",
+            Model::PalmyraWriterX5 => "palmyra-writer-x5",
+            Self::Custom { name, .. } => name,
+        }
+    }
+
+    pub fn request_id(&self) -> &str {
+        match self {
             Model::ClaudeSonnet4 | Model::ClaudeSonnet4Thinking => {
                 "anthropic.claude-sonnet-4-20250514-v1:0"
             }
@@ -164,18 +224,20 @@ impl Model {
             Model::CohereCommandRV1 => "cohere.command-r-v1:0",
             Model::CohereCommandRPlusV1 => "cohere.command-r-plus-v1:0",
             Model::CohereCommandLightTextV14_4k => "cohere.command-light-text-v14:7:4k",
-            Model::MetaLlama3_8BInstruct => "meta.llama3-8b-instruct-v1:0",
-            Model::MetaLlama3_70BInstruct => "meta.llama3-70b-instruct-v1:0",
-            Model::MetaLlama31_8BInstruct => "meta.llama3-1-8b-instruct-v1:0",
-            Model::MetaLlama31_70BInstruct => "meta.llama3-1-70b-instruct-v1:0",
-            Model::MetaLlama31_405BInstruct => "meta.llama3-1-405b-instruct-v1:0",
-            Model::MetaLlama32_11BMultiModal => "meta.llama3-2-11b-instruct-v1:0",
-            Model::MetaLlama32_90BMultiModal => "meta.llama3-2-90b-instruct-v1:0",
-            Model::MetaLlama32_1BInstruct => "meta.llama3-2-1b-instruct-v1:0",
-            Model::MetaLlama32_3BInstruct => "meta.llama3-2-3b-instruct-v1:0",
-            Model::MetaLlama33_70BInstruct => "meta.llama3-3-70b-instruct-v1:0",
-            Model::MetaLlama4Scout_17BInstruct => "meta.llama4-scout-17b-instruct-v1:0",
-            Model::MetaLlama4Maverick_17BInstruct => "meta.llama4-maverick-17b-instruct-v1:0",
+            Model::MetaLlama38BInstructV1 => "meta.llama3-8b-instruct-v1:0",
+            Model::MetaLlama370BInstructV1 => "meta.llama3-70b-instruct-v1:0",
+            Model::MetaLlama318BInstructV1_128k => "meta.llama3-1-8b-instruct-v1:0",
+            Model::MetaLlama318BInstructV1 => "meta.llama3-1-8b-instruct-v1:0",
+            Model::MetaLlama3170BInstructV1_128k => "meta.llama3-1-70b-instruct-v1:0",
+            Model::MetaLlama3170BInstructV1 => "meta.llama3-1-70b-instruct-v1:0",
+            Model::MetaLlama31405BInstructV1 => "meta.llama3-1-405b-instruct-v1:0",
+            Model::MetaLlama3211BInstructV1 => "meta.llama3-2-11b-instruct-v1:0",
+            Model::MetaLlama3290BInstructV1 => "meta.llama3-2-90b-instruct-v1:0",
+            Model::MetaLlama321BInstructV1 => "meta.llama3-2-1b-instruct-v1:0",
+            Model::MetaLlama323BInstructV1 => "meta.llama3-2-3b-instruct-v1:0",
+            Model::MetaLlama3370BInstructV1 => "meta.llama3-3-70b-instruct-v1:0",
+            Model::MetaLlama4Scout17BInstructV1 => "meta.llama4-scout-17b-instruct-v1:0",
+            Model::MetaLlama4Maverick17BInstructV1 => "meta.llama4-maverick-17b-instruct-v1:0",
             Model::MistralMistral7BInstructV0 => "mistral.mistral-7b-instruct-v0:2",
             Model::MistralMixtral8x7BInstructV0 => "mistral.mixtral-8x7b-instruct-v0:1",
             Model::MistralMistralLarge2402V1 => "mistral.mistral-large-2402-v1:0",
@@ -220,18 +282,20 @@ impl Model {
             Self::CohereCommandRV1 => "Cohere Command R V1",
             Self::CohereCommandRPlusV1 => "Cohere Command R Plus V1",
             Self::CohereCommandLightTextV14_4k => "Cohere Command Light Text V14 4K",
-            Self::MetaLlama3_8BInstruct => "Meta Llama 3 8B Instruct",
-            Self::MetaLlama3_70BInstruct => "Meta Llama 3 70B Instruct",
-            Self::MetaLlama31_8BInstruct => "Meta Llama 3.1 8B Instruct",
-            Self::MetaLlama31_70BInstruct => "Meta Llama 3.1 70B Instruct",
-            Self::MetaLlama31_405BInstruct => "Meta Llama 3.1 405B Instruct",
-            Self::MetaLlama32_11BMultiModal => "Meta Llama 3.2 11B Vision Instruct",
-            Self::MetaLlama32_90BMultiModal => "Meta Llama 3.2 90B Vision Instruct",
-            Self::MetaLlama32_1BInstruct => "Meta Llama 3.2 1B Instruct",
-            Self::MetaLlama32_3BInstruct => "Meta Llama 3.2 3B Instruct",
-            Self::MetaLlama33_70BInstruct => "Meta Llama 3.3 70B Instruct",
-            Self::MetaLlama4Scout_17BInstruct => "Meta Llama 4 Scout 17B Instruct",
-            Self::MetaLlama4Maverick_17BInstruct => "Meta Llama 4 Maverick 17B Instruct",
+            Self::MetaLlama38BInstructV1 => "Meta Llama 3 8B Instruct",
+            Self::MetaLlama370BInstructV1 => "Meta Llama 3 70B Instruct",
+            Self::MetaLlama318BInstructV1_128k => "Meta Llama 3.1 8B Instruct 128K",
+            Self::MetaLlama318BInstructV1 => "Meta Llama 3.1 8B Instruct",
+            Self::MetaLlama3170BInstructV1_128k => "Meta Llama 3.1 70B Instruct 128K",
+            Self::MetaLlama3170BInstructV1 => "Meta Llama 3.1 70B Instruct",
+            Self::MetaLlama31405BInstructV1 => "Meta Llama 3.1 405B Instruct",
+            Self::MetaLlama3211BInstructV1 => "Meta Llama 3.2 11B Instruct",
+            Self::MetaLlama3290BInstructV1 => "Meta Llama 3.2 90B Instruct",
+            Self::MetaLlama321BInstructV1 => "Meta Llama 3.2 1B Instruct",
+            Self::MetaLlama323BInstructV1 => "Meta Llama 3.2 3B Instruct",
+            Self::MetaLlama3370BInstructV1 => "Meta Llama 3.3 70B Instruct",
+            Self::MetaLlama4Scout17BInstructV1 => "Meta Llama 4 Scout 17B Instruct",
+            Self::MetaLlama4Maverick17BInstructV1 => "Meta Llama 4 Maverick 17B Instruct",
             Self::MistralMistral7BInstructV0 => "Mistral 7B Instruct V0",
             Self::MistralMixtral8x7BInstructV0 => "Mistral Mixtral 8x7B Instruct V0",
             Self::MistralMistralLarge2402V1 => "Mistral Large 2402 V1",
@@ -253,7 +317,9 @@ impl Model {
             | Self::Claude3_5Haiku
             | Self::Claude3_7Sonnet
             | Self::ClaudeSonnet4
-            | Self::ClaudeOpus4 => 200_000,
+            | Self::ClaudeOpus4
+            | Self::ClaudeSonnet4Thinking
+            | Self::ClaudeOpus4Thinking => 200_000,
             Self::AmazonNovaPremier => 1_000_000,
             Self::PalmyraWriterX5 => 1_000_000,
             Self::PalmyraWriterX4 => 128_000,
@@ -362,11 +428,11 @@ impl Model {
             anyhow::bail!("Unsupported Region {region}");
         };
 
-        let model_id = self.id();
+        let model_id = self.request_id();
 
         match (self, region_group) {
             // Custom models can't have CRI IDs
-            (Model::Custom { .. }, _) => Ok(self.id().into()),
+            (Model::Custom { .. }, _) => Ok(self.request_id().into()),
 
             // Models with US Gov only
             (Model::Claude3_5Sonnet, "us-gov") | (Model::Claude3Haiku, "us-gov") => {
@@ -390,16 +456,18 @@ impl Model {
                 | Model::Claude3Opus
                 | Model::Claude3Sonnet
                 | Model::DeepSeekR1
-                | Model::MetaLlama31_405BInstruct
-                | Model::MetaLlama31_70BInstruct
-                | Model::MetaLlama31_8BInstruct
-                | Model::MetaLlama32_11BMultiModal
-                | Model::MetaLlama32_1BInstruct
-                | Model::MetaLlama32_3BInstruct
-                | Model::MetaLlama32_90BMultiModal
-                | Model::MetaLlama33_70BInstruct
-                | Model::MetaLlama4Maverick_17BInstruct
-                | Model::MetaLlama4Scout_17BInstruct
+                | Model::MetaLlama31405BInstructV1
+                | Model::MetaLlama3170BInstructV1_128k
+                | Model::MetaLlama3170BInstructV1
+                | Model::MetaLlama318BInstructV1_128k
+                | Model::MetaLlama318BInstructV1
+                | Model::MetaLlama3211BInstructV1
+                | Model::MetaLlama321BInstructV1
+                | Model::MetaLlama323BInstructV1
+                | Model::MetaLlama3290BInstructV1
+                | Model::MetaLlama3370BInstructV1
+                | Model::MetaLlama4Maverick17BInstructV1
+                | Model::MetaLlama4Scout17BInstructV1
                 | Model::MistralPixtralLarge2502V1
                 | Model::PalmyraWriterX4
                 | Model::PalmyraWriterX5,
@@ -413,8 +481,8 @@ impl Model {
                 | Model::Claude3_7SonnetThinking
                 | Model::Claude3Haiku
                 | Model::Claude3Sonnet
-                | Model::MetaLlama32_1BInstruct
-                | Model::MetaLlama32_3BInstruct
+                | Model::MetaLlama321BInstructV1
+                | Model::MetaLlama323BInstructV1
                 | Model::MistralPixtralLarge2502V1,
                 "eu",
             ) => Ok(format!("{}.{}", region_group, model_id)),
@@ -429,7 +497,7 @@ impl Model {
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
             // Any other combination is not supported
-            _ => Ok(self.id().into()),
+            _ => Ok(self.request_id().into()),
         }
     }
 }
@@ -506,15 +574,15 @@ mod tests {
     fn test_meta_models_inference_ids() -> anyhow::Result<()> {
         // Test Meta models
         assert_eq!(
-            Model::MetaLlama3_70BInstruct.cross_region_inference_id("us-east-1")?,
+            Model::MetaLlama370BInstructV1.cross_region_inference_id("us-east-1")?,
             "meta.llama3-70b-instruct-v1:0"
         );
         assert_eq!(
-            Model::MetaLlama31_70BInstruct.cross_region_inference_id("us-east-1")?,
+            Model::MetaLlama3170BInstructV1.cross_region_inference_id("us-east-1")?,
             "us.meta.llama3-1-70b-instruct-v1:0"
         );
         assert_eq!(
-            Model::MetaLlama32_1BInstruct.cross_region_inference_id("eu-west-1")?,
+            Model::MetaLlama321BInstructV1.cross_region_inference_id("eu-west-1")?,
             "eu.meta.llama3-2-1b-instruct-v1:0"
         );
         Ok(())
@@ -583,5 +651,40 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_friendly_id_vs_request_id() {
+        // Test that id() returns friendly identifiers
+        assert_eq!(Model::Claude3_5SonnetV2.id(), "claude-3-5-sonnet-v2");
+        assert_eq!(Model::AmazonNovaLite.id(), "amazon-nova-lite");
+        assert_eq!(Model::DeepSeekR1.id(), "deepseek-r1");
+        assert_eq!(
+            Model::MetaLlama38BInstructV1.id(),
+            "meta-llama3-8b-instruct-v1"
+        );
+
+        // Test that request_id() returns actual backend model IDs
+        assert_eq!(
+            Model::Claude3_5SonnetV2.request_id(),
+            "anthropic.claude-3-5-sonnet-20241022-v2:0"
+        );
+        assert_eq!(Model::AmazonNovaLite.request_id(), "amazon.nova-lite-v1:0");
+        assert_eq!(Model::DeepSeekR1.request_id(), "deepseek.r1-v1:0");
+        assert_eq!(
+            Model::MetaLlama38BInstructV1.request_id(),
+            "meta.llama3-8b-instruct-v1:0"
+        );
+
+        // Test thinking models have different friendly IDs but same request IDs
+        assert_eq!(Model::ClaudeSonnet4.id(), "claude-4-sonnet");
+        assert_eq!(
+            Model::ClaudeSonnet4Thinking.id(),
+            "claude-4-sonnet-thinking"
+        );
+        assert_eq!(
+            Model::ClaudeSonnet4.request_id(),
+            Model::ClaudeSonnet4Thinking.request_id()
+        );
     }
 }

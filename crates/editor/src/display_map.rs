@@ -639,6 +639,7 @@ pub struct HighlightedChunk<'a> {
     pub text: &'a str,
     pub style: Option<HighlightStyle>,
     pub is_tab: bool,
+    pub is_inlay: bool,
     pub replacement: Option<ChunkReplacement>,
 }
 
@@ -652,6 +653,7 @@ impl<'a> HighlightedChunk<'a> {
         let style = self.style;
         let is_tab = self.is_tab;
         let renderer = self.replacement;
+        let is_inlay = self.is_inlay;
         iter::from_fn(move || {
             let mut prefix_len = 0;
             while let Some(&ch) = chars.peek() {
@@ -667,6 +669,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style,
                         is_tab,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -693,6 +696,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: Some(ChunkReplacement::Str(replacement.into())),
                     });
                 } else {
@@ -716,6 +720,7 @@ impl<'a> HighlightedChunk<'a> {
                         text: prefix,
                         style: Some(invisible_style),
                         is_tab: false,
+                        is_inlay,
                         replacement: renderer.clone(),
                     });
                 }
@@ -728,6 +733,7 @@ impl<'a> HighlightedChunk<'a> {
                     text: remainder,
                     style,
                     is_tab,
+                    is_inlay,
                     replacement: renderer.clone(),
                 })
             } else {
@@ -961,7 +967,10 @@ impl DisplaySnapshot {
                 if chunk.is_unnecessary {
                     diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
                 }
-                if chunk.underline && editor_style.show_underlines {
+                if chunk.underline
+                    && editor_style.show_underlines
+                    && !(chunk.is_unnecessary && severity > lsp::DiagnosticSeverity::WARNING)
+                {
                     let diagnostic_color = super::diagnostic_style(severity, &editor_style.status);
                     diagnostic_highlight.underline = Some(UnderlineStyle {
                         color: Some(diagnostic_color),
@@ -981,6 +990,7 @@ impl DisplaySnapshot {
                 text: chunk.text,
                 style: highlight_style,
                 is_tab: chunk.is_tab,
+                is_inlay: chunk.is_inlay,
                 replacement: chunk.renderer.map(ChunkReplacement::Renderer),
             }
             .highlight_invisibles(editor_style)
@@ -2524,7 +2534,9 @@ pub mod tests {
             cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(5), &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
-                ("oute\nr".to_string(), Some(Hsla::blue())),
+                ("oute".to_string(), Some(Hsla::blue())),
+                ("\n".to_string(), None),
+                ("r".to_string(), Some(Hsla::blue())),
                 ("() \n{}\n\n".to_string(), None),
             ]
         );
@@ -2547,8 +2559,11 @@ pub mod tests {
             [
                 ("out".to_string(), Some(Hsla::blue())),
                 ("⋯\n".to_string(), None),
-                ("  \nfn ".to_string(), Some(Hsla::red())),
-                ("i\n".to_string(), Some(Hsla::blue()))
+                ("  ".to_string(), Some(Hsla::red())),
+                ("\n".to_string(), None),
+                ("fn ".to_string(), Some(Hsla::red())),
+                ("i".to_string(), Some(Hsla::blue())),
+                ("\n".to_string(), None)
             ]
         );
     }

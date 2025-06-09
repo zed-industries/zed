@@ -1317,6 +1317,7 @@ fn assert_layers_for_range(
     }
 }
 
+#[track_caller]
 fn assert_capture_ranges(
     syntax_map: &SyntaxMap,
     buffer: &BufferSnapshot,

@@ -5,8 +5,17 @@ Currently, Zed supports `.rules` files at the directory's root and the Rules Lib
 
 ## `.rules` files
 
-Zed supports including `.rules` files at the top level of worktrees, and act as project-level instructions you'd like to have included in all of your interactions with the Agent Panel.
-Other names for this file are also supported—the first file which matches in this list will be used: `.rules`, `.cursorrules`, `.windsurfrules`, `.clinerules`, `.github/copilot-instructions.md`, or `CLAUDE.md`.
+Zed supports including `.rules` files at the top level of worktrees, and act as project-level instructions that are included in all of your interactions with the Agent Panel.
+Other names for this file are also supported for compatibility with other agents, but note that the first file which matches in this list will be used:
+
+- `.rules`
+- `.cursorrules`
+- `.windsurfrules`
+- `.clinerules`
+- `.github/copilot-instructions.md`
+- `AGENT.md`
+- `AGENTS.md`
+- `CLAUDE.md`
 
 ## Rules Library {#rules-library}
 

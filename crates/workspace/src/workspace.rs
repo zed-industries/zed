@@ -15,7 +15,7 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-pub use toast_layer::{RunAction, ToastAction, ToastLayer, ToastView};
+pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
 use call::{ActiveCall, call_settings::CallSettings};
@@ -899,9 +899,10 @@ pub enum OpenVisible {
 type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
+        DirectoryLister,
         &mut Window,
         &mut Context<Workspace>,
-    ) -> oneshot::Receiver<Option<ProjectPath>>,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
 type PromptForOpenPath = Box<
@@ -1874,25 +1875,25 @@ impl Workspace {
             let (tx, rx) = oneshot::channel();
             let abs_path = cx.prompt_for_paths(path_prompt_options);
 
-            cx.spawn_in(window, async move |this, cx| {
+            cx.spawn_in(window, async move |workspace, cx| {
                 let Ok(result) = abs_path.await else {
                     return Ok(());
                 };
 
                 match result {
                     Ok(result) => {
-                        tx.send(result).log_err();
+                        tx.send(result).ok();
                     }
                     Err(err) => {
-                        let rx = this.update_in(cx, |this, window, cx| {
-                            this.show_portal_error(err.to_string(), cx);
-                            let prompt = this.on_prompt_for_open_path.take().unwrap();
-                            let rx = prompt(this, lister, window, cx);
-                            this.on_prompt_for_open_path = Some(prompt);
+                        let rx = workspace.update_in(cx, |workspace, window, cx| {
+                            workspace.show_portal_error(err.to_string(), cx);
+                            let prompt = workspace.on_prompt_for_open_path.take().unwrap();
+                            let rx = prompt(workspace, lister, window, cx);
+                            workspace.on_prompt_for_open_path = Some(prompt);
                             rx
                         })?;
                         if let Ok(path) = rx.await {
-                            tx.send(path).log_err();
+                            tx.send(path).ok();
                         }
                     }
                 };
@@ -1906,77 +1907,58 @@ impl Workspace {
 
     pub fn prompt_for_new_path(
         &mut self,
+        lister: DirectoryLister,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> oneshot::Receiver<Option<ProjectPath>> {
-        if (self.project.read(cx).is_via_collab() || self.project.read(cx).is_via_ssh())
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        if self.project.read(cx).is_via_collab()
+            || self.project.read(cx).is_via_ssh()
             || !WorkspaceSettings::get_global(cx).use_system_path_prompts
         {
             let prompt = self.on_prompt_for_new_path.take().unwrap();
-            let rx = prompt(self, window, cx);
+            let rx = prompt(self, lister, window, cx);
             self.on_prompt_for_new_path = Some(prompt);
             return rx;
         }
 
         let (tx, rx) = oneshot::channel();
-        cx.spawn_in(window, async move |this, cx| {
-            let abs_path = this.update(cx, |this, cx| {
-                let mut relative_to = this
+        cx.spawn_in(window, async move |workspace, cx| {
+            let abs_path = workspace.update(cx, |workspace, cx| {
+                let relative_to = workspace
                     .most_recent_active_path(cx)
-                    .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-                if relative_to.is_none() {
-                    let project = this.project.read(cx);
-                    relative_to = project
-                        .visible_worktrees(cx)
-                        .filter_map(|worktree| {
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                    .or_else(|| {
+                        let project = workspace.project.read(cx);
+                        project.visible_worktrees(cx).find_map(|worktree| {
                             Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
                         })
-                        .next()
-                };
-
-                cx.prompt_for_new_path(&relative_to.unwrap_or_else(|| PathBuf::from("")))
+                    })
+                    .or_else(std::env::home_dir)
+                    .unwrap_or_else(|| PathBuf::from(""));
+                cx.prompt_for_new_path(&relative_to)
             })?;
             let abs_path = match abs_path.await? {
                 Ok(path) => path,
                 Err(err) => {
-                    let rx = this.update_in(cx, |this, window, cx| {
-                        this.show_portal_error(err.to_string(), cx);
+                    let rx = workspace.update_in(cx, |workspace, window, cx| {
+                        workspace.show_portal_error(err.to_string(), cx);
 
-                        let prompt = this.on_prompt_for_new_path.take().unwrap();
-                        let rx = prompt(this, window, cx);
-                        this.on_prompt_for_new_path = Some(prompt);
+                        let prompt = workspace.on_prompt_for_new_path.take().unwrap();
+                        let rx = prompt(workspace, lister, window, cx);
+                        workspace.on_prompt_for_new_path = Some(prompt);
                         rx
                     })?;
                     if let Ok(path) = rx.await {
-                        tx.send(path).log_err();
+                        tx.send(path).ok();
                     }
                     return anyhow::Ok(());
                 }
             };
 
-            let project_path = abs_path.and_then(|abs_path| {
-                this.update(cx, |this, cx| {
-                    this.project.update(cx, |project, cx| {
-                        project.find_or_create_worktree(abs_path, true, cx)
-                    })
-                })
-                .ok()
-            });
-
-            if let Some(project_path) = project_path {
-                let (worktree, path) = project_path.await?;
-                let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
-                tx.send(Some(ProjectPath {
-                    worktree_id,
-                    path: path.into(),
-                }))
-                .ok();
-            } else {
-                tx.send(None).ok();
-            }
+            tx.send(abs_path.map(|path| vec![path])).ok();
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach();
 
         rx
     }
@@ -2419,7 +2401,7 @@ impl Workspace {
                                 })
                             }
                         })
-                        .log_err()?;
+                        .ok()?;
                         None
                     } else {
                         Some(
@@ -2432,7 +2414,7 @@ impl Workspace {
                                     cx,
                                 )
                             })
-                            .log_err()?
+                            .ok()?
                             .await,
                         )
                     }
@@ -3129,7 +3111,7 @@ impl Workspace {
         window.spawn(cx, async move |cx| {
             let (project_entry_id, build_item) = task.await?;
             let result = pane.update_in(cx, |pane, window, cx| {
-                let result = pane.open_item(
+                pane.open_item(
                     project_entry_id,
                     project_path,
                     focus_item,
@@ -3139,9 +3121,7 @@ impl Workspace {
                     window,
                     cx,
                     build_item,
-                );
-
-                result
+                )
             });
             result
         })
@@ -3838,7 +3818,7 @@ impl Workspace {
         };
 
         let new_pane = self.add_pane(window, cx);
-        move_item(&from, &new_pane, item_id_to_move, 0, window, cx);
+        move_item(&from, &new_pane, item_id_to_move, 0, true, window, cx);
         self.center
             .split(&pane_to_split, &new_pane, split_direction)
             .unwrap();
@@ -6258,7 +6238,14 @@ fn resize_bottom_dock(
     let size =
         new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
     workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        bottom_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Bottom)
+        {
+            bottom_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            bottom_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6268,9 +6255,24 @@ fn resize_right_dock(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    let mut size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    workspace.left_dock.read_with(cx, |left_dock, cx| {
+        let left_dock_size = left_dock
+            .active_panel_size(window, cx)
+            .unwrap_or(Pixels(0.0));
+        if left_dock_size + size > workspace.bounds.right() {
+            size = workspace.bounds.right() - left_dock_size
+        }
+    });
     workspace.right_dock.update(cx, |right_dock, cx| {
-        right_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Right)
+        {
+            right_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            right_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -6283,7 +6285,14 @@ fn resize_left_dock(
     let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
 
     workspace.left_dock.update(cx, |left_dock, cx| {
-        left_dock.resize_active_panel(Some(size), window, cx);
+        if WorkspaceSettings::get_global(cx)
+            .resize_all_panels_in_dock
+            .contains(&DockPosition::Left)
+        {
+            left_dock.resize_all_panels(Some(size), window, cx);
+        } else {
+            left_dock.resize_active_panel(Some(size), window, cx);
+        }
     });
 }
 
@@ -7410,7 +7419,7 @@ pub fn client_side_decorations(
                                     CursorStyle::ResizeUpRightDownLeft
                                 }
                             },
-                            Some(&hitbox),
+                            &hitbox,
                         );
                     },
                 )
@@ -7533,6 +7542,7 @@ pub fn move_item(
     destination: &Entity<Pane>,
     item_id_to_move: EntityId,
     destination_index: usize,
+    activate: bool,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -7556,8 +7566,18 @@ pub fn move_item(
 
     // This automatically removes duplicate items in the pane
     destination.update(cx, |destination, cx| {
-        destination.add_item(item_handle, true, true, Some(destination_index), window, cx);
-        window.focus(&destination.focus_handle(cx))
+        destination.add_item_inner(
+            item_handle,
+            activate,
+            activate,
+            activate,
+            Some(destination_index),
+            window,
+            cx,
+        );
+        if activate {
+            window.focus(&destination.focus_handle(cx))
+        }
     });
 }
 
@@ -7647,6 +7667,33 @@ pub fn ssh_workspace_position_from_db(
             centered_layout,
         })
     })
+}
+
+pub fn with_active_or_new_workspace(
+    cx: &mut App,
+    f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + Send + 'static,
+) {
+    match cx.active_window().and_then(|w| w.downcast::<Workspace>()) {
+        Some(workspace) => {
+            cx.defer(move |cx| {
+                workspace
+                    .update(cx, |workspace, window, cx| f(workspace, window, cx))
+                    .log_err();
+            });
+        }
+        None => {
+            let app_state = AppState::global(cx);
+            if let Some(app_state) = app_state.upgrade() {
+                open_new(
+                    OpenOptions::default(),
+                    app_state,
+                    cx,
+                    move |workspace, window, cx| f(workspace, window, cx),
+                )
+                .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

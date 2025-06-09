@@ -1012,7 +1012,7 @@ impl InlineAssistant {
                         self.update_editor_highlights(&editor, cx);
                     }
                 } else {
-                    entry.get().highlight_updates.send(()).ok();
+                    entry.get_mut().highlight_updates.send(()).ok();
                 }
             }
 
@@ -1332,7 +1332,7 @@ impl InlineAssistant {
                 editor.clear_gutter_highlights::<GutterPendingRange>(cx);
             } else {
                 editor.highlight_gutter::<GutterPendingRange>(
-                    &gutter_pending_ranges,
+                    gutter_pending_ranges,
                     |cx| cx.theme().status().info_background,
                     cx,
                 )
@@ -1343,7 +1343,7 @@ impl InlineAssistant {
                 editor.clear_gutter_highlights::<GutterTransformedRange>(cx);
             } else {
                 editor.highlight_gutter::<GutterTransformedRange>(
-                    &gutter_transformed_ranges,
+                    gutter_transformed_ranges,
                     |cx| cx.theme().status().info,
                     cx,
                 )
@@ -1520,7 +1520,7 @@ impl InlineAssistant {
 struct EditorInlineAssists {
     assist_ids: Vec<InlineAssistId>,
     scroll_lock: Option<InlineAssistScrollLock>,
-    highlight_updates: async_watch::Sender<()>,
+    highlight_updates: watch::Sender<()>,
     _update_highlights: Task<Result<()>>,
     _subscriptions: Vec<gpui::Subscription>,
 }
@@ -1532,7 +1532,7 @@ struct InlineAssistScrollLock {
 
 impl EditorInlineAssists {
     fn new(editor: &Entity<Editor>, window: &mut Window, cx: &mut App) -> Self {
-        let (highlight_updates_tx, mut highlight_updates_rx) = async_watch::channel(());
+        let (highlight_updates_tx, mut highlight_updates_rx) = watch::channel(());
         Self {
             assist_ids: Vec::new(),
             scroll_lock: None,
@@ -1690,7 +1690,7 @@ impl InlineAssist {
                         if let Some(editor) = editor.upgrade() {
                             InlineAssistant::update_global(cx, |this, cx| {
                                 if let Some(editor_assists) =
-                                    this.assists_by_editor.get(&editor.downgrade())
+                                    this.assists_by_editor.get_mut(&editor.downgrade())
                                 {
                                     editor_assists.highlight_updates.send(()).ok();
                                 }

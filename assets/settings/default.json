@@ -73,9 +73,6 @@
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
   "active_pane_modifiers": {
-    // The factor to grow the active pane by. Defaults to 1.0
-    // which gives the same size as all other panes.
-    "magnification": 1.0,
     // Inset border size of the active pane, in pixels.
     "border_size": 0.0,
     // Opacity of the inactive panes. 0 means transparent, 1 means opaque.
@@ -104,9 +101,12 @@
     // The second option is decimal.
     "unit": "binary"
   },
-  // The key to use for adding multiple cursors
-  // Currently "alt" or "cmd_or_ctrl"  (also aliased as
-  // "cmd" and "ctrl") are supported.
+  // Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
+  //
+  // 1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+  //    "alt"
+  // 2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+  //    "cmd_or_ctrl" (alias: "cmd", "ctrl")
   "multi_cursor_modifier": "alt",
   // Whether to enable vim modes and key bindings.
   "vim_mode": false,
@@ -217,6 +217,8 @@
   "show_signature_help_after_edits": false,
   // Whether to show code action button at start of buffer line.
   "inline_code_actions": true,
+  // Whether to allow drag and drop text selection in buffer.
+  "drag_and_drop_selection": true,
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
@@ -536,6 +538,9 @@
       "function": false
     }
   },
+  // Whether to resize all the panels in a dock when resizing the dock.
+  // Can be a combination of "left", "right" and "bottom".
+  "resize_all_panels_in_dock": ["left"],
   "project_panel": {
     // Whether to show the project panel button in the status bar
     "button": true,
@@ -599,7 +604,9 @@
       // 2. Never show indent guides:
       //    "never"
       "show": "always"
-    }
+    },
+    // Whether to hide the root entry when only one folder is open in the window.
+    "hide_root": false
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
@@ -771,7 +778,6 @@
         "tools": {
           "copy_path": true,
           "create_directory": true,
-          "create_file": true,
           "delete_path": true,
           "diagnostics": true,
           "edit_file": true,
@@ -1034,6 +1040,14 @@
     "button": true,
     // Whether to show warnings or not by default.
     "include_warnings": true,
+    // Settings for using LSP pull diagnostics mechanism in Zed.
+    "lsp_pull_diagnostics": {
+      // Whether to pull for diagnostics or not.
+      "enabled": true,
+      // Minimum time to wait before pulling diagnostics from the language server(s).
+      // 0 turns the debounce off.
+      "debounce_ms": 50
+    },
     // Settings for inline diagnostics
     "inline": {
       // Whether to show diagnostics inline or not
@@ -1457,7 +1471,9 @@
       "language_servers": ["erlang-ls", "!elp", "..."]
     },
     "Git Commit": {
-      "allow_rewrap": "anywhere"
+      "allow_rewrap": "anywhere",
+      "soft_wrap": "editor_width",
+      "preferred_line_length": 72
     },
     "Go": {
       "code_actions_on_format": {
@@ -1500,11 +1516,11 @@
       }
     },
     "LaTeX": {
-      "format_on_save": "on",
       "formatter": "language_server",
       "language_servers": ["texlab", "..."],
       "prettier": {
-        "allowed": false
+        "allowed": true,
+        "plugins": ["prettier-plugin-latex"]
       }
     },
     "Markdown": {
@@ -1528,17 +1544,11 @@
       "allow_rewrap": "anywhere"
     },
     "Ruby": {
-      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "..."]
+      "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
     },
     "SCSS": {
       "prettier": {
         "allowed": true
-      }
-    },
-    "SQL": {
-      "prettier": {
-        "allowed": true,
-        "plugins": ["prettier-plugin-sql"]
       }
     },
     "Starlark": {
