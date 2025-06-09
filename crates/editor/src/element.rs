@@ -641,6 +641,7 @@ impl EditorElement {
             if point_for_position.intersects_selection(&selection) {
                 editor.selection_drag_state = SelectionDragState::ReadyToDrag {
                     selection: newest_anchor.clone(),
+                    click_position: event.position,
                 };
                 cx.stop_propagation();
                 return;
@@ -832,9 +833,44 @@ impl EditorElement {
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
         let point_for_position = position_map.point_for_position(event.position);
 
-        let is_cut = !event.modifiers.control;
-        if editor.drop_selection(Some(point_for_position), is_cut, window, cx) {
-            return;
+        match editor.selection_drag_state {
+            SelectionDragState::ReadyToDrag {
+                selection: _,
+                ref click_position,
+            } => {
+                if event.position == *click_position {
+                    editor.select(
+                        SelectPhase::Begin {
+                            position: point_for_position.previous_valid,
+                            add: false,
+                            click_count: 1, // ready to drag state only occurs on click count 1
+                        },
+                        window,
+                        cx,
+                    );
+                    editor.selection_drag_state = SelectionDragState::None;
+                    cx.stop_propagation();
+                    return;
+                }
+            }
+            SelectionDragState::Dragging { ref selection, .. } => {
+                let snapshot = editor.snapshot(window, cx);
+                let selection_display = selection.map(|anchor| anchor.to_display_point(&snapshot));
+                if !point_for_position.intersects_selection(&selection_display) {
+                    let is_cut = !event.modifiers.control;
+                    editor.move_selection_on_drop(
+                        &selection.clone(),
+                        point_for_position.previous_valid,
+                        is_cut,
+                        window,
+                        cx,
+                    );
+                    editor.selection_drag_state = SelectionDragState::None;
+                    cx.stop_propagation();
+                    return;
+                }
+            }
+            _ => {}
         }
 
         if end_selection {
@@ -951,7 +987,7 @@ impl EditorElement {
                     drop_cursor.start = drop_anchor;
                     drop_cursor.end = drop_anchor;
                 }
-                SelectionDragState::ReadyToDrag { ref selection } => {
+                SelectionDragState::ReadyToDrag { ref selection, .. } => {
                     let drop_cursor = Selection {
                         id: post_inc(&mut editor.selections.next_selection_id),
                         start: drop_anchor,
