@@ -1216,6 +1216,16 @@ or
 
 `boolean` values
 
+### Drag And Drop Selection
+
+- Description: Whether to allow drag and drop text selection in buffer.
+- Setting: `drag_and_drop_selection`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Editor Toolbar
 
 - Description: Whether or not to show various elements in the editor toolbar.
