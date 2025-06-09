@@ -35,10 +35,10 @@ If you need to download the MCP server from an external source—like GitHub Rel
 
 ## Available Extensions
 
-Check out all the MCP servers that have already been exposed as Zed extensions [directly through Zed's site](https://zed.dev/extensions?filter=context-servers).
+Check out all the MCP servers that have already been exposed as Zed extensions [on Zed's site](https://zed.dev/extensions?filter=context-servers).
 
 We recommend taking a look at their repositories as a way to understand how they are generally created and structured.
 
 ## Testing
 
-To test your new MCP server extension out, you can [install it as a dev extension](./developing-extensions.md#developing-an-extension-locally).
+To test your new MCP server extension, you can [install it as a dev extension](./developing-extensions.md#developing-an-extension-locally).
