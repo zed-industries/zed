@@ -1788,12 +1788,31 @@ impl ActiveThread {
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let message_id = self.messages[ix];
-        let Some(message) = self.thread.read(cx).message(message_id) else {
+        let workspace = self.workspace.clone();
+        let thread = self.thread.read(cx);
+
+        let is_first_message = ix == 0;
+        let is_last_message = ix == self.messages.len() - 1;
+
+        let Some(message) = thread.message(message_id) else {
             return Empty.into_any();
         };
 
+        let is_generating = thread.is_generating();
+        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
+
+        let loading_dots = (is_generating && is_last_message).then(|| {
+            h_flex()
+                .h_8()
+                .my_3()
+                .mx_5()
+                .when(is_generating_stale || message.is_hidden, |this| {
+                    this.child(AnimatedLabel::new("").size(LabelSize::Small))
+                })
+        });
+
         if message.is_hidden {
-            return Empty.into_any();
+            return div().children(loading_dots).into_any();
         }
 
         let message_creases = message.creases.clone();
@@ -1801,9 +1820,6 @@ impl ActiveThread {
         let Some(rendered_message) = self.rendered_messages_by_id.get(&message_id) else {
             return Empty.into_any();
         };
-
-        let workspace = self.workspace.clone();
-        let thread = self.thread.read(cx);
 
         // Get all the data we need from thread before we start using it in closures
         let checkpoint = thread.checkpoint_for_message(message_id);
@@ -1815,14 +1831,6 @@ impl ActiveThread {
 
         let tool_uses = thread.tool_uses_for_message(message_id, cx);
         let has_tool_uses = !tool_uses.is_empty();
-        let is_generating = thread.is_generating();
-        let is_generating_stale = thread.is_generation_stale().unwrap_or(false);
-
-        let is_first_message = ix == 0;
-        let is_last_message = ix == self.messages.len() - 1;
-
-        let loading_dots = (is_generating_stale && is_last_message)
-            .then(|| AnimatedLabel::new("").size(LabelSize::Small));
 
         let editing_message_state = self
             .editing_message
@@ -2238,17 +2246,7 @@ impl ActiveThread {
                 parent.child(self.render_rules_item(cx))
             })
             .child(styled_message)
-            .when(is_generating && is_last_message, |this| {
-                this.child(
-                    h_flex()
-                        .h_8()
-                        .mt_2()
-                        .mb_4()
-                        .ml_4()
-                        .py_1p5()
-                        .when_some(loading_dots, |this, loading_dots| this.child(loading_dots)),
-                )
-            })
+            .children(loading_dots)
             .when(show_feedback, move |parent| {
                 parent.child(feedback_items).when_some(
                     self.open_feedback_editors.get(&message_id),
