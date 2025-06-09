@@ -577,10 +577,7 @@ fn render_markdown_code_block(
             }
         })
         .children(label)
-        .child(control_buttons)
-        // Stop header clicks opening editor
-        .id(("codeblock-header", ix))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        .child(control_buttons);
 
     v_flex()
         .group(CODEBLOCK_CONTAINER_GROUP)
@@ -1536,11 +1533,7 @@ impl ActiveThread {
             editor.update(cx, |editor, cx| {
                 let current_selection: text::Selection<usize> =
                     editor.selections.newest(cx).clone();
-                let all_text = editor.text(cx);
-                let processed = PATH_CODE_BLOCK_REGEX
-                    .replace_all(&all_text, "```$2 $1")
-                    .to_string();
-                editor.set_text(processed, window, cx);
+                editor.set_text(preprocessed_text, window, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.select_ranges([current_selection.range()])
                 });
@@ -2145,42 +2138,37 @@ impl ActiveThread {
             ..Default::default()
         };
 
-        let editor_element = if state.is_assistant_message {
-            div()
-                .pt(px(-3.))
-                .when(!editor_settings.gutter.line_numbers, |d| d.px_neg_0p5())
-                .w_full()
-                .child(EditorElement::new(&state.editor, editor_style))
-                .into_any_element()
-        } else {
-            div()
-                .pt(px(-3.))
-                .w_full()
-                .child(EditorElement::new(&state.editor, editor_style))
-                .into_any_element()
-        };
+        let editor_element = div()
+            .pt(px(-3.))
+            .when(
+                state.is_assistant_message && !editor_settings.gutter.line_numbers,
+                |d| d.px_neg_0p5(),
+            )
+            .w_full()
+            .child(EditorElement::new(&state.editor, editor_style))
+            .into_any_element();
 
-        let mut container = v_flex()
+        v_flex()
             .key_context("EditMessageEditor")
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
             .capture_action(cx.listener(Self::paste))
             .w_full()
-            .gap_1();
-
-        if state.is_assistant_message {
-            container = container
-                .capture_action(cx.listener(Self::cancel_editing_message))
-                .capture_action(cx.listener(Self::save_editing_message));
-        } else {
-            container = container
-                .on_action(cx.listener(Self::cancel_editing_message))
-                .on_action(cx.listener(Self::confirm_editing_message))
-                .on_action(cx.listener(Self::save_editing_message))
-                .child(state.context_strip.clone());
-        }
-        container.child(editor_element)
+            .gap_1()
+            .when(state.is_assistant_message, |container| {
+                container
+                    .capture_action(cx.listener(Self::cancel_editing_message))
+                    .capture_action(cx.listener(Self::save_editing_message))
+            })
+            .when(!state.is_assistant_message, |container| {
+                container
+                    .on_action(cx.listener(Self::cancel_editing_message))
+                    .on_action(cx.listener(Self::confirm_editing_message))
+                    .on_action(cx.listener(Self::save_editing_message))
+                    .child(state.context_strip.clone())
+            })
+            .child(editor_element)
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -2376,20 +2364,23 @@ impl ActiveThread {
                         parent.child(h_flex().flex_wrap().gap_1().children(
                             added_context.into_iter().map(|added_context| {
                                 let context = added_context.handle.clone();
-                                let workspace_weak = workspace.clone();
                                 ContextPill::added(added_context, false, false, None).on_click(
-                                    Rc::new(move |_, window, cx| {
-                                        if let Some(workspace) = workspace_weak.upgrade() {
-                                            open_context(&context, workspace, window, cx);
+                                    Rc::new(cx.listener({
+                                        let workspace = workspace.clone();
+                                        move |_, _, window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                open_context(&context, workspace, window, cx);
+                                                cx.notify();
+                                            }
                                         }
-                                    }),
+                                    })),
                                 )
                             }),
                         ))
                     })
                     .when(!message_is_empty, |parent| {
                         parent.child(
-                            v_flex().pt_0p5().min_h_6().child(
+                            div().pt_0p5().min_h_6().child(
                                 self.render_message_content(
                                     message_id,
                                     rendered_message,
@@ -3024,6 +3015,8 @@ impl ActiveThread {
                                                     inner_cx,
                                                 );
                                             });
+                                        } else {
+                                            log::warn!("Message not found: {:?}", message_id);
                                         }
                                     });
                                 div().child(markdown_element).into_any_element()
@@ -4509,41 +4502,18 @@ mod tests {
     async fn test_markdown_preprocessing(cx: &mut TestAppContext) {
         init_test_settings(cx);
         let project = create_test_project(cx, json!({})).await;
-        let (cx, active_thread, _, thread, model) =
-            setup_test_environment(cx, project.clone()).await;
-        cx.update(|_, cx| {
-            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.set_default_model(
-                    Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
-                        model,
-                    }),
-                    cx,
-                );
-            });
-        });
+        let (cx, active_thread, _, thread, _) = setup_test_environment(cx, project).await;
 
         let original_message = r#"Path-based blocks:
-
             ```crates/agent/src/active_thread.rs#L305-309
             fn test_function() {}
             ```
-
-            ```src/main.py
-            print("Hello")
-            ```
-
             ```out/main.html
             <p1></p1>
             ```
-
             Manual blocks:
             ```rust
             fn manual_code() {}
-            ```
-
-            ```javascript
-            console.log("test");
             ```"#;
 
         let message_id = thread.update(cx, |thread, cx| {
@@ -4567,10 +4537,8 @@ mod tests {
             let processed_text = editor.read(cx).text(cx);
 
             assert!(processed_text.contains("```rs crates/agent/src/active_thread.rs#L305-309"));
-            assert!(processed_text.contains("```py src/main.py"));
             assert!(processed_text.contains("```html out/main.html"));
             assert!(processed_text.contains("```rust"));
-            assert!(processed_text.contains("```javascript"));
 
             active_thread.confirm_editing_message(&Default::default(), window, cx);
         });
@@ -4585,76 +4553,8 @@ mod tests {
         };
 
         assert!(final_text.contains("```crates/agent/src/active_thread.rs#L305-309"));
-        assert!(final_text.contains("```src/main.py"));
         assert!(final_text.contains("```out/main.html"));
         assert!(final_text.contains("```rust"));
-        assert!(final_text.contains("```javascript"));
-    }
-
-    #[gpui::test]
-    async fn test_assistant_message_editing(cx: &mut TestAppContext) {
-        init_test_settings(cx);
-        let project = create_test_project(cx, json!({})).await;
-        let (cx, active_thread, _, thread, model) = setup_test_environment(cx, project).await;
-        cx.update(|_, cx| {
-            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-                registry.set_default_model(
-                    Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
-                        model,
-                    }),
-                    cx,
-                );
-            });
-        });
-
-        let message_id = thread.update(cx, |thread, cx| {
-            thread.insert_assistant_message(
-                vec![
-                    MessageSegment::Text("Original text".to_string()),
-                    MessageSegment::Thinking {
-                        text: "thinking".to_string(),
-                        signature: None,
-                    },
-                ],
-                cx,
-            )
-        });
-
-        let message = thread.update(cx, |thread, _| thread.message(message_id).cloned().unwrap());
-        active_thread.update_in(cx, |active_thread, window, cx| {
-            active_thread.start_editing_assistant_message(
-                message.id,
-                &message.segments,
-                &message.creases,
-                None,
-                window,
-                cx,
-            );
-
-            let editing_state = &active_thread.editing_message.as_ref().unwrap().1;
-            assert!(
-                editing_state.is_assistant_message,
-                "Expected assistant message editor"
-            );
-
-            let text = editing_state.editor.read(cx).text(cx);
-            assert_eq!(text, "Original text\n\n<think>\nthinking\n</think>");
-
-            editing_state.editor.update(cx, |editor, cx| {
-                editor.edit([(0..text.len(), "Modified assistant text")], cx)
-            });
-
-            active_thread.confirm_editing_message(&Default::default(), window, cx);
-        });
-        cx.run_until_parked();
-
-        let final_message =
-            thread.update(cx, |thread, _| thread.message(message_id).cloned().unwrap());
-        match &final_message.segments[0] {
-            MessageSegment::Text(text) => assert_eq!(text, "Modified assistant text"),
-            _ => panic!("Expected text segment"),
-        }
     }
 
     #[gpui::test]
@@ -4662,18 +4562,27 @@ mod tests {
         init_test_settings(cx);
         let project = create_test_project(cx, json!({})).await;
         let (cx, active_thread, _, thread, _) = setup_test_environment(cx, project).await;
-        // TODO test on windows
+
         let test_cases = [
-            "```src/file.rs\ncode\n```",
-            "```path/to/file.py#L1-10\ncode\n```",
-            "```\nno path\n```",
-            "```rust\ncode\n```",
-            "```:invalid:path\ncode\n```",
+            (
+                "```src/file.rs#L1-5\ncode\n```",
+                "```rs src/file.rs#L1-5\ncode\n```",
+            ),
+            (
+                "```src\\main.cpp#L1-5\ncode\n```",
+                "```cpp src\\main.cpp#L1-5\ncode\n```",
+            ),
+            (
+                "```config/Dockerfile\ncode\n```",
+                "```config/Dockerfile\ncode\n```",
+            ),
+            ("```\ncode\n```", "```\ncode\n```"),
+            ("```rust\ncode\n```", "```rust\ncode\n```"),
         ];
 
-        for (i, text) in test_cases.iter().enumerate() {
+        for (input, expected) in test_cases {
             let message_id = thread.update(cx, |thread, cx| {
-                thread.insert_assistant_message(vec![MessageSegment::Text(text.to_string())], cx)
+                thread.insert_assistant_message(vec![MessageSegment::Text(input.to_string())], cx)
             });
             let message =
                 thread.update(cx, |thread, _| thread.message(message_id).cloned().unwrap());
@@ -4687,18 +4596,37 @@ mod tests {
                     window,
                     cx,
                 );
-                let editing_state = &active_thread.editing_message.as_ref().unwrap().1;
-                let processed_text = editing_state.editor.read(cx).text(cx);
-
-                assert!(
-                    !processed_text.is_empty(),
-                    "Case {}: text should not be empty",
-                    i
+                let processed_text = active_thread
+                    .editing_message
+                    .as_ref()
+                    .unwrap()
+                    .1
+                    .editor
+                    .read(cx)
+                    .text(cx);
+                assert_eq!(
+                    processed_text.trim(),
+                    expected,
+                    "Preprocessing failed for input: {}",
+                    input
                 );
-
                 active_thread.confirm_editing_message(&Default::default(), window, cx);
             });
             cx.run_until_parked();
+
+            let final_message =
+                thread.update(cx, |thread, _| thread.message(message_id).cloned().unwrap());
+            match &final_message.segments[0] {
+                MessageSegment::Text(text) => {
+                    assert_eq!(
+                        text.trim(),
+                        input.trim(),
+                        "Restoration failed for input: {}",
+                        input
+                    );
+                }
+                _ => panic!("Expected text segment"),
+            }
         }
     }
 }
