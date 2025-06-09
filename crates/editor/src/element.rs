@@ -7329,6 +7329,17 @@ impl LineWithInvisibles {
                 paint(window, cx);
             }),
 
+            ShowWhitespaceSetting::Trailing => {
+                let mut previous_start = self.len;
+                for ([start, end], paint) in invisible_iter.rev() {
+                    if previous_start != end {
+                        break;
+                    }
+                    previous_start = start;
+                    paint(window, cx);
+                }
+            }
+
             // For a whitespace to be on a boundary, any of the following conditions need to be met:
             // - It is a tab
             // - It is adjacent to an edge (start or end)
