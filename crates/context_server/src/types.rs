@@ -291,7 +291,7 @@ pub enum MessageContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         annotations: Option<MessageAnnotations>,
     },
-    #[serde(rename = "image")]
+    #[serde(rename = "image", rename_all = "camelCase")]
     Image {
         data: String,
         mime_type: String,
