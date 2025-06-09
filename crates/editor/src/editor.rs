@@ -923,7 +923,7 @@ enum SelectionDragState {
 
 /// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
 /// a breakpoint on them.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PhantomBreakpointIndicator {
     display_row: DisplayRow,
     /// There's a small debounce between hovering over the line and showing the indicator.
@@ -931,6 +931,7 @@ struct PhantomBreakpointIndicator {
     is_active: bool,
     collides_with_existing_breakpoint: bool,
 }
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
