@@ -4050,7 +4050,7 @@ impl LspCommand for GetDocumentDiagnostics {
         let buffer_id = buffer.update(&mut cx, |buffer, _| buffer.remote_id())?;
         Ok(Self {
             previous_result_id: lsp_store
-                .update(&mut cx, |lsp_store, _| lsp_store.result_id(buffer_id))?,
+                .update(&mut cx, |lsp_store, cx| lsp_store.result_id(buffer_id, cx))?,
         })
     }
 

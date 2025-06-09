@@ -1126,7 +1126,7 @@ impl<'a> SyntaxMapMatches<'a> {
         &self.grammars
     }
 
-    pub fn peek(&self) -> Option<SyntaxMapMatch> {
+    pub fn peek(&self) -> Option<SyntaxMapMatch<'_>> {
         let layer = self.layers.first()?;
 
         if !layer.has_next {
@@ -1550,7 +1550,7 @@ fn insert_newlines_between_ranges(
 
 impl OwnedSyntaxLayer {
     /// Returns the root syntax node for this layer.
-    pub fn node(&self) -> Node {
+    pub fn node(&self) -> Node<'_> {
         self.tree
             .root_node_with_offset(self.offset.0, self.offset.1)
     }
