@@ -634,7 +634,7 @@ impl EditorElement {
             return;
         }
 
-        if click_count == 1 {
+        if editor.drag_and_drop_selection_enabled && click_count == 1 {
             let newest_anchor = editor.selections.newest_anchor();
             let snapshot = editor.snapshot(window, cx);
             let selection = newest_anchor.map(|anchor| anchor.to_display_point(&snapshot));

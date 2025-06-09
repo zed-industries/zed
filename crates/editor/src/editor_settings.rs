@@ -49,6 +49,7 @@ pub struct EditorSettings {
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
+    pub drag_and_drop_selection: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -495,6 +496,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub inline_code_actions: Option<bool>,
+
+    /// Whether to allow drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    pub drag_and_drop_selection: Option<bool>,
 }
 
 // Toolbar related settings

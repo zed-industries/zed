@@ -217,6 +217,8 @@
   "show_signature_help_after_edits": false,
   // Whether to show code action button at start of buffer line.
   "inline_code_actions": true,
+  // Whether to allow drag and drop text selection in buffer.
+  "drag_and_drop_selection": true,
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
