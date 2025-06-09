@@ -336,6 +336,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                 Chunk {
                     text: chunk,
                     highlight_style,
+                    is_inlay: true,
                     ..Default::default()
                 }
             }

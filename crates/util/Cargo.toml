@@ -13,7 +13,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["tempfile", "git2", "rand", "util_macros"]
+test-support = ["git2", "rand", "util_macros"]
 
 [dependencies]
 anyhow.workspace = true
@@ -35,7 +35,7 @@ serde_json.workspace = true
 serde_json_lenient.workspace = true
 smol.workspace = true
 take-until.workspace = true
-tempfile = { workspace = true, optional = true }
+tempfile.workspace = true
 unicase.workspace = true
 util_macros = { workspace = true, optional = true }
 walkdir.workspace = true
@@ -50,6 +50,6 @@ dunce = "1.0"
 
 [dev-dependencies]
 git2.workspace = true
+indoc.workspace = true
 rand.workspace = true
-tempfile.workspace = true
 util_macros.workspace = true

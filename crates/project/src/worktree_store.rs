@@ -367,7 +367,7 @@ impl WorktreeStore {
 
         let handle_id = worktree.entity_id();
         cx.subscribe(worktree, |_, worktree, event, cx| {
-            let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+            let worktree_id = worktree.read(cx).id();
             match event {
                 worktree::Event::UpdatedEntries(changes) => {
                     cx.emit(WorktreeStoreEvent::WorktreeUpdatedEntries(
@@ -966,6 +966,13 @@ impl WorktreeStore {
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .context("invalid request")?;
         Worktree::handle_expand_all_for_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub fn fs(&self) -> Option<Arc<dyn Fs>> {
+        match &self.state {
+            WorktreeStoreState::Local { fs } => Some(fs.clone()),
+            WorktreeStoreState::Remote { .. } => None,
+        }
     }
 }
 

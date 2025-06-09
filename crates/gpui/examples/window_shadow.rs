@@ -1,8 +1,8 @@
 use gpui::{
-    App, Application, Bounds, Context, CursorStyle, Decorations, Hsla, MouseButton, Pixels, Point,
-    ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds, WindowDecorations,
-    WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size, transparent_black,
-    white,
+    App, Application, Bounds, Context, CursorStyle, Decorations, HitboxBehavior, Hsla, MouseButton,
+    Pixels, Point, ResizeEdge, Size, Window, WindowBackgroundAppearance, WindowBounds,
+    WindowDecorations, WindowOptions, black, canvas, div, green, point, prelude::*, px, rgb, size,
+    transparent_black, white,
 };
 
 struct WindowShadow {}
@@ -37,7 +37,7 @@ impl Render for WindowShadow {
                                         point(px(0.0), px(0.0)),
                                         window.window_bounds().get_bounds().size,
                                     ),
-                                    false,
+                                    HitboxBehavior::Normal,
                                 )
                             },
                             move |_bounds, hitbox, window, _cx| {
@@ -61,7 +61,7 @@ impl Render for WindowShadow {
                                             CursorStyle::ResizeUpRightDownLeft
                                         }
                                     },
-                                    Some(&hitbox),
+                                    &hitbox,
                                 );
                             },
                         )
@@ -104,7 +104,7 @@ impl Render for WindowShadow {
                             .when(!tiling.left, |div| div.border_l(border_size))
                             .when(!tiling.right, |div| div.border_r(border_size))
                             .when(!tiling.is_tiled(), |div| {
-                                div.shadow(smallvec::smallvec![gpui::BoxShadow {
+                                div.shadow(vec![gpui::BoxShadow {
                                     color: Hsla {
                                         h: 0.,
                                         s: 0.,
@@ -144,7 +144,7 @@ impl Render for WindowShadow {
                                         .w(px(200.0))
                                         .h(px(100.0))
                                         .bg(green())
-                                        .shadow(smallvec::smallvec![gpui::BoxShadow {
+                                        .shadow(vec![gpui::BoxShadow {
                                             color: Hsla {
                                                 h: 0.,
                                                 s: 0.,

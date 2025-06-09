@@ -23,7 +23,7 @@ need to set your `crate-type` accordingly:
 
 ```toml
 [dependencies]
-zed_extension_api = "0.5.0"
+zed_extension_api = "0.6.0"
 
 [lib]
 crate-type = ["cdylib"]
@@ -51,6 +51,8 @@ zed::register_extension!(MyExtension);
 
 To run your extension in Zed as you're developing it:
 
+- Make sure you have [Rust installed](https://www.rust-lang.org/learn/get-started)
+- Have the `wasm32-wasip2` target installed (`rustup target add wasm32-wasip2`)
 - Open the extensions view using the `zed: extensions` action in the command palette.
 - Click the `Install Dev Extension` button in the top right
 - Choose the path to your extension directory.

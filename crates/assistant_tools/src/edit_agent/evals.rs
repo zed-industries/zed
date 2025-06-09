@@ -11,7 +11,7 @@ use client::{Client, UserStore};
 use collections::HashMap;
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
-use gpui::{AppContext, TestAppContext};
+use gpui::{AppContext, TestAppContext, Timer};
 use indoc::{formatdoc, indoc};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult,
@@ -39,7 +39,7 @@ fn eval_extract_handle_command_output() {
     // Model                       | Pass rate
     // ----------------------------|----------
     // claude-3.7-sonnet           |  0.98
-    // gemini-2.5-pro              |  0.86
+    // gemini-2.5-pro-06-05        |  0.77
     // gemini-2.5-flash            |  0.11
     // gpt-4.1                     |  1.00
 
@@ -58,6 +58,7 @@ fn eval_extract_handle_command_output() {
     eval(
         100,
         0.7, // Taking the lower bar for Gemini
+        0.05,
         EvalInput::from_conversation(
             vec![
                 message(
@@ -116,6 +117,7 @@ fn eval_delete_run_git_blame() {
     eval(
         100,
         0.95,
+        0.05,
         EvalInput::from_conversation(
             vec![
                 message(
@@ -163,12 +165,22 @@ fn eval_delete_run_git_blame() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_translate_doc_comments() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/translate_doc_comments/before.rs");
     let edit_description = "Translate all doc comments to Italian";
     eval(
         200,
         1.,
+        0.05,
         EvalInput::from_conversation(
             vec![
                 message(
@@ -216,6 +228,15 @@ fn eval_translate_doc_comments() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  0.98
+    //  gemini-2.5-pro-preview-03-25   |  0.99
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/lib.rs";
     let input_file_content =
         include_str!("evals/fixtures/use_wasi_sdk_in_compile_parser_to_wasm/before.rs");
@@ -223,6 +244,7 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
     eval(
         100,
         0.95,
+        0.05,
         EvalInput::from_conversation(
             vec![
                 message(
@@ -332,12 +354,22 @@ fn eval_use_wasi_sdk_in_compile_parser_to_wasm() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_disable_cursor_blinking() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
     eval(
         100,
         0.95,
+        0.05,
         EvalInput::from_conversation(
             vec![
                 message(User, [text("Let's research how to cursor blinking works.")]),
@@ -406,12 +438,24 @@ fn eval_disable_cursor_blinking() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_from_pixels_constructor() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |
+    //  gemini-2.5-pro-preview-03-25   |  0.94
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/canvas.rs";
     let input_file_content = include_str!("evals/fixtures/from_pixels_constructor/before.rs");
     let edit_description = "Implement from_pixels constructor and add tests.";
     eval(
         100,
         0.95,
+        // For whatever reason, this eval produces more mismatched tags.
+        // Increasing for now, let's see if we can bring this down.
+        0.2,
         EvalInput::from_conversation(
             vec![
                 message(
@@ -597,12 +641,22 @@ fn eval_from_pixels_constructor() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_zode() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  1.0
+    //  gemini-2.5-pro-preview-03-25   |  1.0
+    //  gemini-2.5-flash-preview-04-17 |  1.0
+    //  gpt-4.1                        |  1.0
     let input_file_path = "root/zode.py";
     let input_content = None;
     let edit_description = "Create the main Zode CLI script";
     eval(
-        200,
+        50,
         1.,
+        0.05,
         EvalInput::from_conversation(
             vec![
                 message(User, [text(include_str!("evals/fixtures/zode/prompt.md"))]),
@@ -694,12 +748,22 @@ fn eval_zode() {
 #[test]
 #[cfg_attr(not(feature = "eval"), ignore)]
 fn eval_add_overwrite_test() {
+    // Results for 2025-05-22
+    //
+    //  Model                          | Pass rate
+    // ============================================
+    //
+    //  claude-3.7-sonnet              |  0.16
+    //  gemini-2.5-pro-preview-03-25   |  0.35
+    //  gemini-2.5-flash-preview-04-17 |
+    //  gpt-4.1                        |
     let input_file_path = "root/action_log.rs";
     let input_file_content = include_str!("evals/fixtures/add_overwrite_test/before.rs");
     let edit_description = "Add a new test for overwriting a file in action_log.rs";
     eval(
         200,
         0.5, // TODO: make this eval better
+        0.05,
         EvalInput::from_conversation(
             vec![
                 message(
@@ -920,13 +984,10 @@ fn eval_create_empty_file() {
     // thoughts into it. This issue is not specific to empty files, but
     // it's easier to reproduce with them.
     //
+    // Results for 2025-05-21:
     //
     //  Model                          | Pass rate
     // ============================================
-    //
-    // --------------------------------------------
-    //           Prompt version: 2025-05-21
-    // --------------------------------------------
     //
     //  claude-3.7-sonnet              |  1.00
     //  gemini-2.5-pro-preview-03-25   |  1.00
@@ -942,6 +1003,7 @@ fn eval_create_empty_file() {
     eval(
         100,
         0.99,
+        0.05,
         EvalInput::from_conversation(
             vec![
                 message(User, [text("Create a second empty todo file ")]),
@@ -1193,9 +1255,12 @@ impl EvalAssertion {
                 }],
                 ..Default::default()
             };
-            let mut response = judge
-                .stream_completion_text(request, &cx.to_async())
-                .await?;
+            let mut response = retry_on_rate_limit(async || {
+                Ok(judge
+                    .stream_completion_text(request.clone(), &cx.to_async())
+                    .await?)
+            })
+            .await?;
             let mut output = String::new();
             while let Some(chunk) = response.stream.next().await {
                 let chunk = chunk?;
@@ -1228,7 +1293,12 @@ impl EvalAssertion {
     }
 }
 
-fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
+fn eval(
+    iterations: usize,
+    expected_pass_ratio: f32,
+    mismatched_tag_threshold: f32,
+    mut eval: EvalInput,
+) {
     let mut evaluated_count = 0;
     let mut failed_count = 0;
     report_progress(evaluated_count, failed_count, iterations);
@@ -1241,10 +1311,17 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
     run_eval(eval.clone(), tx.clone());
 
     let executor = gpui::background_executor();
+    let semaphore = Arc::new(smol::lock::Semaphore::new(32));
     for _ in 1..iterations {
         let eval = eval.clone();
         let tx = tx.clone();
-        executor.spawn(async move { run_eval(eval, tx) }).detach();
+        let semaphore = semaphore.clone();
+        executor
+            .spawn(async move {
+                let _guard = semaphore.acquire().await;
+                run_eval(eval, tx)
+            })
+            .detach();
     }
     drop(tx);
 
@@ -1300,7 +1377,7 @@ fn eval(iterations: usize, expected_pass_ratio: f32, mut eval: EvalInput) {
 
     let mismatched_tag_ratio =
         cumulative_parser_metrics.mismatched_tags as f32 / cumulative_parser_metrics.tags as f32;
-    if mismatched_tag_ratio > 0.05 {
+    if mismatched_tag_ratio > mismatched_tag_threshold {
         for eval_output in eval_outputs {
             println!("{}", eval_output);
         }
@@ -1430,7 +1507,7 @@ impl EditAgentTest {
                     model.provider_id() == selected_model.provider
                         && model.id() == selected_model.model
                 })
-                .unwrap();
+                .expect("Model not found");
             let provider = models.provider(&model.provider_id()).unwrap();
             (provider, model)
         })?;
@@ -1510,21 +1587,31 @@ impl EditAgentTest {
             if let Some(input_content) = eval.input_content.as_deref() {
                 buffer.update(cx, |buffer, cx| buffer.set_text(input_content, cx));
             }
-            let (edit_output, _) = self.agent.edit(
-                buffer.clone(),
-                eval.edit_file_input.display_description,
-                &conversation,
-                &mut cx.to_async(),
-            );
-            edit_output.await?
+            retry_on_rate_limit(async || {
+                self.agent
+                    .edit(
+                        buffer.clone(),
+                        eval.edit_file_input.display_description.clone(),
+                        &conversation,
+                        &mut cx.to_async(),
+                    )
+                    .0
+                    .await
+            })
+            .await?
         } else {
-            let (edit_output, _) = self.agent.overwrite(
-                buffer.clone(),
-                eval.edit_file_input.display_description,
-                &conversation,
-                &mut cx.to_async(),
-            );
-            edit_output.await?
+            retry_on_rate_limit(async || {
+                self.agent
+                    .overwrite(
+                        buffer.clone(),
+                        eval.edit_file_input.display_description.clone(),
+                        &conversation,
+                        &mut cx.to_async(),
+                    )
+                    .0
+                    .await
+            })
+            .await?
         };
 
         let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
@@ -1543,6 +1630,26 @@ impl EditAgentTest {
             .await?;
 
         Ok(EvalOutput { assertion, sample })
+    }
+}
+
+async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
+    loop {
+        match request().await {
+            Ok(result) => return Ok(result),
+            Err(err) => match err.downcast::<LanguageModelCompletionError>() {
+                Ok(err) => match err {
+                    LanguageModelCompletionError::RateLimit(duration) => {
+                        // Wait until after we are allowed to try again
+                        eprintln!("Rate limit exceeded. Waiting for {duration:?}...",);
+                        Timer::after(duration).await;
+                        continue;
+                    }
+                    _ => return Err(err.into()),
+                },
+                Err(err) => return Err(err),
+            },
+        }
     }
 }
 

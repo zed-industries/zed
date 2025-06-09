@@ -35,6 +35,7 @@ pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
 };
+pub use manifest_tree::ManifestTree;
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -66,14 +67,14 @@ use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use ::git::{blame::Blame, status::FileStatus};
 use gpui::{
-    AnyEntity, App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla,
-    SharedString, Task, WeakEntity, Window,
+    App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
+    Task, WeakEntity, Window,
 };
 use itertools::Itertools;
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
-    Unclipped, language_settings::InlayHintKind, proto::split_operations,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiagnosticSourceKind, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
+    Transaction, Unclipped, language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -466,7 +467,7 @@ impl CompletionSource {
         }
     }
 
-    pub fn lsp_completion(&self, apply_defaults: bool) -> Option<Cow<lsp::CompletionItem>> {
+    pub fn lsp_completion(&self, apply_defaults: bool) -> Option<Cow<'_, lsp::CompletionItem>> {
         if let Self::Lsp {
             lsp_completion,
             lsp_defaults,
@@ -552,6 +553,23 @@ impl std::fmt::Debug for Completion {
             .field("source", &self.source)
             .finish()
     }
+}
+
+/// Response from a source of completions.
+pub struct CompletionResponse {
+    pub completions: Vec<Completion>,
+    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// can be filtered instead.
+    pub is_incomplete: bool,
+}
+
+/// Response from language server completion request.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CoreCompletionResponse {
+    pub completions: Vec<CoreCompletion>,
+    /// When false, indicates that the list is complete and so does not need to be re-queried if it
+    /// can be filtered instead.
+    pub is_incomplete: bool,
 }
 
 /// A generic completion that can come from different sources.
@@ -752,13 +770,26 @@ pub struct DirectoryItem {
 #[derive(Clone)]
 pub enum DirectoryLister {
     Project(Entity<Project>),
-    Local(Arc<dyn Fs>),
+    Local(Entity<Project>, Arc<dyn Fs>),
+}
+
+impl std::fmt::Debug for DirectoryLister {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DirectoryLister::Project(project) => {
+                write!(f, "DirectoryLister::Project({project:?})")
+            }
+            DirectoryLister::Local(project, _) => {
+                write!(f, "DirectoryLister::Local({project:?})")
+            }
+        }
+    }
 }
 
 impl DirectoryLister {
     pub fn is_local(&self, cx: &App) -> bool {
         match self {
-            DirectoryLister::Local(_) => true,
+            DirectoryLister::Local(..) => true,
             DirectoryLister::Project(project) => project.read(cx).is_local(),
         }
     }
@@ -772,12 +803,28 @@ impl DirectoryLister {
     }
 
     pub fn default_query(&self, cx: &mut App) -> String {
-        if let DirectoryLister::Project(project) = self {
-            if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
-                return worktree.read(cx).abs_path().to_string_lossy().to_string();
+        let separator = std::path::MAIN_SEPARATOR_STR;
+        match self {
+            DirectoryLister::Project(project) => project,
+            DirectoryLister::Local(project, _) => project,
+        }
+        .read(cx)
+        .visible_worktrees(cx)
+        .next()
+        .map(|worktree| worktree.read(cx).abs_path())
+        .map(|dir| dir.to_string_lossy().to_string())
+        .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().to_string()))
+        .map(|mut s| {
+            s.push_str(separator);
+            s
+        })
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "windows") {
+                format!("C:{separator}")
+            } else {
+                format!("~{separator}")
             }
-        };
-        format!("~{}", std::path::MAIN_SEPARATOR_STR)
+        })
     }
 
     pub fn list_directory(&self, path: String, cx: &mut App) -> Task<Result<Vec<DirectoryItem>>> {
@@ -785,7 +832,7 @@ impl DirectoryLister {
             DirectoryLister::Project(project) => {
                 project.update(cx, |project, cx| project.list_directory(path, cx))
             }
-            DirectoryLister::Local(fs) => {
+            DirectoryLister::Local(_, fs) => {
                 let fs = fs.clone();
                 cx.background_spawn(async move {
                     let mut results = vec![];
@@ -813,6 +860,34 @@ pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
     trigger_character: None,
 };
+
+/// An LSP diagnostics associated with a certain language server.
+#[derive(Clone, Debug, Default)]
+pub enum LspPullDiagnostics {
+    #[default]
+    Default,
+    Response {
+        /// The id of the language server that produced diagnostics.
+        server_id: LanguageServerId,
+        /// URI of the resource,
+        uri: lsp::Url,
+        /// The diagnostics produced by this language server.
+        diagnostics: PulledDiagnostics,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum PulledDiagnostics {
+    Unchanged {
+        /// An ID the current pulled batch for this file.
+        /// If given, can be used to query workspace diagnostics partially.
+        result_id: String,
+    },
+    Changed {
+        result_id: Option<String>,
+        diagnostics: Vec<lsp::Diagnostic>,
+    },
+}
 
 impl Project {
     pub fn init_settings(cx: &mut App) {
@@ -874,11 +949,13 @@ impl Project {
                 cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
 
             let environment = cx.new(|_| ProjectEnvironment::new(env));
+            let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
             let toolchain_store = cx.new(|cx| {
                 ToolchainStore::local(
                     languages.clone(),
                     worktree_store.clone(),
                     environment.clone(),
+                    manifest_tree.clone(),
                     cx,
                 )
             });
@@ -946,6 +1023,7 @@ impl Project {
                     prettier_store.clone(),
                     toolchain_store.clone(),
                     environment.clone(),
+                    manifest_tree,
                     languages.clone(),
                     client.http_client(),
                     fs.clone(),
@@ -1023,7 +1101,7 @@ impl Project {
             let (tx, rx) = mpsc::unbounded();
             cx.spawn(async move |this, cx| Self::send_buffer_ordered_messages(this, rx, cx).await)
                 .detach();
-            let global_snippets_dir = paths::config_dir().join("snippets");
+            let global_snippets_dir = paths::snippets_dir().to_owned();
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
@@ -1540,7 +1618,7 @@ impl Project {
                 .unwrap()
                 .await
                 .unwrap();
-            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .unwrap()
                 .await;
         }
@@ -1579,7 +1657,7 @@ impl Project {
                 .await
                 .unwrap();
 
-            tree.update(cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            tree.read_with(cx, |tree, _| tree.as_local().unwrap().scan_complete())
                 .await;
         }
         project
@@ -1945,7 +2023,7 @@ impl Project {
         let lsp_store = self.lsp_store().downgrade();
         cx.spawn(async move |_, cx| {
             let (old_abs_path, new_abs_path) = {
-                let root_path = worktree.update(cx, |this, _| this.abs_path())?;
+                let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
                 let new_abs_path = if is_root_entry {
                     root_path.parent().unwrap().join(&new_path)
                 } else {
@@ -1970,7 +2048,7 @@ impl Project {
                 .await?;
 
             lsp_store
-                .update(cx, |this, _| {
+                .read_with(cx, |this, _| {
                     this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
                 })
                 .ok();
@@ -2322,7 +2400,7 @@ impl Project {
         &mut self,
         path: ProjectPath,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Option<ProjectEntryId>, AnyEntity)>> {
+    ) -> Task<Result<(Option<ProjectEntryId>, Entity<Buffer>)>> {
         let task = self.open_buffer(path.clone(), cx);
         cx.spawn(async move |_project, cx| {
             let buffer = task.await?;
@@ -2330,8 +2408,7 @@ impl Project {
                 File::from_dyn(buffer.file()).and_then(|file| file.project_entry_id(cx))
             })?;
 
-            let buffer: &AnyEntity = &buffer;
-            Ok((project_entry_id, buffer.clone()))
+            Ok((project_entry_id, buffer))
         })
     }
 
@@ -2551,7 +2628,7 @@ impl Project {
             cx: &mut AsyncApp,
         ) -> Result<()> {
             for (buffer_id, operations) in operations_by_buffer_id.drain() {
-                let request = this.update(cx, |this, _| {
+                let request = this.read_with(cx, |this, _| {
                     let project_id = this.remote_id()?;
                     Some(this.client.request(proto::UpdateBuffer {
                         buffer_id: buffer_id.into(),
@@ -2573,7 +2650,7 @@ impl Project {
         let mut changes = rx.ready_chunks(MAX_BATCH_SIZE);
 
         while let Some(changes) = changes.next().await {
-            let is_local = this.update(cx, |this, _| this.is_local())?;
+            let is_local = this.read_with(cx, |this, _| this.is_local())?;
 
             for change in changes {
                 match change {
@@ -2615,7 +2692,7 @@ impl Project {
                         )
                         .await?;
 
-                        this.update(cx, |this, _| {
+                        this.read_with(cx, |this, _| {
                             if let Some(project_id) = this.remote_id() {
                                 this.client
                                     .send(proto::UpdateLanguageServer {
@@ -3085,16 +3162,13 @@ impl Project {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
-    ) -> Task<Option<ToolchainList>> {
-        if let Some(toolchain_store) = self.toolchain_store.clone() {
+    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
+        if let Some(toolchain_store) = self.toolchain_store.as_ref().map(Entity::downgrade) {
             cx.spawn(async move |cx| {
-                cx.update(|cx| {
-                    toolchain_store
-                        .read(cx)
-                        .list_toolchains(path, language_name, cx)
-                })
-                .ok()?
-                .await
+                toolchain_store
+                    .update(cx, |this, cx| this.list_toolchains(path, language_name, cx))
+                    .ok()?
+                    .await
             })
         } else {
             Task::ready(None)
@@ -3430,7 +3504,7 @@ impl Project {
         position: T,
         context: CompletionContext,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Vec<Completion>>>> {
+    ) -> Task<Result<Vec<CompletionResponse>>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.completions(buffer, position, context, cx)
@@ -3637,6 +3711,37 @@ impl Project {
     ) -> Task<anyhow::Result<InlayHint>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
+        })
+    }
+
+    pub fn document_diagnostics(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.pull_diagnostics(buffer_handle, cx)
+        })
+    }
+
+    pub fn update_diagnostics(
+        &mut self,
+        language_server_id: LanguageServerId,
+        source_kind: DiagnosticSourceKind,
+        result_id: Option<String>,
+        params: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &[String],
+        cx: &mut Context<Self>,
+    ) -> Result<(), anyhow::Error> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                language_server_id,
+                params,
+                result_id,
+                source_kind,
+                disk_based_sources,
+                cx,
+            )
         })
     }
 
@@ -3871,9 +3976,7 @@ impl Project {
     }
 
     pub fn find_worktree(&self, abs_path: &Path, cx: &App) -> Option<(Entity<Worktree>, PathBuf)> {
-        self.worktree_store.read_with(cx, |worktree_store, cx| {
-            worktree_store.find_worktree(abs_path, cx)
-        })
+        self.worktree_store.read(cx).find_worktree(abs_path, cx)
     }
 
     pub fn is_shared(&self) -> bool {
@@ -4010,7 +4113,7 @@ impl Project {
         cx: &mut AsyncApp,
     ) -> Option<ResolvedPath> {
         worktree
-            .update(cx, |worktree, _| {
+            .read_with(cx, |worktree, _| {
                 let root_entry_path = &worktree.root_entry()?.path;
                 let resolved = resolve_path(root_entry_path, path);
                 let stripped = resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
@@ -4034,7 +4137,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<DirectoryItem>>> {
         if self.is_local() {
-            DirectoryLister::Local(self.fs.clone()).list_directory(query, cx)
+            DirectoryLister::Local(cx.entity(), self.fs.clone()).list_directory(query, cx)
         } else if let Some(session) = self.ssh_client.as_ref() {
             let path_buf = PathBuf::from(query);
             let request = proto::ListRemoteDirectory {

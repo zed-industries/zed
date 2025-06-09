@@ -231,9 +231,6 @@ impl WindowsPlatform {
                         }
                     }
                     _ => {
-                        // todo(windows)
-                        // crate `windows 0.56` reports true as Err
-                        TranslateMessage(&msg).as_bool();
                         DispatchMessageW(&msg);
                     }
                 }
@@ -783,7 +780,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
         return Ok(None);
     }
 
-    let mut paths = Vec::new();
+    let mut paths = Vec::with_capacity(file_count as usize);
     for i in 0..file_count {
         let item = unsafe { results.GetItemAt(i)? };
         let path = unsafe { item.GetDisplayName(SIGDN_FILESYSPATH)?.to_string()? };

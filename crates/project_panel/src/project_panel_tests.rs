@@ -309,6 +309,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
+    // Test 1: Multiple worktrees with auto_fold_dirs = true
     let project = Project::test(
         fs.clone(),
         [path!("/root1").as_ref(), path!("/root2").as_ref()],
@@ -392,6 +393,66 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
             separator!("          file_1.java"),
         ]
     );
+
+    // Test 2: Single worktree with auto_fold_dirs = true and hide_root = true
+    {
+        let project = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    auto_fold_dirs: true,
+                    hide_root: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[separator!("> dir_1/nested_dir_1/nested_dir_2/nested_dir_3")],
+            "Single worktree with hide_root=true should hide root and show auto-folded paths"
+        );
+
+        toggle_expand_dir(
+            &panel,
+            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+            cx,
+        );
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                separator!("v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"),
+                separator!("    > nested_dir_4/nested_dir_5"),
+                separator!("      file_a.java"),
+                separator!("      file_b.java"),
+                separator!("      file_c.java"),
+            ],
+            "Expanded auto-folded path with hidden root should show contents without root prefix"
+        );
+
+        toggle_expand_dir(
+            &panel,
+            "root1/dir_1/nested_dir_1/nested_dir_2/nested_dir_3/nested_dir_4/nested_dir_5",
+            cx,
+        );
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                separator!("v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
+                separator!("    v nested_dir_4/nested_dir_5  <== selected"),
+                separator!("          file_d.java"),
+                separator!("      file_a.java"),
+                separator!("      file_b.java"),
+                separator!("      file_c.java"),
+            ],
+            "Nested expansion with hidden root should maintain proper indentation"
+        );
+    }
 }
 
 #[gpui::test(iterations = 30)]
@@ -1168,6 +1229,91 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     panel.update_in(cx, |panel, window, cx| {
         assert!(panel.confirm_edit(window, cx).is_none())
     });
+}
+
+#[gpui::test]
+async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "one.txt": "",
+            "two.txt": "",
+            "a": {},
+            "b": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    select_path_with_mark(&panel, "root/one.txt", cx);
+    select_path_with_mark(&panel, "root/two.txt", cx);
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    > a",
+            "    > b",
+            "      one.txt  <== marked",
+            "      two.txt  <== selected  <== marked",
+        ]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cut(&Default::default(), window, cx);
+    });
+
+    select_path(&panel, "root/a", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v a",
+            "          one.txt  <== marked",
+            "          two.txt  <== selected  <== marked",
+            "    > b",
+        ],
+        "Cut entries should be moved on first paste."
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.cancel(&menu::Cancel {}, window, cx)
+    });
+    cx.executor().run_until_parked();
+
+    select_path(&panel, "root/b", cx);
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.paste(&Default::default(), window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..50, cx),
+        &[
+            "v root",
+            "    v a",
+            "          one.txt",
+            "          two.txt",
+            "    v b",
+            "          one.txt",
+            "          two.txt  <== selected",
+        ],
+        "Cut entries should only be copied for the second paste!"
+    );
 }
 
 #[gpui::test]
@@ -2390,6 +2536,7 @@ async fn test_select_directory(cx: &mut gpui::TestAppContext) {
         ]
     );
 }
+
 #[gpui::test]
 async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
@@ -2457,6 +2604,46 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
             "      file_1.py",
             "      file_2.py  <== selected",
         ]
+    );
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "> dir_1",
+            "> zdir_2",
+            "  file_1.py",
+            "  file_2.py",
+        ],
+        "With hide_root=true, root should be hidden"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_first(&SelectFirst, window, cx)
+    });
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "> dir_1  <== selected",
+            "> zdir_2",
+            "  file_1.py",
+            "  file_2.py",
+        ],
+        "With hide_root=true, first entry should be dir_1, not the hidden root"
     );
 }
 
@@ -2702,6 +2889,101 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
         ],
         "Files in renamed worktree are selectable"
     );
+}
+
+#[gpui::test]
+async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "dir1": { "file1.txt": "content" },
+            "file2.txt": "content",
+        }),
+    )
+    .await;
+    fs.insert_tree("/root2", json!({ "file3.txt": "content" }))
+        .await;
+
+    // Test 1: Single worktree, hide_root=true - rename should be blocked
+    {
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    hide_root: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        panel.update(cx, |panel, cx| {
+            let project = panel.project.read(cx);
+            let worktree = project.visible_worktrees(cx).next().unwrap();
+            let root_entry = worktree.read(cx).root_entry().unwrap();
+            panel.selection = Some(SelectedEntry {
+                worktree_id: worktree.read(cx).id(),
+                entry_id: root_entry.id,
+            });
+        });
+
+        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+
+        assert!(
+            panel.read_with(cx, |panel, _| panel.edit_state.is_none()),
+            "Rename should be blocked when hide_root=true with single worktree"
+        );
+    }
+
+    // Test 2: Multiple worktrees, hide_root=true - rename should work
+    {
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    hide_root: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        select_path(&panel, "root1", cx);
+        panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+
+        #[cfg(target_os = "windows")]
+        assert!(
+            panel.read_with(cx, |panel, _| panel.edit_state.is_none()),
+            "Rename should be blocked on Windows even with multiple worktrees"
+        );
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(
+                panel.read_with(cx, |panel, _| panel.edit_state.is_some()),
+                "Rename should work with multiple worktrees on non-Windows when hide_root=true"
+            );
+            panel.update_in(cx, |panel, window, cx| {
+                panel.cancel(&menu::Cancel, window, cx)
+            });
+        }
+    }
 }
 
 #[gpui::test]
@@ -5011,6 +5293,532 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
         ],
         "A new file is created under the root directory"
     );
+}
+
+#[gpui::test]
+async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "existing_dir": {
+                "existing_file.txt": "",
+            },
+            "existing_file.txt": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace
+        .update(cx, |workspace, window, cx| {
+            let panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        })
+        .unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> existing_dir",
+            "  existing_file.txt",
+        ],
+        "Initial state with hide_root=true, root should be hidden and nothing selected"
+    );
+
+    panel.update(cx, |panel, _| {
+        assert!(
+            panel.selection.is_none(),
+            "Should have no selection initially"
+        );
+    });
+
+    // Test 1: Create new file when no entry is selected
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> existing_dir",
+            "  [EDITOR: '']  <== selected",
+            "  existing_file.txt",
+        ],
+        "Editor should appear at root level when hide_root=true and no selection"
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("new_file_at_root.txt", window, cx)
+        });
+        panel.confirm_edit(window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> existing_dir",
+            "  existing_file.txt",
+            "  new_file_at_root.txt  <== selected  <== marked",
+        ],
+        "New file should be created at root level and visible without root prefix"
+    );
+
+    assert!(
+        fs.is_file(Path::new("/root/new_file_at_root.txt")).await,
+        "File should be created in the actual root directory"
+    );
+
+    // Test 2: Create new directory when no entry is selected
+    panel.update(cx, |panel, _| {
+        panel.selection = None;
+    });
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_directory(&NewDirectory, window, cx);
+    });
+    panel.update_in(cx, |panel, window, cx| {
+        assert!(panel.filename_editor.read(cx).is_focused(window));
+    });
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> [EDITOR: '']  <== selected",
+            "> existing_dir",
+            "  existing_file.txt",
+            "  new_file_at_root.txt",
+        ],
+        "Directory editor should appear at root level when hide_root=true and no selection"
+    );
+
+    let confirm = panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            editor.set_text("new_dir_at_root", window, cx)
+        });
+        panel.confirm_edit(window, cx).unwrap()
+    });
+    confirm.await.unwrap();
+
+    #[rustfmt::skip]
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> existing_dir",
+            "v new_dir_at_root  <== selected",
+            "  existing_file.txt",
+            "  new_file_at_root.txt",
+        ],
+        "New directory should be created at root level and visible without root prefix"
+    );
+
+    assert!(
+        fs.is_dir(Path::new("/root/new_dir_at_root")).await,
+        "Directory should be created in the actual root directory"
+    );
+}
+
+#[gpui::test]
+async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "dir1": {
+                "file1.txt": "",
+                "dir2": {
+                    "file2.txt": ""
+                }
+            },
+            "file3.txt": ""
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let worktree = worktree.read(cx);
+
+        // Test 1: Target is a directory, should highlight the directory itself
+        let dir_entry = worktree.entry_for_path("dir1").unwrap();
+        let result = panel.highlight_entry_for_external_drag(dir_entry, worktree);
+        assert_eq!(
+            result,
+            Some(dir_entry.id),
+            "Should highlight directory itself"
+        );
+
+        // Test 2: Target is nested file, should highlight immediate parent
+        let nested_file = worktree.entry_for_path("dir1/dir2/file2.txt").unwrap();
+        let nested_parent = worktree.entry_for_path("dir1/dir2").unwrap();
+        let result = panel.highlight_entry_for_external_drag(nested_file, worktree);
+        assert_eq!(
+            result,
+            Some(nested_parent.id),
+            "Should highlight immediate parent"
+        );
+
+        // Test 3: Target is root level file, should highlight root
+        let root_file = worktree.entry_for_path("file3.txt").unwrap();
+        let result = panel.highlight_entry_for_external_drag(root_file, worktree);
+        assert_eq!(
+            result,
+            Some(worktree.root_entry().unwrap().id),
+            "Root level file should return None"
+        );
+
+        // Test 4: Target is root itself, should highlight root
+        let root_entry = worktree.root_entry().unwrap();
+        let result = panel.highlight_entry_for_external_drag(root_entry, worktree);
+        assert_eq!(
+            result,
+            Some(root_entry.id),
+            "Root level file should return None"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "parent_dir": {
+                "child_file.txt": "",
+                "sibling_file.txt": "",
+                "child_dir": {
+                    "nested_file.txt": ""
+                }
+            },
+            "other_dir": {
+                "other_file.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktree = project.visible_worktrees(cx).next().unwrap();
+        let worktree_id = worktree.read(cx).id();
+        let worktree = worktree.read(cx);
+
+        let parent_dir = worktree.entry_for_path("parent_dir").unwrap();
+        let child_file = worktree
+            .entry_for_path("parent_dir/child_file.txt")
+            .unwrap();
+        let sibling_file = worktree
+            .entry_for_path("parent_dir/sibling_file.txt")
+            .unwrap();
+        let child_dir = worktree.entry_for_path("parent_dir/child_dir").unwrap();
+        let other_dir = worktree.entry_for_path("other_dir").unwrap();
+        let other_file = worktree.entry_for_path("other_dir/other_file.txt").unwrap();
+
+        // Test 1: Single item drag, don't highlight parent directory
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new(BTreeSet::from([SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            }])),
+        };
+        let result =
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+        assert_eq!(result, None, "Should not highlight parent of dragged item");
+
+        // Test 2: Single item drag, don't highlight sibling files
+        let result = panel.highlight_entry_for_selection_drag(
+            sibling_file,
+            worktree,
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(result, None, "Should not highlight sibling files");
+
+        // Test 3: Single item drag, highlight unrelated directory
+        let result =
+            panel.highlight_entry_for_selection_drag(other_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(other_dir.id),
+            "Should highlight unrelated directory"
+        );
+
+        // Test 4: Single item drag, highlight sibling directory
+        let result =
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(child_dir.id),
+            "Should highlight sibling directory"
+        );
+
+        // Test 5: Multiple items drag, highlight parent directory
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new(BTreeSet::from([
+                SelectedEntry {
+                    worktree_id,
+                    entry_id: child_file.id,
+                },
+                SelectedEntry {
+                    worktree_id,
+                    entry_id: sibling_file.id,
+                },
+            ])),
+        };
+        let result =
+            panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(parent_dir.id),
+            "Should highlight parent with multiple items"
+        );
+
+        // Test 6: Target is file in different directory, highlight parent
+        let result =
+            panel.highlight_entry_for_selection_drag(other_file, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(other_dir.id),
+            "Should highlight parent of target file"
+        );
+
+        // Test 7: Target is directory, always highlight
+        let result =
+            panel.highlight_entry_for_selection_drag(child_dir, worktree, &dragged_selection, cx);
+        assert_eq!(
+            result,
+            Some(child_dir.id),
+            "Should always highlight directories"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_hide_root(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor().clone());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "dir1": {
+                "file1.txt": "content",
+                "file2.txt": "content",
+            },
+            "dir2": {
+                "file3.txt": "content",
+            },
+            "file4.txt": "content",
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "dir3": {
+                "file5.txt": "content",
+            },
+            "file6.txt": "content",
+        }),
+    )
+    .await;
+
+    // Test 1: Single worktree with hide_root = false
+    {
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    hide_root: false,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        #[rustfmt::skip]
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > dir1",
+                "    > dir2",
+                "      file4.txt",
+            ],
+            "With hide_root=false and single worktree, root should be visible"
+        );
+    }
+
+    // Test 2: Single worktree with hide_root = true
+    {
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        // Set hide_root to true
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    hide_root: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["> dir1", "> dir2", "  file4.txt",],
+            "With hide_root=true and single worktree, root should be hidden"
+        );
+
+        // Test expanding directories still works without root
+        toggle_expand_dir(&panel, "root1/dir1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v dir1  <== selected",
+                "      file1.txt",
+                "      file2.txt",
+                "> dir2",
+                "  file4.txt",
+            ],
+            "Should be able to expand directories even when root is hidden"
+        );
+    }
+
+    // Test 3: Multiple worktrees with hide_root = true
+    {
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        // Set hide_root to true
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    hide_root: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > dir1",
+                "    > dir2",
+                "      file4.txt",
+                "v root2",
+                "    > dir3",
+                "      file6.txt",
+            ],
+            "With hide_root=true and multiple worktrees, roots should still be visible"
+        );
+    }
+
+    // Test 4: Multiple worktrees with hide_root = false
+    {
+        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    hide_root: false,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v root1",
+                "    > dir1",
+                "    > dir2",
+                "      file4.txt",
+                "v root2",
+                "    > dir3",
+                "      file6.txt",
+            ],
+            "With hide_root=false and multiple worktrees, roots should be visible"
+        );
+    }
 }
 
 fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {

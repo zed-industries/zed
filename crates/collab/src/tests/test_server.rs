@@ -1,3 +1,4 @@
+use crate::stripe_client::FakeStripeClient;
 use crate::{
     AppState, Config,
     db::{NewUserParams, UserId, tests::TestDb},
@@ -312,7 +313,7 @@ impl TestServer {
             );
             language_model::LanguageModelRegistry::test(cx);
             assistant_context_editor::init(client.clone(), cx);
-            assistant_settings::init(cx);
+            agent_settings::init(cx);
         });
 
         client
@@ -522,7 +523,8 @@ impl TestServer {
             llm_db: None,
             livekit_client: Some(Arc::new(livekit_test_server.create_api_client())),
             blob_store_client: None,
-            stripe_client: None,
+            real_stripe_client: None,
+            stripe_client: Some(Arc::new(FakeStripeClient::new())),
             stripe_billing: None,
             executor,
             kinesis_client: None,

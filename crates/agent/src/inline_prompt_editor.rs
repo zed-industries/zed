@@ -1,4 +1,4 @@
-use crate::agent_model_selector::{AgentModelSelector, ModelType};
+use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context::ContextCreasesAddon;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
@@ -7,12 +7,13 @@ use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::message_editor::{extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::{TextThreadStore, ThreadStore};
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
+use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
 use crate::{RemoveAllContext, ToggleContextPicker};
 use assistant_context_editor::language_model_selector::ToggleModelSelector;
 use client::ErrorExt;
 use collections::VecDeque;
 use db::kvp::Dismissable;
+use editor::actions::Paste;
 use editor::display_map::EditorMargins;
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
@@ -28,6 +29,7 @@ use language_model::{LanguageModel, LanguageModelRegistry};
 use parking_lot::Mutex;
 use settings::Settings;
 use std::cmp;
+use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
@@ -98,8 +100,9 @@ impl<T: 'static> Render for PromptEditor<T> {
 
         v_flex()
             .key_context("PromptEditor")
+            .capture_action(cx.listener(Self::paste))
             .bg(cx.theme().colors().editor_background)
-            .block_mouse_down()
+            .block_mouse_except_scroll()
             .gap_0p5()
             .border_y_1()
             .border_color(cx.theme().status().info_border)
@@ -302,6 +305,10 @@ impl<T: 'static> PromptEditor<T> {
         self.editor.read(cx).text(cx)
     }
 
+    fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
+        crate::active_thread::attach_pasted_images_as_context(&self.context_store, cx);
+    }
+
     fn toggle_rate_limit_notice(
         &mut self,
         _: &ClickEvent,
@@ -371,7 +378,7 @@ impl<T: 'static> PromptEditor<T> {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.context_store.update(cx, |store, _cx| store.clear());
+        self.context_store.update(cx, |store, cx| store.clear(cx));
         cx.notify();
     }
 
@@ -890,7 +897,7 @@ impl PromptEditor<BufferCodegen> {
 
         let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
@@ -911,6 +918,7 @@ impl PromptEditor<BufferCodegen> {
                 text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
+                ModelUsageContext::InlineAssistant,
                 window,
                 cx,
             )
@@ -929,7 +937,7 @@ impl PromptEditor<BufferCodegen> {
                     fs,
                     model_selector_menu_handle,
                     prompt_editor.focus_handle(cx),
-                    ModelType::InlineAssistant,
+                    ModelUsageContext::InlineAssistant,
                     window,
                     cx,
                 )
@@ -1061,7 +1069,7 @@ impl PromptEditor<TerminalCodegen> {
 
         let prompt_editor_entity = prompt_editor.downgrade();
         prompt_editor.update(cx, |editor, _| {
-            editor.set_completion_provider(Some(Box::new(ContextPickerCompletionProvider::new(
+            editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 workspace.clone(),
                 context_store.downgrade(),
                 thread_store.clone(),
@@ -1082,6 +1090,7 @@ impl PromptEditor<TerminalCodegen> {
                 text_thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
+                ModelUsageContext::InlineAssistant,
                 window,
                 cx,
             )
@@ -1100,7 +1109,7 @@ impl PromptEditor<TerminalCodegen> {
                     fs,
                     model_selector_menu_handle.clone(),
                     prompt_editor.focus_handle(cx),
-                    ModelType::InlineAssistant,
+                    ModelUsageContext::InlineAssistant,
                     window,
                     cx,
                 )

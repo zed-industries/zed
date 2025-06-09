@@ -4,7 +4,11 @@ use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
-use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
+use crate::llm::{
+    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG, LlmTokenClaims,
+    MIN_ACCOUNT_AGE_FOR_LLM_USE,
+};
+use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
@@ -311,6 +315,7 @@ impl Server {
             .add_request_handler(
                 forward_read_only_project_request::<proto::LanguageServerIdForName>,
             )
+            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -353,6 +358,9 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateDiffBases>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::PullWorkspaceDiagnostics>,
+            )
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
             .add_request_handler(request_contact)
@@ -383,6 +391,7 @@ impl Server {
             .add_request_handler(get_notifications)
             .add_request_handler(mark_notification_as_read)
             .add_request_handler(move_channel)
+            .add_request_handler(reorder_channel)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
@@ -432,6 +441,16 @@ impl Server {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
                 tracing::info!("cleanup timeout expired, retrieving stale rooms");
+
+                app_state
+                    .db
+                    .delete_stale_channel_chat_participants(
+                        &app_state.config.zed_environment,
+                        server_id,
+                    )
+                    .await
+                    .trace_err();
+
                 if let Some((room_ids, channel_ids)) = app_state
                     .db
                     .stale_server_resource_ids(&app_state.config.zed_environment, server_id)
@@ -552,6 +571,21 @@ impl Server {
                         }
                     }
                 }
+
+                app_state
+                    .db
+                    .delete_stale_channel_chat_participants(
+                        &app_state.config.zed_environment,
+                        server_id,
+                    )
+                    .await
+                    .trace_err();
+
+                app_state
+                    .db
+                    .clear_old_worktree_entries(server_id)
+                    .await
+                    .trace_err();
 
                 app_state
                     .db
@@ -2742,12 +2776,17 @@ async fn make_update_user_plan_message(
         (None, None)
     };
 
-    let account_too_young =
-        !matches!(plan, proto::Plan::ZedPro) && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
+    let bypass_account_age_check = feature_flags
+        .iter()
+        .any(|flag| flag == BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG);
+    let account_too_young = !matches!(plan, proto::Plan::ZedPro)
+        && !bypass_account_age_check
+        && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
 
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
         trial_started_at: billing_customer
+            .as_ref()
             .and_then(|billing_customer| billing_customer.trial_started_at)
             .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
         is_usage_based_billing_enabled: if is_staff {
@@ -2762,6 +2801,8 @@ async fn make_update_user_plan_message(
             }
         }),
         account_too_young: Some(account_too_young),
+        has_overdue_invoices: billing_customer
+            .map(|billing_customer| billing_customer.has_overdue_invoices),
         usage: usage.map(|usage| {
             let plan = match plan {
                 proto::Plan::Free => zed_llm_client::Plan::ZedFree,
@@ -3185,6 +3226,51 @@ async fn move_channel(
         };
 
         session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(Ack {})?;
+    Ok(())
+}
+
+async fn reorder_channel(
+    request: proto::ReorderChannel,
+    response: Response<proto::ReorderChannel>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let direction = request.direction();
+
+    let updated_channels = session
+        .db()
+        .await
+        .reorder_channel(channel_id, direction, session.user_id())
+        .await?;
+
+    if let Some(root_id) = updated_channels.first().map(|channel| channel.root_id()) {
+        let connection_pool = session.connection_pool().await;
+        for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
+            let channels = updated_channels
+                .iter()
+                .filter_map(|channel| {
+                    if role.can_see_channel(channel.visibility) {
+                        Some(channel.to_proto())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            if channels.is_empty() {
+                continue;
+            }
+
+            let update = proto::UpdateChannels {
+                channels,
+                ..Default::default()
+            };
+
+            session.peer.send(connection_id, update.clone())?;
+        }
     }
 
     response.send(Ack {})?;
@@ -3996,9 +4082,6 @@ async fn accept_terms_of_service(
     Ok(())
 }
 
-/// The minimum account age an account must have in order to use the LLM service.
-pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
-
 async fn get_llm_api_token(
     _request: proto::GetLlmToken,
     response: Response<proto::GetLlmToken>,
@@ -4030,31 +4113,26 @@ async fn get_llm_api_token(
         .as_ref()
         .context("failed to retrieve Stripe billing object")?;
 
-    let billing_customer =
-        if let Some(billing_customer) = db.get_billing_customer_by_user_id(user.id).await? {
-            billing_customer
-        } else {
-            let customer_id = stripe_billing
-                .find_or_create_customer_by_email(user.email_address.as_deref())
-                .await?;
+    let billing_customer = if let Some(billing_customer) =
+        db.get_billing_customer_by_user_id(user.id).await?
+    {
+        billing_customer
+    } else {
+        let customer_id = stripe_billing
+            .find_or_create_customer_by_email(user.email_address.as_deref())
+            .await?;
 
-            find_or_create_billing_customer(
-                &session.app_state,
-                &stripe_client,
-                stripe::Expandable::Id(customer_id),
-            )
+        find_or_create_billing_customer(&session.app_state, stripe_client.as_ref(), &customer_id)
             .await?
             .context("billing customer not found")?
-        };
+    };
 
     let billing_subscription =
         if let Some(billing_subscription) = db.get_active_billing_subscription(user.id).await? {
             billing_subscription
         } else {
-            let stripe_customer_id = billing_customer
-                .stripe_customer_id
-                .parse::<stripe::CustomerId>()
-                .context("failed to parse Stripe customer ID from database")?;
+            let stripe_customer_id =
+                StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
 
             let stripe_subscription = stripe_billing
                 .subscribe_to_zed_free(stripe_customer_id)
@@ -4077,6 +4155,7 @@ async fn get_llm_api_token(
     let token = LlmTokenClaims::create(
         &user,
         session.is_staff(),
+        billing_customer,
         billing_preferences,
         &flags,
         billing_subscription,

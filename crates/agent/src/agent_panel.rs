@@ -1,18 +1,19 @@
 use std::ops::Range;
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
+use agent_settings::{AgentDockPosition, AgentSettings, CompletionMode, DefaultView};
 use anyhow::{Result, anyhow};
 use assistant_context_editor::{
     AgentPanelDelegate, AssistantContext, ConfigurationError, ContextEditor, ContextEvent,
     ContextSummary, SlashCommandCompletionProvider, humanize_token_count,
     make_lsp_adapter_delegate, render_remaining_tokens,
 };
-use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 
@@ -40,8 +41,8 @@ use theme::ThemeSettings;
 use time::UtcOffset;
 use ui::utils::WithRemSize;
 use ui::{
-    Banner, CheckboxWithLabel, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
+    Banner, CheckboxWithLabel, ContextMenu, ElevationIndex, KeyBinding, PopoverMenu,
+    PopoverMenuHandle, ProgressBar, Tab, Tooltip, Vector, VectorName, prelude::*,
 };
 use util::{ResultExt as _, maybe};
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -51,22 +52,23 @@ use workspace::{
 use zed_actions::agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding};
 use zed_actions::assistant::{OpenRulesLibrary, ToggleFocus};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
-use zed_llm_client::UsageLimit;
+use zed_llm_client::{CompletionIntent, UsageLimit};
 
 use crate::active_thread::{self, ActiveThread, ActiveThreadEvent};
 use crate::agent_configuration::{AgentConfiguration, AssistantConfigurationEvent};
 use crate::agent_diff::AgentDiff;
-use crate::history_store::{HistoryStore, RecentEntry};
+use crate::history_store::{HistoryEntryId, HistoryStore};
 use crate::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::thread::{Thread, ThreadError, ThreadId, ThreadSummary, TokenUsageRatio};
 use crate::thread_history::{HistoryEntryElement, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::ui::AgentOnboardingModal;
 use crate::{
-    AddContextServer, AgentDiffPane, ContextStore, DeleteRecentlyOpenThread, ExpandMessageEditor,
-    Follow, InlineAssistant, NewTextThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff,
-    OpenHistory, ResetTrialEndUpsell, ResetTrialUpsell, TextThreadStore, ThreadEvent,
-    ToggleContextPicker, ToggleNavigationMenu, ToggleOptionsMenu,
+    AddContextServer, AgentDiffPane, ContextStore, ContinueThread, ContinueWithBurnMode,
+    DeleteRecentlyOpenThread, ExpandMessageEditor, Follow, InlineAssistant, NewTextThread,
+    NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, OpenHistory, ResetTrialEndUpsell,
+    ResetTrialUpsell, TextThreadStore, ThreadEvent, ToggleBurnMode, ToggleContextPicker,
+    ToggleNavigationMenu, ToggleOptionsMenu,
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -172,7 +174,7 @@ enum ActiveView {
         thread: WeakEntity<Thread>,
         _subscriptions: Vec<gpui::Subscription>,
     },
-    PromptEditor {
+    TextThread {
         context_editor: Entity<ContextEditor>,
         title_editor: Entity<Editor>,
         buffer_search_bar: Entity<BufferSearchBar>,
@@ -192,7 +194,7 @@ impl ActiveView {
     pub fn which_font_size_used(&self) -> WhichFontSize {
         match self {
             ActiveView::Thread { .. } | ActiveView::History => WhichFontSize::AgentFont,
-            ActiveView::PromptEditor { .. } => WhichFontSize::BufferFont,
+            ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
             ActiveView::Configuration => WhichFontSize::None,
         }
     }
@@ -255,6 +257,7 @@ impl ActiveView {
 
     pub fn prompt_editor(
         context_editor: Entity<ContextEditor>,
+        history_store: Entity<HistoryStore>,
         language_registry: Arc<LanguageRegistry>,
         window: &mut Window,
         cx: &mut App,
@@ -320,6 +323,19 @@ impl ActiveView {
                             editor.set_text(summary, window, cx);
                         })
                     }
+                    ContextEvent::PathChanged { old_path, new_path } => {
+                        history_store.update(cx, |history_store, cx| {
+                            if let Some(old_path) = old_path {
+                                history_store
+                                    .replace_recently_opened_text_thread(old_path, new_path, cx);
+                            } else {
+                                history_store.push_recently_opened_entry(
+                                    HistoryEntryId::Context(new_path.clone()),
+                                    cx,
+                                );
+                            }
+                        });
+                    }
                     _ => {}
                 }
             }),
@@ -331,7 +347,7 @@ impl ActiveView {
             buffer_search_bar.set_active_pane_item(Some(&context_editor), window, cx)
         });
 
-        Self::PromptEditor {
+        Self::TextThread {
             context_editor,
             title_editor: editor,
             buffer_search_bar,
@@ -514,15 +530,43 @@ impl AgentPanel {
             HistoryStore::new(
                 thread_store.clone(),
                 context_store.clone(),
-                [RecentEntry::Thread(thread_id, thread.clone())],
-                window,
+                [HistoryEntryId::Thread(thread_id)],
                 cx,
             )
         });
 
         cx.observe(&history_store, |_, _, cx| cx.notify()).detach();
 
-        let active_view = ActiveView::thread(thread.clone(), window, cx);
+        let panel_type = AgentSettings::get_global(cx).default_view;
+        let active_view = match panel_type {
+            DefaultView::Thread => ActiveView::thread(thread.clone(), window, cx),
+            DefaultView::TextThread => {
+                let context =
+                    context_store.update(cx, |context_store, cx| context_store.create(cx));
+                let lsp_adapter_delegate = make_lsp_adapter_delegate(&project.clone(), cx).unwrap();
+                let context_editor = cx.new(|cx| {
+                    let mut editor = ContextEditor::for_context(
+                        context,
+                        fs.clone(),
+                        workspace.clone(),
+                        project.clone(),
+                        lsp_adapter_delegate,
+                        window,
+                        cx,
+                    );
+                    editor.insert_default_prompt(window, cx);
+                    editor
+                });
+                ActiveView::prompt_editor(
+                    context_editor,
+                    history_store.clone(),
+                    language_registry.clone(),
+                    window,
+                    cx,
+                )
+            }
+        };
+
         let thread_subscription = cx.subscribe(&thread, |_, _, event, cx| {
             if let ThreadEvent::MessageAdded(_) = &event {
                 // needed to leave empty state
@@ -556,86 +600,9 @@ impl AgentPanel {
             let panel = weak_panel.clone();
             let assistant_navigation_menu =
                 ContextMenu::build_persistent(window, cx, move |mut menu, _window, cx| {
-                    let recently_opened = panel
-                        .update(cx, |this, cx| {
-                            this.history_store.update(cx, |history_store, cx| {
-                                history_store.recently_opened_entries(cx)
-                            })
-                        })
-                        .unwrap_or_default();
-
-                    if !recently_opened.is_empty() {
-                        menu = menu.header("Recently Opened");
-
-                        for entry in recently_opened.iter() {
-                            if let RecentEntry::Context(context) = entry {
-                                if context.read(cx).path().is_none() {
-                                    log::error!(
-                                        "bug: text thread in recent history list was never saved"
-                                    );
-                                    continue;
-                                }
-                            }
-
-                            let summary = entry.summary(cx);
-
-                            menu = menu.entry_with_end_slot_on_hover(
-                                summary,
-                                None,
-                                {
-                                    let panel = panel.clone();
-                                    let entry = entry.clone();
-                                    move |window, cx| {
-                                        panel
-                                            .update(cx, {
-                                                let entry = entry.clone();
-                                                move |this, cx| match entry {
-                                                    RecentEntry::Thread(_, thread) => {
-                                                        this.open_thread(thread, window, cx)
-                                                    }
-                                                    RecentEntry::Context(context) => {
-                                                        let Some(path) = context.read(cx).path()
-                                                        else {
-                                                            return;
-                                                        };
-                                                        this.open_saved_prompt_editor(
-                                                            path.clone(),
-                                                            window,
-                                                            cx,
-                                                        )
-                                                        .detach_and_log_err(cx)
-                                                    }
-                                                }
-                                            })
-                                            .ok();
-                                    }
-                                },
-                                IconName::Close,
-                                "Close Entry".into(),
-                                {
-                                    let panel = panel.clone();
-                                    let entry = entry.clone();
-                                    move |_window, cx| {
-                                        panel
-                                            .update(cx, |this, cx| {
-                                                this.history_store.update(
-                                                    cx,
-                                                    |history_store, cx| {
-                                                        history_store.remove_recently_opened_entry(
-                                                            &entry, cx,
-                                                        );
-                                                    },
-                                                );
-                                            })
-                                            .ok();
-                                    }
-                                },
-                            );
-                        }
-
-                        menu = menu.separator();
+                    if let Some(panel) = panel.upgrade() {
+                        menu = Self::populate_recently_opened_menu_section(menu, panel, cx);
                     }
-
                     menu.action("View All", Box::new(OpenHistory))
                         .end_slot_action(DeleteRecentlyOpenThread.boxed_clone())
                         .fixed_width(px(320.).into())
@@ -873,6 +840,7 @@ impl AgentPanel {
         self.set_active_view(
             ActiveView::prompt_editor(
                 context_editor.clone(),
+                self.history_store.clone(),
                 self.language_registry.clone(),
                 window,
                 cx,
@@ -892,8 +860,8 @@ impl AgentPanel {
         open_rules_library(
             self.language_registry.clone(),
             Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
-            Arc::new(|| {
-                Box::new(SlashCommandCompletionProvider::new(
+            Rc::new(|| {
+                Rc::new(SlashCommandCompletionProvider::new(
                     Arc::new(SlashCommandWorkingSet::default()),
                     None,
                     None,
@@ -959,7 +927,13 @@ impl AgentPanel {
             )
         });
         self.set_active_view(
-            ActiveView::prompt_editor(editor.clone(), self.language_registry.clone(), window, cx),
+            ActiveView::prompt_editor(
+                editor.clone(),
+                self.history_store.clone(),
+                self.language_registry.clone(),
+                window,
+                cx,
+            ),
             window,
             cx,
         );
@@ -1059,9 +1033,23 @@ impl AgentPanel {
     pub fn go_back(&mut self, _: &workspace::GoBack, window: &mut Window, cx: &mut Context<Self>) {
         match self.active_view {
             ActiveView::Configuration | ActiveView::History => {
-                self.active_view =
-                    ActiveView::thread(self.thread.read(cx).thread().clone(), window, cx);
-                self.message_editor.focus_handle(cx).focus(window);
+                if let Some(previous_view) = self.previous_view.take() {
+                    self.active_view = previous_view;
+
+                    match &self.active_view {
+                        ActiveView::Thread { .. } => {
+                            self.message_editor.focus_handle(cx).focus(window);
+                        }
+                        ActiveView::TextThread { context_editor, .. } => {
+                            context_editor.focus_handle(cx).focus(window);
+                        }
+                        _ => {}
+                    }
+                } else {
+                    self.active_view =
+                        ActiveView::thread(self.thread.read(cx).thread().clone(), window, cx);
+                    self.message_editor.focus_handle(cx).focus(window);
+                }
                 cx.notify();
             }
             _ => {}
@@ -1226,7 +1214,7 @@ impl AgentPanel {
                     .map_or(true, |model| model.provider.id() != provider.id())
                 {
                     if let Some(model) = provider.default_model(cx) {
-                        update_settings_file::<AssistantSettings>(
+                        update_settings_file::<AgentSettings>(
                             self.fs.clone(),
                             cx,
                             move |settings, _| settings.set_model(model),
@@ -1259,9 +1247,52 @@ impl AgentPanel {
         matches!(self.active_view, ActiveView::Thread { .. })
     }
 
+    fn continue_conversation(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let thread_state = self.thread.read(cx).thread().read(cx);
+        if !thread_state.tool_use_limit_reached() {
+            return;
+        }
+
+        let model = thread_state.configured_model().map(|cm| cm.model.clone());
+        if let Some(model) = model {
+            self.thread.update(cx, |active_thread, cx| {
+                active_thread.thread().update(cx, |thread, cx| {
+                    thread.insert_invisible_continue_message(cx);
+                    thread.advance_prompt_id();
+                    thread.send_to_model(
+                        model,
+                        CompletionIntent::UserPrompt,
+                        Some(window.window_handle()),
+                        cx,
+                    );
+                });
+            });
+        } else {
+            log::warn!("No configured model available for continuation");
+        }
+    }
+
+    fn toggle_burn_mode(
+        &mut self,
+        _: &ToggleBurnMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.thread.update(cx, |active_thread, cx| {
+            active_thread.thread().update(cx, |thread, _cx| {
+                let current_mode = thread.completion_mode();
+
+                thread.set_completion_mode(match current_mode {
+                    CompletionMode::Burn => CompletionMode::Normal,
+                    CompletionMode::Normal => CompletionMode::Burn,
+                });
+            });
+        });
+    }
+
     pub(crate) fn active_context_editor(&self) -> Option<Entity<ContextEditor>> {
         match &self.active_view {
-            ActiveView::PromptEditor { context_editor, .. } => Some(context_editor.clone()),
+            ActiveView::TextThread { context_editor, .. } => Some(context_editor.clone()),
             _ => None,
         }
     }
@@ -1284,6 +1315,12 @@ impl AgentPanel {
         let current_is_history = matches!(self.active_view, ActiveView::History);
         let new_is_history = matches!(new_view, ActiveView::History);
 
+        let current_is_config = matches!(self.active_view, ActiveView::Configuration);
+        let new_is_config = matches!(new_view, ActiveView::Configuration);
+
+        let current_is_special = current_is_history || current_is_config;
+        let new_is_special = new_is_history || new_is_config;
+
         match &self.active_view {
             ActiveView::Thread { thread, .. } => {
                 if let Some(thread) = thread.upgrade() {
@@ -1295,16 +1332,6 @@ impl AgentPanel {
                     }
                 }
             }
-            ActiveView::PromptEditor { context_editor, .. } => {
-                let context = context_editor.read(cx).context();
-                // When switching away from an unsaved text thread, delete its entry.
-                if context.read(cx).path().is_none() {
-                    let context = context.clone();
-                    self.history_store.update(cx, |store, cx| {
-                        store.remove_recently_opened_entry(&RecentEntry::Context(context), cx);
-                    });
-                }
-            }
             _ => {}
         }
 
@@ -1312,30 +1339,95 @@ impl AgentPanel {
             ActiveView::Thread { thread, .. } => self.history_store.update(cx, |store, cx| {
                 if let Some(thread) = thread.upgrade() {
                     let id = thread.read(cx).id().clone();
-                    store.push_recently_opened_entry(RecentEntry::Thread(id, thread), cx);
+                    store.push_recently_opened_entry(HistoryEntryId::Thread(id), cx);
                 }
             }),
-            ActiveView::PromptEditor { context_editor, .. } => {
+            ActiveView::TextThread { context_editor, .. } => {
                 self.history_store.update(cx, |store, cx| {
-                    let context = context_editor.read(cx).context().clone();
-                    store.push_recently_opened_entry(RecentEntry::Context(context), cx)
+                    if let Some(path) = context_editor.read(cx).context().read(cx).path() {
+                        store.push_recently_opened_entry(HistoryEntryId::Context(path.clone()), cx)
+                    }
                 })
             }
             _ => {}
         }
 
-        if current_is_history && !new_is_history {
+        if current_is_special && !new_is_special {
             self.active_view = new_view;
-        } else if !current_is_history && new_is_history {
+        } else if !current_is_special && new_is_special {
             self.previous_view = Some(std::mem::replace(&mut self.active_view, new_view));
         } else {
-            if !new_is_history {
+            if !new_is_special {
                 self.previous_view = None;
             }
             self.active_view = new_view;
         }
 
         self.focus_handle(cx).focus(window);
+    }
+
+    fn populate_recently_opened_menu_section(
+        mut menu: ContextMenu,
+        panel: Entity<Self>,
+        cx: &mut Context<ContextMenu>,
+    ) -> ContextMenu {
+        let entries = panel
+            .read(cx)
+            .history_store
+            .read(cx)
+            .recently_opened_entries(cx);
+
+        if entries.is_empty() {
+            return menu;
+        }
+
+        menu = menu.header("Recently Opened");
+
+        for entry in entries {
+            let title = entry.title().clone();
+            let id = entry.id();
+
+            menu = menu.entry_with_end_slot_on_hover(
+                title,
+                None,
+                {
+                    let panel = panel.downgrade();
+                    let id = id.clone();
+                    move |window, cx| {
+                        let id = id.clone();
+                        panel
+                            .update(cx, move |this, cx| match id {
+                                HistoryEntryId::Thread(id) => this
+                                    .open_thread_by_id(&id, window, cx)
+                                    .detach_and_log_err(cx),
+                                HistoryEntryId::Context(path) => this
+                                    .open_saved_prompt_editor(path.clone(), window, cx)
+                                    .detach_and_log_err(cx),
+                            })
+                            .ok();
+                    }
+                },
+                IconName::Close,
+                "Close Entry".into(),
+                {
+                    let panel = panel.downgrade();
+                    let id = id.clone();
+                    move |_window, cx| {
+                        panel
+                            .update(cx, |this, cx| {
+                                this.history_store.update(cx, |history_store, cx| {
+                                    history_store.remove_recently_opened_entry(&id, cx);
+                                });
+                            })
+                            .ok();
+                    }
+                },
+            );
+        }
+
+        menu = menu.separator();
+
+        menu
     }
 }
 
@@ -1344,7 +1436,7 @@ impl Focusable for AgentPanel {
         match &self.active_view {
             ActiveView::Thread { .. } => self.message_editor.focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
-            ActiveView::PromptEditor { context_editor, .. } => context_editor.focus_handle(cx),
+            ActiveView::TextThread { context_editor, .. } => context_editor.focus_handle(cx),
             ActiveView::Configuration => {
                 if let Some(configuration) = self.configuration.as_ref() {
                     configuration.focus_handle(cx)
@@ -1357,10 +1449,10 @@ impl Focusable for AgentPanel {
 }
 
 fn agent_panel_dock_position(cx: &App) -> DockPosition {
-    match AssistantSettings::get_global(cx).dock {
-        AssistantDockPosition::Left => DockPosition::Left,
-        AssistantDockPosition::Bottom => DockPosition::Bottom,
-        AssistantDockPosition::Right => DockPosition::Right,
+    match AgentSettings::get_global(cx).dock {
+        AgentDockPosition::Left => DockPosition::Left,
+        AgentDockPosition::Bottom => DockPosition::Bottom,
+        AgentDockPosition::Right => DockPosition::Right,
     }
 }
 
@@ -1380,22 +1472,18 @@ impl Panel for AgentPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<AssistantSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => AssistantDockPosition::Left,
-                    DockPosition::Bottom => AssistantDockPosition::Bottom,
-                    DockPosition::Right => AssistantDockPosition::Right,
-                };
-                settings.set_dock(dock);
-            },
-        );
+        settings::update_settings_file::<AgentSettings>(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left => AgentDockPosition::Left,
+                DockPosition::Bottom => AgentDockPosition::Bottom,
+                DockPosition::Right => AgentDockPosition::Right,
+            };
+            settings.set_dock(dock);
+        });
     }
 
     fn size(&self, window: &Window, cx: &App) -> Pixels {
-        let settings = AssistantSettings::get_global(cx);
+        let settings = AgentSettings::get_global(cx);
         match self.position(window, cx) {
             DockPosition::Left | DockPosition::Right => {
                 self.width.unwrap_or(settings.default_width)
@@ -1420,8 +1508,7 @@ impl Panel for AgentPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<IconName> {
-        (self.enabled(cx) && AssistantSettings::get_global(cx).button)
-            .then_some(IconName::ZedAssistant)
+        (self.enabled(cx) && AgentSettings::get_global(cx).button).then_some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -1437,7 +1524,7 @@ impl Panel for AgentPanel {
     }
 
     fn enabled(&self, cx: &App) -> bool {
-        AssistantSettings::get_global(cx).enabled
+        AgentSettings::get_global(cx).enabled
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
@@ -1501,7 +1588,7 @@ impl AgentPanel {
                         .into_any_element(),
                 }
             }
-            ActiveView::PromptEditor {
+            ActiveView::TextThread {
                 title_editor,
                 context_editor,
                 ..
@@ -1593,7 +1680,7 @@ impl AgentPanel {
 
         let show_token_count = match &self.active_view {
             ActiveView::Thread { .. } => !is_empty || !editor_empty,
-            ActiveView::PromptEditor { .. } => true,
+            ActiveView::TextThread { .. } => true,
             _ => false,
         };
 
@@ -1909,7 +1996,7 @@ impl AgentPanel {
 
                 Some(token_count)
             }
-            ActiveView::PromptEditor { context_editor, .. } => {
+            ActiveView::TextThread { context_editor, .. } => {
                 let element = render_remaining_tokens(context_editor, cx)?;
 
                 Some(element.into_any_element())
@@ -1973,7 +2060,7 @@ impl AgentPanel {
             return None;
         }
 
-        if self.user_store.read(cx).current_user_account_too_young() {
+        if self.user_store.read(cx).account_too_young() {
             Some(self.render_young_account_upsell(cx).into_any_element())
         } else {
             Some(self.render_trial_upsell(cx).into_any_element())
@@ -2555,7 +2642,11 @@ impl AgentPanel {
             })
     }
 
-    fn render_tool_use_limit_reached(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_tool_use_limit_reached(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let tool_use_limit_reached = self
             .thread
             .read(cx)
@@ -2574,17 +2665,59 @@ impl AgentPanel {
             .configured_model()?
             .model;
 
-        let max_mode_upsell = if model.supports_max_mode() {
-            " Enable max mode for unlimited tool use."
-        } else {
-            ""
-        };
+        let focus_handle = self.focus_handle(cx);
 
         let banner = Banner::new()
             .severity(ui::Severity::Info)
-            .child(h_flex().child(Label::new(format!(
-                "Consecutive tool use limit reached.{max_mode_upsell}"
-            ))));
+            .child(Label::new("Consecutive tool use limit reached.").size(LabelSize::Small))
+            .action_slot(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new("continue-conversation", "Continue")
+                            .layer(ElevationIndex::ModalSurface)
+                            .label_size(LabelSize::Small)
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &ContinueThread,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                            )
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.continue_conversation(window, cx);
+                            })),
+                    )
+                    .when(model.supports_max_mode(), |this| {
+                        this.child(
+                            Button::new("continue-burn-mode", "Continue with Burn Mode")
+                                .style(ButtonStyle::Filled)
+                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                .layer(ElevationIndex::ModalSurface)
+                                .label_size(LabelSize::Small)
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &ContinueWithBurnMode,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(10.))),
+                                )
+                                .tooltip(Tooltip::text("Enable Burn Mode for unlimited tool use."))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.thread.update(cx, |active_thread, cx| {
+                                        active_thread.thread().update(cx, |thread, _cx| {
+                                            thread.set_completion_mode(CompletionMode::Burn);
+                                        });
+                                    });
+                                    this.continue_conversation(window, cx);
+                                })),
+                        )
+                    }),
+            );
 
         Some(div().px_2().pb_2().child(banner).into_any_element())
     }
@@ -2781,7 +2914,7 @@ impl AgentPanel {
     ) -> Div {
         let mut registrar = buffer_search::DivRegistrar::new(
             |this, _, _cx| match &this.active_view {
-                ActiveView::PromptEditor {
+                ActiveView::TextThread {
                     buffer_search_bar, ..
                 } => Some(buffer_search_bar.clone()),
                 _ => None,
@@ -2899,7 +3032,7 @@ impl AgentPanel {
                     .detach();
                 });
             }
-            ActiveView::PromptEditor { context_editor, .. } => {
+            ActiveView::TextThread { context_editor, .. } => {
                 context_editor.update(cx, |context_editor, cx| {
                     ContextEditor::insert_dragged_files(
                         context_editor,
@@ -2926,7 +3059,7 @@ impl AgentPanel {
     fn key_context(&self) -> KeyContext {
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("AgentPanel");
-        if matches!(self.active_view, ActiveView::PromptEditor { .. }) {
+        if matches!(self.active_view, ActiveView::TextThread { .. }) {
             key_context.add("prompt_editor");
         }
         key_context
@@ -2939,9 +3072,9 @@ impl Render for AgentPanel {
         // non-obvious implications to the layout of children.
         //
         // If you need to change it, please confirm:
-        // - The message editor expands (⌘esc) correctly
+        // - The message editor expands (cmd-option-esc) correctly
         // - When expanded, the buttons at the bottom of the panel are displayed correctly
-        // - Font size works as expected and can be changed with ⌘+/⌘-
+        // - Font size works as expected and can be changed with cmd-+/cmd-
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
         let content = v_flex()
@@ -2968,6 +3101,18 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::toggle_zoom))
+            .on_action(cx.listener(|this, _: &ContinueThread, window, cx| {
+                this.continue_conversation(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &ContinueWithBurnMode, window, cx| {
+                this.thread.update(cx, |active_thread, cx| {
+                    active_thread.thread().update(cx, |thread, _cx| {
+                        thread.set_completion_mode(CompletionMode::Burn);
+                    });
+                });
+                this.continue_conversation(window, cx);
+            }))
+            .on_action(cx.listener(Self::toggle_burn_mode))
             .child(self.render_toolbar(window, cx))
             .children(self.render_upsell(window, cx))
             .children(self.render_trial_end_upsell(window, cx))
@@ -2975,12 +3120,12 @@ impl Render for AgentPanel {
                 ActiveView::Thread { .. } => parent
                     .relative()
                     .child(self.render_active_thread_or_empty_state(window, cx))
-                    .children(self.render_tool_use_limit_reached(cx))
+                    .children(self.render_tool_use_limit_reached(window, cx))
                     .child(h_flex().child(self.message_editor.clone()))
                     .children(self.render_last_error(cx))
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
-                ActiveView::PromptEditor {
+                ActiveView::TextThread {
                     context_editor,
                     buffer_search_bar,
                     ..

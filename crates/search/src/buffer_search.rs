@@ -696,9 +696,9 @@ impl BufferSearchBar {
                 .read(cx)
                 .as_singleton()
                 .expect("query editor should be backed by a singleton buffer");
-            query_buffer.update(cx, |query_buffer, _| {
-                query_buffer.set_language_registry(languages.clone());
-            });
+            query_buffer
+                .read(cx)
+                .set_language_registry(languages.clone());
 
             cx.spawn(async move |buffer_search_bar, cx| {
                 let regex_language = languages
@@ -1692,7 +1692,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1703,7 +1703,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1714,7 +1714,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1725,7 +1725,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1736,7 +1736,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1747,7 +1747,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1758,7 +1758,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1779,7 +1779,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1800,7 +1800,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 11)..DisplayPoint::new(DisplayRow(3), 13)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(1));
         });
 
@@ -1821,7 +1821,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
 
@@ -1842,7 +1842,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(0), 41)..DisplayPoint::new(DisplayRow(0), 43)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(0));
         });
 
@@ -1863,7 +1863,7 @@ mod tests {
                 [DisplayPoint::new(DisplayRow(3), 56)..DisplayPoint::new(DisplayRow(3), 58)]
             );
         });
-        search_bar.update(cx, |search_bar, _| {
+        search_bar.read_with(cx, |search_bar, _| {
             assert_eq!(search_bar.active_match_index, Some(2));
         });
     }
