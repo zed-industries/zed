@@ -2600,13 +2600,27 @@ impl MultiBuffer {
             return title.into();
         }
 
-        if let Some(buffer) = self.as_singleton() {
-            if let Some(file) = buffer.read(cx).file() {
-                return file.file_name(cx).to_string_lossy();
-            }
-        }
+        self.as_singleton()
+            .and_then(|buffer| {
+                let buffer = buffer.read(cx);
 
-        "untitled".into()
+                if let Some(file) = buffer.file() {
+                    return Some(file.file_name(cx).to_string_lossy());
+                }
+
+                let title = buffer
+                    .snapshot()
+                    .chars()
+                    .skip_while(|ch| ch.is_whitespace())
+                    .take_while(|&ch| ch != '\n')
+                    .take(40)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string();
+
+                (!title.is_empty()).then(|| title.into())
+            })
+            .unwrap_or("untitled".into())
     }
 
     pub fn set_title(&mut self, title: String, cx: &mut Context<Self>) {
