@@ -464,6 +464,9 @@ impl ProjectPanel {
                     if project_panel_settings.hide_gitignore != new_settings.hide_gitignore {
                         this.update_visible_entries(None, cx);
                     }
+                    if project_panel_settings.hide_root != new_settings.hide_root {
+                        this.update_visible_entries(None, cx);
+                    }
                     project_panel_settings = new_settings;
                     this.update_diagnostics(cx);
                     cx.notify();
