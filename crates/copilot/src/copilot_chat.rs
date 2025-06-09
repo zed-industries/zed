@@ -374,14 +374,7 @@ impl CopilotChat {
             .map(|model| model.0.clone())
     }
 
-    pub fn get_oauth_token() -> Option<String> {
-        let (oauth_token, _from_env) = std::env::var(COPILOT_OAUTH_ENV_VAR)
-            .map(|key| (Some(key), true))
-            .unwrap_or((None, false));
-        oauth_token
-    }
-
-    async fn load_models_for_token(
+    async fn load_models(
         oauth_token: &str,
         client: Arc<dyn HttpClient>,
         cx: &mut AsyncApp,
@@ -432,7 +425,7 @@ impl CopilotChat {
                     })?;
 
                     if let Some(ref oauth_token) = oauth_token {
-                        Self::load_models_for_token(oauth_token, client.clone(), &mut cx).await?;
+                        Self::load_models(oauth_token, client.clone(), &mut cx).await?;
                     }
                 }
                 anyhow::Ok(())
@@ -440,18 +433,15 @@ impl CopilotChat {
         })
         .detach_and_log_err(cx);
 
-        let client_clone = client.clone();
-        cx.spawn({
-            async move |mut cx| {
-                if let Some(ref oauth_token) = CopilotChat::get_oauth_token() {
-                    Self::load_models_for_token(oauth_token, client_clone, &mut cx).await?;
-                }
-                anyhow::Ok(())
-            }
-        })
-        .detach_and_log_err(cx);
+        let oauth_token = std::env::var(COPILOT_OAUTH_ENV_VAR).ok();
+        if let Some(oauth_token) = oauth_token.clone() {
+            cx.spawn({
+                let client = client.clone();
+                async move |mut cx| Self::load_models(&oauth_token, client, &mut cx).await
+            })
+            .detach_and_log_err(cx);
+        }
 
-        let oauth_token = CopilotChat::get_oauth_token();
         Self {
             oauth_token,
             api_token: None,
