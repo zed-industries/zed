@@ -99,6 +99,8 @@
         "version_control.added": "#27a657ff",
         "version_control.modified": "#d3b020ff",
         "version_control.deleted": "#e06c76ff",
+        "version_control.conflict_marker.ours": "#a1c1811a",
+        "version_control.conflict_marker.theirs": "#74ade81a",
         "conflict": "#dec184ff",
         "conflict.background": "#dec1841a",
         "conflict.border": "#5d4c2fff",
