@@ -906,11 +906,12 @@ struct InlineBlamePopover {
     popover_state: InlineBlamePopoverState,
 }
 
-enum DragState {
+enum SelectionDragState {
+    /// State when no drag related activity is detected.
     None,
-    ReadyToDrag {
-        selection: Selection<Anchor>,
-    },
+    /// State when the mouse is down on a selection that is about to be dragged.
+    ReadyToDrag { selection: Selection<Anchor> },
+    /// State when the mouse is dragging the selection in the editor.
     Dragging {
         selection: Selection<Anchor>,
         head: DisplayPoint,
@@ -1102,7 +1103,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
-    drag_state: DragState,
+    selection_drag_state: SelectionDragState,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1997,7 +1998,7 @@ impl Editor {
                 .unwrap_or_default(),
             change_list: ChangeList::new(),
             mode,
-            drag_state: DragState::None,
+            selection_drag_state: SelectionDragState::None,
         };
         if let Some(breakpoints) = editor.breakpoint_store.as_ref() {
             editor
@@ -3541,54 +3542,9 @@ impl Editor {
         self.selections.pending_anchor().is_some() || self.columnar_selection_tail.is_some()
     }
 
-    fn update_drag_selection_head(
-        &mut self,
-        display_point: DisplayPoint,
-        scroll_delta: gpui::Point<f32>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match self.drag_state {
-            DragState::Dragging { ref mut head, .. } => {
-                *head = display_point;
-            }
-            DragState::ReadyToDrag { ref selection } => {
-                self.drag_state = DragState::Dragging {
-                    selection: selection.clone(),
-                    head: display_point,
-                };
-            }
-            _ => {}
-        }
-        self.apply_scroll_delta(scroll_delta, window, cx);
-        cx.notify()
-    }
-
-    fn is_intersect_drag_selection(
-        &self,
-        point: DisplayPoint,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> bool {
-        let snapshot = self.snapshot(window, cx);
-        let selection = match self.drag_state {
-            DragState::Dragging { ref selection, .. } => selection.clone(),
-            DragState::ReadyToDrag { ref selection } => selection.clone(),
-            _ => return false,
-        };
-
-        let start = selection.start.to_display_point(&snapshot);
-        let end = selection.end.to_display_point(&snapshot);
-        point >= start && point <= end
-    }
-
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.selection_mark_mode = false;
-
-        if let DragState::Dragging { .. } = self.drag_state {
-            self.drag_state = DragState::None;
-            return;
-        }
+        self.selection_drag_state = SelectionDragState::None;
 
         if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
@@ -10645,37 +10601,49 @@ impl Editor {
 
     pub fn drop_selection(
         &mut self,
-        point: DisplayPoint,
-        selection: Selection<Anchor>,
+        point_for_position: PointForPosition,
         is_cut: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = &display_map.buffer_snapshot;
-        let mut edits = Vec::new();
-        let insert_point = display_map
-            .clip_point(point, Bias::Left)
-            .to_point(&display_map);
-        let text = buffer
-            .text_for_range(selection.start..selection.end)
-            .collect::<String>();
-        if is_cut {
-            edits.push(((selection.start..selection.end), String::new()));
+    ) -> bool {
+        match self.selection_drag_state {
+            SelectionDragState::Dragging { ref selection, .. } => {
+                let snapshot = self.snapshot(window, cx);
+                let selection_display = selection.map(|anchor| anchor.to_display_point(&snapshot));
+                if !point_for_position.intersects_selection(&selection_display) {
+                    let point = point_for_position.previous_valid;
+                    let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+                    let buffer = &display_map.buffer_snapshot;
+                    let mut edits = Vec::new();
+                    let insert_point = display_map
+                        .clip_point(point, Bias::Left)
+                        .to_point(&display_map);
+                    let text = buffer
+                        .text_for_range(selection.start..selection.end)
+                        .collect::<String>();
+                    if is_cut {
+                        edits.push(((selection.start..selection.end), String::new()));
+                    }
+                    let insert_anchor = buffer.anchor_before(insert_point);
+                    edits.push(((insert_anchor..insert_anchor), text));
+                    let last_edit_start = insert_anchor.bias_left(buffer);
+                    let last_edit_end = insert_anchor.bias_right(buffer);
+                    self.transact(window, cx, |this, window, cx| {
+                        this.buffer.update(cx, |buffer, cx| {
+                            buffer.edit(edits, None, cx);
+                        });
+                        this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            s.select_anchor_ranges([last_edit_start..last_edit_end]);
+                        });
+                    });
+                    self.selection_drag_state = SelectionDragState::None;
+                    return true;
+                }
+            }
+            _ => {}
         }
-        let insert_anchor = buffer.anchor_before(insert_point);
-        edits.push(((insert_anchor..insert_anchor), text));
-        let last_edit_start = insert_anchor.bias_left(buffer);
-        let last_edit_end = insert_anchor.bias_right(buffer);
-        self.transact(window, cx, |this, window, cx| {
-            this.buffer.update(cx, |buffer, cx| {
-                buffer.edit(edits, None, cx);
-            });
-            this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select_anchor_ranges([last_edit_start..last_edit_end]);
-            });
-        });
-        self.drag_state = DragState::None;
+        self.selection_drag_state = SelectionDragState::None;
+        false
     }
 
     pub fn duplicate(

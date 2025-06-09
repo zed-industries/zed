@@ -2,13 +2,13 @@ use crate::{
     ActiveDiagnostic, BlockId, CURSORS_VISIBLE_FOR, ChunkRendererContext, ChunkReplacement,
     CodeActionSource, ConflictsOurs, ConflictsOursMarker, ConflictsOuter, ConflictsTheirs,
     ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId, DisplayDiffHunk,
-    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, DragState,
-    EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
-    LineUp, MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MINIMAP_FONT_SIZE,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator,
-    Point, RowExt, RowRangeExt, SelectPhase, SelectedTextHighlight, Selection, SoftWrap,
+    DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode,
+    Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
+    FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
+    InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
+    MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
+    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SoftWrap,
     StickyHeaderExcerpt, ToPoint, ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
@@ -620,7 +620,6 @@ impl EditorElement {
         let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
         let point_for_position = position_map.point_for_position(event.position);
-        let position = point_for_position.previous_valid;
         let mut click_count = event.click_count;
         let mut modifiers = event.modifiers;
 
@@ -634,8 +633,17 @@ impl EditorElement {
             return;
         }
 
-        if click_count == 1 && editor.is_intersect_drag_selection(position, window, cx) {
-            return;
+        if click_count == 1 {
+            let newest_anchor = editor.selections.newest_anchor();
+            let snapshot = editor.snapshot(window, cx);
+            let selection = newest_anchor.map(|anchor| anchor.to_display_point(&snapshot));
+            if point_for_position.intersects_selection(&selection) {
+                editor.selection_drag_state = SelectionDragState::ReadyToDrag {
+                    selection: newest_anchor.clone(),
+                };
+                cx.stop_propagation();
+                return;
+            }
         }
 
         let is_singleton = editor.buffer().read(cx).is_singleton();
@@ -681,8 +689,8 @@ impl EditorElement {
             }
         }
 
+        let position = point_for_position.previous_valid;
         let multi_cursor_modifier = Editor::multi_cursor_modifier(true, &modifiers, cx);
-
         if Editor::columnar_selection_modifiers(multi_cursor_modifier, &modifiers) {
             editor.select(
                 SelectPhase::BeginColumnar {
@@ -822,54 +830,18 @@ impl EditorElement {
         let end_selection = editor.has_pending_selection();
         let pending_nonempty_selections = editor.has_pending_nonempty_selection();
         let point_for_position = position_map.point_for_position(event.position);
-        let display_point = &point_for_position.previous_valid;
 
-        if !end_selection {
-            match editor.drag_state {
-                DragState::Dragging { ref selection, .. } => {
-                    if !editor.is_intersect_drag_selection(*display_point, window, cx)
-                        && text_hitbox.is_hovered(window)
-                    {
-                        let is_cut = !event.modifiers.control;
-                        editor.drop_selection(
-                            *display_point,
-                            selection.clone(),
-                            is_cut,
-                            window,
-                            cx,
-                        );
-                    } else {
-                        editor.drag_state = DragState::ReadyToDrag {
-                            selection: selection.clone(),
-                        }
-                    }
-                    return;
-                }
-                DragState::ReadyToDrag { .. } => {
-                    editor.drag_state = DragState::None;
-                    editor.select(
-                        SelectPhase::Begin {
-                            position: *display_point,
-                            add: false,
-                            click_count: 1,
-                        },
-                        window,
-                        cx,
-                    );
-                    editor.select(SelectPhase::End, window, cx);
-                    return;
-                }
-                _ => {}
-            }
-        } else {
+        let is_cut = !event.modifiers.control;
+        if editor.drop_selection(point_for_position, is_cut, window, cx) {
+            return;
+        }
+
+        if end_selection {
             editor.select(SelectPhase::End, window, cx);
         }
 
         if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
-            editor.drag_state = DragState::ReadyToDrag {
-                selection: editor.selections.newest_anchor().clone(),
-            };
         } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
             && event.button == MouseButton::Middle
         {
@@ -911,11 +883,7 @@ impl EditorElement {
 
         let hovered_link_modifier = Editor::multi_cursor_modifier(false, &event.modifiers(), cx);
 
-        if !pending_nonempty_selections
-            && hovered_link_modifier
-            && text_hitbox.is_hovered(window)
-            && !matches!(editor.drag_state, DragState::Dragging { .. })
-        {
+        if !pending_nonempty_selections && hovered_link_modifier && text_hitbox.is_hovered(window) {
             let point = position_map.point_for_position(event.up.position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
 
@@ -930,7 +898,9 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if !editor.has_pending_selection() && matches!(editor.drag_state, DragState::None) {
+        if !editor.has_pending_selection()
+            && matches!(editor.selection_drag_state, SelectionDragState::None)
+        {
             return;
         }
 
@@ -969,12 +939,20 @@ impl EditorElement {
         }
 
         if !editor.has_pending_selection() {
-            editor.update_drag_selection_head(
-                point_for_position.previous_valid,
-                scroll_delta,
-                window,
-                cx,
-            );
+            match editor.selection_drag_state {
+                SelectionDragState::Dragging { ref mut head, .. } => {
+                    *head = point_for_position.previous_valid;
+                }
+                SelectionDragState::ReadyToDrag { ref selection } => {
+                    editor.selection_drag_state = SelectionDragState::Dragging {
+                        selection: selection.clone(),
+                        head: point_for_position.previous_valid,
+                    };
+                }
+                _ => {}
+            }
+            editor.apply_scroll_delta(scroll_delta, window, cx);
+            cx.notify();
         } else {
             editor.select(
                 SelectPhase::Update {
@@ -995,9 +973,6 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
-        if let DragState::Dragging { .. } = editor.drag_state {
-            return;
-        }
         let text_hitbox = &position_map.text_hitbox;
         let gutter_hitbox = &position_map.gutter_hitbox;
         let modifiers = event.modifiers;
@@ -1498,10 +1473,10 @@ impl EditorElement {
                 }
             }
 
-            if let DragState::Dragging {
+            if let SelectionDragState::Dragging {
                 ref selection,
                 ref head,
-            } = editor.drag_state
+            } = editor.selection_drag_state
             {
                 let cursor_position = head;
                 let in_range = visible_display_row_range.contains(&cursor_position.row());
@@ -9338,6 +9313,35 @@ impl PointForPosition {
             Some(self.previous_valid)
         } else {
             None
+        }
+    }
+
+    pub fn intersects_selection(&self, selection: &Selection<DisplayPoint>) -> bool {
+        let Some(valid_point) = self.as_valid() else {
+            return false;
+        };
+        let range = selection.range();
+
+        let candidate_row = valid_point.row();
+        let candidate_col = valid_point.column();
+
+        let start_row = range.start.row();
+        let start_col = range.start.column();
+        let end_row = range.end.row();
+        let end_col = range.end.column();
+
+        if candidate_row < start_row || candidate_row > end_row {
+            false
+        } else if start_row == end_row {
+            candidate_col >= start_col && candidate_col < end_col
+        } else {
+            if candidate_row == start_row {
+                candidate_col >= start_col
+            } else if candidate_row == end_row {
+                candidate_col < end_col
+            } else {
+                true
+            }
         }
     }
 }
