@@ -425,7 +425,7 @@ impl LanguageModel for OllamaLanguageModel {
             Ok(stream)
         });
 
-        future.map_ok(|f| f.boxed()).map_err(|e| e).boxed()
+        future.map_ok(|f| f.boxed()).boxed()
     }
 }
 
