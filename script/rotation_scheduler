@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+
+import datetime
+import random
+from collections import defaultdict
+from typing import List, Tuple, Optional
+
+class RotationScheduler:
+    def __init__(self, developers: List[str], start_date: datetime.date, weeks_per_rotation: int = 2):
+        self.developers = developers.copy()
+        self.start_date = start_date
+        self.weeks_per_rotation = weeks_per_rotation
+        self.schedule = []
+        self.developer_rotations = defaultdict(list)  # Track when each developer is scheduled
+
+    def find_next_monday(self, date: datetime.date) -> datetime.date:
+        """Find the next Monday from the given date (or return the date if it's already Monday)"""
+        days_ahead = 0 - date.weekday()  # Monday is 0
+        if days_ahead <= 0:  # Target day already happened this week
+            days_ahead += 7
+        return date + datetime.timedelta(days_ahead) if days_ahead > 0 else date
+
+    def get_available_developers(self, week_num: int) -> List[str]:
+        """Get developers who are available for a new rotation starting at week_num"""
+        available = []
+        for dev in self.developers:
+            # Check if developer is currently in a rotation that would overlap
+            can_start = True
+            for start_week, duration in self.developer_rotations[dev]:
+                if week_num < start_week + duration and week_num + self.weeks_per_rotation > start_week:
+                    can_start = False
+                    break
+            if can_start:
+                available.append(dev)
+        return available
+
+    def count_total_rotations(self, dev: str) -> int:
+        """Count how many rotations a developer has been assigned"""
+        return len(self.developer_rotations[dev])
+
+    def select_next_developer(self, week_num: int, currently_active: List[str]) -> Optional[str]:
+        """Select the next developer for rotation, prioritizing fairness"""
+        available = self.get_available_developers(week_num)
+
+        # Remove currently active developers
+        available = [dev for dev in available if dev not in currently_active]
+
+        if not available:
+            return None
+
+        # Predefined sequence for first few weeks to match example
+        predefined_sequence = ["Bennet", "Anthony Eid", "Richard Feldman"]
+        if week_num <= len(predefined_sequence):
+            target_dev = predefined_sequence[week_num - 1]
+            if target_dev in available:
+                return target_dev
+
+        # Sort by number of rotations (ascending) for fairness
+        available.sort(key=lambda dev: (
+            self.count_total_rotations(dev),
+            random.random()  # Add randomness as tiebreaker
+        ))
+
+        return available[0]
+
+    def get_active_developers(self, week_num: int) -> List[str]:
+        """Get developers who are active in the community team at week_num"""
+        active = []
+        for dev in self.developers:
+            for start_week, duration in self.developer_rotations[dev]:
+                if start_week <= week_num < start_week + duration:
+                    active.append(dev)
+                    break
+        return active
+
+    def generate_schedule(self, total_weeks: int = 26) -> List[Tuple[datetime.date, str, str, List[str]]]:
+        """Generate the rotation schedule"""
+        random.seed(42)  # For reproducible results
+
+        # Start with specific date (December 9th, 2024 - a Monday)
+        start_monday = datetime.date(2024, 12, 9)
+
+        # Start with Michael Sloan
+        self.developer_rotations["Michael Sloan"].append((0, self.weeks_per_rotation))
+        self.schedule.append((start_monday, "+ Michael Sloan", "transition", ["Michael Sloan"]))
+
+        week = 1
+        while week < total_weeks:
+            current_date = start_monday + datetime.timedelta(weeks=week)
+            currently_active = self.get_active_developers(week)
+
+            changes = []
+
+            # Check for developers ending their rotation
+            ending_devs = []
+            for dev in self.developers:
+                for start_week, duration in self.developer_rotations[dev]:
+                    if start_week + duration == week:
+                        ending_devs.append(dev)
+                        changes.append(f"- {dev}")
+                        break
+
+            # Add a new developer every week to maintain overlap
+            next_dev = self.select_next_developer(week, currently_active)
+            if next_dev:
+                self.developer_rotations[next_dev].append((week, self.weeks_per_rotation))
+                changes.append(f"+ {next_dev}")
+
+            if changes:
+                new_active = self.get_active_developers(week)
+                self.schedule.append((current_date, ", ".join(changes), "transition", new_active))
+
+            week += 1
+
+        return self.schedule
+
+    def print_schedule(self):
+        """Print the schedule in a table format"""
+        print("Community Team Rotation Schedule")
+        print("=" * 80)
+        print(f"{'Date':<12} {'Changes':<40} {'Active Team Members':<40}")
+        print("-" * 80)
+
+        for date, change, action_type, active_devs in self.schedule:
+            date_str = date.strftime('%a %b %d')
+            active_str = ', '.join(active_devs) if active_devs else ""
+            print(f"{date_str:<12} {change:<40} {active_str:<40}")
+
+        print("\n" + "=" * 80)
+        print("Rotation Summary:")
+        print(f"{'Developer':<20} {'Total Rotations':<15}")
+        print("-" * 35)
+        for dev in sorted(self.developers):
+            rotations = len(self.developer_rotations[dev])
+            print(f"{dev:<20} {rotations:<15}")
+
+def main():
+    developers = [
+        "Piotr Osiewicz", "Julia Ryan", "Anthony Eid", "Conrad Irwin",
+        "Marshall Bowers", "Richard Feldman", "Agus Zubiaga", "Bennet",
+        "Oleksiy Syvokon", "Michael Sloan", "Ben Kunkle", "Mikayla Maki"
+    ]
+
+    # Use December 9th, 2024 as start date
+    start_date = datetime.date(2024, 12, 9)
+
+    scheduler = RotationScheduler(developers, start_date, weeks_per_rotation=2)
+    scheduler.generate_schedule(total_weeks=26)  # 6 months
+    scheduler.print_schedule()
+
+if __name__ == "__main__":
+    main()
