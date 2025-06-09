@@ -699,7 +699,10 @@
       //
       // Default: inherits editor scrollbar settings
       "show": null
-    }
+    },
+    // Prompt to use when generating a commit message
+    // with ai.
+    "commit_message_prompt": null
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.

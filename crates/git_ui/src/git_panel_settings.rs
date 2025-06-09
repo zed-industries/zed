@@ -70,6 +70,10 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub sort_by_path: Option<bool>,
+
+    /// Prompt to use when generating a commit message
+    /// with ai.
+    pub commit_message_prompt: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
@@ -81,6 +85,7 @@ pub struct GitPanelSettings {
     pub scrollbar: ScrollbarSettings,
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
+    pub commit_message_prompt: Option<String>,
 }
 
 impl Settings for GitPanelSettings {

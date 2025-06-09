@@ -1786,14 +1786,23 @@ impl GitPanel {
                 })?;
 
                 let text_empty = subject.trim().is_empty();
+                const PROMPT: &str = include_str!("commit_message_prompt.txt");
 
-                let content = if text_empty {
-                    format!("{PROMPT}\nHere are the changes in this commit:\n{diff_text}")
+                let custom_prompt = cx.read_global::<SettingsStore, Option<String>>(|_s, cx|{
+                    GitPanelSettings::get_global(cx).commit_message_prompt.clone()
+                });
+
+                let prompt = if let Ok(Some(custom_prompt)) = custom_prompt {
+                    std::borrow::Cow::Owned(custom_prompt)
                 } else {
-                    format!("{PROMPT}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                    std::borrow::Cow::Borrowed(PROMPT)
                 };
 
-                const PROMPT: &str = include_str!("commit_message_prompt.txt");
+                let content = if text_empty {
+                    format!("{prompt}\nHere are the changes in this commit:\n{diff_text}")
+                } else {
+                    format!("{prompt}\nHere is the user's subject line:\n{subject}\nHere are the changes in this commit:\n{diff_text}\n")
+                };
 
                 let request = LanguageModelRequest {
                     thread_id: None,
