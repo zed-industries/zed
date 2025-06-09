@@ -99,6 +99,7 @@ dependencies = [
  "paths",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "prompt_store",
  "proto",
