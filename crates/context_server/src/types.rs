@@ -3,7 +3,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-pub const LATEST_PROTOCOL_VERSION: &str = "2024-11-05";
+pub const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
+pub const VERSION_2024_11_05: &str = "2024-11-05";
 
 pub mod request {
     use super::*;
@@ -291,8 +292,15 @@ pub enum MessageContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         annotations: Option<MessageAnnotations>,
     },
-    #[serde(rename = "image")]
+    #[serde(rename = "image", rename_all = "camelCase")]
     Image {
+        data: String,
+        mime_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
+    #[serde(rename = "audio", rename_all = "camelCase")]
+    Audio {
         data: String,
         mime_type: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -394,6 +402,8 @@ pub struct ServerCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logging: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub completions: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompts: Option<PromptsCapabilities>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourcesCapabilities>,
@@ -438,6 +448,28 @@ pub struct Tool {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ToolAnnotations>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolAnnotations {
+    /// A human-readable title for the tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// If true, the tool does not modify its environment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_only_hint: Option<bool>,
+    /// If true, the tool may perform destructive updates to its environment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destructive_hint: Option<bool>,
+    /// If true, calling the tool repeatedly with the same arguments will have no additional effect on its environment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idempotent_hint: Option<bool>,
+    /// If true, this tool may interact with an "open world" of external entities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_world_hint: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -582,6 +614,8 @@ pub struct ProgressParams {
     pub progress_token: ProgressToken,
     pub progress: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<f64>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
@@ -625,6 +659,8 @@ pub enum ToolResponseContent {
     Text { text: String },
     #[serde(rename = "image", rename_all = "camelCase")]
     Image { data: String, mime_type: String },
+    #[serde(rename = "audio", rename_all = "camelCase")]
+    Audio { data: String, mime_type: String },
     #[serde(rename = "resource")]
     Resource { resource: ResourceContents },
 }
