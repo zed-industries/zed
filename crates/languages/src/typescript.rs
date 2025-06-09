@@ -34,11 +34,15 @@ const TYPESCRIPT_RUNNER_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_RUNNER"));
 const TYPESCRIPT_JEST_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JEST"));
+const TYPESCRIPT_JEST_TEST_NAME_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JEST_TEST_NAME"));
 const TYPESCRIPT_MOCHA_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_MOCHA"));
 
 const TYPESCRIPT_VITEST_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_VITEST"));
+const TYPESCRIPT_VITEST_TEST_NAME_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_VITEST_TEST_NAME"));
 const TYPESCRIPT_JASMINE_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JASMINE"));
 const TYPESCRIPT_BUILD_SCRIPT_TASK_VARIABLE: VariableName =
@@ -183,7 +187,10 @@ impl ContextProvider for TypeScriptContextProvider {
             args: vec![
                 TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
                 "--testNamePattern".to_owned(),
-                format!("\"{}\"", VariableName::Symbol.template_value()),
+                format!(
+                    "\"{}\"",
+                    TYPESCRIPT_JEST_TEST_NAME_VARIABLE.template_value()
+                ),
                 VariableName::RelativeFile.template_value(),
             ],
             tags: vec![
@@ -221,7 +228,7 @@ impl ContextProvider for TypeScriptContextProvider {
                 TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
                 "run".to_owned(),
                 "--testNamePattern".to_owned(),
-                format!("\"{}\"", VariableName::Symbol.template_value()),
+                format!("\"{}\"", TYPESCRIPT_VITEST_TASK_VARIABLE.template_value()),
                 VariableName::RelativeFile.template_value(),
             ],
             tags: vec![
@@ -344,14 +351,27 @@ impl ContextProvider for TypeScriptContextProvider {
 
     fn build_context(
         &self,
-        _variables: &task::TaskVariables,
+        current_vars: &task::TaskVariables,
         location: ContextLocation<'_>,
         _project_env: Option<HashMap<String, String>>,
         _toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut App,
     ) -> Task<Result<task::TaskVariables>> {
+        let mut vars = task::TaskVariables::default();
+
+        if let Some(symbol) = current_vars.get(&VariableName::Symbol) {
+            vars.insert(
+                TYPESCRIPT_JEST_TEST_NAME_VARIABLE,
+                replace_test_name_parameters(symbol),
+            );
+            vars.insert(
+                TYPESCRIPT_VITEST_TEST_NAME_VARIABLE,
+                replace_test_name_parameters(symbol),
+            );
+        }
+
         let Some((fs, worktree_root)) = location.fs.zip(location.worktree_root) else {
-            return Task::ready(Ok(task::TaskVariables::default()));
+            return Task::ready(Ok(vars));
         };
 
         let package_json_contents = self.last_package_json.clone();
@@ -361,7 +381,10 @@ impl ContextProvider for TypeScriptContextProvider {
                 .context("package.json context retrieval")
                 .log_err()
                 .unwrap_or_else(task::TaskVariables::default);
-            Ok(variables)
+
+            vars.extend(variables);
+
+            Ok(vars)
         })
     }
 }
@@ -424,6 +447,12 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
         server_path.into(),
         "--stdio".into(),
     ]
+}
+
+fn replace_test_name_parameters(test_name: &str) -> String {
+    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
+
+    pattern.replace_all(test_name, "(.+?)").to_string()
 }
 
 pub struct TypeScriptLspAdapter {

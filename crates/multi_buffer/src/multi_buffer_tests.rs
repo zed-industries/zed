@@ -3686,10 +3686,20 @@ fn test_new_empty_buffer_takes_trimmed_first_line_for_title(cx: &mut App) {
 
 #[gpui::test]
 fn test_new_empty_buffer_uses_truncated_first_line_for_title(cx: &mut App) {
-    let title_after = ["a", "b", "c", "d"]
-        .map(|letter| letter.repeat(10))
-        .join("");
-    let title = format!("{}{}", title_after, "e".repeat(10));
+    let title = "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeee";
+    let title_after = "aaaaaaaaaabbbbbbbbbbccccccccccdddddddddd";
+    let buffer = cx.new(|cx| Buffer::local(title, cx));
+    let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+    assert_eq!(multibuffer.read(cx).title(cx), title_after);
+}
+
+#[gpui::test]
+fn test_new_empty_buffer_uses_truncated_first_line_for_title_after_merging_adjacent_spaces(
+    cx: &mut App,
+) {
+    let title = "aaaaaaaaaabbbbbbbbbb    ccccccccccddddddddddeeeeeeeeee";
+    let title_after = "aaaaaaaaaabbbbbbbbbb ccccccccccddddddddd";
     let buffer = cx.new(|cx| Buffer::local(title, cx));
     let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
