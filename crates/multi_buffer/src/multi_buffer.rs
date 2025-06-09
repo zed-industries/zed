@@ -2608,15 +2608,36 @@ impl MultiBuffer {
                     return Some(file.file_name(cx).to_string_lossy());
                 }
 
-                let title = buffer
-                    .snapshot()
-                    .chars()
-                    .skip_while(|ch| ch.is_whitespace())
-                    .take_while(|&ch| ch != '\n')
-                    .take(40)
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string();
+                let mut title = String::new();
+                let mut prev_was_space = false;
+                let mut count = 0;
+                let mut is_leading_whitespace = false;
+
+                for ch in buffer.snapshot().chars() {
+                    if !is_leading_whitespace && ch.is_whitespace() {
+                        continue;
+                    }
+
+                    is_leading_whitespace = true;
+
+                    if ch == '\n' || count >= 40 {
+                        break;
+                    }
+
+                    if ch.is_whitespace() {
+                        if !prev_was_space {
+                            title.push(' ');
+                            count += 1;
+                            prev_was_space = true;
+                        }
+                    } else {
+                        title.push(ch);
+                        count += 1;
+                        prev_was_space = false;
+                    }
+                }
+
+                let title = title.trim_end().to_string();
 
                 (!title.is_empty()).then(|| title.into())
             })
