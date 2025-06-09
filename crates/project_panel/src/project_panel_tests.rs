@@ -2967,13 +2967,22 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
         select_path(&panel, "root1", cx);
         panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
 
+        #[cfg(target_os = "windows")]
         assert!(
-            panel.read_with(cx, |panel, _| panel.edit_state.is_some()),
-            "Rename should work with multiple worktrees even when hide_root=true"
+            panel.read_with(cx, |panel, _| panel.edit_state.is_none()),
+            "Rename should be blocked on Windows even with multiple worktrees"
         );
-        panel.update_in(cx, |panel, window, cx| {
-            panel.cancel(&menu::Cancel, window, cx)
-        });
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(
+                panel.read_with(cx, |panel, _| panel.edit_state.is_some()),
+                "Rename should work with multiple worktrees on non-Windows when hide_root=true"
+            );
+            panel.update_in(cx, |panel, window, cx| {
+                panel.cancel(&menu::Cancel, window, cx)
+            });
+        }
     }
 }
 
