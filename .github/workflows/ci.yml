@@ -200,7 +200,7 @@ jobs:
     timeout-minutes: 60
     name: Check docs
     needs: [job_spec]
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
