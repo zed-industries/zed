@@ -72,9 +72,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
-    Unclipped, language_settings::InlayHintKind, proto::split_operations,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiagnosticSourceKind, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
+    Transaction, Unclipped, language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -860,6 +860,34 @@ pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_kind: lsp::CompletionTriggerKind::INVOKED,
     trigger_character: None,
 };
+
+/// An LSP diagnostics associated with a certain language server.
+#[derive(Clone, Debug, Default)]
+pub enum LspPullDiagnostics {
+    #[default]
+    Default,
+    Response {
+        /// The id of the language server that produced diagnostics.
+        server_id: LanguageServerId,
+        /// URI of the resource,
+        uri: lsp::Url,
+        /// The diagnostics produced by this language server.
+        diagnostics: PulledDiagnostics,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub enum PulledDiagnostics {
+    Unchanged {
+        /// An ID the current pulled batch for this file.
+        /// If given, can be used to query workspace diagnostics partially.
+        result_id: String,
+    },
+    Changed {
+        result_id: Option<String>,
+        diagnostics: Vec<lsp::Diagnostic>,
+    },
+}
 
 impl Project {
     pub fn init_settings(cx: &mut App) {
@@ -3683,6 +3711,37 @@ impl Project {
     ) -> Task<anyhow::Result<InlayHint>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
+        })
+    }
+
+    pub fn document_diagnostics(
+        &mut self,
+        buffer_handle: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.pull_diagnostics(buffer_handle, cx)
+        })
+    }
+
+    pub fn update_diagnostics(
+        &mut self,
+        language_server_id: LanguageServerId,
+        source_kind: DiagnosticSourceKind,
+        result_id: Option<String>,
+        params: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &[String],
+        cx: &mut Context<Self>,
+    ) -> Result<(), anyhow::Error> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(
+                language_server_id,
+                params,
+                result_id,
+                source_kind,
+                disk_based_sources,
+                cx,
+            )
         })
     }
 

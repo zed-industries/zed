@@ -1356,6 +1356,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
         &[("src/lib.rs".into(), text_1.clone())],
+        "deadbeef",
     );
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
@@ -1416,6 +1417,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
         &[("src/lib.rs".into(), text_2.clone())],
+        "deadbeef",
     );
 
     cx.executor().run_until_parked();

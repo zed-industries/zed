@@ -109,6 +109,20 @@ Automatic scenario creation is currently supported for Rust, Go and Python. Java
 
 ### Example Configurations
 
+#### Go
+
+```json
+[
+  {
+    "label": "Go (Delve)",
+    "adapter": "Delve",
+    "program": "$ZED_FILE",
+    "request": "launch",
+    "mode": "debug"
+  }
+]
+```
+
 #### JavaScript
 
 ##### Debug Active File

@@ -70,7 +70,7 @@ use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new,
 };
-use workspace::{CloseIntent, RestoreBanner};
+use workspace::{CloseIntent, CloseWindow, RestoreBanner, with_active_or_new_workspace};
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
@@ -111,6 +111,98 @@ pub fn init(cx: &mut App) {
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
         cx.on_action(test_panic);
     }
+
+    cx.on_action(|_: &OpenLog, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_log_file(workspace, window, cx);
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                asset_str::<Assets>("licenses.md"),
+                "Open Source License Attribution",
+                "Markdown",
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenTelemetryLog, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_telemetry_log_file(workspace, window, cx);
+        });
+    });
+    cx.on_action(|&zed_actions::OpenKeymap, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::keymap_file(),
+                || settings::initial_keymap_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenSettings, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::settings_file(),
+                || settings::initial_user_settings_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenAccountSettings, cx| {
+        with_active_or_new_workspace(cx, |_, _, cx| {
+            cx.open_url(&zed_urls::account_url(cx));
+        });
+    });
+    cx.on_action(|_: &OpenTasks, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::tasks_file(),
+                || settings::initial_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenDebugTasks, cx| {
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                paths::debug_scenarios_file(),
+                || settings::initial_debug_tasks_content().as_ref().into(),
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &OpenDefaultSettings, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_settings(),
+                "Default Settings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
+    cx.on_action(|_: &zed_actions::OpenDefaultKeymap, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            open_bundled_file(
+                workspace,
+                settings::default_keymap(),
+                "Default Key Bindings",
+                "JSON",
+                window,
+                cx,
+            );
+        });
+    });
 }
 
 fn bind_on_window_closed(cx: &mut App) -> Option<gpui::Subscription> {
@@ -255,7 +347,7 @@ pub fn initialize_workspace(
             handle
                 .update(cx, |workspace, cx| {
                     // We'll handle closing asynchronously
-                    workspace.close_window(&Default::default(), window, cx);
+                    workspace.close_window(&CloseWindow, window, cx);
                     false
                 })
                 .unwrap_or(true)
@@ -683,99 +775,9 @@ fn register_actions(
                 |_, _, _| None,
             );
         })
-        .register_action(|workspace, _: &OpenLog, window, cx| {
-            open_log_file(workspace, window, cx);
-        })
-        .register_action(|workspace, _: &zed_actions::OpenLicenses, window, cx| {
-            open_bundled_file(
-                workspace,
-                asset_str::<Assets>("licenses.md"),
-                "Open Source License Attribution",
-                "Markdown",
-                window,
-                cx,
-            );
-        })
-        .register_action(
-            move |workspace: &mut Workspace,
-                  _: &zed_actions::OpenTelemetryLog,
-                  window: &mut Window,
-                  cx: &mut Context<Workspace>| {
-                open_telemetry_log_file(workspace, window, cx);
-            },
-        )
-        .register_action(
-            move |_: &mut Workspace, _: &zed_actions::OpenKeymap, window, cx| {
-                open_settings_file(
-                    paths::keymap_file(),
-                    || settings::initial_keymap_content().as_ref().into(),
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenSettings, window, cx| {
-            open_settings_file(
-                paths::settings_file(),
-                || settings::initial_user_settings_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(
-            |_: &mut Workspace, _: &OpenAccountSettings, _: &mut Window, cx| {
-                cx.open_url(&zed_urls::account_url(cx));
-            },
-        )
-        .register_action(move |_: &mut Workspace, _: &OpenTasks, window, cx| {
-            open_settings_file(
-                paths::tasks_file(),
-                || settings::initial_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
-            open_settings_file(
-                paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
-        .register_action(move |_: &mut Workspace, _: &OpenDebugTasks, window, cx| {
-            open_settings_file(
-                paths::debug_scenarios_file(),
-                || settings::initial_debug_tasks_content().as_ref().into(),
-                window,
-                cx,
-            );
-        })
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
         .register_action(open_project_debug_tasks_file)
-        .register_action(
-            move |workspace, _: &zed_actions::OpenDefaultKeymap, window, cx| {
-                open_bundled_file(
-                    workspace,
-                    settings::default_keymap(),
-                    "Default Key Bindings",
-                    "JSON",
-                    window,
-                    cx,
-                );
-            },
-        )
-        .register_action(move |workspace, _: &OpenDefaultSettings, window, cx| {
-            open_bundled_file(
-                workspace,
-                settings::default_settings(),
-                "Default Settings",
-                "JSON",
-                window,
-                cx,
-            );
-        })
         .register_action(
             |workspace: &mut Workspace,
              _: &project_panel::ToggleFocus,
@@ -3025,7 +3027,7 @@ mod tests {
         });
         cx.read(|cx| {
             assert!(editor.is_dirty(cx));
-            assert_eq!(editor.read(cx).title(cx), "untitled");
+            assert_eq!(editor.read(cx).title(cx), "hi");
         });
 
         // When the save completes, the buffer's title is updated and the language is assigned based

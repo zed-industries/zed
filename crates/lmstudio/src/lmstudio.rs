@@ -3,7 +3,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, sync::Arc, time::Duration};
+use std::{convert::TryFrom, time::Duration};
 
 pub const LMSTUDIO_API_URL: &str = "http://localhost:1234/api/v0";
 
@@ -243,8 +243,8 @@ pub struct ModelEntry {
     pub compatibility_type: CompatibilityType,
     pub quantization: Option<String>,
     pub state: ModelState,
-    pub max_context_length: Option<u32>,
-    pub loaded_context_length: Option<u32>,
+    pub max_context_length: Option<usize>,
+    pub loaded_context_length: Option<usize>,
     #[serde(default)]
     pub capabilities: Capabilities,
 }
@@ -390,35 +390,4 @@ pub async fn get_models(
     let response: ListModelsResponse =
         serde_json::from_str(&body).context("Unable to parse LM Studio models response")?;
     Ok(response.data)
-}
-
-/// Sends an empty request to LM Studio to trigger loading the model
-pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &str) -> Result<()> {
-    let uri = format!("{api_url}/completions");
-    let request = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json")
-        .body(AsyncBody::from(serde_json::to_string(
-            &serde_json::json!({
-                "model": model,
-                "messages": [],
-                "stream": false,
-                "max_tokens": 0,
-            }),
-        )?))?;
-
-    let mut response = client.send(request).await?;
-
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let mut body = String::new();
-        response.body_mut().read_to_string(&mut body).await?;
-        anyhow::bail!(
-            "Failed to connect to LM Studio API: {} {}",
-            response.status(),
-            body,
-        );
-    }
 }
