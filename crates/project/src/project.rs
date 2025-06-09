@@ -4798,7 +4798,7 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             match lsp::Url::parse(&envelope.payload.uri) {
                 Ok(uri) => {
-                    if !this.is_localhost_url(&uri){
+                    if !this.is_localhost_url(&uri) {
                         this.open_show_document_url(&uri, true, cx);
                     }
                 }
