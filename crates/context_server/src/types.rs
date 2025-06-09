@@ -394,6 +394,8 @@ pub struct ServerCapabilities {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logging: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub completions: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prompts: Option<PromptsCapabilities>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourcesCapabilities>,
