@@ -123,6 +123,9 @@ impl Tool for ContextServerTool {
                         types::ToolResponseContent::Image { .. } => {
                             log::warn!("Ignoring image content from tool response");
                         }
+                        types::ToolResponseContent::Audio { .. } => {
+                            log::warn!("Ignoring audio content from tool response");
+                        }
                         types::ToolResponseContent::Resource { .. } => {
                             log::warn!("Ignoring resource content from tool response");
                         }

@@ -604,7 +604,9 @@
       // 2. Never show indent guides:
       //    "never"
       "show": "always"
-    }
+    },
+    // Whether to hide the root entry when only one folder is open in the window.
+    "hide_root": false
   },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
