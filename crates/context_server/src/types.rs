@@ -582,6 +582,8 @@ pub struct ProgressParams {
     pub progress_token: ProgressToken,
     pub progress: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub total: Option<f64>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
