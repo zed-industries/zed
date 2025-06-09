@@ -562,7 +562,7 @@ impl ThreadStore {
 
             if protocol.capable(context_server::protocol::ServerCapability::Tools) {
                 if let Some(response) = protocol
-                    .request::<context_server::types::request::ListTools>(())
+                    .request::<context_server::types::requests::ListTools>(())
                     .await
                     .log_err()
                 {
