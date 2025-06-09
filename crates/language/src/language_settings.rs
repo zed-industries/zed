@@ -1824,7 +1824,7 @@ mod tests {
     }
 
     #[test]
-    pub fn test_resolve_language_servers() {
+    fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
                 .iter()
