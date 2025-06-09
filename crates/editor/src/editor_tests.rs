@@ -13797,6 +13797,58 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test(iterations = 40)]
+async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+                first_trigger_character: ".".to_string(),
+                more_trigger_character: None,
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.update_buffer(|buffer, _| {
+        // This causes autoindent to be async.
+        buffer.set_sync_parse_timeout(Duration::ZERO)
+    });
+
+    cx.set_state("fn c() {\n    d()ˇ\n}\n");
+    cx.simulate_keystroke("\n");
+    cx.run_until_parked();
+
+    let buffer_cloned =
+        cx.multibuffer(|multi_buffer, _| multi_buffer.as_singleton().unwrap().clone());
+    let mut request =
+        cx.set_request_handler::<lsp::request::OnTypeFormatting, _, _>(move |_, _, mut cx| {
+            let buffer_cloned = buffer_cloned.clone();
+            async move {
+                buffer_cloned.update(&mut cx, |buffer, _| {
+                    assert_eq!(
+                        buffer.text(),
+                        "fn c() {\n    d()\n        .\n}\n",
+                        "OnTypeFormatting should triggered after autoindent applied"
+                    )
+                })?;
+
+                Ok(Some(vec![]))
+            }
+        });
+
+    cx.simulate_keystroke(".");
+    cx.run_until_parked();
+
+    cx.assert_editor_state("fn c() {\n    d()\n        .ˇ\n}\n");
+    assert!(request.next().await.is_some());
+    request.close();
+    assert!(request.next().await.is_none());
+}
+
 #[gpui::test]
 async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppContext) {
     init_test(cx, |_| {});

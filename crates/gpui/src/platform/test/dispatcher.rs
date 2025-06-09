@@ -1,7 +1,7 @@
 use crate::{PlatformDispatcher, TaskLabel};
 use async_task::Runnable;
 use backtrace::Backtrace;
-use collections::{HashMap, HashSet, VecDeque};
+use collections::{HashMap, HashSet};
 use parking::{Parker, Unparker};
 use parking_lot::Mutex;
 use rand::prelude::*;
@@ -28,7 +28,7 @@ pub struct TestDispatcher {
 
 struct TestDispatcherState {
     random: StdRng,
-    foreground: HashMap<TestDispatcherId, VecDeque<Runnable>>,
+    foreground: HashMap<TestDispatcherId, Vec<Runnable>>,
     background: Vec<Runnable>,
     deprioritized_background: Vec<Runnable>,
     delayed: Vec<(Duration, Runnable)>,
@@ -161,14 +161,15 @@ impl TestDispatcher {
             );
             if main_thread {
                 let state = &mut *state;
-                runnable = state
+                let foreground_group = state
                     .foreground
                     .values_mut()
                     .filter(|runnables| !runnables.is_empty())
                     .choose(&mut state.random)
-                    .unwrap()
-                    .pop_front()
                     .unwrap();
+
+                let ix = state.random.gen_range(0..foreground_group.len());
+                runnable = foreground_group.swap_remove(ix);
             } else {
                 let ix = state.random.gen_range(0..background_len);
                 runnable = state.background.swap_remove(ix);
@@ -287,7 +288,7 @@ impl PlatformDispatcher for TestDispatcher {
             .foreground
             .entry(self.id)
             .or_default()
-            .push_back(runnable);
+            .push(runnable);
         self.unparker.unpark();
     }
 

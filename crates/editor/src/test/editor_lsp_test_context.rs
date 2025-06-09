@@ -345,7 +345,7 @@ impl EditorLspTestContext {
         T: 'static + request::Request,
         T::Params: 'static + Send,
         F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncApp) -> Fut,
-        Fut: 'static + Send + Future<Output = Result<T::Result>>,
+        Fut: 'static + Future<Output = Result<T::Result>>,
     {
         let url = self.buffer_lsp_url.clone();
         self.lsp.set_request_handler::<T, _, _>(move |params, cx| {

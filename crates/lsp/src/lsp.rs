@@ -1579,7 +1579,7 @@ impl FakeLanguageServer {
         T: 'static + request::Request,
         T::Params: 'static + Send,
         F: 'static + Send + FnMut(T::Params, gpui::AsyncApp) -> Fut,
-        Fut: 'static + Send + Future<Output = Result<T::Result>>,
+        Fut: 'static + Future<Output = Result<T::Result>>,
     {
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
         self.server.remove_request_handler::<T>();

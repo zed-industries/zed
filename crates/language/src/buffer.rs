@@ -1414,7 +1414,7 @@ impl Buffer {
         self.syntax_map.lock().contains_unknown_injections()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn set_sync_parse_timeout(&mut self, timeout: Duration) {
         self.sync_parse_timeout = timeout;
     }
