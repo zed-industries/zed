@@ -1,4 +1,5 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
+use crate::debugger::dap_store::ActiveSessionEvent;
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -63,6 +64,13 @@ impl From<u64> for ThreadId {
     fn from(id: u64) -> Self {
         Self(id)
     }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct SourceStackFrameItem {
+    pub row: u32,
+    pub is_active: bool,
+    pub abs_path: Arc<Path>,
 }
 
 #[derive(Clone, Debug)]
@@ -597,6 +605,7 @@ pub struct Session {
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     background_tasks: Vec<Task<()>>,
+    active_thread_id: Option<ThreadId>,
     active_stack_frame: Option<StackFrameId>,
 }
 
@@ -763,6 +772,7 @@ impl Session {
                 label,
                 adapter,
                 active_stack_frame: None,
+                active_thread_id: None,
             };
 
             this
@@ -1922,6 +1932,7 @@ impl Session {
                     this.invalidate_command_type::<VariablesCommand>();
 
                     cx.emit(SessionEvent::StackTrace);
+                    cx.emit(ActiveSessionEvent::StackTraceUpdated);
                     cx.notify();
                     Some(stack_frames)
                 },
@@ -1946,8 +1957,49 @@ impl Session {
         self.active_stack_frame = Some(stack_frame);
         cx.notify();
     }
-    pub fn active_stack_frame(&self) -> Option<StackFrameId> {
+    pub fn set_active_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.active_thread_id = Some(thread_id);
+        self.active_stack_frame.take();
+        cx.notify();
+    }
+
+    pub(crate) fn active_stack_frame(&self) -> Option<StackFrameId> {
         self.active_stack_frame
+    }
+    pub(crate) fn active_thread_id(&self) -> Option<ThreadId> {
+        self.active_thread_id
+    }
+
+    pub(crate) fn stack_frames_with_source_for_active_thread(
+        &self,
+    ) -> Option<IndexSet<SourceStackFrameItem>> {
+        self.active_thread_id.map(|tid| {
+            let active_stack_frame = self.active_stack_frame;
+            self.threads
+                .get(&tid)
+                .into_iter()
+                .flat_map(|thread| {
+                    thread.stack_frame_ids.iter().filter_map(|id| {
+                        self.stack_frames.get(id).and_then(|frame| {
+                            let source = frame.dap.source.as_ref()?;
+                            let path: &Path = source.path.as_ref().map(|p| p.as_ref())?;
+                            if !path.is_absolute() {
+                                return None;
+                            }
+                            let mut line = frame.dap.line.checked_sub(1)?;
+
+                            let row = line.try_into().unwrap_or(u32::MAX);
+                            let is_active = Some(*id) == active_stack_frame;
+                            Some(SourceStackFrameItem {
+                                row,
+                                is_active,
+                                abs_path: Arc::from(path),
+                            })
+                        })
+                    })
+                })
+                .collect()
+        })
     }
 
     pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {
@@ -2170,12 +2222,13 @@ impl Session {
                 TerminateThreadsCommand {
                     thread_ids: thread_ids.map(|ids| ids.into_iter().map(|id| id.0).collect()),
                 },
-                Self::empty_response,
+                |_, response, cx| {
+                    cx.emit(ActiveSessionEvent::StackTraceUpdated);
+                    response.ok()
+                },
                 cx,
             )
             .detach();
-        } else {
-            self.shutdown(cx).detach();
         }
     }
 
@@ -2183,3 +2236,5 @@ impl Session {
         self.thread_states.thread_state(thread_id)
     }
 }
+
+impl EventEmitter<ActiveSessionEvent> for Session {}

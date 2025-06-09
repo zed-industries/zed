@@ -317,22 +317,10 @@ impl StackFrameList {
                     state.thread_id.context("No selected thread ID found")
                 })??;
 
-                this.workspace.update(cx, |workspace, cx| {
-                    let breakpoint_store = workspace.project().read(cx).breakpoint_store();
-
-                    breakpoint_store.update(cx, |store, cx| {
-                        store.set_active_position(
-                            ActiveStackFrame {
-                                session_id: this.session.read(cx).session_id(),
-                                thread_id,
-                                stack_frame_id,
-                                path: abs_path,
-                                position,
-                            },
-                            cx,
-                        );
-                    })
-                })
+                this.session.update(cx, |this, cx| {
+                    this.set_active_stack_frame(stack_frame_id, cx);
+                });
+                Ok(())
             })?
         })
     }

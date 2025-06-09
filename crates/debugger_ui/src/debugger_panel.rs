@@ -942,6 +942,9 @@ impl DebugPanel {
         cx: &mut Context<Self>,
     ) {
         debug_assert!(self.sessions.contains(&session_item));
+        self.project.read(cx).dap_store().update(cx, |this, cx| {
+            this.set_active_session(&session_item.read(cx).session(cx), cx);
+        });
         session_item.focus_handle(cx).focus(window);
         session_item.update(cx, |this, cx| {
             this.running_state().update(cx, |this, cx| {

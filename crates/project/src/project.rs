@@ -30,7 +30,7 @@ use git_store::{Repository, RepositoryId};
 pub mod search_history;
 mod yarn;
 
-use crate::git_store::GitStore;
+use crate::{debugger::dap_store::ActiveSessionWithStack, git_store::GitStore};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -1673,6 +1673,10 @@ impl Project {
 
     pub fn active_debug_session(&self, cx: &App) -> Option<Entity<Session>> {
         self.dap_store.read(cx).active_session().cloned()
+    }
+
+    pub fn active_debug_session_with_stack(&self, cx: &App) -> Option<ActiveSessionWithStack> {
+        self.dap_store.read(cx).active_session_with_stack(cx)
     }
 
     pub fn lsp_store(&self) -> Entity<LspStore> {
