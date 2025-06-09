@@ -409,7 +409,10 @@ jobs:
           cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
 
       - name: cargo clippy
-        run: .\script\clippy.ps1
+        run: |
+          echo "Current user: $env:USERNAME"
+          echo "Current directory: $pwd.Path"
+          .\script\clippy.ps1
 
       - name: Run tests
         uses: ./.github/actions/run_tests_windows
