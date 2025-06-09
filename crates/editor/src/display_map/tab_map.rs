@@ -396,7 +396,6 @@ impl TabSnapshot {
 
             // The count of bytes at this point in the iteration while considering tab_count and previous expansions
             let expanded_bytes = tab_stop.byte_offset - tab_count + expanded_tab_len;
-            dbg!(expanded_bytes, column);
 
             // Did we expand past the search target?
             if expanded_bytes > column {
@@ -1244,31 +1243,6 @@ impl<'a> TabStopCursor<'a> {
             debug_assert!(distance == 0, "Can't seek backwards: {distance}");
             return None;
         }
-        if let Some((mut chunk, chunk_position)) = self.current_chunk.take() {
-            let tab_position = chunk.tabs.trailing_zeros() + 1;
-
-            if tab_position - chunk_position > distance {
-                self.bytes_offset += distance;
-                self.current_chunk = Some((chunk, distance));
-                return None;
-            } else {
-                self.bytes_offset += tab_position - chunk_position;
-
-                let tabstop = TabStop {
-                    char_offset: self.bytes_offset,
-                    byte_offset: self.bytes_offset,
-                };
-
-                chunk.tabs = (chunk.tabs - 1) & chunk.tabs;
-                if chunk.tabs > 0 {
-                    self.current_chunk = Some((chunk, tab_position));
-                } else {
-                    self.end_of_chunk = Some(chunk.text.len() as u32 - tab_position);
-                }
-                return Some(tabstop);
-            }
-        }
-
         let past_chunk = self.end_of_chunk.take().unwrap_or_default();
 
         let mut distance_traversed = 0;
@@ -1281,29 +1255,32 @@ impl<'a> TabStopCursor<'a> {
             distance_traversed += past_chunk;
         }
 
-        while let Some(mut chunk) = self.chunks.next() {
+        while let Some((mut chunk, chunk_position)) = self
+            .current_chunk
+            .take()
+            .or_else(|| self.chunks.next().zip(Some(0)))
+        {
             if chunk.tabs == 0 {
                 let chunk_distance = chunk.text.len() as u32;
-                if chunk_distance + distance_traversed >= distance {
+                if chunk_distance + distance_traversed - chunk_position >= distance {
                     let overshoot = chunk_distance + distance_traversed - distance;
                     self.bytes_offset += distance_traversed.abs_diff(distance);
-                    self.end_of_chunk = Some(overshoot);
+                    self.end_of_chunk = Some(overshoot); // todo! this should be a chunk position
                     return None;
                 }
                 self.bytes_offset += chunk.text.len() as u32;
                 distance_traversed += chunk.text.len() as u32;
                 continue;
             }
-
             let tab_position = chunk.tabs.trailing_zeros() + 1;
 
-            if distance_traversed + tab_position > distance {
+            if distance_traversed + tab_position - chunk_position > distance {
                 let cursor_position = distance_traversed.abs_diff(distance);
                 self.current_chunk = Some((chunk, cursor_position));
                 self.bytes_offset += cursor_position;
                 return None;
             }
-            self.bytes_offset += tab_position;
+            self.bytes_offset += tab_position - chunk_position;
 
             let tabstop = TabStop {
                 char_offset: self.bytes_offset,
