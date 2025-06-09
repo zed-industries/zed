@@ -2475,6 +2475,7 @@ async fn test_select_directory(cx: &mut gpui::TestAppContext) {
         ]
     );
 }
+
 #[gpui::test]
 async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
@@ -2542,6 +2543,40 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
             "      file_1.py",
             "      file_2.py  <== selected",
         ]
+    );
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> dir_1", "> zdir_2", "  file_1.py", "  file_2.py",],
+        "With hide_root=true, root should be hidden"
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.select_first(&SelectFirst, window, cx)
+    });
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "> dir_1  <== selected",
+            "> zdir_2",
+            "  file_1.py",
+            "  file_2.py",
+        ],
+        "With hide_root=true, first entry should be dir_1, not the hidden root"
     );
 }
 

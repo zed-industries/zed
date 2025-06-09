@@ -2109,19 +2109,11 @@ impl ProjectPanel {
     }
 
     fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut Context<Self>) {
-        let worktree = self
-            .visible_entries
-            .first()
-            .and_then(|(worktree_id, _, _)| {
-                self.project.read(cx).worktree_for_id(*worktree_id, cx)
-            });
-        if let Some(worktree) = worktree {
-            let worktree = worktree.read(cx);
-            let worktree_id = worktree.id();
-            if let Some(root_entry) = worktree.root_entry() {
+        if let Some((worktree_id, visible_worktree_entries, _)) = self.visible_entries.first() {
+            if let Some(entry) = visible_worktree_entries.first() {
                 let selection = SelectedEntry {
-                    worktree_id,
-                    entry_id: root_entry.id,
+                    worktree_id: *worktree_id,
+                    entry_id: entry.id,
                 };
                 self.selection = Some(selection);
                 if window.modifiers().shift {
