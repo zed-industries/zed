@@ -26,6 +26,7 @@ pub struct EditorSettings {
     pub autoscroll_on_clicks: bool,
     pub horizontal_scroll_margin: f32,
     pub scroll_sensitivity: f32,
+    pub fast_scroll_sensitivity: f32,
     pub relative_line_numbers: bool,
     pub seed_search_query_from_cursor: SeedQuerySetting,
     pub use_smartcase_search: bool,
@@ -47,6 +48,8 @@ pub struct EditorSettings {
     pub snippet_sort_order: SnippetSortOrder,
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
+    pub inline_code_actions: bool,
+    pub drag_and_drop_selection: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -109,6 +112,7 @@ pub struct Toolbar {
     pub quick_actions: bool,
     pub selections_menu: bool,
     pub agent_review: bool,
+    pub code_actions: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -404,6 +408,12 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 1.0
     pub scroll_sensitivity: Option<f32>,
+    /// Scroll sensitivity multiplier for fast scrolling. This multiplier is applied
+    /// to both the horizontal and vertical delta values while scrolling. Fast scrolling
+    /// happens when a user holds the alt or option key while scrolling.
+    ///
+    /// Default: 4.0
+    pub fast_scroll_sensitivity: Option<f32>,
     /// Whether the line numbers on editors gutter are relative or not.
     ///
     /// Default: false
@@ -413,7 +423,7 @@ pub struct EditorSettingsContent {
     /// Default: always
     pub seed_search_query_from_cursor: Option<SeedQuerySetting>,
     pub use_smartcase_search: Option<bool>,
-    /// The key to use for adding multiple cursors
+    /// Determines the modifier to be used to add multiple cursors with the mouse. The open hover link mouse gestures will adapt such that it do not conflict with the multicursor modifier.
     ///
     /// Default: alt
     pub multi_cursor_modifier: Option<MultiCursorModifier>,
@@ -481,6 +491,16 @@ pub struct EditorSettingsContent {
     /// Default: warning
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
+
+    /// Whether to show code action button at start of buffer line.
+    ///
+    /// Default: true
+    pub inline_code_actions: Option<bool>,
+
+    /// Whether to allow drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    pub drag_and_drop_selection: Option<bool>,
 }
 
 // Toolbar related settings
@@ -503,6 +523,10 @@ pub struct ToolbarContent {
     ///
     /// Default: true
     pub agent_review: Option<bool>,
+    /// Whether to display code action buttons in the editor toolbar.
+    ///
+    /// Default: false
+    pub code_actions: Option<bool>,
 }
 
 /// Scrollbar related settings
@@ -733,6 +757,10 @@ impl Settings for EditorSettings {
         vscode.f32_setting(
             "editor.mouseWheelScrollSensitivity",
             &mut current.scroll_sensitivity,
+        );
+        vscode.f32_setting(
+            "editor.fastScrollSensitivity",
+            &mut current.fast_scroll_sensitivity,
         );
         if Some("relative") == vscode.read_string("editor.lineNumbers") {
             current.relative_line_numbers = Some(true);

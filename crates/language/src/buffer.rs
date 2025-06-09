@@ -18,7 +18,6 @@ use crate::{
     text_diff::text_diff,
 };
 use anyhow::{Context as _, Result};
-use async_watch as watch;
 pub use clock::ReplicaId;
 use clock::{AGENT_REPLICA_ID, Lamport};
 use collections::HashMap;
@@ -229,8 +228,19 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
     /// Whether this diagnostic marks unnecessary code.
     pub is_unnecessary: bool,
+    /// Quick separation of diagnostics groups based by their source.
+    pub source_kind: DiagnosticSourceKind,
     /// Data from language server that produced this diagnostic. Passed back to the LS when we request code actions for this diagnostic.
     pub data: Option<Value>,
+    /// Whether to underline the corresponding text range in the editor.
+    pub underline: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DiagnosticSourceKind {
+    Pulled,
+    Pushed,
+    Other,
 }
 
 /// An operation used to synchronize this buffer with its other replicas.
@@ -462,6 +472,7 @@ pub struct BufferChunks<'a> {
     information_depth: usize,
     hint_depth: usize,
     unnecessary_depth: usize,
+    underline: bool,
     highlights: Option<BufferChunkHighlights<'a>>,
 }
 
@@ -482,6 +493,10 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// Whether this chunk of text was originally a tab character.
+    pub is_inlay: bool,
+    /// Whether to underline the corresponding text range in the editor.
+    pub underline: bool,
 }
 
 /// A set of edits to a given version of a buffer, computed asynchronously.
@@ -492,10 +507,11 @@ pub struct Diff {
     pub edits: Vec<(Range<usize>, Arc<str>)>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct DiagnosticEndpoint {
     offset: usize,
     is_start: bool,
+    underline: bool,
     severity: DiagnosticSeverity,
     is_unnecessary: bool,
 }
@@ -926,7 +942,7 @@ impl Buffer {
             reparse: None,
             non_text_state_update_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
-            parse_status: async_watch::channel(ParseStatus::Idle),
+            parse_status: watch::channel(ParseStatus::Idle),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
@@ -1367,9 +1383,30 @@ impl Buffer {
     /// Returns the [`Language`] at the given location.
     pub fn language_at<D: ToOffset>(&self, position: D) -> Option<Arc<Language>> {
         let offset = position.to_offset(self);
+        let mut is_first = true;
+        let start_anchor = self.anchor_before(offset);
+        let end_anchor = self.anchor_after(offset);
         self.syntax_map
             .lock()
             .layers_for_range(offset..offset, &self.text, false)
+            .filter(|layer| {
+                if is_first {
+                    is_first = false;
+                    return true;
+                }
+                let any_sub_ranges_contain_range = layer
+                    .included_sub_ranges
+                    .map(|sub_ranges| {
+                        sub_ranges.iter().any(|sub_range| {
+                            let is_before_start = sub_range.end.cmp(&start_anchor, self).is_lt();
+                            let is_after_end = sub_range.start.cmp(&end_anchor, self).is_gt();
+                            !is_before_start && !is_after_end
+                        })
+                    })
+                    .unwrap_or(true);
+                let result = any_sub_ranges_contain_range;
+                return result;
+            })
             .last()
             .map(|info| info.language.clone())
             .or_else(|| self.language.clone())
@@ -1837,9 +1874,12 @@ impl Buffer {
     }
 
     /// Ensures that the buffer ends with a single newline character, and
-    /// no other whitespace.
+    /// no other whitespace. Skips if the buffer is empty.
     pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
         let len = self.len();
+        if len == 0 {
+            return;
+        }
         let mut offset = len;
         for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
             let non_whitespace_len = chunk
@@ -2901,7 +2941,7 @@ impl BufferSnapshot {
                 end
             };
             if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row && !significant_indentation {
+                if start.row == end.row && (!significant_indentation || start.column < end.column) {
                     continue;
                 }
                 let range = start..end;
@@ -3090,7 +3130,7 @@ impl BufferSnapshot {
         None
     }
 
-    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures, Vec<HighlightMap>) {
+    fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
         let captures = self.syntax.captures(range, &self.text, |grammar| {
             grammar.highlights_query.as_ref()
         });
@@ -3106,7 +3146,7 @@ impl BufferSnapshot {
     /// in an arbitrary way due to being stored in a [`Rope`](text::Rope). The text is also
     /// returned in chunks where each chunk has a single syntax highlighting style and
     /// diagnostic status.
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks {
+    pub fn chunks<T: ToOffset>(&self, range: Range<T>, language_aware: bool) -> BufferChunks<'_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut syntax = None;
@@ -3155,12 +3195,12 @@ impl BufferSnapshot {
     }
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
-    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer> + '_ {
+    pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
         self.syntax
             .layers_for_range(0..self.len(), &self.text, true)
     }
 
-    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer> {
+    pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
         self.syntax
             .layers_for_range(offset..offset, &self.text, false)
@@ -3171,7 +3211,7 @@ impl BufferSnapshot {
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
         &self,
         range: Range<D>,
-    ) -> Option<SyntaxLayer> {
+    ) -> Option<SyntaxLayer<'_>> {
         let range = range.to_offset(self);
         return self
             .syntax
@@ -3277,8 +3317,8 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
-        let mut next_chars = self.chars_at(start).peekable();
-        let mut prev_chars = self.reversed_chars_at(start).peekable();
+        let mut next_chars = self.chars_at(start).take(128).peekable();
+        let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
         let classifier = self.char_classifier_at(start);
         let word_kind = cmp::max(
@@ -3389,7 +3429,7 @@ impl BufferSnapshot {
     }
 
     /// Returns the root syntax node within the given row
-    pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node> {
+    pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node<'_>> {
         let start_offset = position.to_offset(self);
 
         let row = self.summary_for_anchor::<text::PointUtf16>(&position).row as usize;
@@ -3726,7 +3766,7 @@ impl BufferSnapshot {
         &self,
         range: Range<usize>,
         query: fn(&Grammar) -> Option<&tree_sitter::Query>,
-    ) -> SyntaxMapMatches {
+    ) -> SyntaxMapMatches<'_> {
         self.syntax.matches(range, self, query)
     }
 
@@ -4388,6 +4428,7 @@ impl<'a> BufferChunks<'a> {
             information_depth: 0,
             hint_depth: 0,
             unnecessary_depth: 0,
+            underline: true,
             highlights,
         };
         this.initialize_diagnostic_endpoints();
@@ -4448,12 +4489,14 @@ impl<'a> BufferChunks<'a> {
                         is_start: true,
                         severity: entry.diagnostic.severity,
                         is_unnecessary: entry.diagnostic.is_unnecessary,
+                        underline: entry.diagnostic.underline,
                     });
                     diagnostic_endpoints.push(DiagnosticEndpoint {
                         offset: entry.range.end,
                         is_start: false,
                         severity: entry.diagnostic.severity,
                         is_unnecessary: entry.diagnostic.is_unnecessary,
+                        underline: entry.diagnostic.underline,
                     });
                 }
                 diagnostic_endpoints
@@ -4559,6 +4602,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 if endpoint.offset <= self.range.start {
                     self.update_diagnostic_depths(endpoint);
                     diagnostic_endpoints.next();
+                    self.underline = endpoint.underline;
                 } else {
                     next_diagnostic_endpoint = endpoint.offset;
                     break;
@@ -4590,9 +4634,10 @@ impl<'a> Iterator for BufferChunks<'a> {
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,
+                underline: self.underline,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
-                ..Default::default()
+                ..Chunk::default()
             })
         } else {
             None
@@ -4623,6 +4668,7 @@ impl Default for Diagnostic {
     fn default() -> Self {
         Self {
             source: Default::default(),
+            source_kind: DiagnosticSourceKind::Other,
             code: None,
             code_description: None,
             severity: DiagnosticSeverity::ERROR,
@@ -4632,6 +4678,7 @@ impl Default for Diagnostic {
             is_primary: false,
             is_disk_based: false,
             is_unnecessary: false,
+            underline: true,
             data: None,
         }
     }

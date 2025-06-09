@@ -28,6 +28,18 @@ pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     Ok(hsla)
 }
 
+fn ensure_non_opaque(color: Hsla) -> Hsla {
+    const MAXIMUM_OPACITY: f32 = 0.7;
+    if color.a <= MAXIMUM_OPACITY {
+        color
+    } else {
+        Hsla {
+            a: MAXIMUM_OPACITY,
+            ..color
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AppearanceContent {
@@ -374,6 +386,22 @@ pub struct ThemeColorsContent {
     #[serde(rename = "scrollbar.track.border")]
     pub scrollbar_track_border: Option<String>,
 
+    /// The color of the minimap thumb.
+    #[serde(rename = "minimap.thumb.background")]
+    pub minimap_thumb_background: Option<String>,
+
+    /// The color of the minimap thumb when hovered over.
+    #[serde(rename = "minimap.thumb.hover_background")]
+    pub minimap_thumb_hover_background: Option<String>,
+
+    /// The color of the minimap thumb whilst being actively dragged.
+    #[serde(rename = "minimap.thumb.active_background")]
+    pub minimap_thumb_active_background: Option<String>,
+
+    /// The border color of the minimap thumb.
+    #[serde(rename = "minimap.thumb.border")]
+    pub minimap_thumb_border: Option<String>,
+
     #[serde(rename = "editor.foreground")]
     pub editor_foreground: Option<String>,
 
@@ -592,24 +620,20 @@ pub struct ThemeColorsContent {
     pub version_control_ignored: Option<String>,
 
     /// Background color for row highlights of "ours" regions in merge conflicts.
-    #[serde(rename = "version_control.conflict.ours_background")]
-    pub version_control_conflict_ours_background: Option<String>,
+    #[serde(rename = "version_control.conflict_marker.ours")]
+    pub version_control_conflict_marker_ours: Option<String>,
 
     /// Background color for row highlights of "theirs" regions in merge conflicts.
-    #[serde(rename = "version_control.conflict.theirs_background")]
+    #[serde(rename = "version_control.conflict_marker.theirs")]
+    pub version_control_conflict_marker_theirs: Option<String>,
+
+    /// Deprecated in favor of `version_control_conflict_marker_ours`.
+    #[deprecated]
+    pub version_control_conflict_ours_background: Option<String>,
+
+    /// Deprecated in favor of `version_control_conflict_marker_theirs`.
+    #[deprecated]
     pub version_control_conflict_theirs_background: Option<String>,
-
-    /// Background color for row highlights of "ours" conflict markers in merge conflicts.
-    #[serde(rename = "version_control.conflict.ours_marker_background")]
-    pub version_control_conflict_ours_marker_background: Option<String>,
-
-    /// Background color for row highlights of "theirs" conflict markers in merge conflicts.
-    #[serde(rename = "version_control.conflict.theirs_marker_background")]
-    pub version_control_conflict_theirs_marker_background: Option<String>,
-
-    /// Background color for row highlights of the "ours"/"theirs" divider in merge conflicts.
-    #[serde(rename = "version_control.conflict.divider_background")]
-    pub version_control_conflict_divider_background: Option<String>,
 }
 
 impl ThemeColorsContent {
@@ -635,6 +659,19 @@ impl ThemeColorsContent {
                     .as_ref()
                     .and_then(|color| try_parse_color(color).ok())
             });
+        let scrollbar_thumb_hover_background = self
+            .scrollbar_thumb_hover_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
+        let scrollbar_thumb_active_background = self
+            .scrollbar_thumb_active_background
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok())
+            .or(scrollbar_thumb_background);
+        let scrollbar_thumb_border = self
+            .scrollbar_thumb_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
         ThemeColorsRefinement {
             border,
             border_variant: self
@@ -819,19 +856,9 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok())
                 .or(border),
             scrollbar_thumb_background,
-            scrollbar_thumb_hover_background: self
-                .scrollbar_thumb_hover_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            scrollbar_thumb_active_background: self
-                .scrollbar_thumb_active_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok())
-                .or(scrollbar_thumb_background),
-            scrollbar_thumb_border: self
-                .scrollbar_thumb_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            scrollbar_thumb_hover_background,
+            scrollbar_thumb_active_background,
+            scrollbar_thumb_border,
             scrollbar_track_background: self
                 .scrollbar_track_background
                 .as_ref()
@@ -840,6 +867,26 @@ impl ThemeColorsContent {
                 .scrollbar_track_border
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            minimap_thumb_background: self
+                .minimap_thumb_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(scrollbar_thumb_background.map(ensure_non_opaque)),
+            minimap_thumb_hover_background: self
+                .minimap_thumb_hover_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(scrollbar_thumb_hover_background.map(ensure_non_opaque)),
+            minimap_thumb_active_background: self
+                .minimap_thumb_active_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(scrollbar_thumb_active_background.map(ensure_non_opaque)),
+            minimap_thumb_border: self
+                .minimap_thumb_border
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(scrollbar_thumb_border),
             editor_foreground: self
                 .editor_foreground
                 .as_ref()
@@ -1067,25 +1114,17 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok())
                 // Fall back to `conflict`, for backwards compatibility.
                 .or(status_colors.ignored),
-            version_control_conflict_ours_background: self
-                .version_control_conflict_ours_background
+            #[allow(deprecated)]
+            version_control_conflict_marker_ours: self
+                .version_control_conflict_marker_ours
                 .as_ref()
+                .or(self.version_control_conflict_ours_background.as_ref())
                 .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_theirs_background: self
-                .version_control_conflict_theirs_background
+            #[allow(deprecated)]
+            version_control_conflict_marker_theirs: self
+                .version_control_conflict_marker_theirs
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_ours_marker_background: self
-                .version_control_conflict_ours_marker_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_theirs_marker_background: self
-                .version_control_conflict_theirs_marker_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_divider_background: self
-                .version_control_conflict_divider_background
-                .as_ref()
+                .or(self.version_control_conflict_theirs_background.as_ref())
                 .and_then(|color| try_parse_color(color).ok()),
         }
     }

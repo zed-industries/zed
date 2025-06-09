@@ -26,7 +26,9 @@ impl Tool for OpenTool {
     fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
         true
     }
-
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
     fn description(&self) -> String {
         include_str!("./open_tool/description.md").to_string()
     }

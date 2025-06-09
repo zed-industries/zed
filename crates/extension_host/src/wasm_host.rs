@@ -87,7 +87,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(command.into())
             }
@@ -113,7 +113,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -136,7 +136,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -161,7 +161,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -186,7 +186,7 @@ impl extension::Extension for WasmExtension {
                         resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(options)
             }
             .boxed()
@@ -208,7 +208,7 @@ impl extension::Extension for WasmExtension {
                         completions.into_iter().map(Into::into).collect(),
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(labels
                     .into_iter()
@@ -234,7 +234,7 @@ impl extension::Extension for WasmExtension {
                         symbols.into_iter().map(Into::into).collect(),
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(labels
                     .into_iter()
@@ -256,7 +256,7 @@ impl extension::Extension for WasmExtension {
                 let completions = extension
                     .call_complete_slash_command_argument(store, &command.into(), &arguments)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(completions.into_iter().map(Into::into).collect())
             }
@@ -282,7 +282,7 @@ impl extension::Extension for WasmExtension {
                 let output = extension
                     .call_run_slash_command(store, &command.into(), &arguments, resource)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(output.into())
             }
@@ -302,7 +302,7 @@ impl extension::Extension for WasmExtension {
                 let command = extension
                     .call_context_server_command(store, context_server_id.clone(), project_resource)
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 anyhow::Ok(command.into())
             }
             .boxed()
@@ -325,7 +325,7 @@ impl extension::Extension for WasmExtension {
                         project_resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err}"))?
+                    .map_err(|err| store.data().extension_error(err))?
                 else {
                     return Ok(None);
                 };
@@ -343,7 +343,7 @@ impl extension::Extension for WasmExtension {
                 let packages = extension
                     .call_suggest_docs_packages(store, provider.as_ref())
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 Ok(packages)
             }
@@ -369,7 +369,7 @@ impl extension::Extension for WasmExtension {
                         kv_store_resource,
                     )
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
 
                 anyhow::Ok(())
             }
@@ -390,9 +390,23 @@ impl extension::Extension for WasmExtension {
                 let dap_binary = extension
                     .call_get_dap_binary(store, dap_name, config, user_installed_path, resource)
                     .await?
-                    .map_err(|err| anyhow!("{err:?}"))?;
+                    .map_err(|err| store.data().extension_error(err))?;
                 let dap_binary = dap_binary.try_into()?;
                 Ok(dap_binary)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn get_dap_schema(&self) -> Result<serde_json::Value> {
+        self.call(|extension, store| {
+            async move {
+                extension
+                    .call_dap_schema(store)
+                    .await
+                    .and_then(|schema| serde_json::to_value(schema).map_err(|err| err.to_string()))
+                    .map_err(|err| store.data().extension_error(err))
             }
             .boxed()
         })
@@ -666,6 +680,15 @@ impl WasmState {
     fn work_dir(&self) -> PathBuf {
         self.host.work_dir.join(self.manifest.id.as_ref())
     }
+
+    fn extension_error(&self, message: String) -> anyhow::Error {
+        anyhow!(
+            "from extension \"{}\" version {}: {}",
+            self.manifest.name,
+            self.manifest.version,
+            message
+        )
+    }
 }
 
 impl wasi::WasiView for WasmState {
@@ -701,109 +724,12 @@ impl IncrementalCompilationCache {
 }
 
 impl CacheStore for IncrementalCompilationCache {
-    fn get(&self, key: &[u8]) -> Option<Cow<[u8]>> {
+    fn get(&self, key: &[u8]) -> Option<Cow<'_, [u8]>> {
         self.cache.get(key).map(|v| v.into())
     }
 
     fn insert(&self, key: &[u8], value: Vec<u8>) -> bool {
         self.cache.insert(key.to_vec(), value);
         true
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use extension::{
-        ExtensionCapability, ExtensionLibraryKind, LanguageServerManifestEntry, LibManifestEntry,
-        SchemaVersion,
-        extension_builder::{CompileExtensionOptions, ExtensionBuilder},
-    };
-    use gpui::TestAppContext;
-    use reqwest_client::ReqwestClient;
-
-    use super::*;
-
-    #[gpui::test]
-    fn test_cache_size_for_test_extension(cx: &TestAppContext) {
-        let cache_store = cache_store();
-        let engine = wasm_engine();
-        let wasm_bytes = wasm_bytes(cx, &mut manifest());
-
-        Component::new(&engine, wasm_bytes).unwrap();
-
-        cache_store.cache.run_pending_tasks();
-        let size: usize = cache_store
-            .cache
-            .iter()
-            .map(|(k, v)| k.len() + v.len())
-            .sum();
-        // If this assertion fails, it means extensions got larger and we may want to
-        // reconsider our cache size.
-        assert!(size < 512 * 1024);
-    }
-
-    fn wasm_bytes(cx: &TestAppContext, manifest: &mut ExtensionManifest) -> Vec<u8> {
-        let extension_builder = extension_builder();
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("extensions/test-extension");
-        cx.executor()
-            .block(extension_builder.compile_extension(
-                &path,
-                manifest,
-                CompileExtensionOptions { release: true },
-            ))
-            .unwrap();
-        std::fs::read(path.join("extension.wasm")).unwrap()
-    }
-
-    fn extension_builder() -> ExtensionBuilder {
-        let user_agent = format!(
-            "Zed Extension CLI/{} ({}; {})",
-            env!("CARGO_PKG_VERSION"),
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
-        let http_client = Arc::new(ReqwestClient::user_agent(&user_agent).unwrap());
-        // Local dir so that we don't have to download it on every run
-        let build_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("benches/.build");
-        ExtensionBuilder::new(http_client, build_dir)
-    }
-
-    fn manifest() -> ExtensionManifest {
-        ExtensionManifest {
-            id: "test-extension".into(),
-            name: "Test Extension".into(),
-            version: "0.1.0".into(),
-            schema_version: SchemaVersion(1),
-            description: Some("An extension for use in tests.".into()),
-            authors: Vec::new(),
-            repository: None,
-            themes: Default::default(),
-            icon_themes: Vec::new(),
-            lib: LibManifestEntry {
-                kind: Some(ExtensionLibraryKind::Rust),
-                version: Some(SemanticVersion::new(0, 1, 0)),
-            },
-            languages: Vec::new(),
-            grammars: BTreeMap::default(),
-            language_servers: [("gleam".into(), LanguageServerManifestEntry::default())]
-                .into_iter()
-                .collect(),
-            context_servers: BTreeMap::default(),
-            slash_commands: BTreeMap::default(),
-            indexed_docs_providers: BTreeMap::default(),
-            snippets: None,
-            capabilities: vec![ExtensionCapability::ProcessExec {
-                command: "echo".into(),
-                args: vec!["hello!".into()],
-            }],
-            debug_adapters: Vec::new(),
-        }
     }
 }

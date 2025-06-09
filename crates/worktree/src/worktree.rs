@@ -880,7 +880,7 @@ impl Worktree {
                             .await
                             .map(CreatedEntry::Included),
                         None => {
-                            let abs_path = this.update(cx, |worktree, _| {
+                            let abs_path = this.read_with(cx, |worktree, _| {
                                 worktree
                                     .absolutize(&path)
                                     .with_context(|| format!("absolutizing {path:?}"))
@@ -2027,7 +2027,7 @@ impl LocalWorktree {
         cx.spawn(async move |this, cx| {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
-            let new_entry = this.update(cx, |this, _| {
+            let new_entry = this.read_with(cx, |this, _| {
                 this.entry_for_path(path)
                     .cloned()
                     .context("reading path after update")
@@ -2274,7 +2274,7 @@ impl RemoteWorktree {
                     .await
                     .map(CreatedEntry::Included),
                 None => {
-                    let abs_path = this.update(cx, |worktree, _| {
+                    let abs_path = this.read_with(cx, |worktree, _| {
                         worktree
                             .absolutize(&new_path)
                             .with_context(|| format!("absolutizing {new_path:?}"))
@@ -2566,7 +2566,7 @@ impl Snapshot {
         include_dirs: bool,
         include_ignored: bool,
         start_offset: usize,
-    ) -> Traversal {
+    ) -> Traversal<'_> {
         let mut cursor = self.entries_by_path.cursor(&());
         cursor.seek(
             &TraversalTarget::Count {
@@ -2593,19 +2593,19 @@ impl Snapshot {
         include_dirs: bool,
         include_ignored: bool,
         path: &Path,
-    ) -> Traversal {
+    ) -> Traversal<'_> {
         Traversal::new(self, include_files, include_dirs, include_ignored, path)
     }
 
-    pub fn files(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn files(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(true, false, include_ignored, start)
     }
 
-    pub fn directories(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn directories(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(false, true, include_ignored, start)
     }
 
-    pub fn entries(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn entries(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(true, true, include_ignored, start)
     }
 
@@ -3948,7 +3948,7 @@ impl BackgroundScanner {
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
             Ok(path) => SanitizedPath::from(path),
             Err(err) => {
-                log::error!("failed to canonicalize root path: {}", err);
+                log::error!("failed to canonicalize root path {root_path:?}: {err}");
                 return true;
             }
         };
@@ -5082,7 +5082,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
         let file_name = "fs-event-sentinel";
 
         let tree = self.clone();
-        let (fs, root_path) = self.update(cx, |tree, _| {
+        let (fs, root_path) = self.read_with(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
             (tree.fs.clone(), tree.abs_path().clone())
         });
@@ -5094,7 +5094,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
 
             let mut events = cx.events(&tree);
             while events.next().await.is_some() {
-                if tree.update(cx, |tree, _| tree.entry_for_path(file_name).is_some()) {
+                if tree.read_with(cx, |tree, _| tree.entry_for_path(file_name).is_some()) {
                     break;
                 }
             }
@@ -5103,7 +5103,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
             while events.next().await.is_some() {
-                if tree.update(cx, |tree, _| tree.entry_for_path(file_name).is_none()) {
+                if tree.read_with(cx, |tree, _| tree.entry_for_path(file_name).is_none()) {
                     break;
                 }
             }
@@ -5128,7 +5128,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
         let file_name = "fs-event-sentinel";
 
         let tree = self.clone();
-        let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, _| {
+        let (fs, root_path, mut git_dir_scan_id) = self.read_with(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
             let local_repo_entry = tree
                 .git_repositories

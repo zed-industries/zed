@@ -90,6 +90,10 @@ impl ThemeColors {
             scrollbar_thumb_border: gpui::transparent_black(),
             scrollbar_track_background: gpui::transparent_black(),
             scrollbar_track_border: neutral().light().step_5(),
+            minimap_thumb_background: neutral().light_alpha().step_3().alpha(0.7),
+            minimap_thumb_hover_background: neutral().light_alpha().step_4().alpha(0.7),
+            minimap_thumb_active_background: neutral().light_alpha().step_5().alpha(0.7),
+            minimap_thumb_border: gpui::transparent_black(),
             editor_foreground: neutral().light().step_12(),
             editor_background: neutral().light().step_1(),
             editor_gutter_background: neutral().light().step_1(),
@@ -144,11 +148,8 @@ impl ThemeColors {
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().light().step_12(),
             version_control_ignored: gray().light().step_12(),
-            version_control_conflict_ours_background: green().light().step_10().alpha(0.5),
-            version_control_conflict_theirs_background: blue().light().step_10().alpha(0.5),
-            version_control_conflict_ours_marker_background: green().light().step_10().alpha(0.7),
-            version_control_conflict_theirs_marker_background: blue().light().step_10().alpha(0.7),
-            version_control_conflict_divider_background: Hsla::default(),
+            version_control_conflict_marker_ours: green().light().step_10().alpha(0.5),
+            version_control_conflict_marker_theirs: blue().light().step_10().alpha(0.5),
         }
     }
 
@@ -211,6 +212,10 @@ impl ThemeColors {
             scrollbar_thumb_border: gpui::transparent_black(),
             scrollbar_track_background: gpui::transparent_black(),
             scrollbar_track_border: neutral().dark().step_5(),
+            minimap_thumb_background: neutral().dark_alpha().step_3().alpha(0.7),
+            minimap_thumb_hover_background: neutral().dark_alpha().step_4().alpha(0.7),
+            minimap_thumb_active_background: neutral().dark_alpha().step_5().alpha(0.7),
+            minimap_thumb_border: gpui::transparent_black(),
             editor_foreground: neutral().dark().step_12(),
             editor_background: neutral().dark().step_1(),
             editor_gutter_background: neutral().dark().step_1(),
@@ -265,11 +270,8 @@ impl ThemeColors {
             version_control_renamed: MODIFIED_COLOR,
             version_control_conflict: orange().dark().step_12(),
             version_control_ignored: gray().dark().step_12(),
-            version_control_conflict_ours_background: green().dark().step_10().alpha(0.5),
-            version_control_conflict_theirs_background: blue().dark().step_10().alpha(0.5),
-            version_control_conflict_ours_marker_background: green().dark().step_10().alpha(0.7),
-            version_control_conflict_theirs_marker_background: blue().dark().step_10().alpha(0.7),
-            version_control_conflict_divider_background: Hsla::default(),
+            version_control_conflict_marker_ours: green().dark().step_10().alpha(0.5),
+            version_control_conflict_marker_theirs: blue().dark().step_10().alpha(0.5),
         }
     }
 }

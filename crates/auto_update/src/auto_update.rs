@@ -39,13 +39,26 @@ struct UpdateRequestBody {
     destination: &'static str,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VersionCheckType {
+    Sha(AppCommitSha),
+    Semantic(SemanticVersion),
+}
+
 #[derive(Clone, PartialEq, Eq)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
-    Downloading,
-    Installing,
-    Updated { binary_path: PathBuf },
+    Downloading {
+        version: VersionCheckType,
+    },
+    Installing {
+        version: VersionCheckType,
+    },
+    Updated {
+        binary_path: PathBuf,
+        version: VersionCheckType,
+    },
     Errored,
 }
 
@@ -62,7 +75,7 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<Option<()>>>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct JsonRelease {
     pub version: String,
     pub url: String,
@@ -307,7 +320,7 @@ impl AutoUpdater {
     }
 
     pub fn poll(&mut self, cx: &mut Context<Self>) {
-        if self.pending_poll.is_some() || self.status.is_updated() {
+        if self.pending_poll.is_some() {
             return;
         }
 
@@ -483,42 +496,120 @@ impl AutoUpdater {
     }
 
     async fn update(this: Entity<Self>, mut cx: AsyncApp) -> Result<()> {
-        let (client, current_version, release_channel) = this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Checking;
-            cx.notify();
-            (
-                this.http_client.clone(),
-                this.current_version,
-                ReleaseChannel::try_global(cx),
-            )
-        })?;
-
-        let release =
-            Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
-
-        let should_download = match *RELEASE_CHANNEL {
-            ReleaseChannel::Nightly => cx
-                .update(|cx| AppCommitSha::try_global(cx).map(|sha| release.version != sha.0))
-                .ok()
-                .flatten()
-                .unwrap_or(true),
-            _ => release.version.parse::<SemanticVersion>()? > current_version,
-        };
-
-        if !should_download {
-            this.update(&mut cx, |this, cx| {
-                this.status = AutoUpdateStatus::Idle;
-                cx.notify();
+        let (client, installed_version, previous_status, release_channel) =
+            this.read_with(&mut cx, |this, cx| {
+                (
+                    this.http_client.clone(),
+                    this.current_version,
+                    this.status.clone(),
+                    ReleaseChannel::try_global(cx),
+                )
             })?;
-            return Ok(());
-        }
 
         this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Downloading;
+            this.status = AutoUpdateStatus::Checking;
+            cx.notify();
+        })?;
+
+        let fetched_release_data =
+            Self::get_latest_release(&this, "zed", OS, ARCH, release_channel, &mut cx).await?;
+        let fetched_version = fetched_release_data.clone().version;
+        let app_commit_sha = cx.update(|cx| AppCommitSha::try_global(cx).map(|sha| sha.full()));
+        let newer_version = Self::check_if_fetched_version_is_newer(
+            *RELEASE_CHANNEL,
+            app_commit_sha,
+            installed_version,
+            fetched_version,
+            previous_status.clone(),
+        )?;
+
+        let Some(newer_version) = newer_version else {
+            return this.update(&mut cx, |this, cx| {
+                let status = match previous_status {
+                    AutoUpdateStatus::Updated { .. } => previous_status,
+                    _ => AutoUpdateStatus::Idle,
+                };
+                this.status = status;
+                cx.notify();
+            });
+        };
+
+        this.update(&mut cx, |this, cx| {
+            this.status = AutoUpdateStatus::Downloading {
+                version: newer_version.clone(),
+            };
             cx.notify();
         })?;
 
         let installer_dir = InstallerDir::new().await?;
+        let target_path = Self::target_path(&installer_dir).await?;
+        download_release(&target_path, fetched_release_data, client, &cx).await?;
+
+        this.update(&mut cx, |this, cx| {
+            this.status = AutoUpdateStatus::Installing {
+                version: newer_version.clone(),
+            };
+            cx.notify();
+        })?;
+
+        let binary_path = Self::binary_path(installer_dir, target_path, &cx).await?;
+
+        this.update(&mut cx, |this, cx| {
+            this.set_should_show_update_notification(true, cx)
+                .detach_and_log_err(cx);
+            this.status = AutoUpdateStatus::Updated {
+                binary_path,
+                version: newer_version,
+            };
+            cx.notify();
+        })
+    }
+
+    fn check_if_fetched_version_is_newer(
+        release_channel: ReleaseChannel,
+        app_commit_sha: Result<Option<String>>,
+        installed_version: SemanticVersion,
+        fetched_version: String,
+        status: AutoUpdateStatus,
+    ) -> Result<Option<VersionCheckType>> {
+        let parsed_fetched_version = fetched_version.parse::<SemanticVersion>();
+
+        if let AutoUpdateStatus::Updated { version, .. } = status {
+            match version {
+                VersionCheckType::Sha(cached_version) => {
+                    let should_download = fetched_version != cached_version.full();
+                    let newer_version = should_download
+                        .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
+                    return Ok(newer_version);
+                }
+                VersionCheckType::Semantic(cached_version) => {
+                    return Self::check_if_fetched_version_is_newer_non_nightly(
+                        cached_version,
+                        parsed_fetched_version?,
+                    );
+                }
+            }
+        }
+
+        match release_channel {
+            ReleaseChannel::Nightly => {
+                let should_download = app_commit_sha
+                    .ok()
+                    .flatten()
+                    .map(|sha| fetched_version != sha)
+                    .unwrap_or(true);
+                let newer_version = should_download
+                    .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
+                Ok(newer_version)
+            }
+            _ => Self::check_if_fetched_version_is_newer_non_nightly(
+                installed_version,
+                parsed_fetched_version?,
+            ),
+        }
+    }
+
+    async fn target_path(installer_dir: &InstallerDir) -> Result<PathBuf> {
         let filename = match OS {
             "macos" => anyhow::Ok("Zed.dmg"),
             "linux" => Ok("zed.tar.gz"),
@@ -532,29 +623,29 @@ impl AutoUpdater {
             "Aborting. Could not find rsync which is required for auto-updates."
         );
 
-        let downloaded_asset = installer_dir.path().join(filename);
-        download_release(&downloaded_asset, release, client, &cx).await?;
+        Ok(installer_dir.path().join(filename))
+    }
 
-        this.update(&mut cx, |this, cx| {
-            this.status = AutoUpdateStatus::Installing;
-            cx.notify();
-        })?;
-
-        let binary_path = match OS {
-            "macos" => install_release_macos(&installer_dir, downloaded_asset, &cx).await,
-            "linux" => install_release_linux(&installer_dir, downloaded_asset, &cx).await,
-            "windows" => install_release_windows(downloaded_asset).await,
+    async fn binary_path(
+        installer_dir: InstallerDir,
+        target_path: PathBuf,
+        cx: &AsyncApp,
+    ) -> Result<PathBuf> {
+        match OS {
+            "macos" => install_release_macos(&installer_dir, target_path, cx).await,
+            "linux" => install_release_linux(&installer_dir, target_path, cx).await,
+            "windows" => install_release_windows(target_path).await,
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
-        }?;
+        }
+    }
 
-        this.update(&mut cx, |this, cx| {
-            this.set_should_show_update_notification(true, cx)
-                .detach_and_log_err(cx);
-            this.status = AutoUpdateStatus::Updated { binary_path };
-            cx.notify();
-        })?;
-
-        Ok(())
+    fn check_if_fetched_version_is_newer_non_nightly(
+        installed_version: SemanticVersion,
+        fetched_version: SemanticVersion,
+    ) -> Result<Option<VersionCheckType>> {
+        let should_download = fetched_version > installed_version;
+        let newer_version = should_download.then(|| VersionCheckType::Semantic(fetched_version));
+        Ok(newer_version)
     }
 
     pub fn set_should_show_update_notification(
@@ -828,4 +919,256 @@ pub fn check_pending_installation() -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_stable_does_not_update_when_fetched_version_is_not_higher() {
+        let release_channel = ReleaseChannel::Stable;
+        let app_commit_sha = Ok(Some("a".to_string()));
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Idle;
+        let fetched_version = SemanticVersion::new(1, 0, 0);
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_version.to_string(),
+            status,
+        );
+
+        assert_eq!(newer_version.unwrap(), None);
+    }
+
+    #[test]
+    fn test_stable_does_update_when_fetched_version_is_higher() {
+        let release_channel = ReleaseChannel::Stable;
+        let app_commit_sha = Ok(Some("a".to_string()));
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Idle;
+        let fetched_version = SemanticVersion::new(1, 0, 1);
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_version.to_string(),
+            status,
+        );
+
+        assert_eq!(
+            newer_version.unwrap(),
+            Some(VersionCheckType::Semantic(fetched_version))
+        );
+    }
+
+    #[test]
+    fn test_stable_does_not_update_when_fetched_version_is_not_higher_than_cached() {
+        let release_channel = ReleaseChannel::Stable;
+        let app_commit_sha = Ok(Some("a".to_string()));
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Updated {
+            binary_path: PathBuf::new(),
+            version: VersionCheckType::Semantic(SemanticVersion::new(1, 0, 1)),
+        };
+        let fetched_version = SemanticVersion::new(1, 0, 1);
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_version.to_string(),
+            status,
+        );
+
+        assert_eq!(newer_version.unwrap(), None);
+    }
+
+    #[test]
+    fn test_stable_does_update_when_fetched_version_is_higher_than_cached() {
+        let release_channel = ReleaseChannel::Stable;
+        let app_commit_sha = Ok(Some("a".to_string()));
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Updated {
+            binary_path: PathBuf::new(),
+            version: VersionCheckType::Semantic(SemanticVersion::new(1, 0, 1)),
+        };
+        let fetched_version = SemanticVersion::new(1, 0, 2);
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_version.to_string(),
+            status,
+        );
+
+        assert_eq!(
+            newer_version.unwrap(),
+            Some(VersionCheckType::Semantic(fetched_version))
+        );
+    }
+
+    #[test]
+    fn test_nightly_does_not_update_when_fetched_sha_is_same() {
+        let release_channel = ReleaseChannel::Nightly;
+        let app_commit_sha = Ok(Some("a".to_string()));
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Idle;
+        let fetched_sha = "a".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_sha,
+            status,
+        );
+
+        assert_eq!(newer_version.unwrap(), None);
+    }
+
+    #[test]
+    fn test_nightly_does_update_when_fetched_sha_is_not_same() {
+        let release_channel = ReleaseChannel::Nightly;
+        let app_commit_sha = Ok(Some("a".to_string()));
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Idle;
+        let fetched_sha = "b".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_sha.clone(),
+            status,
+        );
+
+        assert_eq!(
+            newer_version.unwrap(),
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+        );
+    }
+
+    #[test]
+    fn test_nightly_does_not_update_when_fetched_sha_is_same_as_cached() {
+        let release_channel = ReleaseChannel::Nightly;
+        let app_commit_sha = Ok(Some("a".to_string()));
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Updated {
+            binary_path: PathBuf::new(),
+            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
+        };
+        let fetched_sha = "b".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_sha,
+            status,
+        );
+
+        assert_eq!(newer_version.unwrap(), None);
+    }
+
+    #[test]
+    fn test_nightly_does_update_when_fetched_sha_is_not_same_as_cached() {
+        let release_channel = ReleaseChannel::Nightly;
+        let app_commit_sha = Ok(Some("a".to_string()));
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Updated {
+            binary_path: PathBuf::new(),
+            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
+        };
+        let fetched_sha = "c".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_sha.clone(),
+            status,
+        );
+
+        assert_eq!(
+            newer_version.unwrap(),
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+        );
+    }
+
+    #[test]
+    fn test_nightly_does_update_when_installed_versions_sha_cannot_be_retrieved() {
+        let release_channel = ReleaseChannel::Nightly;
+        let app_commit_sha = Ok(None);
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Idle;
+        let fetched_sha = "a".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_sha.clone(),
+            status,
+        );
+
+        assert_eq!(
+            newer_version.unwrap(),
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+        );
+    }
+
+    #[test]
+    fn test_nightly_does_not_update_when_cached_update_is_same_as_fetched_and_installed_versions_sha_cannot_be_retrieved()
+     {
+        let release_channel = ReleaseChannel::Nightly;
+        let app_commit_sha = Ok(None);
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Updated {
+            binary_path: PathBuf::new(),
+            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
+        };
+        let fetched_sha = "b".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_sha,
+            status,
+        );
+
+        assert_eq!(newer_version.unwrap(), None);
+    }
+
+    #[test]
+    fn test_nightly_does_update_when_cached_update_is_not_same_as_fetched_and_installed_versions_sha_cannot_be_retrieved()
+     {
+        let release_channel = ReleaseChannel::Nightly;
+        let app_commit_sha = Ok(None);
+        let installed_version = SemanticVersion::new(1, 0, 0);
+        let status = AutoUpdateStatus::Updated {
+            binary_path: PathBuf::new(),
+            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
+        };
+        let fetched_sha = "c".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            app_commit_sha,
+            installed_version,
+            fetched_sha.clone(),
+            status,
+        );
+
+        assert_eq!(
+            newer_version.unwrap(),
+            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+        );
+    }
 }

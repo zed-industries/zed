@@ -408,6 +408,7 @@ pub fn task_file_name() -> &'static str {
 }
 
 /// Returns the relative path to a `debug.json` file within a project.
+/// .zed/debug.json
 pub fn local_debug_file_relative_path() -> &'static Path {
     Path::new(".zed/debug.json")
 }
@@ -429,6 +430,21 @@ pub fn global_ssh_config_file() -> &'static Path {
 pub fn vscode_settings_file() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     let rel_path = "Code/User/settings.json";
+    LOGS_DIR.get_or_init(|| {
+        if cfg!(target_os = "macos") {
+            home_dir()
+                .join("Library/Application Support")
+                .join(rel_path)
+        } else {
+            home_dir().join(".config").join(rel_path)
+        }
+    })
+}
+
+/// Returns the path to the cursor user settings file
+pub fn cursor_settings_file() -> &'static PathBuf {
+    static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    let rel_path = "Cursor/User/settings.json";
     LOGS_DIR.get_or_init(|| {
         if cfg!(target_os = "macos") {
             home_dir()

@@ -58,6 +58,12 @@ pub enum Model {
     OpenMistralNemo,
     #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
     OpenCodestralMamba,
+    #[serde(rename = "devstral-small-latest", alias = "devstral-small-latest")]
+    DevstralSmallLatest,
+    #[serde(rename = "pixtral-12b-latest", alias = "pixtral-12b-latest")]
+    Pixtral12BLatest,
+    #[serde(rename = "pixtral-large-latest", alias = "pixtral-large-latest")]
+    PixtralLargeLatest,
 
     #[serde(rename = "custom")]
     Custom {
@@ -68,6 +74,7 @@ pub enum Model {
         max_output_tokens: Option<u32>,
         max_completion_tokens: Option<u32>,
         supports_tools: Option<bool>,
+        supports_images: Option<bool>,
     },
 }
 
@@ -84,6 +91,9 @@ impl Model {
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
             "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
             "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
+            "devstral-small-latest" => Ok(Self::DevstralSmallLatest),
+            "pixtral-12b-latest" => Ok(Self::Pixtral12BLatest),
+            "pixtral-large-latest" => Ok(Self::PixtralLargeLatest),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -96,6 +106,9 @@ impl Model {
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralSmallLatest => "devstral-small-latest",
+            Self::Pixtral12BLatest => "pixtral-12b-latest",
+            Self::PixtralLargeLatest => "pixtral-large-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -108,6 +121,9 @@ impl Model {
             Self::MistralSmallLatest => "mistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralSmallLatest => "devstral-small-latest",
+            Self::Pixtral12BLatest => "pixtral-12b-latest",
+            Self::PixtralLargeLatest => "pixtral-large-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -122,6 +138,9 @@ impl Model {
             Self::MistralSmallLatest => 32000,
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,
+            Self::DevstralSmallLatest => 262144,
+            Self::Pixtral12BLatest => 128000,
+            Self::PixtralLargeLatest => 128000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -142,8 +161,28 @@ impl Model {
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
             | Self::OpenMistralNemo
-            | Self::OpenCodestralMamba => true,
+            | Self::OpenCodestralMamba
+            | Self::DevstralSmallLatest
+            | Self::Pixtral12BLatest
+            | Self::PixtralLargeLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
+        }
+    }
+
+    pub fn supports_images(&self) -> bool {
+        match self {
+            Self::Pixtral12BLatest
+            | Self::PixtralLargeLatest
+            | Self::MistralMediumLatest
+            | Self::MistralSmallLatest => true,
+            Self::CodestralLatest
+            | Self::MistralLargeLatest
+            | Self::OpenMistralNemo
+            | Self::OpenCodestralMamba
+            | Self::DevstralSmallLatest => false,
+            Self::Custom {
+                supports_images, ..
+            } => supports_images.unwrap_or(false),
         }
     }
 }
@@ -225,7 +264,8 @@ pub enum RequestMessage {
         tool_calls: Vec<ToolCall>,
     },
     User {
-        content: String,
+        #[serde(flatten)]
+        content: MessageContent,
     },
     System {
         content: String,
@@ -234,6 +274,54 @@ pub enum RequestMessage {
         content: String,
         tool_call_id: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    #[serde(rename = "content")]
+    Plain { content: String },
+    #[serde(rename = "content")]
+    Multipart { content: Vec<MessagePart> },
+}
+
+impl MessageContent {
+    pub fn empty() -> Self {
+        Self::Plain {
+            content: String::new(),
+        }
+    }
+
+    pub fn push_part(&mut self, part: MessagePart) {
+        match self {
+            Self::Plain { content } => match part {
+                MessagePart::Text { text } => {
+                    content.push_str(&text);
+                }
+                part => {
+                    let mut parts = if content.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![MessagePart::Text {
+                            text: content.clone(),
+                        }]
+                    };
+                    parts.push(part);
+                    *self = Self::Multipart { content: parts };
+                }
+            },
+            Self::Multipart { content } => {
+                content.push(part);
+            }
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessagePart {
+    Text { text: String },
+    ImageUrl { image_url: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

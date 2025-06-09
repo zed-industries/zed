@@ -82,10 +82,8 @@ impl DapLocator for CargoLocator {
                 task_template,
                 locator_name: Some(self.name()),
             }),
-            request: None,
-            initialize_args: None,
+            config: serde_json::Value::Null,
             tcp_connection: None,
-            stop_on_entry: None,
         })
     }
 
@@ -166,13 +164,9 @@ impl DapLocator for CargoLocator {
 
         Ok(DebugRequest::Launch(task::LaunchRequest {
             program: executable,
-            cwd: build_config.cwd.clone(),
+            cwd: build_config.cwd,
             args,
-            env: build_config
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
+            env: build_config.env.into_iter().collect(),
         }))
     }
 }

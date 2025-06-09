@@ -190,6 +190,7 @@ message Envelope {
         GetChannelMessagesById get_channel_messages_by_id = 144;
 
         MoveChannel move_channel = 147;
+        ReorderChannel reorder_channel = 349;
         SetChannelVisibility set_channel_visibility = 148;
 
         AddNotification add_notification = 149;
@@ -386,7 +387,12 @@ message Envelope {
         LspExtRunFlycheck lsp_ext_run_flycheck = 346;
         LspExtClearFlycheck lsp_ext_clear_flycheck = 347;
 
-        LogToDebugConsole log_to_debug_console = 348; // current max
+        LogToDebugConsole log_to_debug_console = 348;
+
+        GetDocumentDiagnostics get_document_diagnostics = 350;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 351;
+        PullWorkspaceDiagnostics pull_workspace_diagnostics = 352; // current max
+
     }
 
     reserved 87 to 88;

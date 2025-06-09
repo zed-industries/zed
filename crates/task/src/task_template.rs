@@ -315,7 +315,7 @@ pub fn substitute_variables_in_str(template_str: &str, context: &TaskContext) ->
         &mut substituted_variables,
     )
 }
-pub fn substitute_all_template_variables_in_str<A: AsRef<str>>(
+fn substitute_all_template_variables_in_str<A: AsRef<str>>(
     template_str: &str,
     task_variables: &HashMap<String, A>,
     variable_names: &HashMap<String, VariableName>,

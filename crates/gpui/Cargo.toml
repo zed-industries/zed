@@ -22,6 +22,7 @@ test-support = [
     "wayland",
     "x11",
 ]
+inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
 runtime_shaders = []
 macos-blade = [
@@ -125,6 +126,7 @@ uuid.workspace = true
 waker-fn = "1.2.0"
 lyon = "1.0"
 workspace-hack.workspace = true
+libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"

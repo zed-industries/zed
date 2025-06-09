@@ -21,15 +21,16 @@ const BACKSPACE_KEY: u16 = 0x7f;
 const SPACE_KEY: u16 = b' ' as u16;
 const ENTER_KEY: u16 = 0x0d;
 const NUMPAD_ENTER_KEY: u16 = 0x03;
-const ESCAPE_KEY: u16 = 0x1b;
+pub(crate) const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 
-pub fn key_to_native(key: &str) -> Cow<str> {
+pub fn key_to_native(key: &str) -> Cow<'_, str> {
     use cocoa::appkit::*;
     let code = match key {
         "space" => SPACE_KEY,
         "backspace" => BACKSPACE_KEY,
+        "escape" => ESCAPE_KEY,
         "up" => NSUpArrowFunctionKey,
         "down" => NSDownArrowFunctionKey,
         "left" => NSLeftArrowFunctionKey,

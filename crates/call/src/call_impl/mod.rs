@@ -116,7 +116,7 @@ impl ActiveCall {
         envelope: TypedEnvelope<proto::IncomingCall>,
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
-        let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
+        let user_store = this.read_with(&mut cx, |this, _| this.user_store.clone())?;
         let call = IncomingCall {
             room_id: envelope.payload.room_id,
             participants: user_store
