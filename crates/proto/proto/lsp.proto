@@ -543,14 +543,7 @@ message UpdateLanguageServer {
     }
 }
 
-message ShowDocument {
-    uint64 project_id = 1;
-    string uri = 2;
-}
 
-message ShowDocumentResponse {
-    optional uint64 buffer_id = 1;
-}
 
 message LspWorkStart {
     string token = 1;

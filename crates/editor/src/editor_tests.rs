@@ -22071,6 +22071,7 @@ async fn test_show_document_request_succeeds(cx: &mut TestAppContext) {
             println!(\"Other function\");
         }ˇ
     "});
+
     let show_document_result = cx
         .lsp
         .request::<lsp::request::ShowDocument>(lsp::ShowDocumentParams {
@@ -22078,8 +22079,8 @@ async fn test_show_document_request_succeeds(cx: &mut TestAppContext) {
             external: Some(false),
             take_focus: Some(true),
             selection: Some(lsp::Range::new(
-                lsp::Position::new(4, 3), // Start of "other" function name
-                lsp::Position::new(4, 8), // End of "other" function name
+                lsp::Position::new(4, 3),
+                lsp::Position::new(4, 8),
             )),
         })
         .await
@@ -22087,10 +22088,8 @@ async fn test_show_document_request_succeeds(cx: &mut TestAppContext) {
         .unwrap();
 
     assert!(show_document_result.success);
-
     cx.executor().run_until_parked();
 
-    // Verify that ShowDocument with selection parameter works correctly
     cx.update_editor(|editor, window, cx| {
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let start_point = language::Point::new(4, 3);
@@ -22101,13 +22100,10 @@ async fn test_show_document_request_succeeds(cx: &mut TestAppContext) {
         editor.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
             s.select_ranges([start_offset..end_offset]);
         });
-    });
 
-    cx.update_editor(|editor, _, cx| {
         let selections = editor.selections.ranges::<usize>(cx);
         assert_eq!(selections.len(), 1);
 
-        let buffer = editor.buffer().read(cx).snapshot(cx);
         let selected_text = buffer
             .text_for_range(selections[0].clone())
             .collect::<String>();

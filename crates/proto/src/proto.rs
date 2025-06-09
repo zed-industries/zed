@@ -238,7 +238,6 @@ messages!(
     (ShareProject, Foreground),
     (ShareProjectResponse, Foreground),
     (ShowContacts, Foreground),
-    (ShowDocument, Foreground),
     (ShutdownRemoteServer, Foreground),
     (Stage, Background),
     (StartLanguageServer, Foreground),
@@ -310,8 +309,7 @@ messages!(
     (LogToDebugConsole, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
-    (PullWorkspaceDiagnostics, Background),
-    (ShowDocumentResponse, Background)
+    (PullWorkspaceDiagnostics, Background)
 );
 
 request_messages!(
@@ -475,8 +473,7 @@ request_messages!(
     (GetDebugAdapterBinary, DebugAdapterBinary),
     (RunDebugLocators, DebugRequest),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
-    (PullWorkspaceDiagnostics, Ack),
-    (ShowDocument, ShowDocumentResponse)
+    (PullWorkspaceDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -604,8 +601,7 @@ entity_messages!(
     GetDebugAdapterBinary,
     LogToDebugConsole,
     GetDocumentDiagnostics,
-    PullWorkspaceDiagnostics,
-    ShowDocument
+    PullWorkspaceDiagnostics
 );
 
 entity_messages!(

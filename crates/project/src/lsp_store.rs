@@ -1024,35 +1024,15 @@ impl LocalLspStore {
                     let this = this.clone();
                     let mut cx = cx.clone();
                     async move {
-                        // Suppress ShowDocument in remote scenarios to prevent disruptive behavior
-                        // in multi-client environments where request origin cannot be determined.
-                        let is_remote = this.update(&mut cx, |this, _cx| match &this.mode {
-                            LspStoreMode::Remote(_) => true,
-                            LspStoreMode::Local(_) => this.downstream_client.is_some(),
-                        })?;
-
-                        if is_remote {
-                            anyhow::bail!(
-                                "ShowDocument requests are not supported in remote scenarios"
-                            );
-                        }
-
-                        if params.external.unwrap_or(false) || params.uri.scheme() != "file" {
-                            let success = cx
-                                .update(|cx| {
-                                    cx.open_url(params.uri.as_str());
-                                    true
-                                })
-                                .is_ok();
-                            return Ok(lsp::ShowDocumentResult { success });
-                        }
-
+                        let external =
+                            params.external.unwrap_or(false) || params.uri.scheme() != "file";
                         let success = this
                             .update(&mut cx, |_this, cx| {
                                 cx.emit(LspStoreEvent::ShowDocument {
                                     uri: params.uri.clone(),
                                     take_focus: params.take_focus.unwrap_or(true),
                                     selection: params.selection,
+                                    external,
                                 });
                                 true
                             })
@@ -3555,6 +3535,7 @@ pub enum LspStoreEvent {
         uri: lsp::Url,
         take_focus: bool,
         selection: Option<lsp::Range>,
+        external: bool,
     },
 }
 
