@@ -209,13 +209,18 @@ Custom models will be listed in the model dropdown in the Agent Panel. You can a
 > ✅ Supports tool use in some cases.
 > Visit [the Copilot Chat code](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset.
 
-You can use GitHub Copilot chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use GitHub Copilot Chat with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+
+1. Open the settings view (`agent: open configuration`) and go to the GitHub Copilot Chat section
+2. Click on `Sign in to use GitHub Copilot`, follow the steps shown in the modal.
+
+Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environment variable.
 
 ### Google AI {#google-ai}
 
 > ✅ Supports tool use
 
-You can use Gemini 1.5 Pro/Flash with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
+You can use Gemini models with the Zed assistant by choosing it via the model dropdown in the Agent Panel.
 
 1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
 2. Open the settings view (`agent: open configuration`) and go to the Google AI section
@@ -302,7 +307,8 @@ The Zed Assistant comes pre-configured with several Mistral models (codestral-la
           "max_tokens": 32000,
           "max_output_tokens": 4096,
           "max_completion_tokens": 1024,
-          "supports_tools": true
+          "supports_tools": true,
+          "supports_images": false
         }
       ]
     }
@@ -374,10 +380,10 @@ The `supports_tools` option controls whether or not the model will use additiona
 If the model is tagged with `tools` in the Ollama catalog this option should be supplied, and built in profiles `Ask` and `Write` can be used.
 If the model is not tagged with `tools` in the Ollama catalog, this option can still be supplied with value `true`; however be aware that only the `Minimal` built in profile will work.
 
-The `supports_thinking` option controls whether or not the model will perform an explicit “thinking” (reasoning) pass before producing its final answer.  
+The `supports_thinking` option controls whether or not the model will perform an explicit “thinking” (reasoning) pass before producing its final answer.
 If the model is tagged with `thinking` in the Ollama catalog, set this option and you can use it in zed.
 
-The `supports_images` option enables the model’s vision capabilities, allowing it to process images included in the conversation context.  
+The `supports_images` option enables the model’s vision capabilities, allowing it to process images included in the conversation context.
 If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in zed.
 
 ### OpenAI {#openai}

@@ -68,6 +68,14 @@ impl CopilotChatLanguageModelProvider {
             State {
                 _copilot_chat_subscription: copilot_chat_subscription,
                 _settings_subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+                    if let Some(copilot_chat) = CopilotChat::global(cx) {
+                        let settings = AllLanguageModelSettings::get_global(cx)
+                            .copilot_chat
+                            .clone();
+                        copilot_chat.update(cx, |chat, cx| {
+                            chat.set_settings(settings, cx);
+                        });
+                    }
                     cx.notify();
                 }),
             }
@@ -854,6 +862,13 @@ impl Render for ConfigurationView {
                                         this.update_copilot_settings(cx);
                                         copilot::initiate_sign_in(window, cx)
                                     })),
+                            )
+                            .child(
+                                Label::new(
+                                    format!("You can also assign the {} environment variable and restart Zed.", copilot::copilot_chat::COPILOT_OAUTH_ENV_VAR),
+                                )
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
                             )
                     }
                 },
