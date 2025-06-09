@@ -3227,7 +3227,7 @@ impl ProjectPanel {
         None
     }
 
-    fn entry_at_index(&self, index: usize) -> Option<(WorktreeId, GitEntryRef)> {
+    fn entry_at_index(&self, index: usize) -> Option<(WorktreeId, GitEntryRef<'_>)> {
         let mut offset = 0;
         for (worktree_id, visible_worktree_entries, _) in &self.visible_entries {
             if visible_worktree_entries.len() > offset + index {
