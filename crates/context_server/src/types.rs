@@ -298,6 +298,13 @@ pub enum MessageContent {
         #[serde(skip_serializing_if = "Option::is_none")]
         annotations: Option<MessageAnnotations>,
     },
+    #[serde(rename = "audio", rename_all = "camelCase")]
+    Audio {
+        data: String,
+        mime_type: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        annotations: Option<MessageAnnotations>,
+    },
     #[serde(rename = "resource")]
     Resource {
         resource: ResourceContents,
@@ -651,6 +658,8 @@ pub enum ToolResponseContent {
     Text { text: String },
     #[serde(rename = "image", rename_all = "camelCase")]
     Image { data: String, mime_type: String },
+    #[serde(rename = "audio", rename_all = "camelCase")]
+    Audio { data: String, mime_type: String },
     #[serde(rename = "resource")]
     Resource { resource: ResourceContents },
 }
