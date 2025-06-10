@@ -46,8 +46,7 @@ impl DapLocator for NodeLocator {
         let config = serde_json::json!({
             "request": "launch",
             "type": "pwa-node",
-            "runtimeExecutable": TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            "program": program_path,
+            "runtimeExecutable": program_path,
             "args": args,
             "cwd": build_config.cwd.clone(),
             "runtimeArgs": ["--inspect-brk"],
