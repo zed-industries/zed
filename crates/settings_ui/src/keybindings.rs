@@ -3,7 +3,8 @@ use std::{cell::RefCell, fmt::Write as _, rc::Rc};
 use db::anyhow::anyhow;
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Global, IntoElement, Keymap, Length, Subscription, Task, actions, div,
+    Global, IntoElement, Keymap, Length, ListHorizontalSizingBehavior, ListSizingBehavior,
+    Subscription, Task, actions, div, uniform_list,
 };
 
 use ui::{
@@ -196,30 +197,50 @@ impl Render for KeymapEditor {
         div().size_full().bg(theme.colors().background).child(
             table
                 .render()
+                .h_full()
                 .child(table.render_header(headers, cx))
-                .children(
-                    self.processed_bindings
-                        .iter()
-                        .enumerate()
-                        .map(|(index, binding)| {
-                            table.render_row(
-                                index,
-                                [
-                                    string_cell(binding.action.clone()),
-                                    string_cell(binding.keystroke_text.clone()),
-                                    string_cell(binding.context.clone()),
-                                    // TODO: Add a source field
-                                    // string_cell(keybinding.source().to_string()),
-                                ],
-                                cx,
-                            )
-                        }),
+                .child(
+                    uniform_list(
+                        cx.entity(),
+                        "keybindings",
+                        table.row_count,
+                        move |this, range, _, cx| {
+                            return range
+                                .map(|index| {
+                                    table.render_row(
+                                        index,
+                                        [
+                                            string_cell(
+                                                this.processed_bindings[index].action.clone(),
+                                            ),
+                                            string_cell(
+                                                this.processed_bindings[index]
+                                                    .keystroke_text
+                                                    .clone(),
+                                            ),
+                                            string_cell(
+                                                this.processed_bindings[index].context.clone(),
+                                            ),
+                                            // TODO: Add a source field
+                                            // string_cell(keybinding.source().to_string()),
+                                        ],
+                                        cx,
+                                    )
+                                })
+                                .collect();
+                        },
+                    )
+                    .size_full()
+                    .flex_grow()
+                    .with_sizing_behavior(ListSizingBehavior::Auto)
+                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained),
                 ),
         )
     }
 }
 
 /// A table component
+#[derive(Clone, Copy)]
 pub struct Table<const COLS: usize> {
     striped: bool,
     width: Length,
@@ -260,12 +281,7 @@ impl<const COLS: usize> Table<COLS> {
             .overflow_hidden()
     }
 
-    pub fn render_row(
-        &self,
-        row_index: usize,
-        items: [TableCell; COLS],
-        cx: &App,
-    ) -> impl IntoElement {
+    pub fn render_row(&self, row_index: usize, items: [TableCell; COLS], cx: &App) -> AnyElement {
         let is_last = row_index == self.row_count - 1;
         let bg = if row_index % 2 == 1 && self.striped {
             Some(cx.theme().colors().text.opacity(0.05))
@@ -288,6 +304,7 @@ impl<const COLS: usize> Table<COLS> {
                 TableCell::String(s) => Self::base_cell_style(cx).child(s),
                 TableCell::Element(e) => Self::base_cell_style(cx).child(e),
             }))
+            .into_any_element()
     }
 
     fn render_header(&self, headers: [SharedString; COLS], cx: &mut App) -> impl IntoElement {
