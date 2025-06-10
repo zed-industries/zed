@@ -19,7 +19,7 @@ use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
 use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
-use util::truncate_and_trailoff;
+use util::{debug_panic, truncate_and_trailoff};
 use workspace::{StatusItemView, Workspace};
 
 use crate::{LogStore, lsp_log::GlobalLogStore};
@@ -53,13 +53,18 @@ struct LspPickerDelegate {
 
 #[derive(Debug)]
 enum LspItem {
-    Header {
+    SectionHeader {
+        id: usize,
+        message: SharedString,
+        expanded: Option<bool>,
+    },
+    ServerHeader {
         server_id: LanguageServerId,
         server_name: LanguageServerName,
         status: LanguageServerStatus,
         message: Option<(SharedString, Severity)>,
     },
-    Item {
+    Server {
         server_id: LanguageServerId,
         status: LanguageServerStatus,
     },
@@ -177,6 +182,36 @@ enum LanguageServerStatus {
 }
 
 impl LspPickerDelegate {
+    fn render_section_header(
+        &self,
+        id: usize,
+        message: SharedString,
+        expanded: Option<bool>,
+        cx: &mut Context<'_, Picker<Self>>,
+    ) -> AnyElement {
+        h_flex()
+            .w_full()
+            .id((message.clone(), expanded.map(usize::from).unwrap_or(2)))
+            .child(Label::new(message.clone()))
+            .when_some(expanded, |div, expanded| {
+                let icon = if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronLeft
+                };
+
+                div.justify_between()
+                    .child(Icon::new(icon))
+                    .cursor_pointer()
+                    .on_mouse_down(MouseButton::Left, {
+                        cx.listener(move |picker, _, _, cx| {
+                            picker.delegate.toggle_section_header(id, cx);
+                        })
+                    })
+            })
+            .into_any_element()
+    }
+
     fn render_server_header(
         &self,
         server_id: LanguageServerId,
@@ -184,12 +219,12 @@ impl LspPickerDelegate {
         status: LanguageServerStatus,
         lsp_status: &Option<(SharedString, Severity)>,
         cx: &mut Context<Picker<Self>>,
-    ) -> Div {
+    ) -> AnyElement {
         let lsp_store = self.lsp_store.clone();
         let Ok(buffer_store) = self.workspace.update(cx, |workspace, cx| {
             workspace.project().read(cx).buffer_store().clone()
         }) else {
-            return div();
+            return div().into_any_element();
         };
 
         let buffers = self
@@ -264,6 +299,7 @@ impl LspPickerDelegate {
                 ))
             })
             .cursor_default()
+            .into_any_element()
     }
 
     fn render_server_actions(
@@ -271,7 +307,7 @@ impl LspPickerDelegate {
         server_id: LanguageServerId,
         status: LanguageServerStatus,
         cx: &mut Context<'_, Picker<Self>>,
-    ) -> Div {
+    ) -> AnyElement {
         let lsp_logs = self.lsp_logs.clone();
         let can_stop = match status {
             LanguageServerStatus::Starting | LanguageServerStatus::Running => true,
@@ -280,7 +316,7 @@ impl LspPickerDelegate {
         let Ok(has_logs) = lsp_logs.update(cx, |lsp_logs, _| {
             lsp_logs.get_language_server_state(server_id).is_some()
         }) else {
-            return div();
+            return div().into_any_element();
         };
 
         h_flex()
@@ -385,6 +421,7 @@ impl LspPickerDelegate {
                         }),
                 )
             })
+            .into_any_element()
     }
 
     fn render_server_message(
@@ -442,7 +479,7 @@ impl LspPickerDelegate {
                             .items
                             .iter_mut()
                             .find_map(|item| match item {
-                                LspItem::Header {
+                                LspItem::ServerHeader {
                                     server_id: state_server_id,
                                     message: state_message,
                                     ..
@@ -460,7 +497,7 @@ impl LspPickerDelegate {
                                         None
                                     }
                                 }
-                                LspItem::Item { .. } => None,
+                                LspItem::Server { .. } | LspItem::SectionHeader { .. } => None,
                             })
                     {
                         *state_message = None;
@@ -471,6 +508,7 @@ impl LspPickerDelegate {
             .into_any_element()
     }
 
+    // TODO kb create section headers, regroup the servers: first, buffer-related ones (or an empty header), then all the rest (folded by default)
     fn regenerate_items(&mut self, cx: &mut Context<'_, Picker<Self>>) {
         self.selected_index = 0;
         self.items = self
@@ -503,19 +541,49 @@ impl LspPickerDelegate {
             .sorted_by_key(|state| state.name.clone())
             .flat_map(|state| {
                 [
-                    LspItem::Header {
+                    LspItem::ServerHeader {
                         server_id: state.id,
                         server_name: state.name.clone(),
                         status: state.status,
                         message: state.message.clone(),
                     },
-                    LspItem::Item {
+                    LspItem::Server {
                         server_id: state.id,
                         status: state.status,
                     },
                 ]
             })
             .collect();
+    }
+
+    fn toggle_section_header(&mut self, id_to_update: usize, cx: &mut Context<Picker<Self>>) {
+        let mut section_found = false;
+        self.items = self
+            .items
+            .drain(..)
+            .filter_map(|mut item| {
+                if let LspItem::SectionHeader { id, expanded, .. } = &mut item {
+                    if id_to_update == *id {
+                        section_found = true;
+                        match expanded {
+                            Some(expanded) => {
+                                *expanded = !*expanded;
+                            }
+                            None => debug_panic!("Toggling a section header without items"),
+                        }
+                    } else {
+                        section_found = false;
+                    }
+                    Some(item)
+                } else if section_found {
+                    None
+                } else {
+                    Some(item)
+                }
+            })
+            .collect();
+        self.regenerate_items(cx);
+        cx.notify();
     }
 }
 
@@ -570,20 +638,22 @@ impl PickerDelegate for LspPickerDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        Some(
-            match self.items.get(ix)? {
-                LspItem::Header {
-                    server_id,
-                    server_name,
-                    status,
-                    message,
-                } => self.render_server_header(*server_id, server_name, *status, message, cx),
-                LspItem::Item { server_id, status } => {
-                    self.render_server_actions(*server_id, *status, cx)
-                }
+        Some(match self.items.get(ix)? {
+            LspItem::SectionHeader {
+                id,
+                message,
+                expanded,
+            } => self.render_section_header(*id, message.clone(), *expanded, cx),
+            LspItem::ServerHeader {
+                server_id,
+                server_name,
+                status,
+                message,
+            } => self.render_server_header(*server_id, server_name, *status, message, cx),
+            LspItem::Server { server_id, status } => {
+                self.render_server_actions(*server_id, *status, cx)
             }
-            .into_any_element(),
-        )
+        })
     }
 
     fn render_editor(
@@ -665,8 +735,12 @@ impl PickerDelegate for LspPickerDelegate {
             .iter()
             .enumerate()
             .filter_map(|(i, item)| match item {
-                LspItem::Header { .. } => None,
-                LspItem::Item { .. } => Some(i),
+                LspItem::ServerHeader { .. } => None,
+                LspItem::Server { .. } => Some(i),
+                LspItem::SectionHeader { expanded, .. } => match expanded {
+                    None | Some(false) => Some(i),
+                    Some(true) => None,
+                },
             })
             .collect()
     }
@@ -1045,11 +1119,11 @@ impl Render for LspTool {
         let mut has_warnings = false;
         for item in &delegate.items {
             match item {
-                LspItem::Header {
+                LspItem::ServerHeader {
                     message: Some((_, Severity::Error)),
                     ..
                 } => has_errors = true,
-                LspItem::Header {
+                LspItem::ServerHeader {
                     message: Some((_, Severity::Warning)),
                     ..
                 } => has_warnings = true,
