@@ -260,6 +260,8 @@ const TYPEABLE_CODES: &[u16] = &[
     0x002b, // , Comma
     0x002f, // . Period
     0x002c, // / Slash
+    0x000a, // Non-US \ International backslash
+    0x005e, // Non-US Ro International Ro
 ];
 
 fn get_scan_code(scan_code: ScanCode) -> Option<u16> {
@@ -333,6 +335,8 @@ fn get_scan_code(scan_code: ScanCode) -> Option<u16> {
         ScanCode::Comma => 0x002b,
         ScanCode::Period => 0x002f,
         ScanCode::Slash => 0x002c,
+        ScanCode::IntlBackslash => 0x000a,
+        ScanCode::IntlRo => 0x005e,
         ScanCode::Left => 0x007b,
         ScanCode::Up => 0x007e,
         ScanCode::Right => 0x007c,
@@ -348,7 +352,5 @@ fn get_scan_code(scan_code: ScanCode) -> Option<u16> {
         ScanCode::Backspace => 0x0033,
         ScanCode::Delete => 0x0075,
         ScanCode::Insert => 0x0072,
-        ScanCode::IntlBackslash => 0x000a,
-        ScanCode::IntlRo => 0x005e,
     })
 }
