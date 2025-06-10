@@ -85,9 +85,9 @@ impl RenderOnce for Table {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .children(self.column_headers.into_iter().map(|h| {
-                Self::base_cell_style(cx)
+                Table::base_cell_style(cx)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(h)
+                    .child(h.clone())
             }));
 
         let row_count = self.rows.len();
