@@ -4,7 +4,7 @@ use db::anyhow::anyhow;
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     Global, IntoElement, Keymap, Length, ListHorizontalSizingBehavior, ListSizingBehavior,
-    Subscription, Task, actions, div, uniform_list,
+    ScrollHandle, Subscription, Task, UniformListScrollHandle, actions, div, uniform_list,
 };
 
 use ui::{
@@ -53,6 +53,7 @@ struct KeymapEditor {
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
     processed_bindings: Vec<ProcessedKeybinding>,
+    scroll_handle: UniformListScrollHandle,
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -73,6 +74,7 @@ impl KeymapEditor {
             focus_handle: cx.focus_handle(),
             _keymap_subscription,
             processed_bindings: vec![],
+            scroll_handle: UniformListScrollHandle::new(),
         }
     }
 
@@ -169,6 +171,7 @@ impl Render for KeymapEditor {
                     )
                     .size_full()
                     .flex_grow()
+                    .track_scroll(self.scroll_handle.clone())
                     .with_sizing_behavior(ListSizingBehavior::Auto)
                     .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained),
                 ),
