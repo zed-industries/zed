@@ -1,6 +1,6 @@
 use std::{ops::Range, path::PathBuf, sync::Arc};
 
-use crate::{LanguageToolchainStore, Location, Runnable};
+use crate::{File, LanguageToolchainStore, Location, Runnable};
 
 use anyhow::Result;
 use collections::HashMap;
@@ -39,8 +39,9 @@ pub trait ContextProvider: Send + Sync {
     /// Provides all tasks, associated with the current language.
     fn associated_tasks(
         &self,
-        _: Option<Arc<dyn crate::File>>,
-        _cx: &App,
+        _: Arc<dyn Fs>,
+        _: Option<Arc<dyn File>>,
+        _: &App,
     ) -> Task<Option<TaskTemplates>> {
         Task::ready(None)
     }

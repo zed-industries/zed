@@ -11,6 +11,7 @@ use std::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use dap::DapRegistry;
+use fs::Fs;
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{
@@ -31,12 +32,23 @@ use worktree::WorktreeId;
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
 /// Inventory tracks available tasks for a given project.
-#[derive(Debug, Default)]
 pub struct Inventory {
+    fs: Arc<dyn Fs>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
     last_scheduled_scenarios: VecDeque<DebugScenario>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
+}
+
+impl std::fmt::Debug for Inventory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inventory")
+            .field("last_scheduled_tasks", &self.last_scheduled_tasks)
+            .field("last_scheduled_scenarios", &self.last_scheduled_scenarios)
+            .field("templates_from_settings", &self.templates_from_settings)
+            .field("scenarios_from_settings", &self.scenarios_from_settings)
+            .finish()
+    }
 }
 
 // Helper trait for better error messages in [InventoryFor]
@@ -223,8 +235,14 @@ impl TaskSourceKind {
 }
 
 impl Inventory {
-    pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new(|_| Self::default())
+    pub fn new(fs: Arc<dyn Fs>, cx: &mut App) -> Entity<Self> {
+        cx.new(|_| Self {
+            fs,
+            last_scheduled_tasks: VecDeque::default(),
+            last_scheduled_scenarios: VecDeque::default(),
+            templates_from_settings: InventoryFor::default(),
+            scenarios_from_settings: InventoryFor::default(),
+        })
     }
 
     pub fn scenario_scheduled(&mut self, scenario: DebugScenario) {
@@ -346,6 +364,7 @@ impl Inventory {
         cx: &App,
     ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
         let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
+        let fs = self.fs.clone();
         let mut worktree_tasks = worktree
             .into_iter()
             .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
@@ -362,7 +381,7 @@ impl Inventory {
             .and_then(|language| {
                 language
                     .context_provider()
-                    .map(|provider| provider.associated_tasks(file, cx))
+                    .map(|provider| provider.associated_tasks(fs, file, cx))
             });
         cx.background_spawn(async move {
             if let Some(t) = language_tasks {
@@ -390,6 +409,7 @@ impl Inventory {
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
     )> {
+        let fs = self.fs.clone();
         let worktree = task_contexts.worktree();
         let location = task_contexts.location();
         let language = location
@@ -447,7 +467,7 @@ impl Inventory {
             .and_then(|language| {
                 language
                     .context_provider()
-                    .map(|provider| provider.associated_tasks(file, cx))
+                    .map(|provider| provider.associated_tasks(fs, file, cx))
             });
         let worktree_tasks = worktree
             .into_iter()
@@ -468,7 +488,7 @@ impl Inventory {
 
             let worktree_tasks = worktree_tasks
                 .into_iter()
-                .chain(language_tasks.into_iter().flat_map(std::convert::identity))
+                .chain(language_tasks.into_iter().flatten())
                 .chain(global_tasks);
 
             let new_resolved_tasks = worktree_tasks
@@ -1020,7 +1040,8 @@ impl ContextProviderWithTasks {
 impl ContextProvider for ContextProviderWithTasks {
     fn associated_tasks(
         &self,
-        _: Option<Arc<dyn language::File>>,
+        _: Arc<dyn Fs>,
+        _: Option<Arc<dyn File>>,
         _: &App,
     ) -> Task<Option<TaskTemplates>> {
         Task::ready(Some(self.templates.clone()))
@@ -1029,6 +1050,7 @@ impl ContextProvider for ContextProviderWithTasks {
 
 #[cfg(test)]
 mod tests {
+    use fs::FakeFs;
     use gpui::TestAppContext;
     use paths::tasks_file;
     use pretty_assertions::assert_eq;
@@ -1043,7 +1065,8 @@ mod tests {
     #[gpui::test]
     async fn test_task_list_sorting(cx: &mut TestAppContext) {
         init_test(cx);
-        let inventory = cx.update(Inventory::new);
+        let fs = FakeFs::new(cx.executor());
+        let inventory = cx.update(|cx| Inventory::new(fs, cx));
         let initial_tasks = resolved_task_names(&inventory, None, cx).await;
         assert!(
             initial_tasks.is_empty(),
@@ -1223,7 +1246,8 @@ mod tests {
     #[gpui::test]
     async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
         init_test(cx);
-        let inventory = cx.update(Inventory::new);
+        let fs = FakeFs::new(cx.executor());
+        let inventory = cx.update(|cx| Inventory::new(fs, cx));
         let common_name = "common_task_name";
         let worktree_1 = WorktreeId::from_usize(1);
         let worktree_2 = WorktreeId::from_usize(2);

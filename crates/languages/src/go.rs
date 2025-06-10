@@ -510,7 +510,8 @@ impl ContextProvider for GoContextProvider {
 
     fn associated_tasks(
         &self,
-        _: Option<Arc<dyn language::File>>,
+        _: Arc<dyn Fs>,
+        _: Option<Arc<dyn File>>,
         _: &App,
     ) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {

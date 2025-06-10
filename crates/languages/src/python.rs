@@ -481,6 +481,7 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
+        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {

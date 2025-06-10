@@ -21,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::archive::extract_zip;
 use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
@@ -32,23 +32,12 @@ pub(crate) struct TypeScriptContextProvider {
 
 const TYPESCRIPT_RUNNER_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_RUNNER"));
-const TYPESCRIPT_JEST_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JEST"));
+
 const TYPESCRIPT_JEST_TEST_NAME_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JEST_TEST_NAME"));
-const TYPESCRIPT_MOCHA_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_MOCHA"));
 
-const TYPESCRIPT_VITEST_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_VITEST"));
 const TYPESCRIPT_VITEST_TEST_NAME_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("TYPESCRIPT_VITEST_TEST_NAME"));
-const TYPESCRIPT_JASMINE_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_JASMINE"));
-const TYPESCRIPT_BUILD_SCRIPT_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_BUILD_SCRIPT"));
-const TYPESCRIPT_TEST_SCRIPT_TASK_VARIABLE: VariableName =
-    VariableName::Custom(Cow::Borrowed("TYPESCRIPT_TEST_SCRIPT"));
 
 #[derive(Clone, Default)]
 struct PackageJsonContents(Arc<RwLock<HashMap<PathBuf, PackageJson>>>);
@@ -58,23 +47,13 @@ struct PackageJson {
     data: PackageJsonData,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct PackageJsonData {
     jest: bool,
     mocha: bool,
     vitest: bool,
     jasmine: bool,
-    build_script: bool,
-    test_script: bool,
-    runner: Runner,
-}
-
-#[derive(Clone, Copy, Default)]
-enum Runner {
-    #[default]
-    Npm,
-    Yarn,
-    Pnpm,
+    scripts: Vec<String>,
 }
 
 impl PackageJsonData {
@@ -83,11 +62,9 @@ impl PackageJsonData {
         worktree_root: PathBuf,
         fs: Arc<dyn Fs>,
     ) -> Self {
-        let mut build_script = false;
-        let mut test_script = false;
-        if let Some(serde_json::Value::Object(scripts)) = package_json.get("scripts") {
-            build_script |= scripts.contains_key("build");
-            test_script |= scripts.contains_key("test");
+        let mut scripts = Vec::new();
+        if let Some(serde_json::Value::Object(package_json_scripts)) = package_json.get("scripts") {
+            scripts.extend(package_json_scripts.keys().cloned());
         }
 
         let mut jest = false;
@@ -107,272 +84,283 @@ impl PackageJsonData {
             vitest |= dev_dependencies.contains_key("vitest");
             jasmine |= dev_dependencies.contains_key("jasmine");
         }
-
-        let mut runner = package_json
-            .get("packageManager")
-            .and_then(|value| value.as_str())
-            .and_then(|value| {
-                if value.starts_with("pnpm") {
-                    Some(Runner::Pnpm)
-                } else if value.starts_with("yarn") {
-                    Some(Runner::Yarn)
-                } else if value.starts_with("npm") {
-                    Some(Runner::Npm)
-                } else {
-                    None
-                }
-            });
-
-        if runner.is_none() {
-            let detected_runner = detect_package_manager(&fs, &worktree_root).await;
-            runner = Some(detected_runner);
-        }
-
         Self {
             jest,
             mocha,
             vitest,
             jasmine,
-            build_script,
-            test_script,
-            runner: runner.unwrap(),
+            scripts,
         }
     }
 
-    fn fill_variables(&self, variables: &mut TaskVariables) {
-        let runner = match self.runner {
-            Runner::Npm => "npm",
-            Runner::Pnpm => "pnpm",
-            Runner::Yarn => "yarn",
-        };
-        variables.insert(TYPESCRIPT_RUNNER_VARIABLE, runner.to_owned());
-
+    fn fill_task_templates(&self, task_templates: &mut TaskTemplates) {
         if self.jest {
-            variables.insert(TYPESCRIPT_JEST_TASK_VARIABLE, "jest".to_owned());
+            task_templates.0.push(TaskTemplate {
+                label: "jest file test".to_owned(),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "jest".to_owned(),
+                    VariableName::RelativeFile.template_value(),
+                ],
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
+                ..TaskTemplate::default()
+            });
+            task_templates.0.push(TaskTemplate {
+                label: format!("jest test {}", VariableName::Symbol.template_value()),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "jest".to_owned(),
+                    "--testNamePattern".to_owned(),
+                    format!(
+                        "\"{}\"",
+                        TYPESCRIPT_JEST_TEST_NAME_VARIABLE.template_value()
+                    ),
+                    VariableName::RelativeFile.template_value(),
+                ],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
+                ..TaskTemplate::default()
+            });
         }
-        if self.mocha {
-            variables.insert(TYPESCRIPT_MOCHA_TASK_VARIABLE, "mocha".to_owned());
-        }
+
         if self.vitest {
-            variables.insert(TYPESCRIPT_VITEST_TASK_VARIABLE, "vitest".to_owned());
-        }
-        if self.jasmine {
-            variables.insert(TYPESCRIPT_JASMINE_TASK_VARIABLE, "jasmine".to_owned());
-        }
-        if self.build_script {
-            variables.insert(TYPESCRIPT_BUILD_SCRIPT_TASK_VARIABLE, "build".to_owned());
-        }
-        if self.test_script {
-            variables.insert(TYPESCRIPT_TEST_SCRIPT_TASK_VARIABLE, "test".to_owned());
-        }
-    }
-}
-
-impl TypeScriptContextProvider {
-    pub fn new() -> Self {
-        TypeScriptContextProvider {
-            last_package_json: PackageJsonContents::default(),
-        }
-    }
-}
-
-impl ContextProvider for TypeScriptContextProvider {
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
-        let mut task_templates = TaskTemplates(Vec::new());
-
-        // Jest tasks
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "{} file test",
-                TYPESCRIPT_JEST_TASK_VARIABLE.template_value()
-            ),
-            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            args: vec![
-                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
-                VariableName::RelativeFile.template_value(),
-            ],
-            cwd: Some(VariableName::WorktreeRoot.template_value()),
-            ..TaskTemplate::default()
-        });
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "{} test {}",
-                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
-                VariableName::Symbol.template_value(),
-            ),
-            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            args: vec![
-                TYPESCRIPT_JEST_TASK_VARIABLE.template_value(),
-                "--testNamePattern".to_owned(),
-                format!(
-                    "\"{}\"",
-                    TYPESCRIPT_JEST_TEST_NAME_VARIABLE.template_value()
-                ),
-                VariableName::RelativeFile.template_value(),
-            ],
-            tags: vec![
-                "ts-test".to_owned(),
-                "js-test".to_owned(),
-                "tsx-test".to_owned(),
-            ],
-            cwd: Some(VariableName::WorktreeRoot.template_value()),
-            ..TaskTemplate::default()
-        });
-
-        // Vitest tasks
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "{} file test",
-                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value()
-            ),
-            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            args: vec![
-                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
-                "run".to_owned(),
-                VariableName::RelativeFile.template_value(),
-            ],
-            cwd: Some(VariableName::WorktreeRoot.template_value()),
-            ..TaskTemplate::default()
-        });
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "{} test {}",
-                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
-                VariableName::Symbol.template_value(),
-            ),
-            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            args: vec![
-                TYPESCRIPT_VITEST_TASK_VARIABLE.template_value(),
-                "run".to_owned(),
-                "--testNamePattern".to_owned(),
-                format!("\"{}\"", TYPESCRIPT_VITEST_TASK_VARIABLE.template_value()),
-                VariableName::RelativeFile.template_value(),
-            ],
-            tags: vec![
-                "ts-test".to_owned(),
-                "js-test".to_owned(),
-                "tsx-test".to_owned(),
-            ],
-            cwd: Some(VariableName::WorktreeRoot.template_value()),
-            ..TaskTemplate::default()
-        });
-
-        // Mocha tasks
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "{} file test",
-                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value()
-            ),
-            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            args: vec![
-                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
-                VariableName::RelativeFile.template_value(),
-            ],
-            cwd: Some(VariableName::WorktreeRoot.template_value()),
-            ..TaskTemplate::default()
-        });
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "{} test {}",
-                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
-                VariableName::Symbol.template_value(),
-            ),
-            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            args: vec![
-                TYPESCRIPT_MOCHA_TASK_VARIABLE.template_value(),
-                "--grep".to_owned(),
-                format!("\"{}\"", VariableName::Symbol.template_value()),
-                VariableName::RelativeFile.template_value(),
-            ],
-            tags: vec![
-                "ts-test".to_owned(),
-                "js-test".to_owned(),
-                "tsx-test".to_owned(),
-            ],
-            cwd: Some(VariableName::WorktreeRoot.template_value()),
-            ..TaskTemplate::default()
-        });
-
-        // Jasmine tasks
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "{} file test",
-                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value()
-            ),
-            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            args: vec![
-                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
-                VariableName::RelativeFile.template_value(),
-            ],
-            cwd: Some(VariableName::WorktreeRoot.template_value()),
-            ..TaskTemplate::default()
-        });
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "{} test {}",
-                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
-                VariableName::Symbol.template_value(),
-            ),
-            command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
-            args: vec![
-                TYPESCRIPT_JASMINE_TASK_VARIABLE.template_value(),
-                format!("--filter={}", VariableName::Symbol.template_value()),
-                VariableName::RelativeFile.template_value(),
-            ],
-            tags: vec![
-                "ts-test".to_owned(),
-                "js-test".to_owned(),
-                "tsx-test".to_owned(),
-            ],
-            cwd: Some(VariableName::WorktreeRoot.template_value()),
-            ..TaskTemplate::default()
-        });
-
-        for package_json_script in [
-            TYPESCRIPT_TEST_SCRIPT_TASK_VARIABLE,
-            TYPESCRIPT_BUILD_SCRIPT_TASK_VARIABLE,
-        ] {
+            task_templates.0.push(TaskTemplate {
+                label: format!("{} file test", "vitest".to_owned()),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "vitest".to_owned(),
+                    "run".to_owned(),
+                    VariableName::RelativeFile.template_value(),
+                ],
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
+                ..TaskTemplate::default()
+            });
             task_templates.0.push(TaskTemplate {
                 label: format!(
-                    "package.json script {}",
-                    package_json_script.template_value()
+                    "{} test {}",
+                    "vitest".to_owned(),
+                    VariableName::Symbol.template_value(),
                 ),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "vitest".to_owned(),
+                    "run".to_owned(),
+                    "--testNamePattern".to_owned(),
+                    format!("\"{}\"", "vitest".to_owned()),
+                    VariableName::RelativeFile.template_value(),
+                ],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
+                ..TaskTemplate::default()
+            });
+        }
+
+        if self.mocha {
+            task_templates.0.push(TaskTemplate {
+                label: format!("{} file test", "mocha".to_owned()),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "mocha".to_owned(),
+                    VariableName::RelativeFile.template_value(),
+                ],
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
+                ..TaskTemplate::default()
+            });
+            task_templates.0.push(TaskTemplate {
+                label: format!(
+                    "{} test {}",
+                    "mocha".to_owned(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "mocha".to_owned(),
+                    "--grep".to_owned(),
+                    format!("\"{}\"", VariableName::Symbol.template_value()),
+                    VariableName::RelativeFile.template_value(),
+                ],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
+                ..TaskTemplate::default()
+            });
+        }
+
+        if self.jasmine {
+            task_templates.0.push(TaskTemplate {
+                label: format!("{} file test", "jasmine".to_owned()),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "jasmine".to_owned(),
+                    VariableName::RelativeFile.template_value(),
+                ],
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
+                ..TaskTemplate::default()
+            });
+            task_templates.0.push(TaskTemplate {
+                label: format!(
+                    "{} test {}",
+                    "jasmine".to_owned(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
+                args: vec![
+                    "jasmine".to_owned(),
+                    format!("--filter={}", VariableName::Symbol.template_value()),
+                    VariableName::RelativeFile.template_value(),
+                ],
+                tags: vec![
+                    "ts-test".to_owned(),
+                    "js-test".to_owned(),
+                    "tsx-test".to_owned(),
+                ],
+                cwd: Some(VariableName::WorktreeRoot.template_value()),
+                ..TaskTemplate::default()
+            });
+        }
+
+        for script in &self.scripts {
+            task_templates.0.push(TaskTemplate {
+                label: format!("package.json > {script}",),
                 command: TYPESCRIPT_RUNNER_VARIABLE.template_value(),
                 args: vec![
                     "--prefix".to_owned(),
                     VariableName::WorktreeRoot.template_value(),
                     "run".to_owned(),
-                    package_json_script.template_value(),
+                    script.to_owned(),
                 ],
                 tags: vec!["package-script".into()],
                 cwd: Some(VariableName::WorktreeRoot.template_value()),
                 ..TaskTemplate::default()
             });
         }
+    }
+}
 
-        task_templates.0.push(TaskTemplate {
-            label: format!(
-                "execute selection {}",
-                VariableName::SelectedText.template_value()
-            ),
-            command: "node".to_owned(),
-            args: vec![
-                "-e".to_owned(),
-                format!("\"{}\"", VariableName::SelectedText.template_value()),
-            ],
-            ..TaskTemplate::default()
-        });
+impl TypeScriptContextProvider {
+    pub fn new() -> Self {
+        Self {
+            last_package_json: PackageJsonContents::default(),
+        }
+    }
 
-        Task::ready(Some(task_templates))
+    fn package_json_data(
+        &self,
+        fs: Arc<dyn Fs>,
+        worktree_root: &Path,
+        cx: &App,
+    ) -> Task<anyhow::Result<PackageJsonData>> {
+        let package_json_path = worktree_root.join("package.json");
+        let last_package_json = self.last_package_json.0.clone();
+
+        cx.background_spawn(async move {
+            let metadata = fs
+                .metadata(&package_json_path)
+                .await
+                .with_context(|| format!("getting metadata for {package_json_path:?}"))?
+                .with_context(|| format!("missing FS metadata for {package_json_path:?}"))?;
+            let mtime = DateTime::<Local>::from(metadata.mtime.timestamp_for_user());
+            let existing_data = {
+                let contents = last_package_json.read().await;
+                contents
+                    .get(&package_json_path)
+                    .filter(|package_json| package_json.mtime == mtime)
+                    .map(|package_json| package_json.data.clone())
+            };
+
+            Ok(match existing_data {
+                Some(data) => data,
+                None => {
+                    let package_json_string =
+                        fs.load(&package_json_path).await.with_context(|| {
+                            format!("loading package.json from {package_json_path:?}")
+                        })?;
+                    let package_json: HashMap<String, serde_json::Value> =
+                        serde_json::from_str(&package_json_string).with_context(|| {
+                            format!("parsing package.json from {package_json_path:?}")
+                        })?;
+                    let new_data = PackageJsonData::new(package_json);
+                    {
+                        let mut contents = last_package_json.write().await;
+                        contents.insert(
+                            package_json_path,
+                            PackageJson {
+                                mtime,
+                                data: new_data.clone(),
+                            },
+                        );
+                    }
+                    new_data
+                }
+            })
+        })
+    }
+}
+
+impl ContextProvider for TypeScriptContextProvider {
+    fn associated_tasks(
+        &self,
+        fs: Arc<dyn Fs>,
+        file: Option<Arc<dyn File>>,
+        cx: &App,
+    ) -> Task<Option<TaskTemplates>> {
+        let package_json_data = project::File::from_dyn(file.as_ref())
+            .and_then(|f| f.worktree.read(cx).root_dir())
+            .map(|worktree_root| {
+                let data = self.package_json_data(fs.clone(), &worktree_root, cx);
+                (worktree_root, data)
+            });
+
+        cx.background_spawn(async move {
+            let mut task_templates = TaskTemplates(Vec::new());
+            task_templates.0.push(TaskTemplate {
+                label: format!(
+                    "execute selection {}",
+                    VariableName::SelectedText.template_value()
+                ),
+                command: "node".to_owned(),
+                args: vec![
+                    "-e".to_owned(),
+                    format!("\"{}\"", VariableName::SelectedText.template_value()),
+                ],
+                ..TaskTemplate::default()
+            });
+
+            if let Some((worktree_root, package_json_data)) = package_json_data {
+                match package_json_data.await {
+                    Ok(package_json) => {
+                        package_json.fill_task_templates(&mut task_templates);
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to read package.json for worktree {worktree_root:?}: {e:#}"
+                        );
+                    }
+                }
+            }
+
+            Some(task_templates)
+        })
     }
 
     fn build_context(
         &self,
         current_vars: &task::TaskVariables,
-        location: ContextLocation<'_>,
+        _: ContextLocation<'_>,
         _project_env: Option<HashMap<String, String>>,
         _toolchains: Arc<dyn LanguageToolchainStore>,
-        cx: &mut App,
+        _: &mut App,
     ) -> Task<Result<task::TaskVariables>> {
         let mut vars = task::TaskVariables::default();
 
@@ -387,72 +375,38 @@ impl ContextProvider for TypeScriptContextProvider {
             );
         }
 
-        let Some((fs, worktree_root)) = location.fs.zip(location.worktree_root) else {
-            return Task::ready(Ok(vars));
-        };
-
-        let package_json_contents = self.last_package_json.clone();
-        cx.background_spawn(async move {
-            let variables = package_json_variables(fs, worktree_root, package_json_contents)
-                .await
-                .context("package.json context retrieval")
-                .log_err()
-                .unwrap_or_else(task::TaskVariables::default);
-
-            vars.extend(variables);
-
-            Ok(vars)
-        })
-    }
-}
-
-async fn package_json_variables(
-    fs: Arc<dyn Fs>,
-    worktree_root: PathBuf,
-    package_json_contents: PackageJsonContents,
-) -> anyhow::Result<task::TaskVariables> {
-    let package_json_path = worktree_root.join("package.json");
-    let metadata = fs
-        .metadata(&package_json_path)
-        .await
-        .with_context(|| format!("getting metadata for {package_json_path:?}"))?
-        .with_context(|| format!("missing FS metadata for {package_json_path:?}"))?;
-    let mtime = DateTime::<Local>::from(metadata.mtime.timestamp_for_user());
-    let existing_data = {
-        let contents = package_json_contents.0.read().await;
-        contents
-            .get(&package_json_path)
-            .filter(|package_json| package_json.mtime == mtime)
-            .map(|package_json| package_json.data)
-    };
-
-    let mut variables = TaskVariables::default();
-    if let Some(existing_data) = existing_data {
-        existing_data.fill_variables(&mut variables);
-    } else {
-        let package_json_string = fs
-            .load(&package_json_path)
-            .await
-            .with_context(|| format!("loading package.json from {package_json_path:?}"))?;
-        let package_json: HashMap<String, serde_json::Value> =
-            serde_json::from_str(&package_json_string)
-                .with_context(|| format!("parsing package.json from {package_json_path:?}"))?;
-
-        let new_data = PackageJsonData::new(package_json, worktree_root, fs).await;
-        new_data.fill_variables(&mut variables);
-        {
-            let mut contents = package_json_contents.0.write().await;
-            contents.insert(
-                package_json_path,
-                PackageJson {
-                    mtime,
-                    data: new_data,
-                },
-            );
+        let mut runner = "npm";
+        if which::which("pnpm").is_ok() {
+            runner = "pnpm";
+        } else if which::which("yarn").is_ok() {
+            runner = "yarn";
         }
-    }
+        /* TODO kb
+         let mut runner = package_json
+        .get("packageManager")
+        .and_then(|value| value.as_str())
+        .and_then(|value| {
+            if value.starts_with("pnpm") {
+                Some(Runner::Pnpm)
+            } else if value.starts_with("yarn") {
+                Some(Runner::Yarn)
+            } else if value.starts_with("npm") {
+                Some(Runner::Npm)
+            } else {
+                None
+            }
+        });
 
-    Ok(variables)
+        if runner.is_none() {
+            let detected_runner = detect_package_manager(&fs, &worktree_root).await;
+            runner = Some(detected_runner);
+        }
+             */
+
+        vars.insert(TYPESCRIPT_RUNNER_VARIABLE, runner.to_owned());
+
+        Task::ready(Ok(vars))
+    }
 }
 
 async fn detect_package_manager(fs: &Arc<dyn Fs>, worktree_root: &PathBuf) -> Runner {
