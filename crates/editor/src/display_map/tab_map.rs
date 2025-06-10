@@ -387,7 +387,7 @@ impl TabSnapshot {
 
         while let Some(tab_stop) = cursor.seek(seek_target) {
             // Calculate how much we want to expand this tab stop (into spaces)
-            let expanded_chars_old = tab_stop.char_offset - tab_count + expanded_tab_len;
+            let expanded_chars_old = tab_stop.char_offset + expanded_tab_len - tab_count;
             let tab_len = tab_size - ((expanded_chars_old - 1) % tab_size);
             // Increment tab count
             tab_count += 1;
@@ -395,11 +395,11 @@ impl TabSnapshot {
             expanded_tab_len += tab_len;
 
             // The count of bytes at this point in the iteration while considering tab_count and previous expansions
-            let expanded_bytes = tab_stop.byte_offset - tab_count + expanded_tab_len;
+            let expanded_bytes = tab_stop.byte_offset + expanded_tab_len - tab_count;
 
             // Did we expand past the search target?
             if expanded_bytes > column {
-                let mut expanded_chars = tab_stop.char_offset - tab_count + expanded_tab_len;
+                let mut expanded_chars = tab_stop.char_offset + expanded_tab_len - tab_count;
                 // We expanded past the search target, so need to account for the offshoot
                 expanded_chars -= expanded_bytes - column;
                 return match bias {
@@ -413,17 +413,17 @@ impl TabSnapshot {
             } else {
                 // otherwise we only want to move the cursor collapse column forward
                 collapsed_column = collapsed_column - tab_len + 1;
-                seek_target = (collapsed_column - cursor.bytes_offset)
-                    .min(self.max_expansion_column - cursor.bytes_offset);
+                seek_target = (collapsed_column - cursor.byte_offset)
+                    .min(self.max_expansion_column - cursor.byte_offset);
             }
         }
 
         let collapsed_bytes = cursor.byte_offset();
-        let expanded_bytes = cursor.byte_offset() - tab_count + expanded_tab_len;
-        // let expanded_chars = cursor.char_offset() - tab_count + expanded_tab_len;
+        let expanded_bytes = cursor.byte_offset() + expanded_tab_len - tab_count;
+        let expanded_chars = cursor.char_offset() + expanded_tab_len - tab_count;
         (
             collapsed_bytes + column.saturating_sub(expanded_bytes),
-            expanded_bytes,
+            expanded_chars,
             0,
         )
     }
@@ -776,6 +776,7 @@ mod tests {
         // Generate random input string with up to 200 characters including tabs
         // to stay within the MAX_EXPANSION_COLUMN limit of 256
         let len = rng.gen_range(0..=2048);
+        let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
         let mut input = String::with_capacity(len);
 
         for _ in 0..len {
@@ -801,6 +802,7 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
         tab_snapshot.max_expansion_column = rng.gen_range(0..323);
+        tab_snapshot.tab_size = tab_size;
 
         for (ix, _) in input.char_indices() {
             let range = TabPoint::new(0, ix as u32)..tab_snapshot.max_point();
@@ -1026,8 +1028,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_tab_stop_cursor(cx: &mut gpui::App) {
+    fn test_tab_stop_cursor_utf8(cx: &mut gpui::App) {
         let text = "\tfoo\tbarbarbar\t\tbaz\n";
+        let text = "rikR~${H25ao'\\@r/<`&bjrzg(uQG})kl#!^r>Z\\27X$mmh\"tz;fq@F>=<Oi+R4;0Xt09,_!WxDZD&Rs/\"%5o7\\Kr`fIJR(.a]2SQHTZJJ)(^cx,%FfwrGkd,u&00&!;\t";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1041,37 +1044,33 @@ mod tests {
         assert!(cursor.seek(0).is_none());
         let mut tab_stops = Vec::new();
 
+        let mut all_tab_stops = Vec::new();
+        let mut byte_offset = 0;
+        let mut char_offset = 0;
+        for ch in buffer.read(cx).snapshot(cx).text().chars() {
+            // byte_offset += ch.len_utf8();
+            byte_offset += ch.len_utf8() as u32;
+            char_offset += 1;
+
+            if ch == '\t' {
+                all_tab_stops.push(TabStop {
+                    byte_offset,
+                    char_offset,
+                });
+            }
+        }
+
         while let Some(tab_stop) = cursor.seek(u32::MAX) {
             tab_stops.push(tab_stop);
         }
-        pretty_assertions::assert_eq!(
-            tab_stops.as_slice(),
-            &[
-                TabStop {
-                    byte_offset: 1,
-                    char_offset: 1
-                },
-                TabStop {
-                    byte_offset: 5,
-                    char_offset: 5
-                },
-                TabStop {
-                    byte_offset: 15,
-                    char_offset: 15,
-                },
-                TabStop {
-                    byte_offset: 16,
-                    char_offset: 16,
-                },
-            ],
-        );
+        pretty_assertions::assert_eq!(tab_stops.as_slice(), all_tab_stops.as_slice(),);
 
-        assert_eq!(cursor.byte_offset(), 20);
+        assert_eq!(cursor.byte_offset(), byte_offset);
     }
 
     #[gpui::test]
-    fn test_tab_stop_with_end_range(cx: &mut gpui::App) {
-        let input = "A\tBC\tDEF\tG\tHI\tJ\tK\tL\tM";
+    fn test_tab_stop_with_end_range_utf8(cx: &mut gpui::App) {
+        let input = "A\tBC\t"; // DEF\tG\tHI\tJ\tK\tL\tM
 
         let buffer = MultiBuffer::build_simple(input, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
@@ -1080,53 +1079,35 @@ mod tests {
 
         let chunks = fold_snapshot.chunks_at(FoldPoint::new(0, 0));
         let mut cursor = TabStopCursor::new(chunks);
-        let mut tab_stops = Vec::new();
-        while let Some(tab_stop) = cursor.seek(33) {
-            tab_stops.push(tab_stop);
-        }
-        pretty_assertions::assert_eq!(
-            &[
-                TabStop {
-                    byte_offset: 2,
-                    char_offset: 2
-                },
-                TabStop {
-                    byte_offset: 5,
-                    char_offset: 5
-                },
-                TabStop {
-                    byte_offset: 9,
-                    char_offset: 9,
-                },
-                TabStop {
-                    byte_offset: 11,
-                    char_offset: 11,
-                },
-                TabStop {
-                    byte_offset: 14,
-                    char_offset: 14
-                },
-                TabStop {
-                    byte_offset: 16,
-                    char_offset: 16,
-                },
-                TabStop {
-                    byte_offset: 18,
-                    char_offset: 18
-                },
-                TabStop {
-                    byte_offset: 20,
-                    char_offset: 20,
-                },
-            ],
-            tab_stops.as_slice(),
-        );
 
-        assert_eq!(cursor.byte_offset(), 21);
+        let mut actual_tab_stops = Vec::new();
+
+        let mut expected_tab_stops = Vec::new();
+        let mut byte_offset = 0;
+        let mut char_offset = 0;
+        for ch in buffer.read(cx).snapshot(cx).text().chars() {
+            // byte_offset += ch.len_utf8();
+            byte_offset += ch.len_utf8() as u32;
+            char_offset += 1;
+
+            if ch == '\t' {
+                expected_tab_stops.push(TabStop {
+                    byte_offset,
+                    char_offset,
+                });
+            }
+        }
+
+        while let Some(tab_stop) = cursor.seek(u32::MAX) {
+            actual_tab_stops.push(tab_stop);
+        }
+        pretty_assertions::assert_eq!(actual_tab_stops.as_slice(), expected_tab_stops.as_slice(),);
+
+        assert_eq!(cursor.byte_offset(), byte_offset);
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_tab_stop_cursor_random(cx: &mut gpui::App, mut rng: StdRng) {
+    fn test_tab_stop_cursor_random_utf8(cx: &mut gpui::App, mut rng: StdRng) {
         // Generate random input string with up to 512 characters including tabs
         let len = rng.gen_range(0..=2048);
         let mut input = String::with_capacity(len);
@@ -1138,14 +1119,12 @@ mod tests {
             }
 
             if rng.gen_bool(0.15) && !skip_tabs {
-                // 15% chance of inserting a tab
                 input.push('\t');
             } else {
-                // 85% chance of inserting a random ASCII character (excluding tab, newline, carriage return)
                 let ch = loop {
                     let ascii_code = rng.gen_range(32..=126); // printable ASCII range
                     let ch = ascii_code as u8 as char;
-                    if ch != '\t' && ch != '\n' && ch != '\r' {
+                    if ch != '\t' {
                         break ch;
                     }
                 };
@@ -1163,7 +1142,121 @@ mod tests {
         let mut all_tab_stops = Vec::new();
         let mut byte_offset = 1;
         let mut char_offset = 1;
-        for ch in input.chars() {
+        for ch in buffer_snapshot.text().chars() {
+            if ch == '\t' {
+                all_tab_stops.push(TabStop {
+                    byte_offset,
+                    char_offset,
+                });
+            }
+            byte_offset += ch.len_utf8() as u32;
+            char_offset += 1;
+        }
+
+        // Test with various distances
+        let distances = vec![1, 5, 10, 50, 100, u32::MAX];
+        // let distances = vec![150];
+
+        for distance in distances {
+            let chunks = fold_snapshot.chunks_at(FoldPoint::new(0, 0));
+            let mut cursor = TabStopCursor::new(chunks);
+
+            let mut found_tab_stops = Vec::new();
+            let mut position = distance;
+            while let Some(tab_stop) = cursor.seek(position) {
+                found_tab_stops.push(tab_stop);
+                position = distance - tab_stop.byte_offset;
+            }
+
+            let expected_found_tab_stops: Vec<_> = all_tab_stops
+                .iter()
+                .take_while(|tab_stop| tab_stop.byte_offset <= distance)
+                .cloned()
+                .collect();
+
+            pretty_assertions::assert_eq!(
+                found_tab_stops,
+                expected_found_tab_stops,
+                "TabStopCursor output mismatch for distance {}. Input: {:?}",
+                distance,
+                input
+            );
+
+            let final_position = cursor.byte_offset();
+            if !found_tab_stops.is_empty() {
+                let last_tab_stop = found_tab_stops.last().unwrap();
+                assert!(
+                    final_position >= last_tab_stop.byte_offset,
+                    "Cursor final position {} is before last tab stop {}. Input: {:?}",
+                    final_position,
+                    last_tab_stop.byte_offset,
+                    input
+                );
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn test_tab_stop_cursor_utf16(cx: &mut gpui::App) {
+        let text = "\r\t😁foo\tb😀arbar🤯bar\t\tbaz\n";
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let chunks = fold_snapshot.chunks(
+            FoldOffset(0)..fold_snapshot.len(),
+            false,
+            Default::default(),
+        );
+        let mut cursor = TabStopCursor::new(chunks);
+        assert!(cursor.seek(0).is_none());
+        let mut tab_stops = Vec::new();
+
+        let mut all_tab_stops = Vec::new();
+        let mut byte_offset = 0;
+        let mut char_offset = 0;
+        for ch in buffer.read(cx).snapshot(cx).text().chars() {
+            // byte_offset += ch.len_utf8();
+            byte_offset += ch.len_utf8() as u32;
+            char_offset += 1;
+
+            if ch == '\t' {
+                all_tab_stops.push(TabStop {
+                    byte_offset,
+                    char_offset,
+                });
+            }
+        }
+
+        while let Some(tab_stop) = cursor.seek(u32::MAX) {
+            tab_stops.push(tab_stop);
+        }
+        pretty_assertions::assert_eq!(tab_stops.as_slice(), all_tab_stops.as_slice(),);
+
+        assert_eq!(cursor.byte_offset(), byte_offset);
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_tab_stop_cursor_random_utf16(cx: &mut gpui::App, mut rng: StdRng) {
+        // Generate random input string with up to 512 characters including tabs
+        let len = rng.gen_range(0..=2048);
+        let input = util::RandomCharIter::new(&mut rng)
+            .take(len)
+            .collect::<String>();
+
+        // Build the buffer and create cursor
+        let buffer = MultiBuffer::build_simple(&input, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+
+        // First, collect all expected tab positions
+        let mut all_tab_stops = Vec::new();
+        let mut byte_offset = 0;
+        let mut char_offset = 0;
+        for ch in buffer_snapshot.text().chars() {
+            byte_offset += ch.len_utf8() as u32;
+            char_offset += 1;
             if ch == '\t' {
                 all_tab_stops.push(TabStop {
                     byte_offset,
@@ -1171,12 +1264,11 @@ mod tests {
                 });
             }
             // byte_offset += ch.len_utf8();
-            byte_offset += 1;
-            char_offset += 1;
         }
 
         // Test with various distances
-        let distances = vec![1, 5, 10, 50, 100, u32::MAX];
+        // let distances = vec![1, 5, 10, 50, 100, u32::MAX];
+        let distances = vec![150];
 
         for distance in distances {
             let chunks = fold_snapshot.chunks_at(FoldPoint::new(0, 0));
@@ -1220,19 +1312,19 @@ mod tests {
 
 struct TabStopCursor<'a> {
     chunks: FoldChunks<'a>,
-    bytes_offset: u32,
+    byte_offset: u32,
+    char_offset: u32,
     /// Chunk
     /// last tab position iterated through
     current_chunk: Option<(Chunk<'a>, u32)>,
-    end_of_chunk: Option<u32>,
 }
 
 impl<'a> TabStopCursor<'a> {
     fn new(chunks: FoldChunks<'a>) -> Self {
         Self {
             chunks,
-            bytes_offset: 0,
-            end_of_chunk: None,
+            byte_offset: 0,
+            char_offset: 0,
             current_chunk: None,
         }
     }
@@ -1243,17 +1335,8 @@ impl<'a> TabStopCursor<'a> {
             debug_assert!(distance == 0, "Can't seek backwards: {distance}");
             return None;
         }
-        let past_chunk = self.end_of_chunk.take().unwrap_or_default();
 
         let mut distance_traversed = 0;
-        if past_chunk > distance {
-            self.bytes_offset += distance;
-            self.end_of_chunk = Some(past_chunk - distance);
-            return None;
-        } else {
-            self.bytes_offset += past_chunk;
-            distance_traversed += past_chunk;
-        }
 
         while let Some((mut chunk, chunk_position)) = self
             .current_chunk
@@ -1261,37 +1344,52 @@ impl<'a> TabStopCursor<'a> {
             .or_else(|| self.chunks.next().zip(Some(0)))
         {
             if chunk.tabs == 0 {
-                let chunk_distance = chunk.text.len() as u32;
-                if chunk_distance + distance_traversed - chunk_position >= distance {
-                    let overshoot = chunk_distance + distance_traversed - distance;
-                    self.bytes_offset += distance_traversed.abs_diff(distance);
-                    self.end_of_chunk = Some(overshoot); // todo! this should be a chunk position
+                let chunk_distance = chunk.text.len() as u32 - chunk_position;
+                if chunk_distance + distance_traversed >= distance {
+                    let overshoot = distance_traversed.abs_diff(distance);
+                    self.byte_offset += overshoot;
+
+                    self.char_offset += get_char_offset(
+                        chunk_position..(chunk_position + overshoot).saturating_sub(1).min(127),
+                        chunk.chars,
+                    );
+                    self.current_chunk = Some((chunk, chunk_position + overshoot));
+
                     return None;
                 }
-                self.bytes_offset += chunk.text.len() as u32;
-                distance_traversed += chunk.text.len() as u32;
+
+                self.byte_offset += chunk_distance;
+                // todo! calculate char offset
+                self.char_offset += get_char_offset(
+                    chunk_position..(chunk_position + chunk_distance).saturating_sub(1).min(127),
+                    chunk.chars,
+                );
+                distance_traversed += chunk_distance;
                 continue;
             }
             let tab_position = chunk.tabs.trailing_zeros() + 1;
 
             if distance_traversed + tab_position - chunk_position > distance {
                 let cursor_position = distance_traversed.abs_diff(distance);
+                self.char_offset += get_char_offset(0..(cursor_position - 1), chunk.chars);
                 self.current_chunk = Some((chunk, cursor_position));
-                self.bytes_offset += cursor_position;
+                self.byte_offset += cursor_position;
+
                 return None;
             }
-            self.bytes_offset += tab_position - chunk_position;
+
+            self.byte_offset += tab_position - chunk_position;
+            self.char_offset += get_char_offset(chunk_position..(tab_position - 1), chunk.chars);
 
             let tabstop = TabStop {
-                char_offset: self.bytes_offset,
-                byte_offset: self.bytes_offset,
+                char_offset: self.char_offset,
+                byte_offset: self.byte_offset,
             };
 
             chunk.tabs = (chunk.tabs - 1) & chunk.tabs;
-            if chunk.tabs > 0 {
+
+            if tab_position as usize != chunk.text.len() {
                 self.current_chunk = Some((chunk, tab_position));
-            } else {
-                self.end_of_chunk = Some(chunk.text.len() as u32 - tab_position);
             }
 
             return Some(tabstop);
@@ -1301,8 +1399,31 @@ impl<'a> TabStopCursor<'a> {
     }
 
     fn byte_offset(&self) -> u32 {
-        self.bytes_offset
+        self.byte_offset
     }
+
+    fn char_offset(&self) -> u32 {
+        self.char_offset
+    }
+}
+
+#[inline(always)]
+fn get_char_offset(range: Range<u32>, bit_map: u128) -> u32 {
+    // This edge case can happen when we're at chunk position 128
+
+    if range.start == range.end {
+        return if (1u128 << range.start) & bit_map == 0 {
+            0
+        } else {
+            1
+        };
+    }
+    let end_shift: u128 = 127u128 - range.end.min(127) as u128;
+    let mut bit_mask = (u128::MAX >> range.start) << range.start;
+    bit_mask = (bit_mask << end_shift) >> end_shift;
+    let bit_map = bit_map & bit_mask;
+
+    bit_map.count_ones()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

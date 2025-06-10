@@ -488,6 +488,8 @@ pub struct Chunk<'a> {
     pub is_tab: bool,
     /// A bitset of which characters are tabs in this string.
     pub tabs: u128,
+    /// Bitmap of character indices in this chunk
+    pub chars: u128,
     /// Whether this chunk of text was originally a tab character.
     pub is_inlay: bool,
     /// Whether to underline the corresponding text range in the editor.
@@ -4582,7 +4584,7 @@ impl<'a> Iterator for BufferChunks<'a> {
         }
         self.diagnostic_endpoints = diagnostic_endpoints;
 
-        if let Some((chunk, tabs)) = self.chunks.peek_tabs() {
+        if let Some((chunk, tabs, chars_map)) = self.chunks.peek_tabs() {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
@@ -4598,6 +4600,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
             let tabs = tabs >> (chunk_start - self.chunks.offset());
+            let chars_map = chars_map >> (chunk_start - self.chunks.offset());
 
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
@@ -4611,6 +4614,7 @@ impl<'a> Iterator for BufferChunks<'a> {
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
                 tabs,
+                chars: chars_map,
                 ..Chunk::default()
             })
         } else {

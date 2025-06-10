@@ -67,6 +67,11 @@ impl Chunk {
     pub fn slice(&self, range: Range<usize>) -> ChunkSlice {
         self.as_slice().slice(range)
     }
+
+    #[inline(always)]
+    pub fn chars(&self) -> u128 {
+        self.chars
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

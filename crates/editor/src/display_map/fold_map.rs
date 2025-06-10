@@ -1271,8 +1271,10 @@ pub struct Chunk<'a> {
     pub is_inlay: bool,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
-    /// The location of tab characters in the chunk.
+    /// Bitmap of tab character locations in chunk
     pub tabs: u128,
+    /// Bitmap of character locations in chunk
+    pub chars: u128,
 }
 
 /// A recipe for how the chunk should be presented.
@@ -1421,6 +1423,7 @@ impl<'a> Iterator for FoldChunks<'a> {
             chunk.text = &chunk.text
                 [(self.inlay_offset - buffer_chunk_start).0..(chunk_end - buffer_chunk_start).0];
             chunk.tabs = chunk.tabs >> (self.inlay_offset - buffer_chunk_start).0;
+            chunk.chars = chunk.chars >> (self.inlay_offset - buffer_chunk_start).0;
 
             if chunk_end == transform_end {
                 self.transform_cursor.next(&());
@@ -1433,6 +1436,7 @@ impl<'a> Iterator for FoldChunks<'a> {
             return Some(Chunk {
                 text: chunk.text,
                 tabs: chunk.tabs,
+                chars: chunk.chars,
                 syntax_highlight_id: chunk.syntax_highlight_id,
                 highlight_style: chunk.highlight_style,
                 diagnostic_severity: chunk.diagnostic_severity,

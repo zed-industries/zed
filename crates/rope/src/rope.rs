@@ -772,7 +772,7 @@ impl<'a> Chunks<'a> {
         Some(&chunk.text[slice_range])
     }
 
-    pub fn peek_tabs(&self) -> Option<(&'a str, u128)> {
+    pub fn peek_tabs(&self) -> Option<(&'a str, u128, u128)> {
         if !self.offset_is_valid() {
             return None;
         }
@@ -793,8 +793,9 @@ impl<'a> Chunks<'a> {
 
         // Shift the tabs to align with our slice window
         let shifted_tabs = chunk.tabs >> chunk_start_offset;
+        let shifted_chars_utf16 = chunk.chars();
 
-        Some((slice_text, shifted_tabs))
+        Some((slice_text, shifted_tabs, shifted_chars_utf16))
     }
 
     pub fn lines(self) -> Lines<'a> {

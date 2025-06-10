@@ -3281,11 +3281,12 @@ fn test_contiguous_ranges() {
 
 #[test]
 fn test_buffer_chunks_tabs() {
-    let buffer = text::Buffer::new(0, BufferId::new(1).unwrap(), "\ta\tbc");
+    let buffer = text::Buffer::new(0, BufferId::new(1).unwrap(), "\ta\tbc😁");
     let mut iter = buffer.as_rope().chunks();
 
-    while let Some((str, tabs)) = iter.peek_tabs() {
-        dbg!(str, format!("{:b}", tabs));
+    while let Some((str, _, chars)) = iter.peek_tabs() {
+        dbg!(str.len(), str.bytes().count());
+        dbg!(str, format!("{:b}", chars));
         iter.next();
     }
     dbg!("---");
@@ -3294,7 +3295,7 @@ fn test_buffer_chunks_tabs() {
     let mut iter = buffer.as_rope().chunks();
     iter.seek(3);
 
-    while let Some((str, tabs)) = iter.peek_tabs() {
+    while let Some((str, tabs, _)) = iter.peek_tabs() {
         dbg!(str, format!("{:b}", tabs));
         iter.next();
     }
