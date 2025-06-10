@@ -56,27 +56,25 @@ impl MacKeyboardLayout {
 
 pub(crate) struct MacKeyboardMapper {
     code_to_key: HashMap<u16, String>,
-    key_to_code: HashMap<String, u16>,
     code_to_shifted_key: HashMap<u16, String>,
 }
 
 impl MacKeyboardMapper {
     pub(crate) fn new() -> Self {
         let mut code_to_key = HashMap::default();
-        let mut key_to_code = HashMap::default();
         let mut code_to_shifted_key = HashMap::default();
 
         let always_use_cmd_layout = always_use_command_layout();
         for &scan_code in TYPEABLE_CODES.iter() {
             let (key, shifted_key) = generate_key_pairs(scan_code, always_use_cmd_layout);
-            code_to_key.insert(scan_code, key.clone());
-            key_to_code.insert(key, scan_code);
-            code_to_shifted_key.insert(scan_code, shifted_key);
+            if !is_letter_key(&key) {
+                code_to_shifted_key.insert(scan_code, shifted_key);
+            }
+            code_to_key.insert(scan_code, key);
         }
 
         Self {
             code_to_key,
-            key_to_code,
             code_to_shifted_key,
         }
     }
@@ -350,7 +348,7 @@ fn get_scan_code(scan_code: ScanCode) -> Option<u16> {
         ScanCode::Backspace => 0x0033,
         ScanCode::Delete => 0x0075,
         ScanCode::Insert => 0x0072,
-        ScnaCode::IntlBackslash => 0x000a,
+        ScanCode::IntlBackslash => 0x000a,
         ScanCode::IntlRo => 0x005e,
     })
 }

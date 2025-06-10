@@ -7,9 +7,10 @@ use super::{
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, ScreenCaptureSource,
-    SemanticVersion, Task, WindowAppearance, WindowParams, hash,
+    MacDisplay, MacKeyboardMapper, MacWindow, Menu, MenuItem, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem,
+    PlatformWindow, Result, ScreenCaptureSource, SemanticVersion, Task, WindowAppearance,
+    WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -844,6 +845,10 @@ impl Platform for MacPlatform {
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.0.lock().validate_menu_command = Some(callback);
+    }
+
+    fn keyboard_mapper(&self) -> Box<dyn PlatformKeyboardMapper> {
+        Box::new(MacKeyboardMapper::new())
     }
 
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
