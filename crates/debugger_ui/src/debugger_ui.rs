@@ -1,14 +1,17 @@
+use std::any::TypeId;
+
 use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::{DebugPanel, ToggleFocus};
 use editor::Editor;
 use feature_flags::{DebuggerFeatureFlag, FeatureFlagViewExt};
-use gpui::{App, EntityInputHandler, actions};
+use gpui::{App, DispatchPhase, EntityInputHandler, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
-use project::debugger::{self, breakpoint_store::SourceBreakpoint};
+use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
 use session::DebugSession;
 use settings::Settings;
 use stack_trace_view::StackTraceView;
 use tasks_ui::{Spawn, TaskOverrides};
+use ui::{FluentBuilder, InteractiveElement};
 use util::maybe;
 use workspace::{ItemHandle, ShutdownDebugAdapters, Workspace};
 
@@ -68,148 +71,6 @@ pub fn init(cx: &mut App) {
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
                     workspace.toggle_panel_focus::<DebugPanel>(window, cx);
                 })
-                .register_action(|workspace, _: &Pause, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel
-                            .read(cx)
-                            .active_session()
-                            .map(|session| session.read(cx).running_state().clone())
-                        {
-                            active_item.update(cx, |item, cx| item.pause_thread(cx))
-                        }
-                    }
-                })
-                .register_action(|workspace, _: &Restart, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel
-                            .read(cx)
-                            .active_session()
-                            .map(|session| session.read(cx).running_state().clone())
-                        {
-                            active_item.update(cx, |item, cx| item.restart_session(cx))
-                        }
-                    }
-                })
-                .register_action(|workspace, _: &Continue, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel
-                            .read(cx)
-                            .active_session()
-                            .map(|session| session.read(cx).running_state().clone())
-                        {
-                            active_item.update(cx, |item, cx| item.continue_thread(cx))
-                        }
-                    }
-                })
-                .register_action(|workspace, _: &StepInto, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel
-                            .read(cx)
-                            .active_session()
-                            .map(|session| session.read(cx).running_state().clone())
-                        {
-                            active_item.update(cx, |item, cx| item.step_in(cx))
-                        }
-                    }
-                })
-                .register_action(|workspace, _: &StepOver, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel
-                            .read(cx)
-                            .active_session()
-                            .map(|session| session.read(cx).running_state().clone())
-                        {
-                            active_item.update(cx, |item, cx| item.step_over(cx))
-                        }
-                    }
-                })
-                .register_action(|workspace, _: &StepOut, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel.read_with(cx, |panel, cx| {
-                            panel
-                                .active_session()
-                                .map(|session| session.read(cx).running_state().clone())
-                        }) {
-                            active_item.update(cx, |item, cx| item.step_out(cx))
-                        }
-                    }
-                })
-                .register_action(|workspace, _: &StepBack, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel
-                            .read(cx)
-                            .active_session()
-                            .map(|session| session.read(cx).running_state().clone())
-                        {
-                            active_item.update(cx, |item, cx| item.step_back(cx))
-                        }
-                    }
-                })
-                .register_action(|workspace, _: &Stop, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel
-                            .read(cx)
-                            .active_session()
-                            .map(|session| session.read(cx).running_state().clone())
-                        {
-                            cx.defer(move |cx| {
-                                active_item.update(cx, |item, cx| item.stop_thread(cx))
-                            })
-                        }
-                    }
-                })
-                .register_action(|workspace, _: &ToggleIgnoreBreakpoints, _, cx| {
-                    if let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) {
-                        if let Some(active_item) = debug_panel
-                            .read(cx)
-                            .active_session()
-                            .map(|session| session.read(cx).running_state().clone())
-                        {
-                            active_item.update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))
-                        }
-                    }
-                })
-                .register_action(
-                    |workspace: &mut Workspace, _: &ShutdownDebugAdapters, _window, cx| {
-                        workspace.project().update(cx, |project, cx| {
-                            project.dap_store().update(cx, |store, cx| {
-                                store.shutdown_sessions(cx).detach();
-                            })
-                        })
-                    },
-                )
-                .register_action(
-                    |workspace: &mut Workspace, _: &ShowStackTrace, window, cx| {
-                        let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
-                            return;
-                        };
-
-                        if let Some(existing) = workspace.item_of_type::<StackTraceView>(cx) {
-                            let is_active = workspace
-                                .active_item(cx)
-                                .is_some_and(|item| item.item_id() == existing.item_id());
-                            workspace.activate_item(&existing, true, !is_active, window, cx);
-                        } else {
-                            let Some(active_session) = debug_panel.read(cx).active_session() else {
-                                return;
-                            };
-
-                            let project = workspace.project();
-
-                            let stack_trace_view = active_session.update(cx, |session, cx| {
-                                session.stack_trace_view(project, window, cx).clone()
-                            });
-
-                            workspace.add_item_to_active_pane(
-                                Box::new(stack_trace_view),
-                                None,
-                                true,
-                                window,
-                                cx,
-                            );
-                        }
-                    },
-                )
                 .register_action(|workspace: &mut Workspace, _: &Start, window, cx| {
                     NewProcessModal::show(workspace, window, NewProcessMode::Debug, None, cx);
                 })
@@ -223,90 +84,247 @@ pub fn init(cx: &mut App) {
                             debug_panel.rerun_last_session(workspace, window, cx);
                         })
                     },
-                );
+                )
+                .register_action(
+                    |workspace: &mut Workspace, _: &ShutdownDebugAdapters, _window, cx| {
+                        workspace.project().update(cx, |project, cx| {
+                            project.dap_store().update(cx, |store, cx| {
+                                store.shutdown_sessions(cx).detach();
+                            })
+                        })
+                    },
+                )
+                .register_action_renderer(|div, workspace, _, cx| {
+                    let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                        return div;
+                    };
+                    let Some(active_item) = debug_panel
+                        .read(cx)
+                        .active_session()
+                        .map(|session| session.read(cx).running_state().clone())
+                    else {
+                        return div;
+                    };
+                    let running_state = active_item.read(cx);
+                    if running_state.session().read(cx).is_terminated() {
+                        return div;
+                    }
+
+                    let caps = running_state.capabilities(cx);
+                    let supports_restart = caps.supports_restart_request.unwrap_or_default();
+                    let supports_step_back = caps.supports_step_back.unwrap_or_default();
+                    let status = running_state.thread_status(cx);
+
+                    let active_item = active_item.downgrade();
+                    let workspace = workspace.weak_handle();
+                    div.when(status == Some(ThreadStatus::Running), |div| {
+                        let active_item = active_item.clone();
+                        div.on_action(move |_: &Pause, _, cx| {
+                            active_item
+                                .update(cx, |item, cx| item.pause_thread(cx))
+                                .ok();
+                        })
+                    })
+                    .when(status == Some(ThreadStatus::Stopped), |div| {
+                        div.on_action({
+                            let active_item = active_item.clone();
+                            move |_: &StepInto, _, cx| {
+                                active_item.update(cx, |item, cx| item.step_in(cx)).ok();
+                            }
+                        })
+                        .on_action({
+                            let active_item = active_item.clone();
+                            move |_: &StepOver, _, cx| {
+                                active_item.update(cx, |item, cx| item.step_over(cx)).ok();
+                            }
+                        })
+                        .on_action({
+                            let active_item = active_item.clone();
+                            move |_: &StepOut, _, cx| {
+                                active_item.update(cx, |item, cx| item.step_out(cx)).ok();
+                            }
+                        })
+                        .when(supports_step_back, |div| {
+                            let active_item = active_item.clone();
+                            div.on_action(move |_: &StepBack, _, cx| {
+                                active_item.update(cx, |item, cx| item.step_back(cx)).ok();
+                            })
+                        })
+                        .on_action({
+                            let active_item = active_item.clone();
+                            move |_: &Continue, _, cx| {
+                                active_item
+                                    .update(cx, |item, cx| item.continue_thread(cx))
+                                    .ok();
+                            }
+                        })
+                        .on_action(cx.listener(
+                            |workspace, _: &ShowStackTrace, window, cx| {
+                                let Some(debug_panel) = workspace.panel::<DebugPanel>(cx) else {
+                                    return;
+                                };
+
+                                if let Some(existing) = workspace.item_of_type::<StackTraceView>(cx)
+                                {
+                                    let is_active = workspace
+                                        .active_item(cx)
+                                        .is_some_and(|item| item.item_id() == existing.item_id());
+                                    workspace
+                                        .activate_item(&existing, true, !is_active, window, cx);
+                                } else {
+                                    let Some(active_session) =
+                                        debug_panel.read(cx).active_session()
+                                    else {
+                                        return;
+                                    };
+
+                                    let project = workspace.project();
+
+                                    let stack_trace_view =
+                                        active_session.update(cx, |session, cx| {
+                                            session.stack_trace_view(project, window, cx).clone()
+                                        });
+
+                                    workspace.add_item_to_active_pane(
+                                        Box::new(stack_trace_view),
+                                        None,
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                }
+                            },
+                        ))
+                    })
+                    .when(supports_restart, |div| {
+                        let active_item = active_item.clone();
+                        div.on_action(move |_: &Restart, _, cx| {
+                            active_item
+                                .update(cx, |item, cx| item.restart_session(cx))
+                                .ok();
+                        })
+                    })
+                    .on_action({
+                        let active_item = active_item.clone();
+                        move |_: &Stop, _, cx| {
+                            active_item.update(cx, |item, cx| item.stop_thread(cx)).ok();
+                        }
+                    })
+                    .on_action({
+                        let active_item = active_item.clone();
+                        move |_: &ToggleIgnoreBreakpoints, _, cx| {
+                            active_item
+                                .update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))
+                                .ok();
+                        }
+                    })
+                });
         })
     })
     .detach();
 
     cx.observe_new({
-        move |editor: &mut Editor, _, cx| {
+        move |editor: &mut Editor, _, _| {
             editor
-                .register_action(cx.listener(
-                    move |editor, _: &editor::actions::DebuggerRunToCursor, _, cx| {
-                        maybe!({
-                            let debug_panel =
-                                editor.workspace()?.read(cx).panel::<DebugPanel>(cx)?;
-                            let cursor_point: language::Point = editor.selections.newest(cx).head();
-                            let active_session = debug_panel.read(cx).active_session()?;
+                .register_action_renderer(move |editor, window, cx| {
+                    let Some(workspace) = editor.workspace() else {
+                        return;
+                    };
+                    let Some(debug_panel) = workspace.read(cx).panel::<DebugPanel>(cx) else {
+                        return;
+                    };
+                    let Some(active_session) = debug_panel
+                        .clone()
+                        .update(cx, |panel, _| panel.active_session())
+                    else {
+                        return;
+                    };
+                    let editor = cx.entity().downgrade();
+                    window.on_action(TypeId::of::<editor::actions::RunToCursor>(), {
+                        let editor = editor.clone();
+                        let active_session = active_session.clone();
+                        move |_, phase, _, cx| {
+                            if phase != DispatchPhase::Bubble {
+                                return;
+                            }
+                            maybe!({
+                                let (buffer, position, _) = editor
+                                    .update(cx, |editor, cx| {
+                                        let cursor_point: language::Point =
+                                            editor.selections.newest(cx).head();
 
-                            let (buffer, position, _) = editor
-                                .buffer()
-                                .read(cx)
-                                .point_to_buffer_point(cursor_point, cx)?;
+                                        editor
+                                            .buffer()
+                                            .read(cx)
+                                            .point_to_buffer_point(cursor_point, cx)
+                                    })
+                                    .ok()??;
 
-                            let path =
+                                let path =
                                 debugger::breakpoint_store::BreakpointStore::abs_path_from_buffer(
                                     &buffer, cx,
                                 )?;
 
-                            let source_breakpoint = SourceBreakpoint {
-                                row: position.row,
-                                path,
-                                message: None,
-                                condition: None,
-                                hit_condition: None,
-                                state: debugger::breakpoint_store::BreakpointState::Enabled,
-                            };
+                                let source_breakpoint = SourceBreakpoint {
+                                    row: position.row,
+                                    path,
+                                    message: None,
+                                    condition: None,
+                                    hit_condition: None,
+                                    state: debugger::breakpoint_store::BreakpointState::Enabled,
+                                };
 
-                            active_session.update(cx, |session, cx| {
-                                session.running_state().update(cx, |state, cx| {
-                                    if let Some(thread_id) = state.selected_thread_id() {
-                                        state.session().update(cx, |session, cx| {
-                                            session.run_to_position(
-                                                source_breakpoint,
-                                                thread_id,
-                                                cx,
-                                            );
-                                        })
-                                    }
-                                });
-                            });
-
-                            Some(())
-                        });
-                    },
-                ))
-                .detach();
-
-            editor
-                .register_action(cx.listener(
-                    move |editor, _: &editor::actions::DebuggerEvaluateSelectedText, window, cx| {
-                        maybe!({
-                            let debug_panel =
-                                editor.workspace()?.read(cx).panel::<DebugPanel>(cx)?;
-                            let active_session = debug_panel.read(cx).active_session()?;
-
-                            let text = editor.text_for_range(
-                                editor.selections.newest(cx).range(),
-                                &mut None,
-                                window,
-                                cx,
-                            )?;
-
-                            active_session.update(cx, |session, cx| {
-                                session.running_state().update(cx, |state, cx| {
-                                    let stack_id = state.selected_stack_frame_id(cx);
-
-                                    state.session().update(cx, |session, cx| {
-                                        session.evaluate(text, None, stack_id, None, cx).detach();
+                                active_session.update(cx, |session, cx| {
+                                    session.running_state().update(cx, |state, cx| {
+                                        if let Some(thread_id) = state.selected_thread_id() {
+                                            state.session().update(cx, |session, cx| {
+                                                session.run_to_position(
+                                                    source_breakpoint,
+                                                    thread_id,
+                                                    cx,
+                                                );
+                                            })
+                                        }
                                     });
                                 });
-                            });
 
-                            Some(())
-                        });
-                    },
-                ))
+                                Some(())
+                            });
+                        }
+                    });
+
+                    window.on_action(
+                        TypeId::of::<editor::actions::EvaluateSelectedText>(),
+                        move |_, _, window, cx| {
+                            maybe!({
+                                let text = editor
+                                    .update(cx, |editor, cx| {
+                                        editor.text_for_range(
+                                            editor.selections.newest(cx).range(),
+                                            &mut None,
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                    .ok()??;
+
+                                active_session.update(cx, |session, cx| {
+                                    session.running_state().update(cx, |state, cx| {
+                                        let stack_id = state.selected_stack_frame_id(cx);
+
+                                        state.session().update(cx, |session, cx| {
+                                            session
+                                                .evaluate(text, None, stack_id, None, cx)
+                                                .detach();
+                                        });
+                                    });
+                                });
+
+                                Some(())
+                            });
+                        },
+                    );
+                })
                 .detach();
         }
     })

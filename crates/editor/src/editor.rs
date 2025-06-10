@@ -1053,8 +1053,9 @@ pub struct Editor {
     style: Option<EditorStyle>,
     text_style_refinement: Option<TextStyleRefinement>,
     next_editor_action_id: EditorActionId,
-    editor_actions:
-        Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut Window, &mut Context<Self>)>>>>,
+    editor_actions: Rc<
+        RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&Editor, &mut Window, &mut Context<Self>)>>>,
+    >,
     use_autoclose: bool,
     use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
@@ -7523,8 +7524,7 @@ impl Editor {
             "Set Breakpoint"
         };
 
-        let run_to_cursor = command_palette_hooks::CommandPaletteFilter::try_global(cx)
-            .map_or(false, |filter| !filter.is_hidden(&DebuggerRunToCursor));
+        let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
             BreakpointState::Enabled => Some("Disable"),
@@ -7548,7 +7548,7 @@ impl Editor {
                             })
                             .ok();
 
-                        window.dispatch_action(Box::new(DebuggerRunToCursor), cx);
+                        window.dispatch_action(Box::new(RunToCursor), cx);
                     })
                     .separator()
                 })
@@ -19793,6 +19793,21 @@ impl Editor {
         }
     }
 
+    pub fn register_action_renderer(
+        &mut self,
+        listener: impl Fn(&Editor, &mut Window, &mut Context<Editor>) + 'static,
+    ) -> Subscription {
+        let id = self.next_editor_action_id.post_inc();
+        self.editor_actions
+            .borrow_mut()
+            .insert(id, Box::new(listener));
+
+        let editor_actions = self.editor_actions.clone();
+        Subscription::new(move || {
+            editor_actions.borrow_mut().remove(&id);
+        })
+    }
+
     pub fn register_action<A: Action>(
         &mut self,
         listener: impl Fn(&A, &mut Window, &mut App) + 'static,
@@ -19801,7 +19816,7 @@ impl Editor {
         let listener = Arc::new(listener);
         self.editor_actions.borrow_mut().insert(
             id,
-            Box::new(move |window, _| {
+            Box::new(move |_, window, _| {
                 let listener = listener.clone();
                 window.on_action(TypeId::of::<A>(), move |action, phase, window, cx| {
                     let action = action.downcast_ref().unwrap();

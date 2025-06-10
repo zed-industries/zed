@@ -4,12 +4,10 @@ use crate::session::running::RunningState;
 use crate::{
     ClearAllBreakpoints, Continue, Detach, FocusBreakpointList, FocusConsole, FocusFrames,
     FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables, NewProcessModal,
-    NewProcessMode, Pause, Restart, ShowStackTrace, StepBack, StepInto, StepOut, StepOver, Stop,
-    ToggleExpandItem, ToggleIgnoreBreakpoints, ToggleSessionPicker, ToggleThreadPicker,
-    persistence, spawn_task_or_modal,
+    NewProcessMode, Pause, Restart, StepInto, StepOut, StepOver, Stop, ToggleExpandItem,
+    ToggleSessionPicker, ToggleThreadPicker, persistence, spawn_task_or_modal,
 };
 use anyhow::Result;
-use command_palette_hooks::CommandPaletteFilter;
 use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
@@ -29,7 +27,6 @@ use project::{Fs, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
 use settings::Settings;
-use std::any::TypeId;
 use std::sync::Arc;
 use task::{DebugScenario, TaskContext};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
@@ -140,82 +137,6 @@ impl DebugPanel {
             .map(|session| session.read(cx).running_state().clone())
     }
 
-    pub(crate) fn filter_action_types(&self, cx: &mut App) {
-        let (has_active_session, supports_restart, support_step_back, status) = self
-            .active_session()
-            .map(|item| {
-                let running = item.read(cx).running_state().clone();
-                let caps = running.read(cx).capabilities(cx);
-                (
-                    !running.read(cx).session().read(cx).is_terminated(),
-                    caps.supports_restart_request.unwrap_or_default(),
-                    caps.supports_step_back.unwrap_or_default(),
-                    running.read(cx).thread_status(cx),
-                )
-            })
-            .unwrap_or((false, false, false, None));
-
-        let filter = CommandPaletteFilter::global_mut(cx);
-        let debugger_action_types = [
-            TypeId::of::<Detach>(),
-            TypeId::of::<Stop>(),
-            TypeId::of::<ToggleIgnoreBreakpoints>(),
-        ];
-
-        let running_action_types = [TypeId::of::<Pause>()];
-
-        let stopped_action_type = [
-            TypeId::of::<Continue>(),
-            TypeId::of::<StepOver>(),
-            TypeId::of::<StepInto>(),
-            TypeId::of::<StepOut>(),
-            TypeId::of::<ShowStackTrace>(),
-            TypeId::of::<editor::actions::DebuggerRunToCursor>(),
-            TypeId::of::<editor::actions::DebuggerEvaluateSelectedText>(),
-        ];
-
-        let step_back_action_type = [TypeId::of::<StepBack>()];
-        let restart_action_type = [TypeId::of::<Restart>()];
-
-        if has_active_session {
-            filter.show_action_types(debugger_action_types.iter());
-
-            if supports_restart {
-                filter.show_action_types(restart_action_type.iter());
-            } else {
-                filter.hide_action_types(&restart_action_type);
-            }
-
-            if support_step_back {
-                filter.show_action_types(step_back_action_type.iter());
-            } else {
-                filter.hide_action_types(&step_back_action_type);
-            }
-
-            match status {
-                Some(ThreadStatus::Running) => {
-                    filter.show_action_types(running_action_types.iter());
-                    filter.hide_action_types(&stopped_action_type);
-                }
-                Some(ThreadStatus::Stopped) => {
-                    filter.show_action_types(stopped_action_type.iter());
-                    filter.hide_action_types(&running_action_types);
-                }
-                _ => {
-                    filter.hide_action_types(&running_action_types);
-                    filter.hide_action_types(&stopped_action_type);
-                }
-            }
-        } else {
-            // show only the `debug: start`
-            filter.hide_action_types(&debugger_action_types);
-            filter.hide_action_types(&step_back_action_type);
-            filter.hide_action_types(&restart_action_type);
-            filter.hide_action_types(&running_action_types);
-            filter.hide_action_types(&stopped_action_type);
-        }
-    }
-
     pub fn load(
         workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
@@ -233,17 +154,6 @@ impl DebugPanel {
                     )
                 });
 
-                cx.observe_new::<DebugPanel>(|debug_panel, _, cx| {
-                    Self::filter_action_types(debug_panel, cx);
-                })
-                .detach();
-
-                cx.observe(&debug_panel, |_, debug_panel, cx| {
-                    debug_panel.update(cx, |debug_panel, cx| {
-                        Self::filter_action_types(debug_panel, cx);
-                    });
-                })
-                .detach();
                 workspace.set_debugger_provider(DebuggerProvider(debug_panel.clone()));
 
                 debug_panel

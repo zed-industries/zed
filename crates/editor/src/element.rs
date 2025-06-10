@@ -187,7 +187,7 @@ impl EditorElement {
         let editor = &self.editor;
         editor.update(cx, |editor, cx| {
             for action in editor.editor_actions.borrow().values() {
-                (action)(window, cx)
+                (action)(editor, window, cx)
             }
         });
 

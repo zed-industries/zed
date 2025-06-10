@@ -1,8 +1,8 @@
 use crate::{
-    Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DebuggerEvaluateSelectedText, DisplayPoint,
-    DisplaySnapshot, Editor, FindAllReferences, GoToDeclaration, GoToDefinition,
-    GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode,
-    SelectionExt, ToDisplayPoint, ToggleCodeActions,
+    Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
+    EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation,
+    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, SelectionExt,
+    ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
@@ -199,17 +199,15 @@ pub fn deploy_context_menu(
                 .is_some()
         });
 
-        let evaluate_selection = command_palette_hooks::CommandPaletteFilter::try_global(cx)
-            .map_or(false, |filter| {
-                !filter.is_hidden(&DebuggerEvaluateSelectedText)
-            });
+        let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
+        dbg!(&evaluate_selection);
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
                 .when(evaluate_selection && has_selections, |builder| {
                     builder
-                        .action("Evaluate Selection", Box::new(DebuggerEvaluateSelectedText))
+                        .action("Evaluate Selection", Box::new(EvaluateSelectedText))
                         .separator()
                 })
                 .action("Go to Definition", Box::new(GoToDefinition))
