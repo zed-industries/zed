@@ -1,15 +1,16 @@
-use std::{cell::RefCell, fmt::Write as _, rc::Rc};
+use std::fmt::Write as _;
 
 use db::anyhow::anyhow;
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
-    Global, IntoElement, Keymap, Length, ListHorizontalSizingBehavior, ListSizingBehavior,
-    ScrollHandle, Subscription, Task, UniformListScrollHandle, actions, div, uniform_list,
+    AnyElement, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
+    IntoElement, Length, ListHorizontalSizingBehavior, ListSizingBehavior, Subscription,
+    UniformListScrollHandle, actions, div, px, uniform_list,
 };
 
+use editor::ShowScrollbar;
 use ui::{
-    ActiveTheme as _, App, BorrowAppContext, Indicator, ParentElement as _, Render, SharedString,
-    Styled as _, Window, prelude::*,
+    ActiveTheme as _, App, BorrowAppContext, ParentElement as _, Render, Scrollbar, ScrollbarState,
+    SharedString, Styled as _, Window, prelude::*,
 };
 use workspace::{Item, SerializableItem, Workspace, register_serializable_item};
 
@@ -54,6 +55,8 @@ struct KeymapEditor {
     _keymap_subscription: Subscription,
     processed_bindings: Vec<ProcessedKeybinding>,
     scroll_handle: UniformListScrollHandle,
+    vertical_scrollbar_state: ScrollbarState,
+    show_vertical_scrollbar: bool,
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -66,16 +69,26 @@ impl Focusable for KeymapEditor {
 
 impl KeymapEditor {
     fn new(cx: &mut gpui::Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
+
         let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(|this, cx| {
             let key_bindings = Self::process_bindings(cx);
             this.processed_bindings = key_bindings;
+            _ = this.update_scrollbar_visibility(cx);
         });
-        Self {
-            focus_handle: cx.focus_handle(),
+        let scroll_handle = UniformListScrollHandle::new();
+        let vertical_scrollbar_state = ScrollbarState::new(scroll_handle.clone());
+        let mut this = Self {
+            focus_handle: focus_handle.clone(),
             _keymap_subscription,
             processed_bindings: vec![],
-            scroll_handle: UniformListScrollHandle::new(),
-        }
+            scroll_handle,
+            vertical_scrollbar_state,
+            show_vertical_scrollbar: false,
+        };
+
+        this.update_scrollbar_visibility(cx);
+        this
     }
 
     fn process_bindings(cx: &mut Context<Self>) -> Vec<ProcessedKeybinding> {
@@ -105,6 +118,48 @@ impl KeymapEditor {
         }
         processed_bindings
     }
+
+    fn update_scrollbar_visibility(&mut self, cx: &mut Context<Self>) {
+        use editor::EditorSettings;
+        use settings::Settings;
+
+        let show_setting = EditorSettings::get_global(cx).scrollbar.show;
+
+        self.show_vertical_scrollbar = match show_setting {
+            ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
+        };
+
+        cx.notify();
+    }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("keymap-editor-vertical-scroll")
+            .occlude()
+            .flex_none()
+            .h_full()
+            .cursor_default()
+            .absolute()
+            .right_0()
+            .top_0()
+            .bottom_0()
+            .w(px(12.))
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .children(Scrollbar::vertical(self.vertical_scrollbar_state.clone()))
+    }
 }
 
 struct ProcessedKeybinding {
@@ -126,6 +181,7 @@ impl Render for KeymapEditor {
         dbg!("rendering");
         if self.processed_bindings.is_empty() {
             self.processed_bindings = Self::process_bindings(cx);
+            self.update_scrollbar_visibility(cx);
         }
 
         let table = Table::new(self.processed_bindings.len());
@@ -133,49 +189,67 @@ impl Render for KeymapEditor {
         let theme = cx.theme();
         let headers = ["Command", "Keystrokes", "Context"].map(Into::into);
 
-        div().size_full().bg(theme.colors().background).child(
-            table
-                .render()
-                .h_full()
-                .child(table.render_header(headers, cx))
-                .child(
-                    uniform_list(
-                        cx.entity(),
-                        "keybindings",
-                        table.row_count,
-                        move |this, range, _, cx| {
-                            return range
-                                .map(|index| {
-                                    table.render_row(
-                                        index,
-                                        [
-                                            string_cell(
-                                                this.processed_bindings[index].action.clone(),
-                                            ),
-                                            string_cell(
-                                                this.processed_bindings[index]
-                                                    .keystroke_text
-                                                    .clone(),
-                                            ),
-                                            string_cell(
-                                                this.processed_bindings[index].context.clone(),
-                                            ),
-                                            // TODO: Add a source field
-                                            // string_cell(keybinding.source().to_string()),
-                                        ],
-                                        cx,
-                                    )
-                                })
-                                .collect();
-                        },
-                    )
+        div()
+            .size_full()
+            .bg(theme.colors().background)
+            .track_focus(&self.focus_handle)
+            .child(
+                div()
+                    .relative()
                     .size_full()
-                    .flex_grow()
-                    .track_scroll(self.scroll_handle.clone())
-                    .with_sizing_behavior(ListSizingBehavior::Auto)
-                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained),
-                ),
-        )
+                    .child(
+                        table
+                            .render()
+                            .h_full()
+                            .child(table.render_header(headers, cx))
+                            .child(
+                                uniform_list(
+                                    cx.entity(),
+                                    "keybindings",
+                                    table.row_count,
+                                    move |this, range, _, cx| {
+                                        return range
+                                            .map(|index| {
+                                                table.render_row(
+                                                    index,
+                                                    [
+                                                        string_cell(
+                                                            this.processed_bindings[index]
+                                                                .action
+                                                                .clone(),
+                                                        ),
+                                                        string_cell(
+                                                            this.processed_bindings[index]
+                                                                .keystroke_text
+                                                                .clone(),
+                                                        ),
+                                                        string_cell(
+                                                            this.processed_bindings[index]
+                                                                .context
+                                                                .clone(),
+                                                        ),
+                                                        // TODO: Add a source field
+                                                        // string_cell(keybinding.source().to_string()),
+                                                    ],
+                                                    cx,
+                                                )
+                                            })
+                                            .collect();
+                                    },
+                                )
+                                .size_full()
+                                .flex_grow()
+                                .track_scroll(self.scroll_handle.clone())
+                                .with_sizing_behavior(ListSizingBehavior::Auto)
+                                .with_horizontal_sizing_behavior(
+                                    ListHorizontalSizingBehavior::Unconstrained,
+                                ),
+                            ),
+                    )
+                    .when(self.show_vertical_scrollbar, |this| {
+                        this.child(self.render_vertical_scrollbar(cx))
+                    }),
+            )
     }
 }
 
