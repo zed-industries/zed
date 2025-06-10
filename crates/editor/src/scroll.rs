@@ -685,10 +685,15 @@ impl Editor {
             return;
         }
 
-        let cur_position = self.scroll_position(cx);
+        let mut cur_position = self.scroll_position(cx);
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };
+        if cur_position.x == 0.0 && amount.columns() > 0. {
+            if let Some(last_position_map) = &self.last_position_map {
+                cur_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
+            }
+        }
         let new_pos = cur_position + point(amount.columns(), amount.lines(visible_line_count));
         self.set_scroll_position(new_pos, window, cx);
     }

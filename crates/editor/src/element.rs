@@ -7699,8 +7699,9 @@ impl Element for EditorElement {
                     let line_height = style.text.line_height_in_pixels(window.rem_size());
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
+                    dbg!(em_width, em_advance);
 
-                    let glyph_grid_cell = size(em_width, line_height);
+                    let glyph_grid_cell = size(em_advance, line_height);
 
                     let gutter_dimensions = snapshot
                         .gutter_dimensions(
@@ -8259,7 +8260,7 @@ impl Element for EditorElement {
                         MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
 
                     let scroll_max = point(
-                        ((scroll_width - editor_content_width) / em_width).max(0.0),
+                        ((scroll_width - editor_content_width) / em_advance).max(0.0),
                         max_scroll_top,
                     );
 
@@ -8271,7 +8272,7 @@ impl Element for EditorElement {
                                 start_row,
                                 editor_content_width,
                                 scroll_width,
-                                em_width,
+                                em_advance,
                                 &line_layouts,
                                 cx,
                             )
@@ -8286,9 +8287,10 @@ impl Element for EditorElement {
                     });
 
                     let scroll_pixel_position = point(
-                        scroll_position.x * em_width,
+                        scroll_position.x * em_advance,
                         scroll_position.y * line_height,
                     );
+                    dbg!(scroll_pixel_position);
 
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
@@ -9414,7 +9416,7 @@ impl PositionMap {
         let scroll_position = self.snapshot.scroll_position();
         let position = position - text_bounds.origin;
         let y = position.y.max(px(0.)).min(self.size.height);
-        let x = position.x + (scroll_position.x * self.em_width);
+        let x = position.x + (scroll_position.x * self.em_advance);
         let row = ((y / self.line_height) + scroll_position.y) as u32;
 
         let (column, x_overshoot_after_line_end) = if let Some(line) = self
