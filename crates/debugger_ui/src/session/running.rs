@@ -822,14 +822,14 @@ impl RunningState {
             let config_is_valid = request_type.is_ok();
 
             let build_output = if let Some(build) = build {
-                let (task, locator_name) = match build {
+                let (task_template, locator_name) = match build {
                     BuildTaskDefinition::Template {
                         task_template,
                         locator_name,
                     } => (task_template, locator_name),
                     BuildTaskDefinition::ByName(ref label) => {
-                        let Some(task) = task_store.update(cx, |this, cx| {
-                            this.task_inventory().and_then(|inventory| {
+                        let task = task_store.update(cx, |this, cx| {
+                            this.task_inventory().map(|inventory| {
                                 inventory.read(cx).task_template_by_label(
                                     buffer,
                                     worktree_id,
@@ -837,14 +837,15 @@ impl RunningState {
                                     cx,
                                 )
                             })
-                        })?
-                        else {
-                            anyhow::bail!("Couldn't find task template for {:?}", build)
-                        };
+                        })?;
+                        let task = match task {
+                            Some(task) => task.await,
+                            None => None,
+                        }.with_context(|| format!("Couldn't find task template for {build:?}"))?;
                         (task, None)
                     }
                 };
-                let Some(task) = task.resolve_task("debug-build-task", &task_context) else {
+                let Some(task) = task_template.resolve_task("debug-build-task", &task_context) else {
                     anyhow::bail!("Could not resolve task variables within a debug scenario");
                 };
 

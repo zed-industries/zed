@@ -177,7 +177,7 @@ impl TypeScriptContextProvider {
 }
 
 impl ContextProvider for TypeScriptContextProvider {
-    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Option<TaskTemplates> {
+    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
         let mut task_templates = TaskTemplates(Vec::new());
 
         // Jest tasks
@@ -363,7 +363,7 @@ impl ContextProvider for TypeScriptContextProvider {
             ..TaskTemplate::default()
         });
 
-        Some(task_templates)
+        Task::ready(Some(task_templates))
     }
 
     fn build_context(

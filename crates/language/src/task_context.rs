@@ -41,8 +41,8 @@ pub trait ContextProvider: Send + Sync {
         &self,
         _: Option<Arc<dyn crate::File>>,
         _cx: &App,
-    ) -> Option<TaskTemplates> {
-        None
+    ) -> Task<Option<TaskTemplates>> {
+        Task::ready(None)
     }
 
     /// A language server name, that can return tasks using LSP (ext) for this language.

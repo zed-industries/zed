@@ -512,7 +512,7 @@ impl ContextProvider for GoContextProvider {
         &self,
         _: Option<Arc<dyn language::File>>,
         _: &App,
-    ) -> Option<TaskTemplates> {
+    ) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {
@@ -520,7 +520,7 @@ impl ContextProvider for GoContextProvider {
         };
         let module_cwd = Some(GO_MODULE_ROOT_TASK_VARIABLE.template_value());
 
-        Some(TaskTemplates(vec![
+        Task::ready(Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
                     "go test {} -run {}",
@@ -631,7 +631,7 @@ impl ContextProvider for GoContextProvider {
                 cwd: module_cwd.clone(),
                 ..TaskTemplate::default()
             },
-        ]))
+        ])))
     }
 }
 

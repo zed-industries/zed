@@ -630,7 +630,7 @@ impl ContextProvider for RustContextProvider {
         &self,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
-    ) -> Option<TaskTemplates> {
+    ) -> Task<Option<TaskTemplates>> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
         const CUSTOM_TARGET_DIR: &str = "RUST_TARGET_DIR";
 
@@ -798,7 +798,7 @@ impl ContextProvider for RustContextProvider {
                 .collect();
         }
 
-        Some(TaskTemplates(task_templates))
+        Task::ready(Some(TaskTemplates(task_templates)))
     }
 
     fn lsp_task_source(&self) -> Option<LanguageServerName> {

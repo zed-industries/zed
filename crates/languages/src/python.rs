@@ -483,7 +483,7 @@ impl ContextProvider for PythonContextProvider {
         &self,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
-    ) -> Option<TaskTemplates> {
+    ) -> Task<Option<TaskTemplates>> {
         let test_runner = selected_test_runner(file.as_ref(), cx);
 
         let mut tasks = vec![
@@ -587,7 +587,7 @@ impl ContextProvider for PythonContextProvider {
             }
         });
 
-        Some(TaskTemplates(tasks))
+        Task::ready(Some(TaskTemplates(tasks)))
     }
 }
 
