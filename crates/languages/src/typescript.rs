@@ -19,6 +19,7 @@ use smol::{fs, io::BufReader, lock::RwLock, stream::StreamExt};
 use std::{
     any::Any,
     borrow::Cow,
+    collections::BTreeSet,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
@@ -55,16 +56,13 @@ struct PackageJsonData {
     mocha: bool,
     vitest: bool,
     jasmine: bool,
-    scripts: Vec<String>,
+    scripts: BTreeSet<String>,
+    package_manager: Option<&'static str>,
 }
 
 impl PackageJsonData {
-    async fn new(
-        package_json: HashMap<String, Value>,
-        worktree_root: PathBuf,
-        fs: Arc<dyn Fs>,
-    ) -> Self {
-        let mut scripts = Vec::new();
+    fn new(package_json: HashMap<String, Value>) -> Self {
+        let mut scripts = BTreeSet::new();
         if let Some(serde_json::Value::Object(package_json_scripts)) = package_json.get("scripts") {
             scripts.extend(package_json_scripts.keys().cloned());
         }
@@ -86,12 +84,29 @@ impl PackageJsonData {
             vitest |= dev_dependencies.contains_key("vitest");
             jasmine |= dev_dependencies.contains_key("jasmine");
         }
+
+        let package_manager = package_json
+            .get("packageManager")
+            .and_then(|value| value.as_str())
+            .and_then(|value| {
+                if value.starts_with("pnpm") {
+                    Some("pnpm")
+                } else if value.starts_with("yarn") {
+                    Some("yarn")
+                } else if value.starts_with("npm") {
+                    Some("npm")
+                } else {
+                    None
+                }
+            });
+
         Self {
             jest,
             mocha,
             vitest,
             jasmine,
             scripts,
+            package_manager,
         }
     }
 
@@ -265,7 +280,7 @@ impl TypeScriptContextProvider {
         }
     }
 
-    fn package_json_data(
+    fn combined_package_json_data(
         &self,
         fs: Arc<dyn Fs>,
         worktree_root: &Path,
@@ -276,67 +291,96 @@ impl TypeScriptContextProvider {
             log::debug!("No package json data for off-worktree files");
             return Task::ready(Ok(PackageJsonData::default()));
         };
-
-        let metadata_check_fs = fs.clone();
-        let potential_package_json_paths = file_relative_path
+        let new_json_data = file_relative_path
             .ancestors()
-            .map(|path| worktree_root.join(path).join("package.json"))
-            .map(|package_json_path| {
-                let fs = metadata_check_fs.clone();
-                async move {
-                    let metadata = fs.metadata(&package_json_path).await.ok()??;
-                    Some((package_json_path, metadata))
-                }
+            .map(|path| worktree_root.join(path))
+            .map(|parent_path| {
+                self.package_json_data(&parent_path, self.last_package_json.clone(), fs.clone(), cx)
             })
             .collect::<Vec<_>>();
 
-        let last_package_json = self.last_package_json.0.clone();
-
-        let last_package_json = last_package_json.clone();
         cx.background_spawn(async move {
             let mut package_json_data = PackageJsonData::default();
-            for new_metadata in join_all(potential_package_json_paths).await {
-                if let Some((package_json_path, metadata)) = new_metadata {
-                    let mtime = DateTime::<Local>::from(metadata.mtime.timestamp_for_user());
-                    let existing_data = {
-                        let contents = last_package_json.read().await;
-                        contents
-                            .get(&package_json_path)
-                            .filter(|package_json| package_json.mtime == mtime)
-                            .map(|package_json| package_json.data.clone())
-                    };
-                    match existing_data {
-                        Some(existing_data) => {
-                            package_json_data.merge(existing_data);
-                            continue;
-                        }
-                        None => {
-                            let package_json_string =
-                                fs.load(&package_json_path).await.with_context(|| {
-                                    format!("loading package.json from {package_json_path:?}")
-                                })?;
-                            let package_json: HashMap<String, serde_json::Value> =
-                                serde_json::from_str(&package_json_string).with_context(|| {
-                                    format!("parsing package.json from {package_json_path:?}")
-                                })?;
-                            let new_data = PackageJsonData::new(package_json);
-                            {
-                                let mut contents = last_package_json.write().await;
-                                contents.insert(
-                                    package_json_path,
-                                    PackageJson {
-                                        mtime,
-                                        data: new_data.clone(),
-                                    },
-                                );
-                            }
-                            package_json_data.merge(new_data);
-                        }
-                    };
+            for new_data in join_all(new_json_data).await.into_iter().flatten() {
+                package_json_data.merge(new_data);
+            }
+            Ok(package_json_data)
+        })
+    }
+
+    fn package_json_data(
+        &self,
+        directory_path: &Path,
+        existing_package_json: PackageJsonContents,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) -> Task<anyhow::Result<PackageJsonData>> {
+        let package_json_path = directory_path.join("package.json");
+        let metadata_check_fs = fs.clone();
+        cx.background_spawn(async move {
+            let metadata = metadata_check_fs
+                .metadata(&package_json_path)
+                .await
+                .with_context(|| format!("getting metadata for {package_json_path:?}"))?
+                .with_context(|| format!("missing FS metadata for {package_json_path:?}"))?;
+            let mtime = DateTime::<Local>::from(metadata.mtime.timestamp_for_user());
+            let existing_data = {
+                let contents = existing_package_json.0.read().await;
+                contents
+                    .get(&package_json_path)
+                    .filter(|package_json| package_json.mtime == mtime)
+                    .map(|package_json| package_json.data.clone())
+            };
+            match existing_data {
+                Some(existing_data) => Ok(existing_data),
+                None => {
+                    let package_json_string =
+                        fs.load(&package_json_path).await.with_context(|| {
+                            format!("loading package.json from {package_json_path:?}")
+                        })?;
+                    let package_json: HashMap<String, serde_json::Value> =
+                        serde_json::from_str(&package_json_string).with_context(|| {
+                            format!("parsing package.json from {package_json_path:?}")
+                        })?;
+                    let new_data = PackageJsonData::new(package_json);
+                    {
+                        let mut contents = existing_package_json.0.write().await;
+                        contents.insert(
+                            package_json_path,
+                            PackageJson {
+                                mtime,
+                                data: new_data.clone(),
+                            },
+                        );
+                    }
+                    Ok(new_data)
                 }
             }
+        })
+    }
 
-            Ok(package_json_data)
+    fn detect_package_manager(
+        &self,
+        worktree_root: PathBuf,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) -> Task<&'static str> {
+        let last_package_json = self.last_package_json.clone();
+        let package_json_data =
+            self.package_json_data(&worktree_root, last_package_json, fs.clone(), cx);
+        cx.background_spawn(async move {
+            if let Ok(package_json_data) = package_json_data.await {
+                if let Some(package_manager) = package_json_data.package_manager {
+                    return package_manager;
+                }
+            }
+            if fs.is_file(&worktree_root.join("pnpm-lock.yaml")).await {
+                return "pnpm";
+            }
+            if fs.is_file(&worktree_root.join("yarn.lock")).await {
+                return "yarn";
+            }
+            "npm"
         })
     }
 }
@@ -356,7 +400,7 @@ impl ContextProvider for TypeScriptContextProvider {
         };
         let file_abs_path = file.abs_path(cx);
         let package_json_data =
-            self.package_json_data(fs.clone(), &worktree_root, &file_abs_path, cx);
+            self.combined_package_json_data(fs.clone(), &worktree_root, &file_abs_path, cx);
 
         cx.background_spawn(async move {
             let mut task_templates = TaskTemplates(Vec::new());
@@ -391,10 +435,10 @@ impl ContextProvider for TypeScriptContextProvider {
     fn build_context(
         &self,
         current_vars: &task::TaskVariables,
-        _: ContextLocation<'_>,
+        location: ContextLocation<'_>,
         _project_env: Option<HashMap<String, String>>,
         _toolchains: Arc<dyn LanguageToolchainStore>,
-        _: &mut App,
+        cx: &mut App,
     ) -> Task<Result<task::TaskVariables>> {
         let mut vars = task::TaskVariables::default();
 
@@ -409,55 +453,17 @@ impl ContextProvider for TypeScriptContextProvider {
             );
         }
 
-        let mut runner = "npm";
-        if which::which("pnpm").is_ok() {
-            runner = "pnpm";
-        } else if which::which("yarn").is_ok() {
-            runner = "yarn";
-        }
-        /* TODO kb
-         let mut runner = package_json
-        .get("packageManager")
-        .and_then(|value| value.as_str())
-        .and_then(|value| {
-            if value.starts_with("pnpm") {
-                Some(Runner::Pnpm)
-            } else if value.starts_with("yarn") {
-                Some(Runner::Yarn)
-            } else if value.starts_with("npm") {
-                Some(Runner::Npm)
-            } else {
-                None
+        let task = location
+            .worktree_root
+            .zip(location.fs)
+            .map(|(worktree_root, fs)| self.detect_package_manager(worktree_root, fs, cx));
+        cx.background_spawn(async move {
+            if let Some(task) = task {
+                vars.insert(TYPESCRIPT_RUNNER_VARIABLE, task.await.to_owned());
             }
-        });
-
-        if runner.is_none() {
-            let detected_runner = detect_package_manager(&fs, &worktree_root).await;
-            runner = Some(detected_runner);
-        }
-             */
-
-        vars.insert(TYPESCRIPT_RUNNER_VARIABLE, runner.to_owned());
-
-        Task::ready(Ok(vars))
+            Ok(vars)
+        })
     }
-}
-
-async fn detect_package_manager(fs: &Arc<dyn Fs>, worktree_root: &PathBuf) -> Runner {
-    // Check for pnpm-lock.yaml first (pnpm)
-    if fs
-        .metadata(&worktree_root.join("pnpm-lock.yaml"))
-        .await
-        .is_ok()
-    {
-        return Runner::Pnpm;
-    }
-
-    if fs.metadata(&worktree_root.join("yarn.lock")).await.is_ok() {
-        return Runner::Yarn;
-    }
-
-    Runner::Npm
 }
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
