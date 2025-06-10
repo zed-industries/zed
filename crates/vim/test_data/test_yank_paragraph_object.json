@@ -1,0 +1,11 @@
+{"Put":{"state":"The quick brownˇ fox\njumps over the lazy dog.\n"}}
+{"Key":"y"}
+{"Key":"i"}
+{"Key":"p"}
+{"Get":{"state":"ˇThe quick brown fox\njumps over the lazy dog.\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"The quick brown fox\njumps over the lazy dog.\n"}}
+{"Key":"y"}
+{"Key":"a"}
+{"Key":"p"}
+{"Get":{"state":"ˇThe quick brown fox\njumps over the lazy dog.\n","mode":"Normal"}}
+{"ReadRegister":{"name":"\"","value":"The quick brown fox\njumps over the lazy dog.\n\n"}}

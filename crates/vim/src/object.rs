@@ -1867,6 +1867,25 @@ mod test {
         }
     }
 
+    #[gpui::test]
+    async fn test_yank_paragraph_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "The quick brownˇ fox
+            jumps over the lazy dog.
+            "
+        })
+        .await;
+        cx.simulate_shared_keystrokes("y i p").await;
+        cx.shared_clipboard()
+            .await
+            .assert_eq("The quick brown fox\njumps over the lazy dog.\n");
+        cx.simulate_shared_keystrokes("y a p").await;
+        cx.shared_clipboard()
+            .await
+            .assert_eq("The quick brown fox\njumps over the lazy dog.\n\n");
+    }
+
     // Test string with "`" for opening surrounders and "'" for closing surrounders
     const SURROUNDING_MARKER_STRING: &str = indoc! {"
         ˇTh'ˇe ˇ`ˇ'ˇquˇi`ˇck broˇ'wn`

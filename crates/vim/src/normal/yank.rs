@@ -80,7 +80,12 @@ impl Vim {
                         start_positions.insert(selection.id, start_position);
                     });
                 });
-                vim.yank_selections_content(editor, MotionKind::Exclusive, window, cx);
+                let kind = if object == Object::Paragraph {
+                    MotionKind::Linewise
+                } else {
+                    MotionKind::Exclusive
+                };
+                vim.yank_selections_content(editor, kind, window, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = start_positions.remove(&selection.id).unwrap();
