@@ -3867,6 +3867,7 @@ mod tests {
         for i in 0..7 {
             add_labeled_item(&pane, format!("{}", i).as_str(), false, cx);
         }
+
         set_max_tabs(cx, Some(5));
         add_labeled_item(&pane, "7", false, cx);
         // Remove items to respect the max tab cap.
@@ -3901,6 +3902,27 @@ mod tests {
             ],
             cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_reduce_max_tabs_closes_existing_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        set_max_tabs(cx, Some(5));
+
+        for i in 1..=5 {
+            add_labeled_item(&pane, format!("{}", i).as_str(), false, cx);
+        }
+
+        set_max_tabs(cx, Some(4));
+
+        assert_item_labels(&pane, ["2", "3", "4", "5*"], cx);
     }
 
     #[gpui::test]
