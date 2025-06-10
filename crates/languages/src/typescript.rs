@@ -4,6 +4,7 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use collections::HashMap;
+use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{
@@ -92,6 +93,14 @@ impl PackageJsonData {
             jasmine,
             scripts,
         }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.jest |= other.jest;
+        self.mocha |= other.mocha;
+        self.vitest |= other.vitest;
+        self.jasmine |= other.jasmine;
+        self.scripts.extend(other.scripts);
     }
 
     fn fill_task_templates(&self, task_templates: &mut TaskTemplates) {
@@ -260,53 +269,74 @@ impl TypeScriptContextProvider {
         &self,
         fs: Arc<dyn Fs>,
         worktree_root: &Path,
-        // TODO kb move from file_abs_path to workree_root to find all applicable package.json files
         file_abs_path: &Path,
         cx: &App,
     ) -> Task<anyhow::Result<PackageJsonData>> {
-        let package_json_path = worktree_root.join("package.json");
-        let last_package_json = self.last_package_json.0.clone();
+        let Some(file_relative_path) = file_abs_path.strip_prefix(&worktree_root).ok() else {
+            log::debug!("No package json data for off-worktree files");
+            return Task::ready(Ok(PackageJsonData::default()));
+        };
 
-        cx.background_spawn(async move {
-            let metadata = fs
-                .metadata(&package_json_path)
-                .await
-                .with_context(|| format!("getting metadata for {package_json_path:?}"))?
-                .with_context(|| format!("missing FS metadata for {package_json_path:?}"))?;
-            let mtime = DateTime::<Local>::from(metadata.mtime.timestamp_for_user());
-            let existing_data = {
-                let contents = last_package_json.read().await;
-                contents
-                    .get(&package_json_path)
-                    .filter(|package_json| package_json.mtime == mtime)
-                    .map(|package_json| package_json.data.clone())
-            };
-
-            Ok(match existing_data {
-                Some(data) => data,
-                None => {
-                    let package_json_string =
-                        fs.load(&package_json_path).await.with_context(|| {
-                            format!("loading package.json from {package_json_path:?}")
-                        })?;
-                    let package_json: HashMap<String, serde_json::Value> =
-                        serde_json::from_str(&package_json_string).with_context(|| {
-                            format!("parsing package.json from {package_json_path:?}")
-                        })?;
-                    let new_data = PackageJsonData::new(package_json);
-                    {
-                        let mut contents = last_package_json.write().await;
-                        contents.insert(
-                            package_json_path,
-                            PackageJson {
-                                mtime,
-                                data: new_data.clone(),
-                            },
-                        );
-                    }
-                    new_data
+        let metadata_check_fs = fs.clone();
+        let potential_package_json_paths = file_relative_path
+            .ancestors()
+            .map(|path| worktree_root.join(path).join("package.json"))
+            .map(|package_json_path| {
+                let fs = metadata_check_fs.clone();
+                async move {
+                    let metadata = fs.metadata(&package_json_path).await.ok()??;
+                    Some((package_json_path, metadata))
                 }
             })
+            .collect::<Vec<_>>();
+
+        let last_package_json = self.last_package_json.0.clone();
+
+        let last_package_json = last_package_json.clone();
+        cx.background_spawn(async move {
+            let mut package_json_data = PackageJsonData::default();
+            for new_metadata in join_all(potential_package_json_paths).await {
+                if let Some((package_json_path, metadata)) = new_metadata {
+                    let mtime = DateTime::<Local>::from(metadata.mtime.timestamp_for_user());
+                    let existing_data = {
+                        let contents = last_package_json.read().await;
+                        contents
+                            .get(&package_json_path)
+                            .filter(|package_json| package_json.mtime == mtime)
+                            .map(|package_json| package_json.data.clone())
+                    };
+                    match existing_data {
+                        Some(existing_data) => {
+                            package_json_data.merge(existing_data);
+                            continue;
+                        }
+                        None => {
+                            let package_json_string =
+                                fs.load(&package_json_path).await.with_context(|| {
+                                    format!("loading package.json from {package_json_path:?}")
+                                })?;
+                            let package_json: HashMap<String, serde_json::Value> =
+                                serde_json::from_str(&package_json_string).with_context(|| {
+                                    format!("parsing package.json from {package_json_path:?}")
+                                })?;
+                            let new_data = PackageJsonData::new(package_json);
+                            {
+                                let mut contents = last_package_json.write().await;
+                                contents.insert(
+                                    package_json_path,
+                                    PackageJson {
+                                        mtime,
+                                        data: new_data.clone(),
+                                    },
+                                );
+                            }
+                            package_json_data.merge(new_data);
+                        }
+                    };
+                }
+            }
+
+            Ok(package_json_data)
         })
     }
 }
