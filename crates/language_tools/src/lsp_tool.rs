@@ -18,14 +18,14 @@ use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, WorktreeId, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
 use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
-use util::{debug_panic, truncate_and_trailoff};
+use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace};
 
 use crate::{LogStore, lsp_log::GlobalLogStore};
 
 pub struct LspTool {
     workspace: WeakEntity<Workspace>,
-    lsp_store: Entity<LspStore>,
+    lsp_store: WeakEntity<LspStore>,
     active_editor: Option<ActiveEditor>,
     language_servers: LanguageServers,
     lsp_picker: Option<Entity<Picker<LspPickerDelegate>>>,
@@ -42,8 +42,8 @@ struct LspPickerDelegate {
     language_servers: LanguageServers,
     active_editor: WeakEntity<Editor>,
     workspace: WeakEntity<Workspace>,
-    lsp_store: Entity<LspStore>,
-    lsp_logs: Entity<LogStore>,
+    lsp_store: WeakEntity<LspStore>,
+    lsp_logs: WeakEntity<LogStore>,
     editor_buffers: HashSet<(WorktreeId, BufferId)>,
     selected_index: usize,
     items: Vec<LspItem>,
@@ -216,13 +216,15 @@ impl LspPickerDelegate {
             .when(!buffers.is_empty(), |button| {
                 button.on_click({
                     move |_, _, cx| {
-                        lsp_store.update(cx, |lsp_store, cx| {
-                            lsp_store.restart_language_servers_for_buffers(
-                                buffers.clone(),
-                                vec![server_id],
-                                cx,
-                            )
-                        });
+                        lsp_store
+                            .update(cx, |lsp_store, cx| {
+                                lsp_store.restart_language_servers_for_buffers(
+                                    buffers.clone(),
+                                    vec![server_id],
+                                    cx,
+                                )
+                            })
+                            .ok();
                     }
                 })
             });
@@ -277,9 +279,11 @@ impl LspPickerDelegate {
             LanguageServerStatus::Starting | LanguageServerStatus::Running => true,
             LanguageServerStatus::Stopping | LanguageServerStatus::Stopped => false,
         };
-        let has_logs = lsp_logs.update(cx, |lsp_logs, _| {
+        let Ok(has_logs) = lsp_logs.update(cx, |lsp_logs, _| {
             lsp_logs.get_language_server_state(server_id).is_some()
-        });
+        }) else {
+            return div();
+        };
 
         h_flex()
             .w_full()
@@ -291,13 +295,15 @@ impl LspPickerDelegate {
                         .on_click({
                             let lsp_store = self.lsp_store.clone();
                             move |_, _, cx| {
-                                lsp_store.update(cx, |lsp_store, cx| {
-                                    lsp_store.stop_language_servers_for_buffers(
-                                        Vec::new(),
-                                        vec![server_id],
-                                        cx,
-                                    );
-                                });
+                                lsp_store
+                                    .update(cx, |lsp_store, cx| {
+                                        lsp_store.stop_language_servers_for_buffers(
+                                            Vec::new(),
+                                            vec![server_id],
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
                             }
                         }),
                 )
@@ -323,13 +329,15 @@ impl LspPickerDelegate {
                         .on_click({
                             let lsp_store = self.lsp_store.clone();
                             move |_, _, cx| {
-                                lsp_store.update(cx, |lsp_store, cx| {
-                                    lsp_store.restart_language_servers_for_buffers(
-                                        buffers.clone(),
-                                        vec![server_id],
-                                        cx,
-                                    );
-                                });
+                                lsp_store
+                                    .update(cx, |lsp_store, cx| {
+                                        lsp_store.restart_language_servers_for_buffers(
+                                            buffers.clone(),
+                                            vec![server_id],
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
                             }
                         }),
                 )
@@ -342,14 +350,16 @@ impl LspPickerDelegate {
                             let workspace = self.workspace.clone();
                             let lsp_logs = self.lsp_logs.clone();
                             move |_, window, cx| {
-                                lsp_logs.update(cx, |lsp_logs, cx| {
-                                    lsp_logs.open_server_log(
-                                        workspace.clone(),
-                                        server_id,
-                                        window,
-                                        cx,
-                                    );
-                                });
+                                lsp_logs
+                                    .update(cx, |lsp_logs, cx| {
+                                        lsp_logs.open_server_log(
+                                            workspace.clone(),
+                                            server_id,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
                             }
                         }),
                 )
@@ -361,16 +371,18 @@ impl LspPickerDelegate {
                             let workspace = self.workspace.clone();
                             let lsp_logs = self.lsp_logs.clone();
                             move |_, window, cx| {
-                                lsp_logs.update(cx, |lsp_logs, cx| {
-                                    // TODO kb none of the open_* methods focus the log input
-                                    // TODO kb rpc logs are not synced remotely?
-                                    lsp_logs.open_server_trace(
-                                        workspace.clone(),
-                                        server_id,
-                                        window,
-                                        cx,
-                                    );
-                                });
+                                lsp_logs
+                                    .update(cx, |lsp_logs, cx| {
+                                        // TODO kb none of the open_* methods focus the log input
+                                        // TODO kb rpc logs are not synced remotely?
+                                        lsp_logs.open_server_trace(
+                                            workspace.clone(),
+                                            server_id,
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
                             }
                         }),
                 )
@@ -652,7 +664,7 @@ impl LspTool {
         let lsp_store = workspace.project().read(cx).lsp_store();
 
         let settings_workspace = workspace.weak_handle();
-        let settings_lsp_store = lsp_store.clone();
+        let settings_lsp_store = lsp_store.downgrade();
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |lsp_tool, window, cx| {
                 if ProjectSettings::get_global(cx).global_lsp_settings.button {
@@ -682,7 +694,7 @@ impl LspTool {
 
         Self {
             workspace: workspace.weak_handle(),
-            lsp_store,
+            lsp_store: lsp_store.downgrade(),
             active_editor: None,
             lsp_picker: None,
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
@@ -833,7 +845,7 @@ impl LspTool {
 
     fn new_lsp_picker(
         workspace: WeakEntity<Workspace>,
-        lsp_store: Entity<LspStore>,
+        lsp_store: WeakEntity<LspStore>,
         active_editor: WeakEntity<Editor>,
         editor_buffers: HashSet<(WorktreeId, BufferId)>,
         language_servers: LanguageServers,
@@ -850,7 +862,7 @@ impl LspTool {
                     language_servers,
                     workspace,
                     lsp_store,
-                    lsp_logs: cx.global::<GlobalLogStore>().0.clone(),
+                    lsp_logs: cx.global::<GlobalLogStore>().0.downgrade(),
                 },
                 window,
                 cx,
