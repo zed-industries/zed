@@ -1478,7 +1478,8 @@
     "Go": {
       "code_actions_on_format": {
         "source.organizeImports": true
-      }
+      },
+      "debuggers": ["Delve"]
     },
     "GraphQL": {
       "prettier": {
@@ -1543,8 +1544,14 @@
     "Plain Text": {
       "allow_rewrap": "anywhere"
     },
+    "Python": {
+      "debuggers": ["Debugpy"]
+    },
     "Ruby": {
       "language_servers": ["solargraph", "!ruby-lsp", "!rubocop", "!sorbet", "!steep", "..."]
+    },
+    "Rust": {
+      "debuggers": ["CodeLLDB"]
     },
     "SCSS": {
       "prettier": {

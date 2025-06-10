@@ -31,8 +31,7 @@ impl DapLocator for NodeLocator {
         if cfg!(not(debug_assertions)) {
             return None;
         }
-
-        if adapter.as_ref() != "JavaScript" {
+        if adapter.0.as_ref() != "JavaScript" {
             return None;
         }
         if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value() {
