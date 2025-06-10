@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::ScanCode;
+use crate::{Modifiers, ScanCode};
 
 /// A trait for platform-specific keyboard layouts
 pub trait PlatformKeyboardLayout {
@@ -13,7 +13,7 @@ pub trait PlatformKeyboardLayout {
 /// TODO:
 pub trait PlatformKeyboardMapper {
     /// TODO:
-    fn scan_code_to_key(&self, scan_code: ScanCode, shift: &mut bool) -> Result<String>;
+    fn scan_code_to_key(&self, scan_code: ScanCode, modifiers: &mut Modifiers) -> Result<String>;
 }
 
 // pub struct TestKeyboardMapper {
@@ -53,7 +53,7 @@ pub trait PlatformKeyboardMapper {
 pub struct EmptyKeyboardMapper;
 
 impl PlatformKeyboardMapper for EmptyKeyboardMapper {
-    fn scan_code_to_key(&self, _scan_code: ScanCode, _shift: &mut bool) -> Result<String> {
+    fn scan_code_to_key(&self, _scan_code: ScanCode, _modifiers: &mut Modifiers) -> Result<String> {
         anyhow::bail!("EmptyKeyboardMapper does not support scan codes")
     }
 }
