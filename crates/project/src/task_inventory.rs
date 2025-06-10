@@ -289,8 +289,7 @@ impl Inventory {
                                 locator.create_scenario(
                                     &task.original_task().clone(),
                                     &task.display_label(),
-                                    Some(adapter.clone().into()),
-                                    cx,
+                                    adapter.clone().into(),
                                 )
                             })
                     {

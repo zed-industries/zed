@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
-use gpui::{App, SharedString};
+use gpui::SharedString;
 
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, VariableName};
 
@@ -20,13 +20,10 @@ impl DapLocator for PythonLocator {
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: Option<DebugAdapterName>,
-        cx: &App,
+        adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
-        if let Some(adapter) = adapter.as_ref() {
-            if adapter.0 != "Debugpy" {
-                return None;
-            }
+        if adapter.0.as_ref() != "Debugpy" {
+            return None;
         }
         let valid_program = build_config.command.starts_with("$ZED_")
             || Path::new(&build_config.command)
@@ -95,7 +92,7 @@ impl DapLocator for PythonLocator {
         }
 
         Some(DebugScenario {
-            adapter: adapter.unwrap_or(DebugAdapterName("Debugpy".into())).0,
+            adapter: adapter.0,
             label: resolved_label.to_string().into(),
             build: None,
             config,

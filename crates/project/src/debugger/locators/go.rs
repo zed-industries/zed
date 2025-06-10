@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
-use gpui::{App, SharedString};
+use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
 
@@ -93,14 +93,11 @@ impl DapLocator for GoLocator {
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: Option<DebugAdapterName>,
-        cx: &App,
+        adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
         if build_config.command != "go" {
             return None;
         }
-        let adapter = adapter.map(|adapter| adapter.0).unwrap_or("Delve".into());
-
         let go_action = build_config.args.first()?;
 
         match go_action.as_str() {
@@ -173,7 +170,7 @@ impl DapLocator for GoLocator {
 
                 Some(DebugScenario {
                     label: resolved_label.to_string().into(),
-                    adapter,
+                    adapter: adapter.0,
                     build: None,
                     config: config,
                     tcp_connection: None,
@@ -217,7 +214,7 @@ impl DapLocator for GoLocator {
 
                 Some(DebugScenario {
                     label: resolved_label.to_string().into(),
-                    adapter,
+                    adapter: adapter.0,
                     build: None,
                     config,
                     tcp_connection: None,
@@ -238,8 +235,8 @@ mod tests {
     use super::*;
     use task::{HideStrategy, RevealStrategy, RevealTarget, Shell, TaskTemplate};
 
-    #[gpui::test]
-    fn test_create_scenario_for_go_build(cx: &App) {
+    #[test]
+    fn test_create_scenario_for_go_build() {
         let locator = GoLocator;
         let task = TaskTemplate {
             label: "go build".into(),
@@ -258,18 +255,14 @@ mod tests {
             show_command: true,
         };
 
-        let scenario = locator.create_scenario(
-            &task,
-            "test label",
-            Some(DebugAdapterName("Delve".into())),
-            cx,
-        );
+        let scenario =
+            locator.create_scenario(&task, "test label", DebugAdapterName("Delve".into()));
 
         assert!(scenario.is_none());
     }
 
-    #[gpui::test]
-    fn test_skip_non_go_commands_with_non_delve_adapter(cx: &App) {
+    #[test]
+    fn test_skip_non_go_commands_with_non_delve_adapter() {
         let locator = GoLocator;
         let task = TaskTemplate {
             label: "cargo build".into(),
@@ -291,17 +284,16 @@ mod tests {
         let scenario = locator.create_scenario(
             &task,
             "test label",
-            Some( DebugAdapterName("SomeOtherAdapter".into()) ),
-            cx,
+            DebugAdapterName("SomeOtherAdapter".into()),
         );
         assert!(scenario.is_none());
 
         let scenario =
-            locator.create_scenario(&task, "test label", Some( DebugAdapterName("Delve".into()) ), cx);
+            locator.create_scenario(&task, "test label", DebugAdapterName("Delve".into()));
         assert!(scenario.is_none());
     }
-    #[gpui::test]
-    fn test_go_locator_run(cx: &App) {
+    #[test]
+    fn test_go_locator_run() {
         let locator = GoLocator;
         let delve = DebugAdapterName("Delve".into());
 
@@ -328,7 +320,7 @@ mod tests {
         };
 
         let scenario = locator
-            .create_scenario(&task, "test run label", Some(delve), cx)
+            .create_scenario(&task, "test run label", delve)
             .unwrap();
 
         let config: DelveLaunchRequest = serde_json::from_value(scenario.config).unwrap();
@@ -359,8 +351,8 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_go_locator_test(cx: &App) {
+    #[test]
+    fn test_go_locator_test() {
         let locator = GoLocator;
         let delve = DebugAdapterName("Delve".into());
 
@@ -379,7 +371,7 @@ mod tests {
             ..Default::default()
         };
         let result = locator
-            .create_scenario(&task_with_tags, "", Some(delve.clone()), cx)
+            .create_scenario(&task_with_tags, "", delve.clone())
             .unwrap();
 
         let config: DelveLaunchRequest = serde_json::from_value(result.config).unwrap();
@@ -402,8 +394,8 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn test_skip_unsupported_go_commands(cx: &App) {
+    #[test]
+    fn test_skip_unsupported_go_commands() {
         let locator = GoLocator;
         let task = TaskTemplate {
             label: "go clean".into(),
@@ -422,12 +414,8 @@ mod tests {
             show_command: true,
         };
 
-        let scenario = locator.create_scenario(
-            &task,
-            "test label",
-            Some(DebugAdapterName("Delve".into())),
-            cx,
-        );
+        let scenario =
+            locator.create_scenario(&task, "test label", DebugAdapterName("Delve".into()));
         assert!(scenario.is_none());
     }
 }

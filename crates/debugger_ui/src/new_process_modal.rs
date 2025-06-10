@@ -1321,29 +1321,29 @@ impl PickerDelegate for DebugDelegate {
         let file = location.buffer.read(cx).file();
         let language = location.buffer.read(cx).language();
         let language_name = language.as_ref().map(|l| l.name());
-        let adapter = language::language_settings::language_settings(language_name, file, cx)
-            .debuggers
-            .first()
-            .map(SharedString::from)
-            .map(Into::into)
-            .or_else(|| {
-                language.and_then(|l| {
-                    l.config()
-                        .debuggers
-                        .first()
-                        .map(SharedString::from)
-                        .map(Into::into)
+        let Some(adapter): Option<DebugAdapterName> =
+            language::language_settings::language_settings(language_name, file, cx)
+                .debuggers
+                .first()
+                .map(SharedString::from)
+                .map(Into::into)
+                .or_else(|| {
+                    language.and_then(|l| {
+                        l.config()
+                            .debuggers
+                            .first()
+                            .map(SharedString::from)
+                            .map(Into::into)
+                    })
                 })
-            });
-        let Some(debug_scenario) =
-            cx.global::<DapRegistry>()
-                .locators()
-                .iter()
-                .find_map(|locator| {
-                    locator
-                        .1
-                        .create_scenario(&task, "one-off", adapter.clone(), cx)
-                })
+        else {
+            return;
+        };
+        let Some(debug_scenario) = cx
+            .global::<DapRegistry>()
+            .locators()
+            .iter()
+            .find_map(|locator| locator.1.create_scenario(&task, "one-off", adapter.clone()))
         else {
             return;
         };

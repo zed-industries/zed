@@ -1,8 +1,7 @@
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
-use gpui::{App, SharedString};
-use language::{language_settings::language_settings, LanguageName};
+use gpui::SharedString;
 use serde_json::Value;
 use smol::{
     io::AsyncReadExt,
@@ -46,8 +45,7 @@ impl DapLocator for CargoLocator {
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: Option<DebugAdapterName>,
-        cx: &App,
+        adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
         if build_config.command != "cargo" {
             return None;
@@ -78,9 +76,8 @@ impl DapLocator for CargoLocator {
             _ => {}
         }
 
-
         Some(DebugScenario {
-            adapter: adapter?.0,
+            adapter: adapter.0,
             label: resolved_label.to_string().into(),
             build: Some(BuildTaskDefinition::Template {
                 task_template,

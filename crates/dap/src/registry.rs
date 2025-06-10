@@ -23,8 +23,7 @@ pub trait DapLocator: Send + Sync {
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: Option<DebugAdapterName>,
-        cx: &App,
+        adapter: DebugAdapterName,
     ) -> Option<DebugScenario>;
 
     async fn run(&self, build_config: SpawnInTerminal) -> Result<DebugRequest>;
