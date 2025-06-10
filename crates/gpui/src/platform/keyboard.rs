@@ -55,6 +55,7 @@ impl PlatformKeyboardMapper for EmptyKeyboardMapper {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn is_letter_key(key: &str) -> bool {
     matches!(
         key,
