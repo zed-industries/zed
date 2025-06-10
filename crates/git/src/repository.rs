@@ -904,28 +904,9 @@ impl GitRepository for RealGitRepository {
         let path_prefixes = path_prefixes.to_owned();
         self.executor
             .spawn(async move {
-                let mut args = vec![
-                    "log",
-                    "--no-graph",
-                    "--color=never",
-                    "-r=@",
-                    "-T",
-                    "self.diff().summary()",
-                ]
-                .into_iter()
-                .map(OsString::from)
-                .collect::<Vec<_>>();
-                args.extend(path_prefixes.iter().map(|path_prefix| {
-                    if path_prefix.0.as_ref() == Path::new("") {
-                        Path::new(".").into()
-                    } else {
-                        path_prefix.as_os_str().into()
-                    }
-                }));
-
-                let output = new_std_command(&PathBuf::from("jj"))
+                let output = new_std_command(&git_binary_path)
                     .current_dir(working_directory?)
-                    .args(&args)
+                    .args(git_status_args(&path_prefixes))
                     .output()?;
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);

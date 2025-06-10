@@ -243,7 +243,7 @@ impl From<MTime> for proto::Timestamp {
 }
 
 pub struct RealFs {
-    git_binary_path: Option<PathBuf>,
+    scm_path: Option<PathBuf>,
     executor: BackgroundExecutor,
 }
 
@@ -296,11 +296,8 @@ impl FileHandle for std::fs::File {
 pub struct RealWatcher {}
 
 impl RealFs {
-    pub fn new(git_binary_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
-        Self {
-            git_binary_path,
-            executor,
-        }
+    pub fn new(scm_path: Option<PathBuf>, executor: BackgroundExecutor) -> Self {
+        Self { scm_path, executor }
     }
 }
 
@@ -790,12 +787,22 @@ impl Fs for RealFs {
         )
     }
 
-    fn open_repo(&self, dotgit_path: &Path) -> Option<Arc<dyn GitRepository>> {
-        Some(Arc::new(RealGitRepository::new(
+    fn open_repo(&self, dotgit_path: &Path) -> Option<ScmRepo> {
+        // replace with config check logic
+        let scm_name = self.scm_path.and_then(|p| p.file_name());
+        if scm_name == Some(OsStr::new("jj")) {
+            return Some(Arc::new(ScmRepo::Jj(Arc::new(
+                jj::RealJujutsuRepository::new(
+                    dotgit_path.parent().unwrap(),
+                    self.executor.clone(),
+                )?,
+            ))));
+        }
+        Some(ScmRepo::Git(Arc::new(RealGitRepository::new(
             dotgit_path,
-            self.git_binary_path.clone(),
+            self.scm_path.clone(),
             self.executor.clone(),
-        )?))
+        )?)))
     }
 
     fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
@@ -865,6 +872,10 @@ impl Fs for RealFs {
     fn home_dir(&self) -> Option<PathBuf> {
         Some(paths::home_dir().clone())
     }
+}
+enum ScmRepo {
+    Jj(Arc<dyn JjRepository>),
+    Git(Arc<dyn GitRepository>),
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -2943,7 +2954,7 @@ mod tests {
         // With the file handle still open, the file should be replaced
         // https://github.com/zed-industries/zed/issues/30054
         let fs = RealFs {
-            git_binary_path: None,
+            scm_path: None,
             executor,
         };
         let temp_dir = TempDir::new().unwrap();
@@ -2961,7 +2972,7 @@ mod tests {
     #[gpui::test]
     async fn test_realfs_atomic_write_non_existing_file(executor: BackgroundExecutor) {
         let fs = RealFs {
-            git_binary_path: None,
+            scm_path: None,
             executor,
         };
         let temp_dir = TempDir::new().unwrap();
