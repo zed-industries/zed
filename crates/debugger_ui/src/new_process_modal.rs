@@ -194,11 +194,12 @@ impl NewProcessModal {
                                 return Ok(());
                             };
 
-                            let (used_tasks, current_resolved_tasks) =
-                                task_inventory.update(cx, |task_inventory, cx| {
+                            let (used_tasks, current_resolved_tasks) = task_inventory
+                                .update(cx, |task_inventory, cx| {
                                     task_inventory
-                                        .used_and_current_resolved_tasks(&task_contexts, cx)
-                                })?;
+                                        .used_and_current_resolved_tasks(task_contexts.clone(), cx)
+                                })?
+                                .await;
 
                             debug_picker
                                 .update_in(cx, |picker, window, cx| {

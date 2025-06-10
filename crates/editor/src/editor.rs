@@ -14038,7 +14038,8 @@ impl Editor {
                 prefer_lsp && !lsp_tasks_by_rows.is_empty(),
                 new_rows,
                 cx.clone(),
-            );
+            )
+            .await;
             editor
                 .update(cx, |editor, _| {
                     editor.clear_tasks();
@@ -14068,35 +14069,40 @@ impl Editor {
         snapshot: DisplaySnapshot,
         prefer_lsp: bool,
         runnable_ranges: Vec<RunnableRange>,
-        mut cx: AsyncWindowContext,
-    ) -> Vec<((BufferId, BufferRow), RunnableTasks)> {
-        runnable_ranges
-            .into_iter()
-            .filter_map(|mut runnable| {
-                let mut tasks = cx
+        cx: AsyncWindowContext,
+    ) -> Task<Vec<((BufferId, BufferRow), RunnableTasks)>> {
+        cx.spawn(async move |cx| {
+            let mut runnable_rows = Vec::with_capacity(runnable_ranges.len());
+            for mut runnable in runnable_ranges {
+                let Some(tasks) = cx
                     .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
-                    .ok()?;
+                    .ok()
+                else {
+                    continue;
+                };
+                let mut tasks = tasks.await;
+
                 if prefer_lsp {
                     tasks.retain(|(task_kind, _)| {
                         !matches!(task_kind, TaskSourceKind::Language { .. })
                     });
                 }
                 if tasks.is_empty() {
-                    return None;
+                    continue;
                 }
 
                 let point = runnable.run_range.start.to_point(&snapshot.buffer_snapshot);
-
-                let row = snapshot
+                let Some(row) = snapshot
                     .buffer_snapshot
-                    .buffer_line_for_row(MultiBufferRow(point.row))?
-                    .1
-                    .start
-                    .row;
+                    .buffer_line_for_row(MultiBufferRow(point.row))
+                    .map(|(_, range)| range.start.row)
+                else {
+                    continue;
+                };
 
                 let context_range =
                     BufferOffset(runnable.full_range.start)..BufferOffset(runnable.full_range.end);
-                Some((
+                runnable_rows.push((
                     (runnable.buffer_id, row),
                     RunnableTasks {
                         templates: tasks,
@@ -14107,16 +14113,17 @@ impl Editor {
                         column: point.column,
                         extra_variables: runnable.extra_captures,
                     },
-                ))
-            })
-            .collect()
+                ));
+            }
+            runnable_rows
+        })
     }
 
     fn templates_with_tags(
         project: &Entity<Project>,
         runnable: &mut Runnable,
         cx: &mut App,
-    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
+    ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
         let (inventory, worktree_id, file) = project.read_with(cx, |project, cx| {
             let (worktree_id, file) = project
                 .buffer_for_id(runnable.buffer, cx)
@@ -14131,39 +14138,40 @@ impl Editor {
             )
         });
 
-        let mut templates_with_tags = mem::take(&mut runnable.tags)
-            .into_iter()
-            .flat_map(|RunnableTag(tag)| {
-                inventory
-                    .as_ref()
-                    .into_iter()
-                    .flat_map(|inventory| {
-                        inventory.read(cx).list_tasks(
-                            file.clone(),
-                            Some(runnable.language.clone()),
-                            worktree_id,
-                            cx,
-                        )
-                    })
-                    .filter(move |(_, template)| {
-                        template.tags.iter().any(|source_tag| source_tag == &tag)
-                    })
-            })
-            .sorted_by_key(|(kind, _)| kind.to_owned())
-            .collect::<Vec<_>>();
-        if let Some((leading_tag_source, _)) = templates_with_tags.first() {
-            // Strongest source wins; if we have worktree tag binding, prefer that to
-            // global and language bindings;
-            // if we have a global binding, prefer that to language binding.
-            let first_mismatch = templates_with_tags
-                .iter()
-                .position(|(tag_source, _)| tag_source != leading_tag_source);
-            if let Some(index) = first_mismatch {
-                templates_with_tags.truncate(index);
+        let tags = mem::take(&mut runnable.tags);
+        let language = runnable.language.clone();
+        cx.spawn(async move |cx| {
+            let mut templates_with_tags = Vec::new();
+            if let Some(inventory) = inventory {
+                for RunnableTag(tag) in tags {
+                    let Ok(new_tasks) = inventory.update(cx, |inventory, cx| {
+                        inventory.list_tasks(file.clone(), Some(language.clone()), worktree_id, cx)
+                    }) else {
+                        return templates_with_tags;
+                    };
+                    templates_with_tags.extend(new_tasks.await.into_iter().filter(
+                        move |(_, template)| {
+                            template.tags.iter().any(|source_tag| source_tag == &tag)
+                        },
+                    ));
+                }
             }
-        }
+            templates_with_tags.sort_by_key(|(kind, _)| kind.to_owned());
 
-        templates_with_tags
+            if let Some((leading_tag_source, _)) = templates_with_tags.first() {
+                // Strongest source wins; if we have worktree tag binding, prefer that to
+                // global and language bindings;
+                // if we have a global binding, prefer that to language binding.
+                let first_mismatch = templates_with_tags
+                    .iter()
+                    .position(|(tag_source, _)| tag_source != leading_tag_source);
+                if let Some(index) = first_mismatch {
+                    templates_with_tags.truncate(index);
+                }
+            }
+
+            templates_with_tags
+        })
     }
 
     pub fn move_to_enclosing_bracket(
