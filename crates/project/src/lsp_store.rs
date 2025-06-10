@@ -2561,13 +2561,13 @@ impl LocalLspStore {
                         };
                         let lsp_tool = self.weak.clone();
                         let server_name = server_node.name();
+                        let buffer_abs_path = abs_path.to_string_lossy().to_string();
                         cx.defer(move |cx| {
                             lsp_tool.update(cx, |_, cx| cx.emit(LspStoreEvent::LanguageServerUpdate {
                                 language_server_id: server_id,
                                 name: server_name,
                                 message: proto::update_language_server::Variant::RegisteredForBuffer(proto::RegisteredForBuffer {
-                                    worktree_id: worktree_id.to_proto(),
-                                    buffer_id: buffer_id.to_proto(),
+                                    buffer_abs_path,
                                 })
                             })).ok();
                         });
@@ -2626,8 +2626,7 @@ impl LocalLspStore {
                 name: None,
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
-                        worktree_id: worktree_id.to_proto(),
-                        buffer_id: buffer_id.to_proto(),
+                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
                     },
                 ),
             });
@@ -4706,6 +4705,7 @@ impl LspStore {
                             continue;
                         };
 
+                        let abs_path = file.abs_path(cx);
                         for node in nodes {
                             if !reused {
                                 let server_id = node.server_id_or_init(
@@ -4778,8 +4778,7 @@ impl LspStore {
                                         message:
                                             proto::update_language_server::Variant::RegisteredForBuffer(
                                                 proto::RegisteredForBuffer {
-                                                    worktree_id: worktree_id.to_proto(),
-                                                    buffer_id: buffer_handle.read(cx).remote_id().to_proto(),
+                                                    buffer_abs_path: abs_path.to_string_lossy().to_string(),
                                                 },
                                             ),
                                     });

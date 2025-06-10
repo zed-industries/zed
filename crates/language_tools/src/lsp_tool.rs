@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet, hash_map},
+    path::PathBuf,
     sync::Arc,
     time::Duration,
 };
@@ -12,10 +13,10 @@ use editor::{
 };
 use gpui::{Corner, DismissEvent, Entity, Focusable, MouseButton, Subscription, Task, WeakEntity};
 use itertools::Itertools;
-use language::BufferId;
+use language::{BufferId, LocalFile};
 use lsp::{LanguageServerId, LanguageServerName};
 use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
-use project::{LspStore, LspStoreEvent, WorktreeId, project_settings::ProjectSettings};
+use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
 use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
 use util::truncate_and_trailoff;
@@ -35,16 +36,17 @@ pub struct LspTool {
 struct ActiveEditor {
     editor: WeakEntity<Editor>,
     _editor_subscription: Subscription,
-    editor_buffers: HashSet<(WorktreeId, BufferId)>,
+    editor_buffers: HashSet<BufferId>,
 }
 
+#[derive(Debug)]
 struct LspPickerDelegate {
     language_servers: LanguageServers,
     active_editor: WeakEntity<Editor>,
     workspace: WeakEntity<Workspace>,
     lsp_store: WeakEntity<LspStore>,
     lsp_logs: WeakEntity<LogStore>,
-    editor_buffers: HashSet<(WorktreeId, BufferId)>,
+    editor_buffers: HashSet<BufferId>,
     selected_index: usize,
     items: Vec<LspItem>,
 }
@@ -66,19 +68,15 @@ enum LspItem {
 #[derive(Debug, Default, Clone)]
 struct LanguageServers {
     servers: HashMap<LanguageServerId, LanguageServerState>,
-    // TODO kb all wrong: `BufferId` is not persistent across e.g. file reopens; need to use PathBuf
-    servers_per_worktree: HashMap<WorktreeId, HashMap<BufferId, HashSet<LanguageServerId>>>,
+    servers_per_buffer_abs_path: HashMap<PathBuf, HashSet<LanguageServerId>>,
 }
 
 impl LanguageServers {
     fn remove(&mut self, id: LanguageServerId) {
         self.servers.remove(&id);
-        self.servers_per_worktree.retain(|_, worktree_servers| {
-            worktree_servers.retain(|_, servers| {
-                servers.remove(&id);
-                !servers.is_empty()
-            });
-            !worktree_servers.is_empty()
+        self.servers_per_buffer_abs_path.retain(|_, servers| {
+            servers.remove(&id);
+            !servers.is_empty()
         });
     }
 
@@ -118,7 +116,7 @@ impl LanguageServers {
                 .iter()
                 .fold(HashMap::default(), |mut acc, (id, state)| {
                     acc.entry(state.name.clone())
-                        .or_insert_with(|| BTreeMap::new())
+                        .or_insert_with(BTreeMap::new)
                         .insert(*id, state.status);
                     acc
                 });
@@ -197,7 +195,7 @@ impl LspPickerDelegate {
         let buffers = self
             .editor_buffers
             .iter()
-            .flat_map(|(_, buffer_id)| buffer_store.read(cx).get(*buffer_id))
+            .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
             .collect::<Vec<_>>();
 
         let restart_button = IconButton::new("restart-server", IconName::Rerun)
@@ -317,7 +315,7 @@ impl LspPickerDelegate {
                 let buffers = self
                     .editor_buffers
                     .iter()
-                    .flat_map(|(_, buffer_id)| buffer_store.read(cx).get(*buffer_id))
+                    .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
                     .collect::<Vec<_>>();
                 if buffers.is_empty() {
                     return div;
@@ -468,6 +466,53 @@ impl LspPickerDelegate {
             })
             .into_any_element()
     }
+
+    fn regenerate_items(&mut self, cx: &mut Context<'_, Picker<Self>>) {
+        self.selected_index = 0;
+        self.items = self
+            .editor_buffers
+            .iter()
+            .filter_map(|buffer_id| {
+                let buffer_path = self
+                    .lsp_store
+                    .update(cx, |lsp_store, cx| {
+                        Some(
+                            project::File::from_dyn(
+                                lsp_store
+                                    .buffer_store()
+                                    .read(cx)
+                                    .get(*buffer_id)?
+                                    .read(cx)
+                                    .file(),
+                            )?
+                            .abs_path(cx),
+                        )
+                    })
+                    .ok()??;
+                self.language_servers
+                    .servers_per_buffer_abs_path
+                    .get(&buffer_path)
+            })
+            .flatten()
+            .unique()
+            .filter_map(|id| self.language_servers.servers.get(id))
+            .sorted_by_key(|state| state.name.clone())
+            .flat_map(|state| {
+                [
+                    LspItem::Header {
+                        server_id: state.id,
+                        server_name: state.name.clone(),
+                        status: state.status,
+                        message: state.message.clone(),
+                    },
+                    LspItem::Item {
+                        server_id: state.id,
+                        status: state.status,
+                    },
+                ]
+            })
+            .collect();
+    }
 }
 
 impl PickerDelegate for LspPickerDelegate {
@@ -497,44 +542,8 @@ impl PickerDelegate for LspPickerDelegate {
                 .timer(Duration::from_millis(30))
                 .await;
             lsp_picker
-                .update(cx, |lsp_picker, _| {
-                    lsp_picker.delegate.selected_index = 0;
-                    lsp_picker.delegate.items = lsp_picker
-                        .delegate
-                        .language_servers
-                        .servers
-                        .values()
-                        // TODO kb return back when stable IDs are back
-                        // .iter()
-                        // .filter_map(|(worktree_id, buffer_id)| {
-                        //     Some(
-                        //         lsp_picker
-                        //             .delegate
-                        //             .language_servers
-                        //             .servers_per_worktree
-                        //             .get(worktree_id)?
-                        //             .get(buffer_id)?,
-                        //     )
-                        // })
-                        // .flatten()
-                        // .unique()
-                        // .filter_map(|id| lsp_picker.delegate.language_servers.servers.get(id))
-                        .sorted_by_key(|state| state.name.clone())
-                        .flat_map(|state| {
-                            [
-                                LspItem::Header {
-                                    server_id: state.id,
-                                    server_name: state.name.clone(),
-                                    status: state.status,
-                                    message: state.message.clone(),
-                                },
-                                LspItem::Item {
-                                    server_id: state.id,
-                                    status: state.status,
-                                },
-                            ]
-                        })
-                        .collect();
+                .update(cx, |lsp_picker, cx| {
+                    lsp_picker.delegate.regenerate_items(cx);
                 })
                 .ok();
         })
@@ -668,22 +677,22 @@ impl LspTool {
         let settings_subscription =
             cx.observe_global_in::<SettingsStore>(window, move |lsp_tool, window, cx| {
                 if ProjectSettings::get_global(cx).global_lsp_settings.button {
-                    if let Some(active_editor) = lsp_tool.active_editor.as_ref() {
-                        lsp_tool.lsp_picker = Some(Self::new_lsp_picker(
-                            settings_workspace.clone(),
-                            settings_lsp_store.clone(),
-                            active_editor.editor.clone(),
-                            active_editor.editor_buffers.clone(),
-                            lsp_tool.language_servers.clone(),
-                            window,
-                            cx,
-                        ));
-                        cx.notify();
-                        return;
+                    if lsp_tool.lsp_picker.is_none() {
+                        if let Some(active_editor) = lsp_tool.active_editor.as_ref() {
+                            lsp_tool.lsp_picker = Some(Self::new_lsp_picker(
+                                settings_workspace.clone(),
+                                settings_lsp_store.clone(),
+                                active_editor.editor.clone(),
+                                active_editor.editor_buffers.clone(),
+                                lsp_tool.language_servers.clone(),
+                                window,
+                                cx,
+                            ));
+                            cx.notify();
+                            return;
+                        }
                     }
-                }
-
-                if lsp_tool.lsp_picker.take().is_some() {
+                } else if lsp_tool.lsp_picker.take().is_some() {
                     cx.notify();
                 }
             });
@@ -810,27 +819,22 @@ impl LspTool {
                 message: proto::update_language_server::Variant::RegisteredForBuffer(update),
                 ..
             } => {
-                if let Ok(buffer_id) = BufferId::new(update.buffer_id) {
-                    self.language_servers
-                        .servers_per_worktree
-                        .entry(WorktreeId::from_proto(update.worktree_id))
-                        .or_default()
-                        .entry(buffer_id)
-                        .or_default()
-                        .insert(*language_server_id);
-                    if let Some(picker) = &self.lsp_picker {
-                        picker.update(cx, |picker, _| {
-                            picker
-                                .delegate
-                                .language_servers
-                                .servers_per_worktree
-                                .entry(WorktreeId::from_proto(update.worktree_id))
-                                .or_default()
-                                .entry(buffer_id)
-                                .or_default()
-                                .insert(*language_server_id);
-                        })
-                    }
+                let buffer_abs_path = PathBuf::from(&update.buffer_abs_path);
+                self.language_servers
+                    .servers_per_buffer_abs_path
+                    .entry(buffer_abs_path.clone())
+                    .or_default()
+                    .insert(*language_server_id);
+                if let Some(picker) = &self.lsp_picker {
+                    picker.update(cx, |picker, _| {
+                        picker
+                            .delegate
+                            .language_servers
+                            .servers_per_buffer_abs_path
+                            .entry(buffer_abs_path)
+                            .or_default()
+                            .insert(*language_server_id);
+                    })
                 }
             }
             _ => updated = false,
@@ -847,26 +851,24 @@ impl LspTool {
         workspace: WeakEntity<Workspace>,
         lsp_store: WeakEntity<LspStore>,
         active_editor: WeakEntity<Editor>,
-        editor_buffers: HashSet<(WorktreeId, BufferId)>,
+        editor_buffers: HashSet<BufferId>,
         language_servers: LanguageServers,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Picker<LspPickerDelegate>> {
         cx.new(|cx| {
-            Picker::list(
-                LspPickerDelegate {
-                    selected_index: 0,
-                    items: Vec::new(),
-                    active_editor,
-                    editor_buffers,
-                    language_servers,
-                    workspace,
-                    lsp_store,
-                    lsp_logs: cx.global::<GlobalLogStore>().0.downgrade(),
-                },
-                window,
-                cx,
-            )
+            let mut delegate = LspPickerDelegate {
+                selected_index: 0,
+                items: Vec::new(),
+                active_editor,
+                editor_buffers,
+                language_servers,
+                workspace,
+                lsp_store,
+                lsp_logs: cx.global::<GlobalLogStore>().0.downgrade(),
+            };
+            delegate.regenerate_items(cx);
+            Picker::list(delegate, window, cx)
         })
     }
 
@@ -884,11 +886,16 @@ impl LspTool {
             if let Some(name) = name.cloned() {
                 state.name = name;
             }
-        } else if let Some(message) = message {
-            // TODO kb return back?
-            // debug_panic!(
-            //     "No server state for {id}, but got a message: {message} with severity: {severity:?}"
-            // );
+        } else if let Some((message, name)) = message.zip(name.cloned()) {
+            self.language_servers.servers.insert(
+                id,
+                LanguageServerState {
+                    id,
+                    message: Some((SharedString::from(message.to_owned()), severity)),
+                    name,
+                    status: LanguageServerStatus::Running,
+                },
+            );
         }
 
         if let Some(picker) = &self.lsp_picker {
@@ -941,17 +948,8 @@ impl StatusItemView for LspTool {
                         .and_then(|active_editor| active_editor.editor.upgrade())
                         .as_ref()
                 {
-                    let editor_buffers = editor
-                        .read(cx)
-                        .buffer()
-                        .read(cx)
-                        .all_buffers()
-                        .into_iter()
-                        .filter_map(|buffer| {
-                            let buffer = buffer.read(cx);
-                            Some((buffer.file()?.worktree_id(cx), buffer.remote_id()))
-                        })
-                        .collect::<HashSet<_>>();
+                    let editor_buffers =
+                        HashSet::from_iter(editor.read(cx).buffer().read(cx).excerpt_buffer_ids());
                     self.active_editor = Some(ActiveEditor {
                         editor: editor.downgrade(),
                         _editor_subscription: cx.subscribe_in(
@@ -959,25 +957,17 @@ impl StatusItemView for LspTool {
                             window,
                             |lsp_tool, _, e: &EditorEvent, window, cx| match e {
                                 EditorEvent::ExcerptsAdded { buffer, .. } => {
-                                    if let Some(worktree_id) =
-                                        buffer.read(cx).file().map(|f| f.worktree_id(cx))
-                                    {
-                                        if let Some(active_editor) = lsp_tool.active_editor.as_mut()
-                                        {
-                                            let buffer_id = buffer.read(cx).remote_id();
-                                            if active_editor
-                                                .editor_buffers
-                                                .insert((worktree_id, buffer_id))
-                                            {
-                                                if let Some(picker) = &lsp_tool.lsp_picker {
-                                                    picker.update(cx, |picker, cx| {
-                                                        picker
-                                                            .delegate
-                                                            .editor_buffers
-                                                            .insert((worktree_id, buffer_id));
-                                                        picker.refresh(window, cx)
-                                                    });
-                                                }
+                                    if let Some(active_editor) = lsp_tool.active_editor.as_mut() {
+                                        let buffer_id = buffer.read(cx).remote_id();
+                                        if active_editor.editor_buffers.insert(buffer_id) {
+                                            if let Some(picker) = &lsp_tool.lsp_picker {
+                                                picker.update(cx, |picker, cx| {
+                                                    picker
+                                                        .delegate
+                                                        .editor_buffers
+                                                        .insert(buffer_id);
+                                                    picker.refresh(window, cx)
+                                                });
                                             }
                                         }
                                     }
@@ -988,21 +978,20 @@ impl StatusItemView for LspTool {
                                     if let Some(active_editor) = lsp_tool.active_editor.as_mut() {
                                         let mut removed = false;
                                         for id in removed_buffer_ids {
-                                            active_editor.editor_buffers.retain(
-                                                |(_, buffer_id)| {
-                                                    let retain = buffer_id != id;
-                                                    removed |= !retain;
-                                                    retain
-                                                },
-                                            );
+                                            active_editor.editor_buffers.retain(|buffer_id| {
+                                                let retain = buffer_id != id;
+                                                removed |= !retain;
+                                                retain
+                                            });
                                         }
                                         if removed {
                                             if let Some(picker) = &lsp_tool.lsp_picker {
                                                 picker.update(cx, |picker, cx| {
                                                     for id in removed_buffer_ids {
-                                                        picker.delegate.editor_buffers.retain(
-                                                            |(_, buffer_id)| buffer_id != id,
-                                                        );
+                                                        picker
+                                                            .delegate
+                                                            .editor_buffers
+                                                            .retain(|buffer_id| buffer_id != id);
                                                     }
                                                     picker.refresh(window, cx)
                                                 });
@@ -1027,13 +1016,12 @@ impl StatusItemView for LspTool {
                     );
                     self.lsp_picker = Some(lsp_picker.clone());
                     lsp_picker.update(cx, |lsp_picker, cx| lsp_picker.refresh(window, cx));
-                    return;
                 }
             }
+        } else {
+            self.active_editor = None;
+            self.lsp_picker = None;
         }
-
-        self.active_editor = None;
-        self.lsp_picker = None;
     }
 }
 
