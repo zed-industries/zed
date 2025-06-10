@@ -19,7 +19,7 @@ use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
 use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
-use util::{debug_panic, truncate_and_trailoff};
+use util::truncate_and_trailoff;
 use workspace::{StatusItemView, Workspace};
 
 use crate::{LogStore, lsp_log::GlobalLogStore};
@@ -49,14 +49,15 @@ struct LspPickerDelegate {
     editor_buffers: HashSet<BufferId>,
     selected_index: usize,
     items: Vec<LspItem>,
+    folded_sections: HashSet<SectionHeaderId>,
 }
 
 #[derive(Debug)]
 enum LspItem {
     SectionHeader {
-        id: usize,
+        id: SectionHeaderId,
         message: SharedString,
-        expanded: Option<bool>,
+        empty: bool,
     },
     ServerHeader {
         server_id: LanguageServerId,
@@ -68,6 +69,12 @@ enum LspItem {
         server_id: LanguageServerId,
         status: LanguageServerStatus,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum SectionHeaderId {
+    ActiveServers = 1,
+    OtherServers = 2,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -184,30 +191,34 @@ enum LanguageServerStatus {
 impl LspPickerDelegate {
     fn render_section_header(
         &self,
-        id: usize,
+        id: SectionHeaderId,
         message: SharedString,
-        expanded: Option<bool>,
+        empty: bool,
         cx: &mut Context<'_, Picker<Self>>,
     ) -> AnyElement {
+        let expanded = !empty && !self.folded_sections.contains(&id);
         h_flex()
             .w_full()
-            .id((message.clone(), expanded.map(usize::from).unwrap_or(2)))
+            .id(("lsp-selection-header", usize::from(id as u8)))
             .child(Label::new(message.clone()))
-            .when_some(expanded, |div, expanded| {
-                let icon = if expanded {
-                    IconName::ChevronDown
+            .map(|div| {
+                if empty {
+                    div.cursor_default()
                 } else {
-                    IconName::ChevronLeft
-                };
-
-                div.justify_between()
-                    .child(Icon::new(icon))
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, {
-                        cx.listener(move |picker, _, _, cx| {
-                            picker.delegate.toggle_section_header(id, cx);
+                    let icon = if expanded {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronLeft
+                    };
+                    div.justify_between()
+                        .child(Icon::new(icon))
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, {
+                            cx.listener(move |picker, _, _, cx| {
+                                picker.delegate.toggle_section_header(id, cx);
+                            })
                         })
-                    })
+                }
             })
             .into_any_element()
     }
@@ -508,10 +519,11 @@ impl LspPickerDelegate {
             .into_any_element()
     }
 
-    // TODO kb create section headers, regroup the servers: first, buffer-related ones (or an empty header), then all the rest (folded by default)
     fn regenerate_items(&mut self, cx: &mut Context<'_, Picker<Self>>) {
-        self.selected_index = 0;
-        self.items = self
+        let mut buffer_servers = Vec::with_capacity(self.language_servers.servers.len());
+        let mut other_servers = Vec::with_capacity(self.language_servers.servers.len());
+
+        let buffer_server_ids = self
             .editor_buffers
             .iter()
             .filter_map(|buffer_id| {
@@ -537,51 +549,84 @@ impl LspPickerDelegate {
             })
             .flatten()
             .unique()
-            .filter_map(|id| self.language_servers.servers.get(id))
-            .sorted_by_key(|state| state.name.clone())
-            .flat_map(|state| {
-                [
-                    LspItem::ServerHeader {
+            .copied()
+            .collect::<HashSet<_>>();
+
+        for server_state in self.language_servers.servers.values() {
+            if buffer_server_ids.contains(&server_state.id) {
+                buffer_servers.push(server_state);
+            } else {
+                other_servers.push(server_state);
+            }
+        }
+        buffer_servers.sort_by_key(|state| state.name.clone());
+        other_servers.sort_by_key(|state| state.name.clone());
+
+        self.selected_index = 0;
+        self.items.clear();
+        if buffer_servers.is_empty() && other_servers.is_empty() {
+            return;
+        }
+
+        if buffer_servers.is_empty() {
+            self.items.push(LspItem::SectionHeader {
+                id: SectionHeaderId::ActiveServers,
+                message: SharedString::from("No active language servers"),
+                empty: true,
+            });
+        } else {
+            let active_section_id = SectionHeaderId::ActiveServers;
+            self.items.push(LspItem::SectionHeader {
+                id: active_section_id,
+                message: SharedString::from("Active language servers"),
+                empty: false,
+            });
+            if !self.folded_sections.contains(&active_section_id) {
+                buffer_servers.into_iter().for_each(|state| {
+                    self.items.push(LspItem::ServerHeader {
                         server_id: state.id,
                         server_name: state.name.clone(),
                         status: state.status,
                         message: state.message.clone(),
-                    },
-                    LspItem::Server {
+                    });
+                    self.items.push(LspItem::Server {
                         server_id: state.id,
                         status: state.status,
-                    },
-                ]
-            })
-            .collect();
+                    });
+                });
+            }
+        }
+
+        // TODO kb show worktree root too?
+        if !other_servers.is_empty() {
+            let other_section_id = SectionHeaderId::OtherServers;
+            self.items.push(LspItem::SectionHeader {
+                id: other_section_id,
+                message: SharedString::from("Other language servers"),
+                empty: false,
+            });
+            if !self.folded_sections.contains(&other_section_id) {
+                other_servers.into_iter().for_each(|state| {
+                    self.items.push(LspItem::ServerHeader {
+                        server_id: state.id,
+                        server_name: state.name.clone(),
+                        status: state.status,
+                        message: state.message.clone(),
+                    });
+                    self.items.push(LspItem::Server {
+                        server_id: state.id,
+                        status: state.status,
+                    });
+                });
+            }
+        }
     }
 
-    fn toggle_section_header(&mut self, id_to_update: usize, cx: &mut Context<Picker<Self>>) {
-        let mut section_found = false;
-        self.items = self
-            .items
-            .drain(..)
-            .filter_map(|mut item| {
-                if let LspItem::SectionHeader { id, expanded, .. } = &mut item {
-                    if id_to_update == *id {
-                        section_found = true;
-                        match expanded {
-                            Some(expanded) => {
-                                *expanded = !*expanded;
-                            }
-                            None => debug_panic!("Toggling a section header without items"),
-                        }
-                    } else {
-                        section_found = false;
-                    }
-                    Some(item)
-                } else if section_found {
-                    None
-                } else {
-                    Some(item)
-                }
-            })
-            .collect();
+    fn toggle_section_header(&mut self, id: SectionHeaderId, cx: &mut Context<Picker<Self>>) {
+        if !self.folded_sections.remove(&id) {
+            self.folded_sections.insert(id);
+        }
+
         self.regenerate_items(cx);
         cx.notify();
     }
@@ -639,11 +684,9 @@ impl PickerDelegate for LspPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         Some(match self.items.get(ix)? {
-            LspItem::SectionHeader {
-                id,
-                message,
-                expanded,
-            } => self.render_section_header(*id, message.clone(), *expanded, cx),
+            LspItem::SectionHeader { id, message, empty } => {
+                self.render_section_header(*id, message.clone(), *empty, cx)
+            }
             LspItem::ServerHeader {
                 server_id,
                 server_name,
@@ -671,7 +714,7 @@ impl PickerDelegate for LspPickerDelegate {
         _: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         Some(
-            Button::new("lsp-tool-header", "Active language servers")
+            Button::new("lsp-tool-header", "Language Servers")
                 .full_width()
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::language_docs_url(cx)))
                 .into_any_element(),
@@ -737,10 +780,13 @@ impl PickerDelegate for LspPickerDelegate {
             .filter_map(|(i, item)| match item {
                 LspItem::ServerHeader { .. } => None,
                 LspItem::Server { .. } => Some(i),
-                LspItem::SectionHeader { expanded, .. } => match expanded {
-                    None | Some(false) => Some(i),
-                    Some(true) => None,
-                },
+                LspItem::SectionHeader { empty, id, .. } => {
+                    if *empty || self.folded_sections.contains(id) {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                }
             })
             .collect()
     }
@@ -938,6 +984,7 @@ impl LspTool {
             let mut delegate = LspPickerDelegate {
                 selected_index: 0,
                 items: Vec::new(),
+                folded_sections: HashSet::default(),
                 active_editor,
                 editor_buffers,
                 language_servers,
