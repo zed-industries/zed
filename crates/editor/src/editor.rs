@@ -918,6 +918,7 @@ enum SelectionDragState {
     Dragging {
         selection: Selection<Anchor>,
         drop_cursor: Selection<Anchor>,
+        hide_drop_cursor: bool,
     },
 }
 
