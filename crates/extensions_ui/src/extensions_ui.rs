@@ -554,13 +554,15 @@ impl ExtensionsPage {
                     )
                     .child(
                         h_flex()
-                            .gap_2()
+                            .gap_1()
                             .justify_between()
                             .child(
                                 Button::new(
                                     SharedString::from(format!("rebuild-{}", extension.id)),
                                     "Rebuild",
                                 )
+                                .color(Color::Accent)
+                                .disabled(matches!(status, ExtensionStatus::Upgrading))
                                 .on_click({
                                     let extension_id = extension.id.clone();
                                     move |_, _, cx| {
@@ -568,12 +570,12 @@ impl ExtensionsPage {
                                             store.rebuild_dev_extension(extension_id.clone(), cx)
                                         });
                                     }
-                                })
-                                .color(Color::Accent)
-                                .disabled(matches!(status, ExtensionStatus::Upgrading)),
+                                }),
                             )
                             .child(
                                 Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Removing))
                                     .on_click({
                                         let extension_id = extension.id.clone();
                                         move |_, _, cx| {
@@ -581,9 +583,7 @@ impl ExtensionsPage {
                                                 store.uninstall_extension(extension_id.clone(), cx)
                                             });
                                         }
-                                    })
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Removing)),
+                                    }),
                             )
                             .when(can_configure, |this| {
                                 this.child(
@@ -591,8 +591,8 @@ impl ExtensionsPage {
                                         SharedString::from(format!("configure-{}", extension.id)),
                                         "Configure",
                                     )
-
-
+                                    .color(Color::Accent)
+                                    .disabled(matches!(status, ExtensionStatus::Installing))
                                     .on_click({
                                         let manifest = Arc::new(extension.clone());
                                         move |_, _, cx| {
@@ -609,9 +609,7 @@ impl ExtensionsPage {
                                                 });
                                             }
                                         }
-                                    })
-                                    .color(Color::Accent)
-                                    .disabled(matches!(status, ExtensionStatus::Installing)),
+                                    }),
                                 )
                             }),
                     ),

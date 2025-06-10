@@ -71,6 +71,10 @@ fn show_configure_mcp_modal(
     window: &mut Window,
     cx: &mut Context<'_, Workspace>,
 ) {
+    if !window.is_window_active() {
+        return;
+    }
+
     let context_server_store = workspace.project().read(cx).context_server_store();
     let repository: Option<SharedString> = manifest.repository.as_ref().map(|s| s.clone().into());
 
