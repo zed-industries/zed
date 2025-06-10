@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+cargo install lychee
+cd "$(dirname "$0")/.."
+lychee --no-progress './docs/src/**/*'
