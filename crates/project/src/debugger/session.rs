@@ -13,7 +13,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
-use collections::{HashMap, HashSet, IndexMap, IndexSet};
+use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
@@ -25,7 +25,7 @@ use dap::{
 };
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
-    RunInTerminalRequestArguments, StartDebuggingRequestArguments,
+    RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
 };
 use futures::SinkExt;
 use futures::channel::{mpsc, oneshot};
@@ -106,7 +106,7 @@ impl ThreadStatus {
 #[derive(Debug)]
 pub struct Thread {
     dap: dap::Thread,
-    stack_frame_ids: IndexSet<StackFrameId>,
+    stack_frames: Vec<StackFrame>,
     _has_stopped: bool,
 }
 
@@ -114,7 +114,7 @@ impl From<dap::Thread> for Thread {
     fn from(dap: dap::Thread) -> Self {
         Self {
             dap,
-            stack_frame_ids: Default::default(),
+            stack_frames: Default::default(),
             _has_stopped: false,
         }
     }
@@ -1948,8 +1948,8 @@ impl Session {
                     let stack_frames = stack_frames.log_err()?;
 
                     let entry = this.threads.entry(thread_id).and_modify(|thread| {
-                        thread.stack_frame_ids =
-                            stack_frames.iter().map(|frame| frame.id).collect();
+                        thread.stack_frames =
+                            stack_frames.iter().cloned().map(StackFrame::from).collect();
                     });
                     debug_assert!(
                         matches!(entry, indexmap::map::Entry::Occupied(_)),
@@ -1959,6 +1959,15 @@ impl Session {
                     this.stack_frames.extend(
                         stack_frames
                             .iter()
+                            .filter(|frame| {
+                                // Workaround for JavaScript debug adapter sending out "fake" stack frames for delineating await points. This is fine,
+                                // except that they always use an id of 0 for it, which collides with other (valid) stack frames.
+                                !(frame.id == 0
+                                    && frame.line == 0
+                                    && frame.column == 0
+                                    && frame.presentation_hint
+                                        == Some(StackFramePresentationHint::Label))
+                            })
                             .cloned()
                             .map(|frame| (frame.id, StackFrame::from(frame))),
                     );
@@ -1976,14 +1985,7 @@ impl Session {
 
         self.threads
             .get(&thread_id)
-            .map(|thread| {
-                thread
-                    .stack_frame_ids
-                    .iter()
-                    .filter_map(|id| self.stack_frames.get(id))
-                    .cloned()
-                    .collect()
-            })
+            .map(|thread| thread.stack_frames.clone())
             .unwrap_or_default()
     }
 
