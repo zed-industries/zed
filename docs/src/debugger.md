@@ -274,8 +274,8 @@ To debug a specific package, you can do so by setting the Delve mode to "debug".
 [
   {
     "label": "Run server",
-    "request": "launch",
     "adapter": "Delve",
+    "request": "launch",
     "mode": "debug",
     // For Delve, the program is the package name
     "program": "./cmd/server"
@@ -293,8 +293,8 @@ To debug the tests for a package, set the Delve mode to "test". The "program" is
 [
   {
     "label": "Run integration tests",
-    "request": "launch",
     "adapter": "Delve",
+    "request": "launch",
     "mode": "test",
     "program": ".",
     "buildFlags": ["-tags", "integration"]
@@ -313,6 +313,10 @@ and the "build" command should build that.
 {
   "label": "Debug Prebuilt Unit Tests",
   "adapter": "Delve",
+  "request": "launch",
+  "mode": "exec",
+  "program": "${ZED_WORKTREE_ROOT}/__debug_unit",
+  "args": ["-test.v", "-test.run=${ZED_SYMBOL}"],
   "build": {
     "command": "go",
     "args": [
@@ -325,9 +329,7 @@ and the "build" command should build that.
       "__debug_unit",
       "./pkg/..."
     ]
-  },
-  "program": "${ZED_WORKTREE_ROOT}/__debug_unit",
-  "args": ["-test.v", "-test.run=${ZED_SYMBOL}"]
+  }
 }
 ```
 
