@@ -55,36 +55,36 @@ impl PlatformKeyboardMapper for EmptyKeyboardMapper {
     }
 }
 
-// pub(crate) fn is_alphabetic_key(key: &str) -> bool {
-//     matches!(
-//         key,
-//         "a" | "b"
-//             | "c"
-//             | "d"
-//             | "e"
-//             | "f"
-//             | "g"
-//             | "h"
-//             | "i"
-//             | "j"
-//             | "k"
-//             | "l"
-//             | "m"
-//             | "n"
-//             | "o"
-//             | "p"
-//             | "q"
-//             | "r"
-//             | "s"
-//             | "t"
-//             | "u"
-//             | "v"
-//             | "w"
-//             | "x"
-//             | "y"
-//             | "z"
-//     )
-// }
+pub(crate) fn is_letter_key(key: &str) -> bool {
+    matches!(
+        key,
+        "a" | "b"
+            | "c"
+            | "d"
+            | "e"
+            | "f"
+            | "g"
+            | "h"
+            | "i"
+            | "j"
+            | "k"
+            | "l"
+            | "m"
+            | "n"
+            | "o"
+            | "p"
+            | "q"
+            | "r"
+            | "s"
+            | "t"
+            | "u"
+            | "v"
+            | "w"
+            | "x"
+            | "y"
+            | "z"
+    )
+}
 
 #[cfg(test)]
 mod tests {

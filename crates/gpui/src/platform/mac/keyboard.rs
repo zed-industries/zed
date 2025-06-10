@@ -1,8 +1,14 @@
 use std::ffi::{CStr, c_void};
 
+use collections::HashMap;
+use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
+use core_graphics::event::CGKeyCode;
 use objc::{msg_send, runtime::Object, sel, sel_impl};
 
-use crate::PlatformKeyboardLayout;
+use crate::{
+    Modifiers, PlatformKeyboardLayout, PlatformKeyboardMapper, ScanCode, is_letter_key,
+    platform::mac::{LMGetKbdType, UCKeyTranslate, kTISPropertyUnicodeKeyLayoutData},
+};
 
 use super::{
     TISCopyCurrentKeyboardLayoutInputSource, TISGetInputSourceProperty, kTISPropertyInputSourceID,
@@ -77,42 +83,31 @@ impl MacKeyboardMapper {
 }
 
 impl PlatformKeyboardMapper for MacKeyboardMapper {
-    fn scan_code_to_key(&self, gpui_scan_code: ScanCode) -> anyhow::Result<String> {
-        if let Some(key) = gpui_scan_code.try_to_key() {
+    fn scan_code_to_key(
+        &self,
+        scan_code: ScanCode,
+        modifiers: &mut Modifiers,
+    ) -> anyhow::Result<String> {
+        if let Some(key) = scan_code.try_to_key() {
             return Ok(key);
         }
-        let Some(scan_code) = get_scan_code(gpui_scan_code) else {
-            return Err(anyhow::anyhow!("Scan code not found: {:?}", gpui_scan_code));
-        };
-        if let Some(key) = self.code_to_key.get(&scan_code) {
+        let native_scan_code = get_scan_code(scan_code)
+            .ok_or_else(|| anyhow::anyhow!("Unsupported scan code: {:?}", scan_code))?;
+        let key = self.code_to_key.get(&native_scan_code).ok_or_else(|| {
+            anyhow::anyhow!("Key not found for scan code: {:?}", native_scan_code)
+        })?;
+        if modifiers.shift && !is_letter_key(key) {
+            if let Some(key) = self.code_to_shifted_key.get(&native_scan_code) {
+                modifiers.shift = false;
+                return Ok(key.clone());
+            } else {
+                anyhow::bail!(
+                    "Shifted key not found for scan code: {:?}",
+                    native_scan_code
+                );
+            }
+        } else {
             Ok(key.clone())
-        } else {
-            Err(anyhow::anyhow!(
-                "Key not found for input scan code: {:?}, scan code: {}",
-                gpui_scan_code,
-                scan_code
-            ))
-        }
-    }
-
-    fn get_shifted_key(&self, key: &str) -> anyhow::Result<Option<String>> {
-        if key.chars().count() != 1 {
-            return Ok(None);
-        }
-        if is_alphabetic_key(key) {
-            return Ok(Some(key.to_uppercase()));
-        }
-        let Some(scan_code) = self.key_to_code.get(key) else {
-            return Err(anyhow::anyhow!("Key not found: {}", key));
-        };
-        if let Some(shifted_key) = self.code_to_shifted_key.get(scan_code) {
-            Ok(Some(shifted_key.clone()))
-        } else {
-            Err(anyhow::anyhow!(
-                "Shifted key not found for key {} with scan code: {}",
-                key,
-                scan_code
-            ))
         }
     }
 }
@@ -355,5 +350,7 @@ fn get_scan_code(scan_code: ScanCode) -> Option<u16> {
         ScanCode::Backspace => 0x0033,
         ScanCode::Delete => 0x0075,
         ScanCode::Insert => 0x0072,
+        ScnaCode::IntlBackslash => 0x000a,
+        ScanCode::IntlRo => 0x005e,
     })
 }
