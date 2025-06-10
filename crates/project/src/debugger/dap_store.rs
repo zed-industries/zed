@@ -290,7 +290,9 @@ impl DapStore {
         DapRegistry::global(cx)
             .locators()
             .values()
-            .find_map(|locator| locator.create_scenario(&build, &label, adapter.clone()))
+            .find_map(|locator| {
+                locator.create_scenario(&build, &label, Some(adapter.clone().into()), cx)
+            })
     }
 
     pub fn run_debug_locator(

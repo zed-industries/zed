@@ -3,7 +3,7 @@ use std::{borrow::Cow, path::Path};
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
-use gpui::SharedString;
+use gpui::{App, SharedString};
 
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, VariableName};
 
@@ -23,15 +23,18 @@ impl DapLocator for NodeLocator {
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: DebugAdapterName,
+        adapter: Option<DebugAdapterName>,
+        cx: &App,
     ) -> Option<DebugScenario> {
         // TODO(debugger) fix issues with `await` breakpoint step
         if cfg!(not(debug_assertions)) {
             return None;
         }
 
-        if adapter.as_ref() != "JavaScript" {
-            return None;
+        if let Some(adapter) = adapter.as_ref() {
+            if adapter.0 != "JavaScript" {
+                return None;
+            }
         }
         if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value() {
             return None;
@@ -54,7 +57,7 @@ impl DapLocator for NodeLocator {
         });
 
         Some(DebugScenario {
-            adapter: adapter.0,
+            adapter: adapter.unwrap_or(DebugAdapterName("JavaScript".into())).0,
             label: resolved_label.to_string().into(),
             build: None,
             config,
