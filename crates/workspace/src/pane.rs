@@ -324,7 +324,7 @@ pub struct Pane {
     >,
     render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
-    current_max_tabs: Option<NonZeroUsize>,
+    max_tabs: Option<NonZeroUsize>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
@@ -443,7 +443,7 @@ impl Pane {
             zoomed: false,
             active_item_index: 0,
             preview_item_id: None,
-            current_max_tabs: WorkspaceSettings::get_global(cx).max_tabs,
+            max_tabs: WorkspaceSettings::get_global(cx).max_tabs,
             last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -638,9 +638,9 @@ impl Pane {
             self.preview_item_id = None;
         }
 
-        if new_max_tabs != self.current_max_tabs {
-            self.current_max_tabs = new_max_tabs;
-            self.close_items_over_max_tabs(window, cx);
+        if new_max_tabs != self.max_tabs {
+            self.max_tabs = new_max_tabs;
+            self.close_items_on_settings_change(window, cx);
         }
 
         self.update_diagnostics(cx);
@@ -936,7 +936,7 @@ impl Pane {
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
         if !item_already_exists {
-            self.close_items_over_max_tabs(window, cx);
+            self.close_items_on_file_open(window, cx);
         }
 
         if item.is_singleton(cx) {
@@ -1422,29 +1422,54 @@ impl Pane {
         )
     }
 
-    pub fn close_items_over_max_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(max_tabs) = WorkspaceSettings::get_global(cx).max_tabs.map(|i| i.get()) else {
+    fn close_items_on_file_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.max_tabs.map(|m| m.get());
+        let protect_active_item = false;
+        self.close_items_to_target_count(target, protect_active_item, window, cx);
+    }
+
+    fn close_items_on_settings_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.max_tabs.map(|m| m.get() + 1);
+        // The active item in this case is the settings.json file, which should be protected from being closed
+        let protect_active_item = true;
+        self.close_items_to_target_count(target, protect_active_item, window, cx);
+    }
+
+    fn close_items_to_target_count(
+        &mut self,
+        target_count: Option<usize>,
+        protect_active_item: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target_count) = target_count else {
             return;
         };
 
-        // Reduce over the activation history to get every dirty items up to max_tabs
-        // count.
         let mut index_list = Vec::new();
         let mut items_len = self.items_len();
         let mut indexes: HashMap<EntityId, usize> = HashMap::default();
+        let active_ix = self.active_item_index();
 
         for (index, item) in self.items.iter().enumerate() {
             indexes.insert(item.item_id(), index);
         }
 
+        // Close least recently used items to reach target count.
+        // The target count is allowed to be exceeded, as we protect pinned
+        // items, dirty items, and sometimes, the active item.
         for entry in self.activation_history.iter() {
-            if items_len < max_tabs {
+            if items_len < target_count {
                 break;
             }
 
             let Some(&index) = indexes.get(&entry.entity_id) else {
                 continue;
             };
+
+            if protect_active_item && index == active_ix {
+                continue;
+            }
 
             if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
                 continue;
@@ -3913,15 +3938,31 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
 
-        set_max_tabs(cx, Some(5));
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        let item_d = add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        add_labeled_item(&pane, "Settings", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D", "E", "Settings*"], cx);
 
-        for i in 1..=5 {
-            add_labeled_item(&pane, format!("{}", i).as_str(), false, cx);
-        }
+        set_max_tabs(cx, Some(5));
+        assert_item_labels(&pane, ["B", "C", "D", "E", "Settings*"], cx);
 
         set_max_tabs(cx, Some(4));
+        assert_item_labels(&pane, ["C", "D", "E", "Settings*"], cx);
 
-        assert_item_labels(&pane, ["2", "3", "4", "5*"], cx);
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_d.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C!", "D!", "E", "Settings*"], cx);
+
+        set_max_tabs(cx, Some(2));
+        assert_item_labels(&pane, ["C!", "D!", "Settings*"], cx);
     }
 
     #[gpui::test]
