@@ -458,7 +458,7 @@ impl RunningMode {
         let task = cx.background_spawn(futures::future::try_join(launch, configuration_sequence));
 
         cx.spawn(async move |this, cx| {
-            task.await?;
+            let result = task.await;
 
             this.update(cx, |this, cx| {
                 if let Some(this) = this.as_running_mut() {
@@ -468,6 +468,7 @@ impl RunningMode {
             })
             .ok();
 
+            result?;
             anyhow::Ok(())
         })
     }

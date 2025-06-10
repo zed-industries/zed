@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
@@ -191,7 +191,7 @@ impl TransportDelegate {
                 match Self::handle_output(
                     params.output,
                     client_tx,
-                    pending_requests,
+                    pending_requests.clone(),
                     output_log_handler,
                 )
                 .await
@@ -199,6 +199,12 @@ impl TransportDelegate {
                     Ok(()) => {}
                     Err(e) => log::error!("Error handling debugger output: {e}"),
                 }
+                let mut pending_requests = pending_requests.lock().await;
+                pending_requests.drain().for_each(|(_, request)| {
+                    request
+                        .send(Err(anyhow!("debugger shutdown unexpectedly")))
+                        .ok();
+                });
             }));
 
             if let Some(stderr) = params.stderr.take() {
