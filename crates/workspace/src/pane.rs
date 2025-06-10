@@ -1462,9 +1462,10 @@ impl Pane {
         // using their index position, hence removing from the end
         // of the list first to avoid changing indexes.
         index_list.sort_unstable();
-        index_list.iter().rev().for_each(|&index| {
-            self._remove_item(index, false, false, None, window, cx);
-        });
+        index_list
+            .iter()
+            .rev()
+            .for_each(|&index| self._remove_item(index, false, false, None, window, cx));
     }
 
     // Usually when you close an item that has unsaved changes, we prompt you to
