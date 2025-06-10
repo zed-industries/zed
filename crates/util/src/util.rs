@@ -865,6 +865,7 @@ mod rng {
 }
 #[cfg(any(test, feature = "test-support"))]
 pub use rng::RandomCharIter;
+
 /// Get an embedded file as a string.
 pub fn asset_str<A: rust_embed::RustEmbed>(path: &str) -> Cow<'static, str> {
     match A::get(path).expect(path).data {
