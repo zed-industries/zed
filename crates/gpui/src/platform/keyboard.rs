@@ -16,38 +16,35 @@ pub trait PlatformKeyboardMapper {
     fn scan_code_to_key(&self, scan_code: ScanCode, modifiers: &mut Modifiers) -> Result<String>;
 }
 
-// pub struct TestKeyboardMapper {
-// #[cfg(target_os = "windows")]
-// mapper: super::WindowsKeyboardMapper,
-// #[cfg(target_os = "macos")]
-// mapper: super::MacKeyboardMapper,
-// #[cfg(target_os = "linux")]
-// mapper: super::LinuxKeyboardMapper,
-// }
+/// TODO:
+pub struct TestKeyboardMapper {
+    #[cfg(target_os = "windows")]
+    mapper: super::WindowsKeyboardMapper,
+    #[cfg(target_os = "macos")]
+    mapper: super::MacKeyboardMapper,
+    #[cfg(target_os = "linux")]
+    mapper: super::LinuxKeyboardMapper,
+}
 
-// impl PlatformKeyboardMapper for TestKeyboardMapper {
-//     fn scan_code_to_key(&self, scan_code: ScanCode) -> Result<String> {
-//         self.mapper.scan_code_to_key(scan_code)
-//     }
+impl PlatformKeyboardMapper for TestKeyboardMapper {
+    fn scan_code_to_key(&self, scan_code: ScanCode, modifiers: &mut Modifiers) -> Result<String> {
+        self.mapper.scan_code_to_key(scan_code, modifiers)
+    }
+}
 
-//     fn get_shifted_key(&self, key: &str) -> Result<Option<String>> {
-//         self.mapper.get_shifted_key(key)
-//     }
-// }
-
-// impl TestKeyboardMapper {
-//     /// TODO:
-//     pub fn new() -> Self {
-//         Self {
-//             #[cfg(target_os = "windows")]
-//             mapper: super::WindowsKeyboardMapper::new(),
-//             #[cfg(target_os = "macos")]
-//             mapper: super::MacKeyboardMapper::new(),
-//             #[cfg(target_os = "linux")]
-//             mapper: super::LinuxKeyboardMapper::new(),
-//         }
-//     }
-// }
+impl TestKeyboardMapper {
+    /// TODO:
+    pub fn new() -> Self {
+        Self {
+            #[cfg(target_os = "windows")]
+            mapper: super::WindowsKeyboardMapper::new(),
+            #[cfg(target_os = "macos")]
+            mapper: super::MacKeyboardMapper::new(),
+            #[cfg(target_os = "linux")]
+            mapper: super::LinuxKeyboardMapper::new(),
+        }
+    }
+}
 
 /// A dummy keyboard mapper that does not support any key mappings
 pub struct EmptyKeyboardMapper;
@@ -58,93 +55,55 @@ impl PlatformKeyboardMapper for EmptyKeyboardMapper {
     }
 }
 
-pub(crate) fn is_alphabetic_key(key: &str) -> bool {
-    matches!(
-        key,
-        "a" | "b"
-            | "c"
-            | "d"
-            | "e"
-            | "f"
-            | "g"
-            | "h"
-            | "i"
-            | "j"
-            | "k"
-            | "l"
-            | "m"
-            | "n"
-            | "o"
-            | "p"
-            | "q"
-            | "r"
-            | "s"
-            | "t"
-            | "u"
-            | "v"
-            | "w"
-            | "x"
-            | "y"
-            | "z"
-    )
-}
+// pub(crate) fn is_alphabetic_key(key: &str) -> bool {
+//     matches!(
+//         key,
+//         "a" | "b"
+//             | "c"
+//             | "d"
+//             | "e"
+//             | "f"
+//             | "g"
+//             | "h"
+//             | "i"
+//             | "j"
+//             | "k"
+//             | "l"
+//             | "m"
+//             | "n"
+//             | "o"
+//             | "p"
+//             | "q"
+//             | "r"
+//             | "s"
+//             | "t"
+//             | "u"
+//             | "v"
+//             | "w"
+//             | "x"
+//             | "y"
+//             | "z"
+//     )
+// }
 
 #[cfg(test)]
 mod tests {
     use strum::IntoEnumIterator;
 
-    use crate::ScanCode;
+    use crate::{Modifiers, ScanCode};
 
     use super::{PlatformKeyboardMapper, TestKeyboardMapper};
-
-    #[test]
-    fn test_get_shifted_key() {
-        let mapper = TestKeyboardMapper::new();
-
-        for ch in 'a'..='z' {
-            let key = ch.to_string();
-            let shifted_key = key.to_uppercase();
-            assert_eq!(mapper.get_shifted_key(&key).unwrap().unwrap(), shifted_key);
-        }
-
-        let shift_pairs = [
-            ("1", "!"),
-            ("2", "@"),
-            ("3", "#"),
-            ("4", "$"),
-            ("5", "%"),
-            ("6", "^"),
-            ("7", "&"),
-            ("8", "*"),
-            ("9", "("),
-            ("0", ")"),
-            ("`", "~"),
-            ("-", "_"),
-            ("=", "+"),
-            ("[", "{"),
-            ("]", "}"),
-            ("\\", "|"),
-            (";", ":"),
-            ("'", "\""),
-            (",", "<"),
-            (".", ">"),
-            ("/", "?"),
-        ];
-        for (key, shifted_key) in shift_pairs {
-            assert_eq!(mapper.get_shifted_key(key).unwrap().unwrap(), shifted_key);
-        }
-
-        let immutable_keys = ["backspace", "space", "tab", "enter", "f1"];
-        for key in immutable_keys {
-            assert_eq!(mapper.get_shifted_key(key).unwrap(), None);
-        }
-    }
 
     #[test]
     fn test_scan_code_to_key() {
         let mapper = TestKeyboardMapper::new();
         for scan_code in ScanCode::iter() {
-            let key = mapper.scan_code_to_key(scan_code).unwrap();
+            // The IntlBackslash and IntlRo keys are not mapped to any key on US layout
+            if scan_code == ScanCode::IntlBackslash || scan_code == ScanCode::IntlRo {
+                continue;
+            }
+            let mut modifiers = Modifiers::default();
+            let key = mapper.scan_code_to_key(scan_code, &mut modifiers).unwrap();
             assert_eq!(key, scan_code.to_key());
         }
     }
