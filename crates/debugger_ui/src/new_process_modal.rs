@@ -1407,7 +1407,7 @@ impl PickerDelegate for DebugDelegate {
             .border_color(cx.theme().colors().border_variant)
             .child(
                 // TODO: add button to open selected task in debug.json
-                h_flex().into_any_element()
+                h_flex().into_any_element(),
             )
             .map(|this| {
                 if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty() {
