@@ -166,7 +166,7 @@ pub struct LocalLspStore {
     _subscription: gpui::Subscription,
     lsp_tree: Entity<LanguageServerTree>,
     registered_buffers: HashMap<BufferId, usize>,
-    buffer_pull_diagnostics_result_ids: HashMap<BufferId, Option<String>>,
+    buffer_pull_diagnostics_result_ids: HashMap<PathBuf, Option<String>>,
 }
 
 impl LocalLspStore {
@@ -2295,8 +2295,11 @@ impl LocalLspStore {
 
         let set = DiagnosticSet::new(sanitized_diagnostics, &snapshot);
         buffer.update(cx, |buffer, cx| {
-            self.buffer_pull_diagnostics_result_ids
-                .insert(buffer.remote_id(), result_id);
+            if let Some(abs_path) = File::from_dyn(buffer.file()).map(|f| f.abs_path(cx)) {
+                self.buffer_pull_diagnostics_result_ids
+                    .insert(abs_path, result_id);
+            }
+
             buffer.update_diagnostics(server_id, set, cx)
         });
 
@@ -3792,8 +3795,16 @@ impl LspStore {
                 }
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
+                let abs_path = self
+                    .buffer_store
+                    .read(cx)
+                    .get(*buffer_id)
+                    .and_then(|b| File::from_dyn(b.read(cx).file()))
+                    .map(|f| f.abs_path(cx));
                 if let Some(local) = self.as_local_mut() {
-                    local.buffer_pull_diagnostics_result_ids.remove(buffer_id);
+                    if let Some(abs_path) = abs_path {
+                        local.buffer_pull_diagnostics_result_ids.remove(&abs_path);
+                    }
                 }
             }
             _ => {}
@@ -5745,7 +5756,7 @@ impl LspStore {
     ) -> Task<Result<Vec<LspPullDiagnostics>>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
-        let result_id = self.result_id(buffer_id);
+        let result_id = self.result_id(buffer_id, cx);
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
             let request_task = client.request(proto::MultiLspQuery {
@@ -9704,22 +9715,28 @@ impl LspStore {
         }
     }
 
-    pub fn result_id(&self, buffer_id: BufferId) -> Option<String> {
+    pub fn result_id(&self, buffer_id: BufferId, cx: &App) -> Option<String> {
+        let abs_path = self
+            .buffer_store
+            .read(cx)
+            .get(buffer_id)
+            .and_then(|b| File::from_dyn(b.read(cx).file()))
+            .map(|f| f.abs_path(cx))?;
         self.as_local()?
             .buffer_pull_diagnostics_result_ids
-            .get(&buffer_id)
+            .get(&abs_path)
             .cloned()
             .flatten()
     }
 
-    pub fn all_result_ids(&self) -> HashMap<BufferId, String> {
+    pub fn all_result_ids(&self) -> HashMap<PathBuf, String> {
         let Some(local) = self.as_local() else {
             return HashMap::default();
         };
         local
             .buffer_pull_diagnostics_result_ids
             .iter()
-            .filter_map(|(buffer_id, result_id)| Some((*buffer_id, result_id.clone()?)))
+            .filter_map(|(file_path, result_id)| Some((file_path.clone(), result_id.clone()?)))
             .collect()
     }
 
@@ -9802,17 +9819,11 @@ fn lsp_workspace_diagnostics_refresh(
                     .await;
                 attempts += 1;
 
-                let Ok(previous_result_ids) = lsp_store.update(cx, |lsp_store, cx| {
+                let Ok(previous_result_ids) = lsp_store.update(cx, |lsp_store, _| {
                     lsp_store
                         .all_result_ids()
                         .into_iter()
-                        .filter_map(|(buffer_id, result_id)| {
-                            let buffer = lsp_store
-                                .buffer_store()
-                                .read(cx)
-                                .get_existing(buffer_id)
-                                .ok()?;
-                            let abs_path = buffer.read(cx).file()?.as_local()?.abs_path(cx);
+                        .filter_map(|(abs_path, result_id)| {
                             let uri = file_path_to_lsp_url(&abs_path).ok()?;
                             Some(lsp::PreviousResultId {
                                 uri,

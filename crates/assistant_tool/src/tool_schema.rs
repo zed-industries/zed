@@ -46,15 +46,19 @@ fn adapt_to_json_schema_subset(json: &mut Value) -> Result<()> {
             );
         }
 
-        const KEYS_TO_REMOVE: [&str; 5] = [
-            "format",
-            "additionalProperties",
-            "exclusiveMinimum",
-            "exclusiveMaximum",
-            "optional",
+        const KEYS_TO_REMOVE: [(&str, fn(&Value) -> bool); 5] = [
+            ("format", |value| value.is_string()),
+            ("additionalProperties", |value| value.is_boolean()),
+            ("exclusiveMinimum", |value| value.is_number()),
+            ("exclusiveMaximum", |value| value.is_number()),
+            ("optional", |value| value.is_boolean()),
         ];
-        for key in KEYS_TO_REMOVE {
-            obj.remove(key);
+        for (key, predicate) in KEYS_TO_REMOVE {
+            if let Some(value) = obj.get(key) {
+                if predicate(value) {
+                    obj.remove(key);
+                }
+            }
         }
 
         // If a type is not specified for an input parameter, add a default type
@@ -151,6 +155,24 @@ mod tests {
             json!({
                 "description": "A test field",
                 "type": "integer"
+            })
+        );
+
+        // Ensure that we do not remove keys that are actually supported (e.g. "format" can just be used as another property)
+        let mut json = json!({
+            "description": "A test field",
+            "type": "integer",
+            "format": {},
+        });
+
+        adapt_to_json_schema_subset(&mut json).unwrap();
+
+        assert_eq!(
+            json,
+            json!({
+                "description": "A test field",
+                "type": "integer",
+                "format": {},
             })
         );
     }

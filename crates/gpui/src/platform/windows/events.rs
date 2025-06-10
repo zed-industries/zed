@@ -702,7 +702,7 @@ fn handle_ime_composition_inner(
     } else {
         if lparam & GCS_COMPSTR.0 > 0 {
             let comp_string = parse_ime_composition_string(ctx, GCS_COMPSTR)?;
-            let caret_pos = (lparam & GCS_CURSORPOS.0 > 0).then(|| {
+            let caret_pos = (!comp_string.is_empty() && lparam & GCS_CURSORPOS.0 > 0).then(|| {
                 let pos = retrieve_composition_cursor_position(ctx);
                 pos..pos
             });

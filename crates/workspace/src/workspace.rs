@@ -6263,7 +6263,15 @@ fn resize_right_dock(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    let mut size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
+    workspace.left_dock.read_with(cx, |left_dock, cx| {
+        let left_dock_size = left_dock
+            .active_panel_size(window, cx)
+            .unwrap_or(Pixels(0.0));
+        if left_dock_size + size > workspace.bounds.right() {
+            size = workspace.bounds.right() - left_dock_size
+        }
+    });
     workspace.right_dock.update(cx, |right_dock, cx| {
         if WorkspaceSettings::get_global(cx)
             .resize_all_panels_in_dock
