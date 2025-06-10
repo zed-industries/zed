@@ -275,6 +275,101 @@ Given an externally-ran web server (e.g. with `npx serve` or `npx live-server`) 
 ]
 ```
 
+#### Go
+
+Zed uses [delve](https://github.com/go-delve/delve?tab=readme-ov-file) to debug Go applications. Zed will automatically create debug scenarios for `func main` in your main packages, and also
+for any tests, so you can use the Play button in the gutter to debug these without configuration. We do not yet support attaching to an existing running copy of delve.
+
+##### Debug Go Packages
+
+To debug a specific package, you can do so by setting the Delve mode to "debug". In this case "program" should be set to the package name.
+
+```json
+[
+  {
+    "label": "Run server",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "debug",
+    // For Delve, the program is the package name
+    "program": "./cmd/server"
+    // "args": [],
+    // "buildFlags": [],
+  }
+]
+```
+
+##### Debug Go Tests
+
+To debug the tests for a package, set the Delve mode to "test". The "program" is still the package name, and you can use the "buildFlags" to do things like set tags, and the "args" to set args on the test binary. (See `go help testflags` for more information on doing that).
+
+```json
+[
+  {
+    "label": "Run integration tests",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "test",
+    "program": ".",
+    "buildFlags": ["-tags", "integration"]
+    // To filter down to just the test your cursor is in:
+    // "args": ["-test.run", "$ZED_SYMBOL"]
+  }
+]
+```
+
+##### Build and debug separately
+
+If you need to build your application with a specific command, you can use the "exec" mode of Delve. In this case "program" should point to an executable,
+and the "build" command should build that.
+
+```json
+{
+  "label": "Debug Prebuilt Unit Tests",
+  "adapter": "Delve",
+  "request": "launch",
+  "mode": "exec",
+  "program": "${ZED_WORKTREE_ROOT}/__debug_unit",
+  "args": ["-test.v", "-test.run=${ZED_SYMBOL}"],
+  "build": {
+    "command": "go",
+    "args": [
+      "test",
+      "-c",
+      "-tags",
+      "unit",
+      "-gcflags\"all=-N -l\"",
+      "-o",
+      "__debug_unit",
+      "./pkg/..."
+    ]
+  }
+}
+```
+
+### Ruby
+
+To run a ruby task in the debugger, you will need to configure it in the `.zed/debug.json` file in your project. We don't yet have automatic detection of ruby tasks, nor do we support connecting to an existing process.
+
+The configuration should look like this:
+
+```json
+{
+  {
+    "adapter": "Ruby",
+    "label": "Run CLI",
+    "script": "cli.rb"
+    // If you want to customize how the script is run (for example using bundle exec)
+    // use "command" instead.
+    // "command": "bundle exec cli.rb"
+    //
+    // "args": []
+    // "env": {}
+    // "cwd": ""
+  }
+}
+```
+
 ## Breakpoints
 
 To set a breakpoint, simply click next to the line number in the editor gutter.
