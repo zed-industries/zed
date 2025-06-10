@@ -13,7 +13,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
-use collections::{HashMap, HashSet, IndexMap, IndexSet};
+use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
