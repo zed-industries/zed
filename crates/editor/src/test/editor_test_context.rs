@@ -270,7 +270,10 @@ impl EditorTestContext {
 
     pub fn pixel_position_for(&mut self, display_point: DisplayPoint) -> Point<Pixels> {
         self.update_editor(|editor, window, cx| {
-            let newest_point = editor.selections.newest_display(cx).head();
+            let newest_point = editor
+                .selections
+                .newest_display(&editor.display_snapshot(cx))
+                .head();
             let pixel_position = editor.pixel_position_of_newest_cursor.unwrap();
             let line_height = editor
                 .style()
@@ -546,7 +549,7 @@ impl EditorTestContext {
     fn editor_selections(&mut self) -> Vec<Range<usize>> {
         self.editor
             .update(&mut self.cx, |editor, cx| {
-                editor.selections.all::<usize>(cx)
+                editor.selections.all::<usize>(&editor.display_snapshot(cx))
             })
             .into_iter()
             .map(|s| {

@@ -380,7 +380,10 @@ fn update_editor_selection(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
-    let newest_cursor = editor.selections.newest::<Point>(cx).head();
+    let newest_cursor = editor
+        .selections
+        .newest::<Point>(&editor.display_snapshot(cx))
+        .head();
 
     if !diff_hunks.iter().any(|hunk| {
         hunk.row_range
@@ -1844,7 +1847,9 @@ mod tests {
         );
         assert_eq!(
             editor
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(1, 0)..Point::new(1, 0)
         );
@@ -1858,7 +1863,9 @@ mod tests {
         );
         assert_eq!(
             editor
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -1879,7 +1886,9 @@ mod tests {
         );
         assert_eq!(
             editor
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -1911,7 +1920,9 @@ mod tests {
         );
         assert_eq!(
             editor
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2073,7 +2084,9 @@ mod tests {
         );
         assert_eq!(
             editor1
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(1, 0)..Point::new(1, 0)
         );
@@ -2114,7 +2127,9 @@ mod tests {
         );
         assert_eq!(
             editor1
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2135,7 +2150,9 @@ mod tests {
         );
         assert_eq!(
             editor1
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2161,7 +2178,9 @@ mod tests {
         );
         assert_eq!(
             editor1
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(3, 0)..Point::new(3, 0)
         );
@@ -2194,7 +2213,9 @@ mod tests {
         );
         assert_eq!(
             editor2
-                .update(cx, |editor, cx| editor.selections.newest::<Point>(cx))
+                .update(cx, |editor, cx| editor
+                    .selections
+                    .newest::<Point>(&editor.display_snapshot(cx)))
                 .range(),
             Point::new(0, 0)..Point::new(0, 0)
         );
