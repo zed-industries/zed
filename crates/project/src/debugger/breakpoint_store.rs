@@ -840,7 +840,7 @@ impl BreakpointStore {
                         } else {
                             "breakpoint"
                         };
-                        log::info!("Deserialized {count} {breakpoint_str} at path: {path}");
+                        log::debug!("Deserialized {count} {breakpoint_str} at path: {path}");
                     }
 
                     this.breakpoints = new_breakpoints;
