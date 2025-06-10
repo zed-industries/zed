@@ -341,28 +341,4 @@ Plain minitest does not support running tests by line number, only by name, so w
 ]
 ```
 
-### quickdraw
-
-```json
-[
-  {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle",
-    "args": ["exec", "qt", "exec", "qt", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
-    "tags": ["ruby-test"]
-  }
-]
-```
-
-### tldr
-
-```json
-[
-  {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle",
-    "args": ["exec", "tldr", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
-    "tags": ["ruby-test"]
-  }
-]
-```
+Similar task syntax can be used for other test frameworks such as `quickdraw` or `tldr`.
