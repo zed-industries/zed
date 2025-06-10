@@ -55,7 +55,7 @@ impl DapLocator for NodeLocator {
         let config = serde_json::json!({
             "request": "launch",
             "type": "pwa-node",
-            "program": program_path,
+            "runtimeExecutable": program_path,
             "args": args,
             "cwd": build_config.cwd.clone(),
             "runtimeArgs": ["--inspect-brk"],
@@ -72,6 +72,6 @@ impl DapLocator for NodeLocator {
     }
 
     async fn run(&self, _: SpawnInTerminal) -> Result<DebugRequest> {
-        bail!("Python locator should not require DapLocator::run to be ran");
+        bail!("JavaScript locator should not require DapLocator::run to be ran");
     }
 }

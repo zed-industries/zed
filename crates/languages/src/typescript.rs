@@ -73,12 +73,16 @@ struct PackageJsonData {
 enum Runner {
     #[default]
     Npm,
-    Npx,
+    Yarn,
     Pnpm,
 }
 
 impl PackageJsonData {
-    fn new(package_json: HashMap<String, Value>) -> Self {
+    async fn new(
+        package_json: HashMap<String, Value>,
+        worktree_root: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Self {
         let mut build_script = false;
         let mut test_script = false;
         if let Some(serde_json::Value::Object(scripts)) = package_json.get("scripts") {
@@ -104,11 +108,24 @@ impl PackageJsonData {
             jasmine |= dev_dependencies.contains_key("jasmine");
         }
 
-        let mut runner = Runner::Npm;
-        if which::which("pnpm").is_ok() {
-            runner = Runner::Pnpm;
-        } else if which::which("npx").is_ok() {
-            runner = Runner::Npx;
+        let mut runner = package_json
+            .get("packageManager")
+            .and_then(|value| value.as_str())
+            .and_then(|value| {
+                if value.starts_with("pnpm") {
+                    Some(Runner::Pnpm)
+                } else if value.starts_with("yarn") {
+                    Some(Runner::Yarn)
+                } else if value.starts_with("npm") {
+                    Some(Runner::Npm)
+                } else {
+                    None
+                }
+            });
+
+        if runner.is_none() {
+            let detected_runner = detect_package_manager(&fs, &worktree_root).await;
+            runner = Some(detected_runner);
         }
 
         Self {
@@ -118,15 +135,15 @@ impl PackageJsonData {
             jasmine,
             build_script,
             test_script,
-            runner,
+            runner: runner.unwrap(),
         }
     }
 
     fn fill_variables(&self, variables: &mut TaskVariables) {
         let runner = match self.runner {
             Runner::Npm => "npm",
-            Runner::Npx => "npx",
             Runner::Pnpm => "pnpm",
+            Runner::Yarn => "yarn",
         };
         variables.insert(TYPESCRIPT_RUNNER_VARIABLE, runner.to_owned());
 
@@ -420,7 +437,8 @@ async fn package_json_variables(
         let package_json: HashMap<String, serde_json::Value> =
             serde_json::from_str(&package_json_string)
                 .with_context(|| format!("parsing package.json from {package_json_path:?}"))?;
-        let new_data = PackageJsonData::new(package_json);
+
+        let new_data = PackageJsonData::new(package_json, worktree_root, fs).await;
         new_data.fill_variables(&mut variables);
         {
             let mut contents = package_json_contents.0.write().await;
@@ -435,6 +453,23 @@ async fn package_json_variables(
     }
 
     Ok(variables)
+}
+
+async fn detect_package_manager(fs: &Arc<dyn Fs>, worktree_root: &PathBuf) -> Runner {
+    // Check for pnpm-lock.yaml first (pnpm)
+    if fs
+        .metadata(&worktree_root.join("pnpm-lock.yaml"))
+        .await
+        .is_ok()
+    {
+        return Runner::Pnpm;
+    }
+
+    if fs.metadata(&worktree_root.join("yarn.lock")).await.is_ok() {
+        return Runner::Yarn;
+    }
+
+    Runner::Npm
 }
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
