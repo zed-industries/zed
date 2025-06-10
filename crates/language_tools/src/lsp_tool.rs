@@ -394,7 +394,9 @@ impl LspPickerDelegate {
         cx: &Context<'_, Picker<Self>>,
     ) -> AnyElement {
         let full_label_message = message.trim();
-        let shortened_message = truncate_and_trailoff(full_label_message, 30);
+        let shortened_message = truncate_and_trailoff(full_label_message, 30)
+            .lines()
+            .join(" ");
         let tooltip = if full_label_message == shortened_message {
             None
         } else if full_label_message == message.as_ref() {
@@ -411,10 +413,12 @@ impl LspPickerDelegate {
                 div.tooltip(move |_, cx| Tooltip::simple(tooltip.clone(), cx))
             })
             .hover(|s| s.opacity(0.6))
+            .border_1()
             .map(|div| match severity {
-                Severity::Other | Severity::Ok | Severity::Info => div,
-                Severity::Warning => div.border_1().border_color(Color::Warning.color(cx)),
-                Severity::Error => div.border_1().border_color(Color::Error.color(cx)),
+                Severity::Ok | Severity::Info => div.border_color(Color::Info.color(cx)),
+                Severity::Warning => div.border_color(Color::Warning.color(cx)),
+                Severity::Error => div.border_color(Color::Error.color(cx)),
+                Severity::Other => div,
             })
             .cursor_pointer()
             .on_mouse_down(MouseButton::Left, {
