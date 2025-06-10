@@ -605,6 +605,12 @@ impl DebugPanel {
                     }
                 })
         };
+        let documentation_button = || {
+            IconButton::new("debug-open-documentation", IconName::CircleHelp)
+                .icon_size(IconSize::Small)
+                .on_click(move |_, _, cx| cx.open_url("https://zed.dev/docs/debugger"))
+                .tooltip(Tooltip::text("Open Documentation"))
+        };
 
         Some(
             div.border_b_1()
@@ -840,7 +846,10 @@ impl DebugPanel {
                             ),
                         )
                         .justify_around()
-                        .when(is_side, |this| this.child(new_session_button())),
+                        .when(is_side, |this| {
+                            this.child(new_session_button())
+                                .child(documentation_button())
+                        }),
                 )
                 .child(
                     h_flex()
@@ -881,7 +890,10 @@ impl DebugPanel {
                                     window,
                                     cx,
                                 ))
-                                .when(!is_side, |this| this.child(new_session_button())),
+                                .when(!is_side, |this| {
+                                    this.child(new_session_button())
+                                        .child(documentation_button())
+                                }),
                         ),
                 ),
         )
