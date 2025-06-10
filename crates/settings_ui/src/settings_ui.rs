@@ -20,7 +20,7 @@ use workspace::{Workspace, with_active_or_new_workspace};
 
 use crate::appearance_settings_controls::AppearanceSettingsControls;
 
-mod keybindings;
+pub mod keybindings;
 
 pub struct SettingsUiFeatureFlag;
 

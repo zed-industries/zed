@@ -1,9 +1,13 @@
-use std::fmt::Write as _;
+use std::{cell::RefCell, fmt::Write as _, rc::Rc};
 
 use db::anyhow::anyhow;
-use gpui::{AppContext as _, EventEmitter, FocusHandle, Focusable, actions};
+use gpui::{
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, Keymap,
+    Subscription, Task, actions,
+};
 use ui::{
-    ActiveTheme as _, App, ParentElement as _, Render, Styled as _, Table, Window, div, string_cell,
+    ActiveTheme as _, App, BorrowAppContext, ParentElement as _, Render, SharedString, Styled as _,
+    Table, Window, div, string_cell,
 };
 use workspace::{Item, SerializableItem, Workspace, register_serializable_item};
 
@@ -12,6 +16,9 @@ use crate::keybindings::persistence::KEYBINDING_EDITORS;
 actions!(zed, [OpenKeymapEditor]);
 
 pub fn init(cx: &mut App) {
+    let keymap_event_channel = KeymapEventChannel::new();
+    cx.set_global(keymap_event_channel);
+
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &OpenKeymapEditor, window, cx| {
             let open_keymap_editor = cx.new(|cx| KeymapEditor::new(cx));
@@ -23,8 +30,32 @@ pub fn init(cx: &mut App) {
     register_serializable_item::<KeymapEditor>(cx);
 }
 
+enum KeymapEvent {
+    KeymapChanged,
+}
+
+pub struct KeymapEventChannel {}
+
+impl EventEmitter<KeymapEvent> for KeymapEventChannel {}
+impl Global for KeymapEventChannel {}
+
+impl KeymapEventChannel {
+    fn new() -> Self {
+        Self {}
+    }
+
+    pub fn trigger_keymap_changed(cx: &mut App) {
+        cx.update_global(|_event_channel: &mut Self, _| {
+            dbg!("updating global");
+            *_event_channel = Self::new();
+        });
+    }
+}
+
 struct KeymapEditor {
     focus_handle: FocusHandle,
+    _keymap_subscription: Subscription,
+    processed_bindings: Vec<ProcessedKeybinding>,
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -37,10 +68,50 @@ impl Focusable for KeymapEditor {
 
 impl KeymapEditor {
     fn new(cx: &mut gpui::Context<Self>) -> Self {
+        let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(|this, cx| {
+            let key_bindings = Self::process_bindings(cx);
+            this.processed_bindings = key_bindings;
+        });
         Self {
             focus_handle: cx.focus_handle(),
+            _keymap_subscription,
+            processed_bindings: vec![],
         }
     }
+
+    fn process_bindings(cx: &mut Context<Self>) -> Vec<ProcessedKeybinding> {
+        let key_bindings_ptr = cx.key_bindings();
+        let lock = key_bindings_ptr.borrow();
+        let key_bindings = lock.bindings();
+
+        let mut processed_bindings = Vec::new();
+
+        for key_binding in key_bindings {
+            let mut keystroke_text = String::new();
+            for keystroke in key_binding.keystrokes() {
+                write!(&mut keystroke_text, "{} ", keystroke.unparse()).ok();
+            }
+            let keystroke_text = keystroke_text.trim().to_string();
+
+            let context = key_binding
+                .predicate()
+                .map(|predicate| predicate.to_string())
+                .unwrap_or_else(|| "<global>".to_string());
+
+            processed_bindings.push(ProcessedKeybinding {
+                keystroke_text: keystroke_text.into(),
+                action: key_binding.action().name().into(),
+                context: context.into(),
+            })
+        }
+        processed_bindings
+    }
+}
+
+struct ProcessedKeybinding {
+    keystroke_text: SharedString,
+    action: SharedString,
+    context: SharedString,
 }
 
 impl SerializableItem for KeymapEditor {
@@ -116,29 +187,17 @@ impl Item for KeymapEditor {
 
 impl Render for KeymapEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
-        let key_bindings_ptr = cx.key_bindings();
-        let lock = key_bindings_ptr.borrow();
-        let key_bindings = lock.bindings();
+        dbg!("rendering");
+        if self.processed_bindings.is_empty() {
+            self.processed_bindings = Self::process_bindings(cx);
+        }
 
         let mut table = Table::new(vec!["Command", "Keystrokes", "Context"]);
-        for key_binding in key_bindings {
-            let mut keystroke_text = String::new();
-            for keystroke in key_binding.keystrokes() {
-                write!(&mut keystroke_text, "{} ", keystroke.unparse()).ok();
-            }
-            let keystroke_text = keystroke_text.trim().to_string();
-
-            let context = key_binding
-                .predicate()
-                .map(|predicate| predicate.to_string())
-                .unwrap_or_else(|| "<global>".to_string());
-
-            // dbg!(key_binding.action().name(), &keystroke_text, &context);
-
+        for key_binding in &self.processed_bindings {
             table = table.row(vec![
-                string_cell(key_binding.action().name()),
-                string_cell(keystroke_text),
-                string_cell(context),
+                string_cell(key_binding.action.clone()),
+                string_cell(key_binding.keystroke_text.clone()),
+                string_cell(key_binding.context.clone()),
                 // TODO: Add a source field
                 // string_cell(keybinding.source().to_string()),
             ]);
