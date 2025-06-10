@@ -250,6 +250,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
             width: px(360.0),
             height: px(240.0),
         }),
+        #[cfg(target_os = "macos")]
+        disable_click_through_mac: ThemeSettings::get_global(cx).disable_click_through_mac,
     }
 }
 

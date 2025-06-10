@@ -141,6 +141,10 @@
   //  3. Never close the window
   //         "when_closing_with_no_tabs": "keep_window_open",
   "when_closing_with_no_tabs": "platform_default",
+  // Whether to disable click-through behavior on macOS.
+  // When enabled, clicks on inactive Zed windows will only focus the window
+  // without activating buttons or other UI elements.
+  "disable_click_through_mac": false,
   // What to do when the last window is closed.
   // May take 2 values:
   //  1. Use the current platform's convention

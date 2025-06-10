@@ -446,6 +446,8 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     // macOS specific methods
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
+    #[cfg(target_os = "macos")]
+    fn set_disable_click_through(&self, _disable: bool) {}
     fn titlebar_double_click(&self) {}
 
     #[cfg(target_os = "windows")]
@@ -1050,6 +1052,10 @@ pub struct WindowOptions {
     /// Whether to use client or server side decorations. Wayland only
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
+
+    /// Whether to disable click-through behavior on macOS.
+    #[cfg(target_os = "macos")]
+    pub disable_click_through_mac: bool,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1089,6 +1095,9 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_min_size: Option<Size<Pixels>>,
+
+    #[cfg(target_os = "macos")]
+    pub disable_click_through_mac: bool,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1139,6 +1148,8 @@ impl Default for WindowOptions {
             app_id: None,
             window_min_size: None,
             window_decorations: None,
+            #[cfg(target_os = "macos")]
+            disable_click_through_mac: false,
         }
     }
 }

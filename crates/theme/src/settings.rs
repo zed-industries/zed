@@ -131,6 +131,9 @@ pub struct ThemeSettings {
     pub ui_density: UiDensity,
     /// The amount of fading applied to unnecessary code.
     pub unnecessary_code_fade: f32,
+    /// Whether to disable click-through behavior on macOS.
+    #[cfg(target_os = "macos")]
+    pub disable_click_through_mac: bool,
 }
 
 impl ThemeSettings {
@@ -169,6 +172,8 @@ impl ThemeSettings {
 
             if let Some(_theme) = theme_settings.switch_theme(theme_name, cx) {
                 ThemeSettings::override_global(theme_settings, cx);
+                #[cfg(target_os = "macos")]
+                update_click_through_for_all_windows(cx);
             }
         }
     }
@@ -441,6 +446,12 @@ pub struct ThemeSettingsContent {
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeStyleContent>,
+
+    /// Whether to disable click-through behavior on macOS.
+    /// When enabled, clicks on inactive Zed windows will only focus the window
+    /// without activating buttons or other UI elements.
+    #[serde(default)]
+    pub disable_click_through_mac: Option<bool>,
 }
 
 fn default_font_features() -> Option<FontFeatures> {
@@ -797,6 +808,18 @@ pub fn reset_agent_font_size(cx: &mut App) {
     }
 }
 
+/// Updates the click-through setting for all windows on macOS.
+#[cfg(target_os = "macos")]
+pub fn update_click_through_for_all_windows(cx: &mut App) {
+    let disable_click_through = ThemeSettings::get_global(cx).disable_click_through_mac;
+
+    for window in cx.windows() {
+        let _ = window.update(cx, |_, window, _| {
+            window.set_disable_click_through(disable_click_through);
+        });
+    }
+}
+
 /// Ensures font size is within the valid range.
 pub fn clamp_font_size(size: Pixels) -> Pixels {
     size.max(MIN_FONT_SIZE)
@@ -859,6 +882,8 @@ impl settings::Settings for ThemeSettings {
                 .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
+            #[cfg(target_os = "macos")]
+            disable_click_through_mac: defaults.disable_click_through_mac.unwrap_or(false),
         };
 
         for value in sources
@@ -954,6 +979,12 @@ impl settings::Settings for ThemeSettings {
             // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.
             merge(&mut this.unnecessary_code_fade, value.unnecessary_code_fade);
             this.unnecessary_code_fade = this.unnecessary_code_fade.clamp(0.0, 0.9);
+
+            #[cfg(target_os = "macos")]
+            merge(
+                &mut this.disable_click_through_mac,
+                value.disable_click_through_mac,
+            );
         }
 
         Ok(this)

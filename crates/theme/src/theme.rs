@@ -106,6 +106,8 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
     let mut prev_buffer_font_size_settings =
         ThemeSettings::get_global(cx).buffer_font_size_settings();
     let mut prev_ui_font_size_settings = ThemeSettings::get_global(cx).ui_font_size_settings();
+    #[cfg(target_os = "macos")]
+    let mut prev_disable_click_through = ThemeSettings::get_global(cx).disable_click_through_mac;
     cx.observe_global::<SettingsStore>(move |cx| {
         let buffer_font_size_settings = ThemeSettings::get_global(cx).buffer_font_size_settings();
         if buffer_font_size_settings != prev_buffer_font_size_settings {
@@ -117,6 +119,15 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut App) {
         if ui_font_size_settings != prev_ui_font_size_settings {
             prev_ui_font_size_settings = ui_font_size_settings;
             reset_ui_font_size(cx);
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let disable_click_through = ThemeSettings::get_global(cx).disable_click_through_mac;
+            if disable_click_through != prev_disable_click_through {
+                prev_disable_click_through = disable_click_through;
+                crate::settings::update_click_through_for_all_windows(cx);
+            }
         }
     })
     .detach();

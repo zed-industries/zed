@@ -884,6 +884,8 @@ impl Window {
             app_id,
             window_min_size,
             window_decorations,
+            #[cfg(target_os = "macos")]
+            disable_click_through_mac,
         } = options;
 
         let bounds = window_bounds
@@ -900,6 +902,8 @@ impl Window {
                 show,
                 display_id,
                 window_min_size,
+                #[cfg(target_os = "macos")]
+                disable_click_through_mac,
             },
         )?;
         let display_id = platform_window.display().map(|display| display.id());
@@ -1562,6 +1566,13 @@ impl Window {
     /// Toggle zoom on the window.
     pub fn zoom_window(&self) {
         self.platform_window.zoom();
+    }
+
+    /// Set whether click-through behavior is disabled on macOS.
+    /// When disabled, clicks on inactive windows will only focus the window without activating UI elements.
+    #[cfg(target_os = "macos")]
+    pub fn set_disable_click_through(&self, disable: bool) {
+        self.platform_window.set_disable_click_through(disable);
     }
 
     /// Opens the native title bar context menu, useful when implementing client side decorations (Wayland and X11)
