@@ -333,6 +333,7 @@ impl BladeRenderer {
         window: &I,
         config: BladeSurfaceConfig,
     ) -> anyhow::Result<Self> {
+        // workaround for https://github.com/zed-industries/zed/issues/26143
         let sample_count = std::env::var("ZED_SAMPLE_COUNT")
             .ok()
             .and_then(|v| v.parse().ok())
