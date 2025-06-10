@@ -91,36 +91,35 @@ impl AgentModelSelector {
 
 impl Render for AgentModelSelector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle.clone();
-
         let model = self.selector.read(cx).delegate.active_model(cx);
         let model_name = model
             .map(|model| model.model.name().0)
             .unwrap_or_else(|| SharedString::from("No model selected"));
-        div().w_full().min_w_0().overflow_hidden().child(
-            PickerPopoverMenu::new(
-                self.selector.clone(),
-                Button::new("active-model", model_name)
-                    .label_size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .icon(IconName::ChevronDown)
-                    .icon_size(IconSize::XSmall)
-                    .icon_position(IconPosition::End)
-                    .icon_color(Color::Muted),
-                move |window, cx| {
-                    Tooltip::for_action_in(
-                        "Change Model",
-                        &ToggleModelSelector,
-                        &focus_handle,
-                        window,
-                        cx,
-                    )
-                },
-                gpui::Corner::BottomRight,
-                cx,
-            )
-            .with_handle(self.menu_handle.clone())
-            .render(window, cx),
+
+        let focus_handle = self.focus_handle.clone();
+
+        PickerPopoverMenu::new(
+            self.selector.clone(),
+            Button::new("active-model", model_name)
+                .label_size(LabelSize::Small)
+                .color(Color::Muted)
+                .icon(IconName::ChevronDown)
+                .icon_size(IconSize::XSmall)
+                .icon_position(IconPosition::End)
+                .icon_color(Color::Muted),
+            move |window, cx| {
+                Tooltip::for_action_in(
+                    "Change Model",
+                    &ToggleModelSelector,
+                    &focus_handle,
+                    window,
+                    cx,
+                )
+            },
+            gpui::Corner::BottomRight,
+            cx,
         )
+        .with_handle(self.menu_handle.clone())
+        .render(window, cx)
     }
 }
