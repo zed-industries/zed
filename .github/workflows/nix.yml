@@ -31,7 +31,6 @@ jobs:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
       GIT_LFS_SKIP_SMUDGE: 1 # breaks the livekit rust sdk examples which we don't actually depend on
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -52,13 +51,10 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - if: ${{ env.CACHIX_AUTH_TOKEN == '' }}
-        run: 'echo "SECRET NOT SET!"'
-
       - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
         with:
           name: zed
-          authToken: "${{ env.CACHIX_AUTH_TOKEN }}"
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
           pushFilter: "${{ inputs.cachix-filter }}"
           cachixArgs: '-v'
 
