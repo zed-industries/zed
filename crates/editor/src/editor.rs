@@ -1200,10 +1200,12 @@ struct SelectionHistoryEntry {
     add_selections_state: Option<AddSelectionsState>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SelectionHistoryMode {
     Normal,
     Undoing,
     Redoing,
+    Skipping,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -1271,6 +1273,7 @@ impl SelectionHistory {
                 }
                 SelectionHistoryMode::Undoing => self.push_redo(entry),
                 SelectionHistoryMode::Redoing => self.push_undo(entry),
+                SelectionHistoryMode::Skipping => {}
             }
         }
     }
@@ -2090,7 +2093,11 @@ impl Editor {
             }
         }
 
+        // skip adding the initial selection to selection history
+        editor.selection_history.mode = SelectionHistoryMode::Skipping;
         editor.end_selection(window, cx);
+        editor.selection_history.mode = SelectionHistoryMode::Normal;
+
         editor.scroll_manager.show_scrollbars(window, cx);
         jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut editor, &buffer, cx);
 
@@ -14212,18 +14219,20 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        self.end_selection(window, cx);
-        self.selection_history.mode = SelectionHistoryMode::Undoing;
         if let Some(entry) = self.selection_history.undo_stack.pop_back() {
-            self.change_selections(None, window, cx, |s| {
-                s.select_anchors(entry.selections.to_vec())
+            self.selection_history.mode = SelectionHistoryMode::Undoing;
+            self.with_selection_effects_deferred(window, cx, |this, window, cx| {
+                this.end_selection(window, cx);
+                this.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
+                    s.select_anchors(entry.selections.to_vec())
+                });
             });
+            self.selection_history.mode = SelectionHistoryMode::Normal;
+
             self.select_next_state = entry.select_next_state;
             self.select_prev_state = entry.select_prev_state;
             self.add_selections_state = entry.add_selections_state;
-            self.request_autoscroll(Autoscroll::newest(), cx);
         }
-        self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
     pub fn redo_selection(
@@ -14233,18 +14242,20 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        self.end_selection(window, cx);
-        self.selection_history.mode = SelectionHistoryMode::Redoing;
         if let Some(entry) = self.selection_history.redo_stack.pop_back() {
-            self.change_selections(None, window, cx, |s| {
-                s.select_anchors(entry.selections.to_vec())
+            self.selection_history.mode = SelectionHistoryMode::Redoing;
+            self.with_selection_effects_deferred(window, cx, |this, window, cx| {
+                this.end_selection(window, cx);
+                this.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
+                    s.select_anchors(entry.selections.to_vec())
+                });
             });
+            self.selection_history.mode = SelectionHistoryMode::Normal;
+
             self.select_next_state = entry.select_next_state;
             self.select_prev_state = entry.select_prev_state;
             self.add_selections_state = entry.add_selections_state;
-            self.request_autoscroll(Autoscroll::newest(), cx);
         }
-        self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
     pub fn expand_excerpts(
@@ -19999,12 +20010,15 @@ impl Editor {
                 if !selections.is_empty() {
                     let snapshot =
                         buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
+                    // skip adding the initial selection to selection history
+                    self.selection_history.mode = SelectionHistoryMode::Skipping;
                     self.change_selections(None, window, cx, |s| {
                         s.select_ranges(selections.into_iter().map(|(start, end)| {
                             snapshot.clip_offset(start, Bias::Left)
                                 ..snapshot.clip_offset(end, Bias::Right)
                         }));
                     });
+                    self.selection_history.mode = SelectionHistoryMode::Normal;
                 }
             };
         }
