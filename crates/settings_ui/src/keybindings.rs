@@ -111,69 +111,6 @@ struct ProcessedKeybinding {
     context: SharedString,
 }
 
-impl SerializableItem for KeymapEditor {
-    fn serialized_item_kind() -> &'static str {
-        "KeymapEditor"
-    }
-
-    fn cleanup(
-        workspace_id: workspace::WorkspaceId,
-        alive_items: Vec<workspace::ItemId>,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> gpui::Task<gpui::Result<()>> {
-        workspace::delete_unloaded_items(
-            alive_items,
-            workspace_id,
-            "keybinding_editors",
-            &KEYBINDING_EDITORS,
-            cx,
-        )
-    }
-
-    fn deserialize(
-        _project: gpui::Entity<project::Project>,
-        _workspace: gpui::WeakEntity<Workspace>,
-        workspace_id: workspace::WorkspaceId,
-        item_id: workspace::ItemId,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> gpui::Task<gpui::Result<gpui::Entity<Self>>> {
-        cx.spawn(async move |cx| {
-            if KEYBINDING_EDITORS
-                .get_keybinding_editor(item_id, workspace_id)?
-                .is_some()
-            {
-                cx.new(|cx| KeymapEditor::new(cx))
-            } else {
-                Err(anyhow!("No keybinding editor to deserialize"))
-            }
-        })
-    }
-
-    fn serialize(
-        &mut self,
-        workspace: &mut Workspace,
-        item_id: workspace::ItemId,
-        _closing: bool,
-        _window: &mut Window,
-        cx: &mut ui::Context<Self>,
-    ) -> Option<gpui::Task<gpui::Result<()>>> {
-        let Some(workspace_id) = workspace.database_id() else {
-            return None;
-        };
-        Some(cx.background_spawn(async move {
-            KEYBINDING_EDITORS
-                .save_keybinding_editor(item_id, workspace_id)
-                .await
-        }))
-    }
-
-    fn should_serialize(&self, _event: &Self::Event) -> bool {
-        false
-    }
-}
-
 impl Item for KeymapEditor {
     type Event = ();
 
@@ -353,6 +290,69 @@ where
 {
     fn from(e: E) -> Self {
         TableCell::String(e.into())
+    }
+}
+
+impl SerializableItem for KeymapEditor {
+    fn serialized_item_kind() -> &'static str {
+        "KeymapEditor"
+    }
+
+    fn cleanup(
+        workspace_id: workspace::WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Task<gpui::Result<()>> {
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "keybinding_editors",
+            &KEYBINDING_EDITORS,
+            cx,
+        )
+    }
+
+    fn deserialize(
+        _project: gpui::Entity<project::Project>,
+        _workspace: gpui::WeakEntity<Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Task<gpui::Result<gpui::Entity<Self>>> {
+        cx.spawn(async move |cx| {
+            if KEYBINDING_EDITORS
+                .get_keybinding_editor(item_id, workspace_id)?
+                .is_some()
+            {
+                cx.new(|cx| KeymapEditor::new(cx))
+            } else {
+                Err(anyhow!("No keybinding editor to deserialize"))
+            }
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut ui::Context<Self>,
+    ) -> Option<gpui::Task<gpui::Result<()>>> {
+        let Some(workspace_id) = workspace.database_id() else {
+            return None;
+        };
+        Some(cx.background_spawn(async move {
+            KEYBINDING_EDITORS
+                .save_keybinding_editor(item_id, workspace_id)
+                .await
+        }))
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
     }
 }
 
