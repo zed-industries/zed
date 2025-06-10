@@ -80,7 +80,7 @@ impl Database {
         &self,
         user_id: UserId,
     ) -> Result<Option<proto::IncomingCall>> {
-        self.transaction(|tx| async move {
+        self.weak_transaction(|tx| async move {
             let pending_participant = room_participant::Entity::find()
                 .filter(
                     room_participant::Column::UserId

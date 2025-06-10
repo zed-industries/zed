@@ -25,7 +25,6 @@ assistant_context_editor.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 assistant_tool.workspace = true
-async-watch.workspace = true
 audio.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
@@ -95,6 +94,7 @@ ui_input.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 uuid.workspace = true
+watch.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
@@ -102,11 +102,13 @@ zed_llm_client.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+assistant_tools.workspace = true
 buffer_diff = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true

@@ -317,7 +317,6 @@ pub enum Event {
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     AgentLocationChanged,
-    RefreshDocumentsDiagnostics,
 }
 
 pub struct AgentLocationChanged;
@@ -468,7 +467,7 @@ impl CompletionSource {
         }
     }
 
-    pub fn lsp_completion(&self, apply_defaults: bool) -> Option<Cow<lsp::CompletionItem>> {
+    pub fn lsp_completion(&self, apply_defaults: bool) -> Option<Cow<'_, lsp::CompletionItem>> {
         if let Self::Lsp {
             lsp_completion,
             lsp_defaults,
@@ -2814,9 +2813,6 @@ impl Project {
             }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
-            LspStoreEvent::RefreshDocumentsDiagnostics => {
-                cx.emit(Event::RefreshDocumentsDiagnostics)
-            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }
@@ -3732,6 +3728,7 @@ impl Project {
         &mut self,
         language_server_id: LanguageServerId,
         source_kind: DiagnosticSourceKind,
+        result_id: Option<String>,
         params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
@@ -3740,6 +3737,7 @@ impl Project {
             lsp_store.update_diagnostics(
                 language_server_id,
                 params,
+                result_id,
                 source_kind,
                 disk_based_sources,
                 cx,
