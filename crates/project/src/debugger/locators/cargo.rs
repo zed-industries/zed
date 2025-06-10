@@ -49,15 +49,6 @@ impl DapLocator for CargoLocator {
         adapter: Option<DebugAdapterName>,
         cx: &App,
     ) -> Option<DebugScenario> {
-        dbg!(&language_settings(Some(LanguageName::new("Rust")), None, cx).debuggers);
-        let adapter = adapter.or_else(|| {
-            language_settings(Some(LanguageName::new("Rust")), None, cx)
-                .debuggers
-                .first()
-                .map(SharedString::from)
-                .map(Into::into)
-        })?;
-
         if build_config.command != "cargo" {
             return None;
         }
@@ -89,7 +80,7 @@ impl DapLocator for CargoLocator {
 
 
         Some(DebugScenario {
-            adapter: adapter.0,
+            adapter: adapter?.0,
             label: resolved_label.to_string().into(),
             build: Some(BuildTaskDefinition::Template {
                 task_template,

@@ -1311,15 +1311,39 @@ impl PickerDelegate for DebugDelegate {
             ..Default::default()
         };
 
-        let Some(location) = self.task_contexts.and_then(|cx| cx.location()) else {
+        let Some(location) = self
+            .task_contexts
+            .as_ref()
+            .and_then(|cx| cx.location().cloned())
+        else {
             return;
         };
         let file = location.buffer.read(cx).file();
-        let Some(debug_scenario) = cx
-            .global::<DapRegistry>()
-            .locators()
-            .iter()
-            .find_map(|locator| locator.1.create_scenario(&task, "one-off", file, cx))
+        let language = location.buffer.read(cx).language();
+        let language_name = language.as_ref().map(|l| l.name());
+        let adapter = language::language_settings::language_settings(language_name, file, cx)
+            .debuggers
+            .first()
+            .map(SharedString::from)
+            .map(Into::into)
+            .or_else(|| {
+                language.and_then(|l| {
+                    l.config()
+                        .debuggers
+                        .first()
+                        .map(SharedString::from)
+                        .map(Into::into)
+                })
+            });
+        let Some(debug_scenario) =
+            cx.global::<DapRegistry>()
+                .locators()
+                .iter()
+                .find_map(|locator| {
+                    locator
+                        .1
+                        .create_scenario(&task, "one-off", adapter.clone(), cx)
+                })
         else {
             return;
         };
