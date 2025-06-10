@@ -150,27 +150,19 @@ fn parse_literal_single_quoted(input: &str) -> Option<(&str, &str)> {
 
 /// https://www.gnu.org/software/bash/manual/html_node/Double-Quotes.html
 fn parse_literal_double_quoted(input: &str) -> Option<(String, &str)> {
-    let rest = input.strip_prefix('"')?;
-
-    let mut char_indices = rest.char_indices();
-    let mut escaping = false;
-    let (literal, rest) = loop {
-        let (index, char) = char_indices.next()?;
-        if char == '"' && !escaping {
-            break (&rest[..index], &rest[index + 1..]);
-        } else {
-            escaping = !escaping && char == '\\';
+    let mut chars = input.strip_prefix('"')?.chars();
+    let mut content = String::new();
+    loop {
+        match chars.next()? {
+            '"' => return Some((content, chars.as_str())),
+            '\\' => match chars.next()? {
+                '\n' => continue,
+                ch @ ('\\' | '$' | '`' | '"') => content.push(ch),
+                ch => content.extend(['\\', ch]),
+            },
+            ch => content.push(ch),
         }
-    };
-
-    let literal = literal
-        .replace("\\$", "$")
-        .replace("\\`", "`")
-        .replace("\\\"", "\"")
-        .replace("\\\n", "")
-        .replace("\\\\", "\\");
-
-    Some((literal, rest))
+    }
 }
 
 #[cfg(test)]
@@ -243,7 +235,8 @@ mod tests {
             !"#}),
             Some(indoc::indoc! {r#"
             `Hello`
-            "world"\n!\!"#}),
+            "world"\n!\
+            !"#}),
         ];
         let expected = expected_values
             .into_iter()
@@ -298,7 +291,8 @@ mod tests {
 
         let expected = indoc::indoc! {r#"
         `Hello`
-        "world"\n!\!"#};
+        "world"\n!\
+        !"#};
 
         let (actual, rest) = parse_literal_double_quoted(input).unwrap();
         assert_eq!(expected, actual);
