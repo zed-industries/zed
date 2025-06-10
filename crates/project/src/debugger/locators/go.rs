@@ -111,6 +111,7 @@ impl DapLocator for GoLocator {
                 let mut next_arg_is_test = false;
                 let mut next_arg_is_build = false;
                 let mut seen_pkg = false;
+                let mut seen_v = false;
 
                 for arg in build_config.args.iter().skip(1) {
                     if all_args_are_test || next_arg_is_test {
@@ -133,6 +134,9 @@ impl DapLocator for GoLocator {
                         if flag == "args" {
                             all_args_are_test = true;
                         } else if let Some(has_arg) = is_debug_flag(flag) {
+                            if flag == "v" || flag == "test.v" {
+                                seen_v = true;
+                            }
                             if flag.starts_with("test.") {
                                 args.push(arg.clone());
                             } else {
@@ -149,6 +153,9 @@ impl DapLocator for GoLocator {
                     } else {
                         args.push(arg.clone());
                     }
+                }
+                if !seen_v {
+                    args.push("-test.v".to_string());
                 }
 
                 let config: serde_json::Value = serde_json::to_value(DelveLaunchRequest {
@@ -376,7 +383,11 @@ mod tests {
                 mode: "test".to_string(),
                 program: ".".to_string(),
                 build_flags: vec!["-tags".to_string(), "integration,unit".to_string(),],
-                args: vec!["-test.run".to_string(), "Foo".to_string()],
+                args: vec![
+                    "-test.run".to_string(),
+                    "Foo".to_string(),
+                    "-test.v".to_string()
+                ],
                 env: HashMap::default(),
                 cwd: None,
             }
