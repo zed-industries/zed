@@ -8,7 +8,7 @@
 use anyhow::Result;
 
 use crate::client::Client;
-use crate::types::{self, Request};
+use crate::types::{self, Notification, Request};
 
 pub struct ModelContextProtocol {
     inner: Client,
@@ -43,7 +43,7 @@ impl ModelContextProtocol {
 
         let response: types::InitializeResponse = self
             .inner
-            .request(types::request::Initialize::METHOD, params)
+            .request(types::requests::Initialize::METHOD, params)
             .await?;
 
         anyhow::ensure!(
@@ -54,15 +54,12 @@ impl ModelContextProtocol {
 
         log::trace!("mcp server info {:?}", response.server_info);
 
-        self.inner.notify(
-            types::NotificationType::Initialized.as_str(),
-            serde_json::json!({}),
-        )?;
-
         let initialized_protocol = InitializedContextServerProtocol {
             inner: self.inner,
             initialize: response,
         };
+
+        initialized_protocol.notify::<types::notifications::Initialized>(())?;
 
         Ok(initialized_protocol)
     }
@@ -96,5 +93,9 @@ impl InitializedContextServerProtocol {
 
     pub async fn request<T: Request>(&self, params: T::Params) -> Result<T::Response> {
         self.inner.request(T::METHOD, params).await
+    }
+
+    pub fn notify<T: Notification>(&self, params: T::Params) -> Result<()> {
+        self.inner.notify(T::METHOD, params)
     }
 }

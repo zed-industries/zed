@@ -6,7 +6,7 @@ use url::Url;
 pub const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
 pub const VERSION_2024_11_05: &str = "2024-11-05";
 
-pub mod request {
+pub mod requests {
     use super::*;
 
     macro_rules! request {
@@ -81,6 +81,57 @@ pub trait Request {
     type Params: DeserializeOwned + Serialize + Send + Sync + 'static;
     type Response: DeserializeOwned + Serialize + Send + Sync + 'static;
     const METHOD: &'static str;
+}
+
+pub mod notifications {
+    use super::*;
+
+    macro_rules! notification {
+        ($method:expr, $name:ident, $params:ty) => {
+            pub struct $name;
+
+            impl Notification for $name {
+                type Params = $params;
+                const METHOD: &'static str = $method;
+            }
+        };
+    }
+
+    notification!("notifications/initialized", Initialized, ());
+    notification!("notifications/progress", Progress, ProgressParams);
+    notification!("notifications/message", Message, MessageParams);
+    notification!(
+        "notifications/resources/updated",
+        ResourcesUpdated,
+        ResourcesUpdatedParams
+    );
+    notification!(
+        "notifications/resources/list_changed",
+        ResourcesListChanged,
+        ()
+    );
+    notification!("notifications/tools/list_changed", ToolsListChanged, ());
+    notification!("notifications/prompts/list_changed", PromptsListChanged, ());
+    notification!("notifications/roots/list_changed", RootsListChanged, ());
+}
+
+pub trait Notification {
+    type Params: DeserializeOwned + Serialize + Send + Sync + 'static;
+    const METHOD: &'static str;
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageParams {
+    pub level: LoggingLevel,
+    pub logger: Option<String>,
+    pub data: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourcesUpdatedParams {
+    pub uri: String,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -560,34 +611,6 @@ pub struct ModelHint {
     pub name: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum NotificationType {
-    Initialized,
-    Progress,
-    Message,
-    ResourcesUpdated,
-    ResourcesListChanged,
-    ToolsListChanged,
-    PromptsListChanged,
-    RootsListChanged,
-}
-
-impl NotificationType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            NotificationType::Initialized => "notifications/initialized",
-            NotificationType::Progress => "notifications/progress",
-            NotificationType::Message => "notifications/message",
-            NotificationType::ResourcesUpdated => "notifications/resources/updated",
-            NotificationType::ResourcesListChanged => "notifications/resources/list_changed",
-            NotificationType::ToolsListChanged => "notifications/tools/list_changed",
-            NotificationType::PromptsListChanged => "notifications/prompts/list_changed",
-            NotificationType::RootsListChanged => "notifications/roots/list_changed",
-        }
-    }
-}
-
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum ClientNotification {
@@ -608,7 +631,7 @@ pub enum ProgressToken {
     Number(f64),
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProgressParams {
     pub progress_token: ProgressToken,
