@@ -27,10 +27,6 @@ impl DapLocator for NodeLocator {
         resolved_label: &str,
         adapter: DebugAdapterName,
     ) -> Option<DebugScenario> {
-        // TODO(debugger) fix issues with `await` breakpoint step
-        if cfg!(not(debug_assertions)) {
-            return None;
-        }
         if adapter.0.as_ref() != "JavaScript" {
             return None;
         }
