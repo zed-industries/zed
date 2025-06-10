@@ -1,5 +1,6 @@
 mod app_menu;
 mod keyboard;
+mod keycode;
 mod keystroke;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -66,6 +67,7 @@ use uuid::Uuid;
 
 pub use app_menu::*;
 pub use keyboard::*;
+pub use keycode::*;
 pub use keystroke::*;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
