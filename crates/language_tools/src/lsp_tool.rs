@@ -464,7 +464,7 @@ impl LspPickerDelegate {
                 Severity::Ok | Severity::Info => div.border_color(Color::Info.color(cx)),
                 Severity::Warning => div.border_color(Color::Warning.color(cx)),
                 Severity::Error => div.border_color(Color::Error.color(cx)),
-                Severity::Other => div,
+                Severity::Other => div.border_color(Color::Modified.color(cx)),
             })
             .cursor_pointer()
             .on_mouse_down(MouseButton::Left, {
@@ -1161,6 +1161,7 @@ impl Render for LspTool {
 
         let mut has_errors = false;
         let mut has_warnings = false;
+        let mut has_other_notifications = false;
         for item in &delegate.items {
             match item {
                 LspItem::ServerHeader {
@@ -1171,6 +1172,10 @@ impl Render for LspTool {
                     message: Some((_, Severity::Warning)),
                     ..
                 } => has_warnings = true,
+                LspItem::ServerHeader {
+                    message: Some((_, Severity::Other)),
+                    ..
+                } => has_other_notifications = true,
                 _ => {}
             }
         }
@@ -1178,6 +1183,8 @@ impl Render for LspTool {
             Some(Indicator::dot().color(Color::Error))
         } else if has_warnings {
             Some(Indicator::dot().color(Color::Warning))
+        } else if has_other_notifications {
+            Some(Indicator::dot().color(Color::Modified))
         } else {
             None
         };
