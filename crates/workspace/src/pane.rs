@@ -935,15 +935,12 @@ impl Pane {
             .iter()
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
-        if !item_already_exists {
-            self.close_items_over_max_tabs(window, cx);
-        }
-
         if item.is_singleton(cx) {
             if let Some(&entry_id) = item.project_entry_ids(cx).first() {
                 let Some(project) = self.project.upgrade() else {
                     return;
                 };
+
                 let project = project.read(cx);
                 if let Some(project_path) = project.path_for_entry(entry_id, cx) {
                     let abs_path = project.absolute_path(&project_path, cx);
@@ -1035,6 +1032,12 @@ impl Pane {
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
             }
             cx.notify();
+        }
+
+        // Now that the item has been added (or moved), if it's a new item,
+        // check if we exceed the max tabs and close old ones.
+        if !item_already_exists {
+            self.close_items_over_max_tabs(window, cx);
         }
 
         cx.emit(Event::AddItem { item });
@@ -1431,16 +1434,20 @@ impl Pane {
         let mut index_list = Vec::new();
         let mut items_len = self.items_len();
         let mut indexes: HashMap<EntityId, usize> = HashMap::default();
+
         for (index, item) in self.items.iter().enumerate() {
             indexes.insert(item.item_id(), index);
         }
+
         for entry in self.activation_history.iter() {
-            if items_len < max_tabs {
+            if items_len <= max_tabs {
                 break;
             }
+
             let Some(&index) = indexes.get(&entry.entity_id) else {
                 continue;
             };
+
             if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
                 continue;
             }
@@ -1455,10 +1462,9 @@ impl Pane {
         // using their index position, hence removing from the end
         // of the list first to avoid changing indexes.
         index_list.sort_unstable();
-        index_list
-            .iter()
-            .rev()
-            .for_each(|&index| self._remove_item(index, false, false, None, window, cx));
+        index_list.iter().rev().for_each(|&index| {
+            self._remove_item(index, false, false, None, window, cx);
+        });
     }
 
     // Usually when you close an item that has unsaved changes, we prompt you to
