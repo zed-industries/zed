@@ -387,7 +387,13 @@ impl KeymapFile {
             },
         };
 
-        let key_binding = match KeyBinding::load(keystrokes, action, context, key_equivalents) {
+        let key_binding = match KeyBinding::load(
+            keystrokes,
+            action,
+            context,
+            key_equivalents,
+            cx.keyboard_mapper(),
+        ) {
             Ok(key_binding) => key_binding,
             Err(InvalidKeystrokeError { keystroke }) => {
                 return Err(format!(
