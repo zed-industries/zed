@@ -27,6 +27,7 @@ use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
     RunInTerminalRequestArguments, StartDebuggingRequestArguments,
 };
+use futures::SinkExt;
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, future::Shared};
 use gpui::{
@@ -458,7 +459,7 @@ impl RunningMode {
         let task = cx.background_spawn(futures::future::try_join(launch, configuration_sequence));
 
         cx.spawn(async move |this, cx| {
-            task.await?;
+            let result = task.await;
 
             this.update(cx, |this, cx| {
                 if let Some(this) = this.as_running_mut() {
@@ -468,6 +469,7 @@ impl RunningMode {
             })
             .ok();
 
+            result?;
             anyhow::Ok(())
         })
     }
@@ -823,7 +825,7 @@ impl Session {
                 id,
                 parent_session,
                 worktree.downgrade(),
-                binary,
+                binary.clone(),
                 message_tx,
                 cx.clone(),
             )
@@ -836,10 +838,26 @@ impl Session {
             this.update(cx, |session, cx| session.request_initialize(cx))?
                 .await?;
 
-            this.update(cx, |session, cx| {
-                session.initialize_sequence(initialized_rx, dap_store.clone(), cx)
-            })?
-            .await
+            let result = this
+                .update(cx, |session, cx| {
+                    session.initialize_sequence(initialized_rx, dap_store.clone(), cx)
+                })?
+                .await;
+
+            if result.is_err() {
+                let mut console = this.update(cx, |session, cx| session.console_output(cx))?;
+
+                console
+                    .send(format!(
+                        "Tried to launch debugger with: {}",
+                        serde_json::to_string_pretty(&binary.request_args.configuration)
+                            .unwrap_or_default(),
+                    ))
+                    .await
+                    .ok();
+            }
+
+            result
         })
     }
 
