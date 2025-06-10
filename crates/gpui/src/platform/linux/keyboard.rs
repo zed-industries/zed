@@ -39,7 +39,6 @@ impl LinuxKeyboardLayout {
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) struct LinuxKeyboardMapper {
     code_to_key: HashMap<Keycode, String>,
-    key_to_code: HashMap<String, Keycode>,
     code_to_shifted_key: HashMap<Keycode, String>,
 }
 
@@ -99,7 +98,6 @@ impl LinuxKeyboardMapper {
             xkbcommon::xkb::x11::state_new_from_device(&xkb_keymap, &*XCB_CONNECTION, xkb_device_id)
         };
         let mut code_to_key = HashMap::default();
-        let mut key_to_code = HashMap::default();
         let mut code_to_shifted_key = HashMap::default();
 
         let keymap = xkb_state.get_keymap();
@@ -112,16 +110,15 @@ impl LinuxKeyboardMapper {
         for &scan_code in TYPEABLE_CODES {
             let keycode = Keycode::new(scan_code);
             let key = xkb_state.key_get_utf8(keycode);
-            code_to_key.insert(keycode, key.clone());
-            key_to_code.insert(key, keycode);
-
-            let shifted_key = shifted_state.key_get_utf8(keycode);
-            code_to_shifted_key.insert(keycode, shifted_key);
+            if !is_letter_key(&key) {
+                let shifted_key = shifted_state.key_get_utf8(keycode);
+                code_to_shifted_key.insert(keycode, shifted_key);
+            }
+            code_to_key.insert(keycode, key);
         }
 
         Self {
             code_to_key,
-            key_to_code,
             code_to_shifted_key,
         }
     }
@@ -177,69 +174,9 @@ const TYPEABLE_CODES: &[u32] = &[
     0x003b, // , Comma
     0x003c, // . Period
     0x003d, // / Slash
+    0x005e, // \ IntlBackslash
+    0x0061, // ro IntlRo
 ];
-
-#[cfg(any(feature = "wayland", feature = "x11"))]
-fn is_immutable_key(key: &str) -> bool {
-    matches!(
-        key,
-        "f1" | "f2"
-            | "f3"
-            | "f4"
-            | "f5"
-            | "f6"
-            | "f7"
-            | "f8"
-            | "f9"
-            | "f10"
-            | "f11"
-            | "f12"
-            | "f13"
-            | "f14"
-            | "f15"
-            | "f16"
-            | "f17"
-            | "f18"
-            | "f19"
-            | "f20"
-            | "f21"
-            | "f22"
-            | "f23"
-            | "f24"
-            | "backspace"
-            | "delete"
-            | "left"
-            | "right"
-            | "up"
-            | "down"
-            | "pageup"
-            | "pagedown"
-            | "insert"
-            | "home"
-            | "end"
-            | "back"
-            | "forward"
-            | "escape"
-            | "space"
-            | "tab"
-            | "enter"
-            | "shift"
-            | "control"
-            | "alt"
-            | "platform"
-            | "cmd"
-            | "super"
-            | "win"
-            | "fn"
-            | "menu"
-            | "copy"
-            | "paste"
-            | "cut"
-            | "find"
-            | "open"
-            | "save"
-    )
-}
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
 fn get_scan_code(scan_code: ScanCode) -> Option<u32> {
