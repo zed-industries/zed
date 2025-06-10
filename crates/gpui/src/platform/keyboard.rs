@@ -104,7 +104,17 @@ mod tests {
             }
             let mut modifiers = Modifiers::default();
             let key = mapper.scan_code_to_key(scan_code, &mut modifiers).unwrap();
-            assert_eq!(key, scan_code.to_key());
+            assert_eq!(key, scan_code.to_key(false));
+            assert_eq!(modifiers, Modifiers::default());
+
+            let mut modifiers = Modifiers::shift();
+            let shifted_key = mapper.scan_code_to_key(scan_code, &mut modifiers).unwrap();
+            assert_eq!(shifted_key, scan_code.to_key(true));
+            if shifted_key != key {
+                assert_eq!(modifiers, Modifiers::default());
+            } else {
+                assert_eq!(modifiers, Modifiers::shift());
+            }
         }
     }
 }

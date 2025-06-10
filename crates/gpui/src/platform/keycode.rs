@@ -375,7 +375,7 @@ impl ScanCode {
 
     /// This function is used to convert the scan code to its key face on US keyboard layout.
     /// Only used for tests.
-    pub fn to_key(&self) -> &str {
+    pub fn to_key(&self, shift: bool) -> &str {
         match self {
             ScanCode::F1 => "f1",
             ScanCode::F2 => "f2",
@@ -427,27 +427,153 @@ impl ScanCode {
             ScanCode::X => "x",
             ScanCode::Y => "y",
             ScanCode::Z => "z",
-            ScanCode::Digit0 => "0",
-            ScanCode::Digit1 => "1",
-            ScanCode::Digit2 => "2",
-            ScanCode::Digit3 => "3",
-            ScanCode::Digit4 => "4",
-            ScanCode::Digit5 => "5",
-            ScanCode::Digit6 => "6",
-            ScanCode::Digit7 => "7",
-            ScanCode::Digit8 => "8",
-            ScanCode::Digit9 => "9",
-            ScanCode::Backquote => "`",
-            ScanCode::Minus => "-",
-            ScanCode::Equal => "=",
-            ScanCode::BracketLeft => "[",
-            ScanCode::BracketRight => "]",
-            ScanCode::Backslash => "\\",
-            ScanCode::Semicolon => ";",
-            ScanCode::Quote => "'",
-            ScanCode::Comma => ",",
-            ScanCode::Period => ".",
-            ScanCode::Slash => "/",
+            ScanCode::Digit0 => {
+                if shift {
+                    ")"
+                } else {
+                    "0"
+                }
+            }
+            ScanCode::Digit1 => {
+                if shift {
+                    "!"
+                } else {
+                    "1"
+                }
+            }
+            ScanCode::Digit2 => {
+                if shift {
+                    "@"
+                } else {
+                    "2"
+                }
+            }
+            ScanCode::Digit3 => {
+                if shift {
+                    "#"
+                } else {
+                    "3"
+                }
+            }
+            ScanCode::Digit4 => {
+                if shift {
+                    "$"
+                } else {
+                    "4"
+                }
+            }
+            ScanCode::Digit5 => {
+                if shift {
+                    "%"
+                } else {
+                    "5"
+                }
+            }
+            ScanCode::Digit6 => {
+                if shift {
+                    "^"
+                } else {
+                    "6"
+                }
+            }
+            ScanCode::Digit7 => {
+                if shift {
+                    "&"
+                } else {
+                    "7"
+                }
+            }
+            ScanCode::Digit8 => {
+                if shift {
+                    "*"
+                } else {
+                    "8"
+                }
+            }
+            ScanCode::Digit9 => {
+                if shift {
+                    "("
+                } else {
+                    "9"
+                }
+            }
+            ScanCode::Backquote => {
+                if shift {
+                    "~"
+                } else {
+                    "`"
+                }
+            }
+            ScanCode::Minus => {
+                if shift {
+                    "_"
+                } else {
+                    "-"
+                }
+            }
+            ScanCode::Equal => {
+                if shift {
+                    "+"
+                } else {
+                    "="
+                }
+            }
+            ScanCode::BracketLeft => {
+                if shift {
+                    "{"
+                } else {
+                    "["
+                }
+            }
+            ScanCode::BracketRight => {
+                if shift {
+                    "}"
+                } else {
+                    "]"
+                }
+            }
+            ScanCode::Backslash => {
+                if shift {
+                    "|"
+                } else {
+                    "\\"
+                }
+            }
+            ScanCode::Semicolon => {
+                if shift {
+                    ":"
+                } else {
+                    ";"
+                }
+            }
+            ScanCode::Quote => {
+                if shift {
+                    "\""
+                } else {
+                    "'"
+                }
+            }
+            ScanCode::Comma => {
+                if shift {
+                    "<"
+                } else {
+                    ","
+                }
+            }
+            ScanCode::Period => {
+                if shift {
+                    ">"
+                } else {
+                    "."
+                }
+            }
+            ScanCode::Slash => {
+                if shift {
+                    "?"
+                } else {
+                    "/"
+                }
+            }
             // Standard US keyboard layout does not have these keys, so we return "unknown".
             ScanCode::IntlBackslash | ScanCode::IntlRo => "unknown",
             ScanCode::Left => "left",
