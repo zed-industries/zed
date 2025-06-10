@@ -418,7 +418,6 @@ impl LspPickerDelegate {
                             move |_, window, cx| {
                                 lsp_logs
                                     .update(cx, |lsp_logs, cx| {
-                                        // TODO kb rpc logs are not synced remotely?
                                         lsp_logs.open_server_trace(
                                             workspace.clone(),
                                             server_id,
@@ -596,7 +595,6 @@ impl LspPickerDelegate {
             }
         }
 
-        // TODO kb show worktree root too?
         if !other_servers.is_empty() {
             let other_section_id = SectionHeaderId::OtherServers;
             self.items.push(LspItem::SectionHeader {
