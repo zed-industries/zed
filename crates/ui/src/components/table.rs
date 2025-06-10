@@ -33,7 +33,7 @@ impl Table {
         if items.len() == self.column_count {
             self.rows.push(items.into_iter().map(Into::into).collect());
         } else {
-            // TODO: Log error: Row length mismatch
+            log::error!("Row length mismatch");
         }
         self
     }
