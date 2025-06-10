@@ -722,6 +722,7 @@ impl MessageEditor {
                     .child(
                         h_flex()
                             .flex_none()
+                            .flex_wrap()
                             .justify_between()
                             .child(
                                 h_flex()
@@ -731,6 +732,7 @@ impl MessageEditor {
                             .child(
                                 h_flex()
                                     .gap_1()
+                                    .flex_wrap()
                                     .when(!incompatible_tools.is_empty(), |this| {
                                         this.child(
                                             IconButton::new(
