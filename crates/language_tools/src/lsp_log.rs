@@ -927,7 +927,7 @@ impl LspLogView {
             self.editor_subscriptions = editor_subscriptions;
             cx.notify();
         }
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 
     fn update_log_level(
@@ -953,7 +953,7 @@ impl LspLogView {
             cx.notify();
         }
 
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 
     fn show_trace_for_server(
@@ -975,7 +975,7 @@ impl LspLogView {
             self.editor_subscriptions = editor_subscriptions;
             cx.notify();
         }
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 
     fn show_rpc_trace_for_server(
@@ -1018,7 +1018,7 @@ impl LspLogView {
             cx.notify();
         }
 
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 
     fn toggle_rpc_trace_for_server(
@@ -1082,7 +1082,7 @@ impl LspLogView {
         self.editor = editor;
         self.editor_subscriptions = editor_subscriptions;
         cx.notify();
-        window.focus(&self.focus_handle);
+        self.editor.read(cx).focus_handle(cx).focus(window);
     }
 }
 

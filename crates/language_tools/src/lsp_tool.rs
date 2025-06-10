@@ -418,7 +418,6 @@ impl LspPickerDelegate {
                             move |_, window, cx| {
                                 lsp_logs
                                     .update(cx, |lsp_logs, cx| {
-                                        // TODO kb none of the open_* methods focus the log input
                                         // TODO kb rpc logs are not synced remotely?
                                         lsp_logs.open_server_trace(
                                             workspace.clone(),
