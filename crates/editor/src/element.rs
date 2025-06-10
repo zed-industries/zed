@@ -856,8 +856,11 @@ impl EditorElement {
             SelectionDragState::Dragging { ref selection, .. } => {
                 let snapshot = editor.snapshot(window, cx);
                 let selection_display = selection.map(|anchor| anchor.to_display_point(&snapshot));
-                if !point_for_position.intersects_selection(&selection_display) {
-                    let is_cut = !event.modifiers.control;
+                if !point_for_position.intersects_selection(&selection_display)
+                    && text_hitbox.is_hovered(window)
+                {
+                    let is_cut = !(cfg!(target_os = "macos") && event.modifiers.alt
+                        || cfg!(not(target_os = "macos")) && event.modifiers.control);
                     editor.move_selection_on_drop(
                         &selection.clone(),
                         point_for_position.previous_valid,
@@ -865,10 +868,11 @@ impl EditorElement {
                         window,
                         cx,
                     );
-                    editor.selection_drag_state = SelectionDragState::None;
-                    cx.stop_propagation();
-                    return;
                 }
+                editor.selection_drag_state = SelectionDragState::None;
+                cx.stop_propagation();
+                cx.notify();
+                return;
             }
             _ => {}
         }
@@ -941,7 +945,8 @@ impl EditorElement {
             return;
         }
 
-        let text_bounds = position_map.text_hitbox.bounds;
+        let text_hitbox = &position_map.text_hitbox;
+        let text_bounds = text_hitbox.bounds;
         let point_for_position = position_map.point_for_position(event.position);
 
         let mut scroll_delta = gpui::Point::<f32>::default();
@@ -982,10 +987,12 @@ impl EditorElement {
             match editor.selection_drag_state {
                 SelectionDragState::Dragging {
                     ref mut drop_cursor,
+                    ref mut hide_drop_cursor,
                     ..
                 } => {
                     drop_cursor.start = drop_anchor;
                     drop_cursor.end = drop_anchor;
+                    *hide_drop_cursor = !text_hitbox.is_hovered(window);
                 }
                 SelectionDragState::ReadyToDrag { ref selection, .. } => {
                     let drop_cursor = Selection {
@@ -998,6 +1005,7 @@ impl EditorElement {
                     editor.selection_drag_state = SelectionDragState::Dragging {
                         selection: selection.clone(),
                         drop_cursor,
+                        hide_drop_cursor: false,
                     };
                 }
                 _ => {}
@@ -1031,7 +1039,7 @@ impl EditorElement {
         editor.set_gutter_hovered(gutter_hovered, cx);
         editor.mouse_cursor_hidden = false;
 
-        if gutter_hovered {
+        let breakpoint_indicator = if gutter_hovered {
             let new_point = position_map
                 .point_for_position(event.position)
                 .previous_valid;
@@ -1045,7 +1053,6 @@ impl EditorElement {
                 .buffer_for_excerpt(buffer_anchor.excerpt_id)
                 .and_then(|buffer| buffer.file().map(|file| (buffer, file)))
             {
-                let was_hovered = editor.gutter_breakpoint_indicator.0.is_some();
                 let as_point = text::ToPoint::to_point(&buffer_anchor.text_anchor, buffer_snapshot);
 
                 let is_visible = editor
@@ -1073,38 +1080,43 @@ impl EditorElement {
                             .is_some()
                     });
 
-                editor.gutter_breakpoint_indicator.0 = Some(PhantomBreakpointIndicator {
-                    display_row: new_point.row(),
-                    is_active: is_visible,
-                    collides_with_existing_breakpoint: has_existing_breakpoint,
-                });
-
-                editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
-                    cx.spawn(async move |this, cx| {
-                        if !was_hovered {
+                if !is_visible {
+                    editor.gutter_breakpoint_indicator.1.get_or_insert_with(|| {
+                        cx.spawn(async move |this, cx| {
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
                                 .await;
-                        }
 
-                        this.update(cx, |this, cx| {
-                            if let Some(indicator) = this.gutter_breakpoint_indicator.0.as_mut() {
-                                indicator.is_active = true;
-                            }
-
-                            cx.notify();
+                            this.update(cx, |this, cx| {
+                                if let Some(indicator) = this.gutter_breakpoint_indicator.0.as_mut()
+                                {
+                                    indicator.is_active = true;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
                         })
-                        .ok();
-                    })
-                });
+                    });
+                }
+
+                Some(PhantomBreakpointIndicator {
+                    display_row: new_point.row(),
+                    is_active: is_visible,
+                    collides_with_existing_breakpoint: has_existing_breakpoint,
+                })
             } else {
-                editor.gutter_breakpoint_indicator = (None, None);
+                editor.gutter_breakpoint_indicator.1 = None;
+                None
             }
         } else {
-            editor.gutter_breakpoint_indicator = (None, None);
-        }
+            editor.gutter_breakpoint_indicator.1 = None;
+            None
+        };
 
-        cx.notify();
+        if &breakpoint_indicator != &editor.gutter_breakpoint_indicator.0 {
+            editor.gutter_breakpoint_indicator.0 = breakpoint_indicator;
+            cx.notify();
+        }
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(window) {
@@ -1247,16 +1259,18 @@ impl EditorElement {
                 if let SelectionDragState::Dragging {
                     ref selection,
                     ref drop_cursor,
+                    ref hide_drop_cursor,
                 } = editor.selection_drag_state
                 {
-                    if drop_cursor
-                        .start
-                        .cmp(&selection.start, &snapshot.buffer_snapshot)
-                        .eq(&Ordering::Less)
-                        || drop_cursor
-                            .end
-                            .cmp(&selection.end, &snapshot.buffer_snapshot)
-                            .eq(&Ordering::Greater)
+                    if !hide_drop_cursor
+                        && (drop_cursor
+                            .start
+                            .cmp(&selection.start, &snapshot.buffer_snapshot)
+                            .eq(&Ordering::Less)
+                            || drop_cursor
+                                .end
+                                .cmp(&selection.end, &snapshot.buffer_snapshot)
+                                .eq(&Ordering::Greater))
                     {
                         let drag_cursor_layout = SelectionLayout::new(
                             drop_cursor.clone(),
@@ -7324,6 +7338,17 @@ impl LineWithInvisibles {
 
                 paint(window, cx);
             }),
+
+            ShowWhitespaceSetting::Trailing => {
+                let mut previous_start = self.len;
+                for ([start, end], paint) in invisible_iter.rev() {
+                    if previous_start != end {
+                        break;
+                    }
+                    previous_start = start;
+                    paint(window, cx);
+                }
+            }
 
             // For a whitespace to be on a boundary, any of the following conditions need to be met:
             // - It is a tab

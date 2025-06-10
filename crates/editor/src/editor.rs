@@ -698,7 +698,7 @@ impl EditorActionId {
 // type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (fn(&ThemeColors) -> Hsla, Arc<[Range<Anchor>]>);
-type GutterHighlight = (fn(&App) -> Hsla, Arc<[Range<Anchor>]>);
+type GutterHighlight = (fn(&App) -> Hsla, Vec<Range<Anchor>>);
 
 #[derive(Default)]
 struct ScrollbarMarkerState {
@@ -918,12 +918,13 @@ enum SelectionDragState {
     Dragging {
         selection: Selection<Anchor>,
         drop_cursor: Selection<Anchor>,
+        hide_drop_cursor: bool,
     },
 }
 
 /// Represents a breakpoint indicator that shows up when hovering over lines in the gutter that don't have
 /// a breakpoint on them.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PhantomBreakpointIndicator {
     display_row: DisplayRow,
     /// There's a small debounce between hovering over the line and showing the indicator.
@@ -931,6 +932,7 @@ struct PhantomBreakpointIndicator {
     is_active: bool,
     collides_with_existing_breakpoint: bool,
 }
+
 /// Zed's primary implementation of text input, allowing users to edit a [`MultiBuffer`].
 ///
 /// See the [module level documentation](self) for more information.
@@ -1199,10 +1201,12 @@ struct SelectionHistoryEntry {
     add_selections_state: Option<AddSelectionsState>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum SelectionHistoryMode {
     Normal,
     Undoing,
     Redoing,
+    Skipping,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -1236,11 +1240,19 @@ struct SelectionHistory {
 }
 
 impl SelectionHistory {
+    #[track_caller]
     fn insert_transaction(
         &mut self,
         transaction_id: TransactionId,
         selections: Arc<[Selection<Anchor>]>,
     ) {
+        if selections.is_empty() {
+            log::error!(
+                "SelectionHistory::insert_transaction called with empty selections. Caller: {}",
+                std::panic::Location::caller()
+            );
+            return;
+        }
         self.selections_by_transaction
             .insert(transaction_id, (selections, None));
     }
@@ -1270,6 +1282,7 @@ impl SelectionHistory {
                 }
                 SelectionHistoryMode::Undoing => self.push_redo(entry),
                 SelectionHistoryMode::Redoing => self.push_undo(entry),
+                SelectionHistoryMode::Skipping => {}
             }
         }
     }
@@ -2089,7 +2102,11 @@ impl Editor {
             }
         }
 
+        // skip adding the initial selection to selection history
+        editor.selection_history.mode = SelectionHistoryMode::Skipping;
         editor.end_selection(window, cx);
+        editor.selection_history.mode = SelectionHistoryMode::Normal;
+
         editor.scroll_manager.show_scrollbars(window, cx);
         jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut editor, &buffer, cx);
 
@@ -14211,18 +14228,20 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        self.end_selection(window, cx);
-        self.selection_history.mode = SelectionHistoryMode::Undoing;
         if let Some(entry) = self.selection_history.undo_stack.pop_back() {
-            self.change_selections(None, window, cx, |s| {
-                s.select_anchors(entry.selections.to_vec())
+            self.selection_history.mode = SelectionHistoryMode::Undoing;
+            self.with_selection_effects_deferred(window, cx, |this, window, cx| {
+                this.end_selection(window, cx);
+                this.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
+                    s.select_anchors(entry.selections.to_vec())
+                });
             });
+            self.selection_history.mode = SelectionHistoryMode::Normal;
+
             self.select_next_state = entry.select_next_state;
             self.select_prev_state = entry.select_prev_state;
             self.add_selections_state = entry.add_selections_state;
-            self.request_autoscroll(Autoscroll::newest(), cx);
         }
-        self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
     pub fn redo_selection(
@@ -14232,18 +14251,20 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
-        self.end_selection(window, cx);
-        self.selection_history.mode = SelectionHistoryMode::Redoing;
         if let Some(entry) = self.selection_history.redo_stack.pop_back() {
-            self.change_selections(None, window, cx, |s| {
-                s.select_anchors(entry.selections.to_vec())
+            self.selection_history.mode = SelectionHistoryMode::Redoing;
+            self.with_selection_effects_deferred(window, cx, |this, window, cx| {
+                this.end_selection(window, cx);
+                this.change_selections(Some(Autoscroll::newest()), window, cx, |s| {
+                    s.select_anchors(entry.selections.to_vec())
+                });
             });
+            self.selection_history.mode = SelectionHistoryMode::Normal;
+
             self.select_next_state = entry.select_next_state;
             self.select_prev_state = entry.select_prev_state;
             self.add_selections_state = entry.add_selections_state;
-            self.request_autoscroll(Autoscroll::newest(), cx);
         }
-        self.selection_history.mode = SelectionHistoryMode::Normal;
     }
 
     pub fn expand_excerpts(
@@ -18377,12 +18398,12 @@ impl Editor {
 
     pub fn highlight_gutter<T: 'static>(
         &mut self,
-        ranges: &[Range<Anchor>],
+        ranges: impl Into<Vec<Range<Anchor>>>,
         color_fetcher: fn(&App) -> Hsla,
         cx: &mut Context<Self>,
     ) {
         self.gutter_highlights
-            .insert(TypeId::of::<T>(), (color_fetcher, Arc::from(ranges)));
+            .insert(TypeId::of::<T>(), (color_fetcher, ranges.into()));
         cx.notify();
     }
 
@@ -18392,6 +18413,65 @@ impl Editor {
     ) -> Option<GutterHighlight> {
         cx.notify();
         self.gutter_highlights.remove(&TypeId::of::<T>())
+    }
+
+    pub fn insert_gutter_highlight<T: 'static>(
+        &mut self,
+        range: Range<Anchor>,
+        color_fetcher: fn(&App) -> Hsla,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let mut highlights = self
+            .gutter_highlights
+            .remove(&TypeId::of::<T>())
+            .map(|(_, highlights)| highlights)
+            .unwrap_or_default();
+        let ix = highlights.binary_search_by(|highlight| {
+            Ordering::Equal
+                .then_with(|| highlight.start.cmp(&range.start, &snapshot))
+                .then_with(|| highlight.end.cmp(&range.end, &snapshot))
+        });
+        if let Err(ix) = ix {
+            highlights.insert(ix, range);
+        }
+        self.gutter_highlights
+            .insert(TypeId::of::<T>(), (color_fetcher, highlights));
+    }
+
+    pub fn remove_gutter_highlights<T: 'static>(
+        &mut self,
+        ranges_to_remove: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let snapshot = self.buffer().read(cx).snapshot(cx);
+        let Some((color_fetcher, mut gutter_highlights)) =
+            self.gutter_highlights.remove(&TypeId::of::<T>())
+        else {
+            return;
+        };
+        let mut ranges_to_remove = ranges_to_remove.iter().peekable();
+        gutter_highlights.retain(|highlight| {
+            while let Some(range_to_remove) = ranges_to_remove.peek() {
+                match range_to_remove.end.cmp(&highlight.start, &snapshot) {
+                    Ordering::Less | Ordering::Equal => {
+                        ranges_to_remove.next();
+                    }
+                    Ordering::Greater => {
+                        match range_to_remove.start.cmp(&highlight.end, &snapshot) {
+                            Ordering::Less | Ordering::Equal => {
+                                return false;
+                            }
+                            Ordering::Greater => break,
+                        }
+                    }
+                }
+            }
+
+            true
+        });
+        self.gutter_highlights
+            .insert(TypeId::of::<T>(), (color_fetcher, gutter_highlights));
     }
 
     #[cfg(feature = "test-support")]
@@ -19939,12 +20019,15 @@ impl Editor {
                 if !selections.is_empty() {
                     let snapshot =
                         buffer_snapshot.get_or_init(|| self.buffer.read(cx).snapshot(cx));
+                    // skip adding the initial selection to selection history
+                    self.selection_history.mode = SelectionHistoryMode::Skipping;
                     self.change_selections(None, window, cx, |s| {
                         s.select_ranges(selections.into_iter().map(|(start, end)| {
                             snapshot.clip_offset(start, Bias::Left)
                                 ..snapshot.clip_offset(end, Bias::Right)
                         }));
                     });
+                    self.selection_history.mode = SelectionHistoryMode::Normal;
                 }
             };
         }
