@@ -33,7 +33,6 @@ pub fn init(cx: &mut App) {
 
 pub struct KeymapEventChannel {}
 
-impl EventEmitter<KeymapEvent> for KeymapEventChannel {}
 impl Global for KeymapEventChannel {}
 
 impl KeymapEventChannel {
@@ -189,83 +188,53 @@ impl Render for KeymapEditor {
             self.processed_bindings = Self::process_bindings(cx);
         }
 
-        let mut table = Table::new(vec!["Command", "Keystrokes", "Context"]);
-        for key_binding in &self.processed_bindings {
-            table = table.row(vec![
-                string_cell(key_binding.action.clone()),
-                string_cell(key_binding.keystroke_text.clone()),
-                string_cell(key_binding.context.clone()),
-                // TODO: Add a source field
-                // string_cell(keybinding.source().to_string()),
-            ]);
-        }
+        let table = Table::new(self.processed_bindings.len());
 
         let theme = cx.theme();
+        let headers = ["Command", "Keystrokes", "Context"].map(Into::into);
 
-        div()
-            .size_full()
-            .bg(theme.colors().background)
-            .child(table.striped())
+        div().size_full().bg(theme.colors().background).child(
+            table
+                .render()
+                .child(table.render_header(headers, cx))
+                .children(
+                    self.processed_bindings
+                        .iter()
+                        .enumerate()
+                        .map(|(index, binding)| {
+                            table.render_row(
+                                index,
+                                [
+                                    string_cell(binding.action.clone()),
+                                    string_cell(binding.keystroke_text.clone()),
+                                    string_cell(binding.context.clone()),
+                                    // TODO: Add a source field
+                                    // string_cell(keybinding.source().to_string()),
+                                ],
+                                cx,
+                            )
+                        }),
+                ),
+        )
     }
 }
 
 /// A table component
-#[derive(IntoElement)]
-pub struct Table {
-    column_headers: Vec<SharedString>,
-    rows: Vec<Vec<TableCell>>,
-    column_count: usize,
+pub struct Table<const COLS: usize> {
     striped: bool,
     width: Length,
+    row_count: usize,
 }
 
-impl Table {
+impl<const COLS: usize> Table<COLS> {
     /// Create a new table with a column count equal to the
     /// number of headers provided.
-    pub fn new(headers: Vec<impl Into<SharedString>>) -> Self {
-        let column_count = headers.len();
-
+    pub fn new(row_count: usize) -> Self {
         Table {
-            column_headers: headers.into_iter().map(Into::into).collect(),
-            column_count,
-            rows: Vec::new(),
             striped: false,
             width: Length::Auto,
+            row_count,
         }
-    }
-
-    /// Adds a row to the table.
-    ///
-    /// The row must have the same number of columns as the table.
-    pub fn row(mut self, items: Vec<impl Into<TableCell>>) -> Self {
-        if items.len() == self.column_count {
-            self.rows.push(items.into_iter().map(Into::into).collect());
-        } else {
-            log::error!("Row length mismatch");
-        }
-        self
-    }
-
-    /// Adds multiple rows to the table.
-    ///
-    /// Each row must have the same number of columns as the table.
-    /// Rows that don't match the column count are ignored.
-    pub fn rows(mut self, rows: Vec<Vec<impl Into<TableCell>>>) -> Self {
-        for row in rows {
-            self = self.row(row);
-        }
-        self
-    }
-
-    fn base_cell_style(cx: &mut App) -> Div {
-        div()
-            .px_1p5()
-            .flex_1()
-            .justify_start()
-            .text_ui(cx)
-            .whitespace_nowrap()
-            .text_ellipsis()
-            .overflow_hidden()
     }
 
     /// Enables row striping.
@@ -279,11 +248,50 @@ impl Table {
         self.width = width.into();
         self
     }
-}
 
-impl RenderOnce for Table {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let header = div()
+    fn base_cell_style(cx: &App) -> Div {
+        div()
+            .px_1p5()
+            .flex_1()
+            .justify_start()
+            .text_ui(cx)
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .overflow_hidden()
+    }
+
+    pub fn render_row(
+        &self,
+        row_index: usize,
+        items: [TableCell; COLS],
+        cx: &App,
+    ) -> impl IntoElement {
+        let is_last = row_index == self.row_count - 1;
+        let bg = if row_index % 2 == 1 && self.striped {
+            Some(cx.theme().colors().text.opacity(0.05))
+        } else {
+            None
+        };
+        div()
+            .w_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .px_1p5()
+            .py_1()
+            .when_some(bg, |row, bg| row.bg(bg))
+            .when(!is_last, |row| {
+                row.border_b_1().border_color(cx.theme().colors().border)
+            })
+            .children(items.into_iter().map(|cell| match cell {
+                TableCell::String(s) => Self::base_cell_style(cx).child(s),
+                TableCell::Element(e) => Self::base_cell_style(cx).child(e),
+            }))
+    }
+
+    fn render_header(&self, headers: [SharedString; COLS], cx: &mut App) -> impl IntoElement {
+        div()
             .flex()
             .flex_row()
             .items_center()
@@ -292,43 +300,15 @@ impl RenderOnce for Table {
             .p_2()
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .children(self.column_headers.into_iter().map(|h| {
-                Table::base_cell_style(cx)
+            .children(headers.into_iter().map(|h| {
+                Self::base_cell_style(cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(h.clone())
-            }));
+            }))
+    }
 
-        let row_count = self.rows.len();
-        let rows = self.rows.into_iter().enumerate().map(|(ix, row)| {
-            let is_last = ix == row_count - 1;
-            let bg = if ix % 2 == 1 && self.striped {
-                Some(cx.theme().colors().text.opacity(0.05))
-            } else {
-                None
-            };
-            div()
-                .w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .px_1p5()
-                .py_1()
-                .when_some(bg, |row, bg| row.bg(bg))
-                .when(!is_last, |row| {
-                    row.border_b_1().border_color(cx.theme().colors().border)
-                })
-                .children(row.into_iter().map(|cell| match cell {
-                    TableCell::String(s) => Self::base_cell_style(cx).child(s),
-                    TableCell::Element(e) => Self::base_cell_style(cx).child(e),
-                }))
-        });
-
-        div()
-            .w(self.width)
-            .overflow_hidden()
-            .child(header)
-            .children(rows)
+    fn render(&self) -> Div {
+        div().w(self.width).overflow_hidden()
     }
 }
 
