@@ -14567,6 +14567,7 @@ name = "settings_ui"
 version = "0.1.0"
 dependencies = [
  "command_palette_hooks",
+ "component",
  "db",
  "editor",
  "feature_flags",

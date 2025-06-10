@@ -15,7 +15,7 @@ use ui::{
 };
 use workspace::{Item, SerializableItem, Workspace, register_serializable_item};
 
-use crate::keybindings::persistence::KEYBINDING_EDITORS;
+use crate::{keybindings::persistence::KEYBINDING_EDITORS, ui_components::table::Table};
 
 actions!(zed, [OpenKeymapEditor]);
 
@@ -391,7 +391,8 @@ impl Render for KeymapEditor {
             px(0.)
         };
 
-        let table = Table::new(self.processed_bindings.len());
+        let row_count = self.processed_bindings.len();
+        let table = Table::new(row_count);
 
         let theme = cx.theme();
         let headers = ["Command", "Keystrokes", "Context"].map(Into::into);
@@ -412,7 +413,6 @@ impl Render for KeymapEditor {
             }))
             .child(
                 table
-                    .render()
                     .h_full()
                     .v_flex()
                     .child(table.render_header(headers, cx))
@@ -424,10 +424,9 @@ impl Render for KeymapEditor {
                             .overflow_hidden()
                             .child(
                                 uniform_list(
-                                    cx.entity(),
                                     "keybindings",
-                                    table.row_count,
-                                    move |this, range, _, cx| {
+                                    row_count,
+                                    cx.processor(move |this, range, _, cx| {
                                         range
                                             .map(|index| {
                                                 let binding = &this.processed_bindings[index];
@@ -443,7 +442,7 @@ impl Render for KeymapEditor {
                                                 table.render_row(index, row, cx)
                                             })
                                             .collect()
-                                    },
+                                    }),
                                 )
                                 .size_full()
                                 .flex_grow()
@@ -515,123 +514,6 @@ impl Render for KeymapEditor {
                         this.child(self.render_horizontal_scrollbar(h_scroll_offset, cx))
                     }),
             )
-    }
-}
-
-/// A table component
-#[derive(Clone, Copy)]
-pub struct Table<const COLS: usize> {
-    striped: bool,
-    width: Length,
-    row_count: usize,
-}
-
-impl<const COLS: usize> Table<COLS> {
-    /// Create a new table with a column count equal to the
-    /// number of headers provided.
-    pub fn new(row_count: usize) -> Self {
-        Table {
-            striped: false,
-            width: Length::Auto,
-            row_count,
-        }
-    }
-
-    /// Enables row striping.
-    pub fn striped(mut self) -> Self {
-        self.striped = true;
-        self
-    }
-
-    /// Sets the width of the table.
-    pub fn width(mut self, width: impl Into<Length>) -> Self {
-        self.width = width.into();
-        self
-    }
-
-    fn base_cell_style(cx: &App) -> Div {
-        div()
-            .px_1p5()
-            .flex_1()
-            .justify_start()
-            .text_ui(cx)
-            .whitespace_nowrap()
-            .text_ellipsis()
-            .overflow_hidden()
-    }
-
-    pub fn render_row(&self, row_index: usize, items: [TableCell; COLS], cx: &App) -> AnyElement {
-        let is_last = row_index == self.row_count - 1;
-        let bg = if row_index % 2 == 1 && self.striped {
-            Some(cx.theme().colors().text.opacity(0.05))
-        } else {
-            None
-        };
-        div()
-            .w_full()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .px_1p5()
-            .py_1()
-            .when_some(bg, |row, bg| row.bg(bg))
-            .when(!is_last, |row| {
-                row.border_b_1().border_color(cx.theme().colors().border)
-            })
-            .children(items.into_iter().map(|cell| match cell {
-                TableCell::String(s) => Self::base_cell_style(cx).child(s),
-                TableCell::Element(e) => Self::base_cell_style(cx).child(e),
-            }))
-            .into_any_element()
-    }
-
-    fn render_header(&self, headers: [SharedString; COLS], cx: &mut App) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .w_full()
-            .p_2()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .children(headers.into_iter().map(|h| {
-                Self::base_cell_style(cx)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(h.clone())
-            }))
-    }
-
-    fn render(&self) -> Div {
-        div().w(self.width).overflow_hidden()
-    }
-}
-
-/// Represents a cell in a table.
-pub enum TableCell {
-    /// A cell containing a string value.
-    String(SharedString),
-    /// A cell containing a UI element.
-    Element(AnyElement),
-}
-
-/// Creates a `TableCell` containing a string value.
-pub fn string_cell(s: impl Into<SharedString>) -> TableCell {
-    TableCell::String(s.into())
-}
-
-/// Creates a `TableCell` containing an element.
-pub fn element_cell(e: impl Into<AnyElement>) -> TableCell {
-    TableCell::Element(e.into())
-}
-
-impl<E> From<E> for TableCell
-where
-    E: Into<SharedString>,
-{
-    fn from(e: E) -> Self {
-        TableCell::String(e.into())
     }
 }
 
