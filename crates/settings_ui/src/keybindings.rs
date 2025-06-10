@@ -1,13 +1,14 @@
-use std::fmt::Write as _;
+use std::{fmt::Write as _, time::Duration};
 
 use db::anyhow::anyhow;
 use gpui::{
-    AnyElement, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, FontWeight, Global,
-    IntoElement, Length, ListHorizontalSizingBehavior, ListSizingBehavior, Subscription,
-    UniformListScrollHandle, actions, div, px, uniform_list,
+    AnyElement, AppContext as _, Axis, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    FontWeight, Global, IntoElement, Length, ListHorizontalSizingBehavior, ListSizingBehavior,
+    MouseButton, Subscription, Task, UniformListScrollHandle, actions, div, px, uniform_list,
 };
 
-use editor::ShowScrollbar;
+use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
+use settings::Settings as _;
 use ui::{
     ActiveTheme as _, App, BorrowAppContext, ParentElement as _, Render, Scrollbar, ScrollbarState,
     SharedString, Styled as _, Window, prelude::*,
@@ -24,7 +25,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &OpenKeymapEditor, window, cx| {
-            let open_keymap_editor = cx.new(|cx| KeymapEditor::new(cx));
+            let open_keymap_editor = KeymapEditor::new(window, cx);
             workspace.add_item_to_center(Box::new(open_keymap_editor), window, cx);
         });
     })
@@ -54,8 +55,8 @@ struct KeymapEditor {
     _keymap_subscription: Subscription,
     processed_bindings: Vec<ProcessedKeybinding>,
     scroll_handle: UniformListScrollHandle,
-    vertical_scrollbar_state: ScrollbarState,
-    show_vertical_scrollbar: bool,
+    horizontal_scrollbar: ScrollbarProperties,
+    vertical_scrollbar: ScrollbarProperties,
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -67,25 +68,51 @@ impl Focusable for KeymapEditor {
 }
 
 impl KeymapEditor {
-    fn new(cx: &mut gpui::Context<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
+    fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
+        let this = cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
 
-        let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(|this, cx| {
-            let key_bindings = Self::process_bindings(cx);
-            this.processed_bindings = key_bindings;
+            let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(|this, cx| {
+                let key_bindings = Self::process_bindings(cx);
+                this.processed_bindings = key_bindings;
+            });
+
+            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+                this.hide_scrollbars(window, cx);
+            })
+            .detach();
+
+            let scroll_handle = UniformListScrollHandle::new();
+            let vertical_scrollbar = ScrollbarProperties {
+                axis: Axis::Vertical,
+                state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
+                show_scrollbar: false,
+                show_track: false,
+                auto_hide: false,
+                hide_task: None,
+            };
+
+            let horizontal_scrollbar = ScrollbarProperties {
+                axis: Axis::Horizontal,
+                state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
+                show_scrollbar: false,
+                show_track: false,
+                auto_hide: false,
+                hide_task: None,
+            };
+
+            let mut this = Self {
+                focus_handle: focus_handle.clone(),
+                _keymap_subscription,
+                processed_bindings: vec![],
+                scroll_handle,
+                horizontal_scrollbar,
+                vertical_scrollbar,
+            };
+
+            this.update_scrollbar_visibility(cx);
+            this
         });
-        let scroll_handle = UniformListScrollHandle::new();
-        let vertical_scrollbar_state = ScrollbarState::new(scroll_handle.clone());
-        let mut this = Self {
-            focus_handle: focus_handle.clone(),
-            _keymap_subscription,
-            processed_bindings: vec![],
-            scroll_handle,
-            vertical_scrollbar_state,
-            show_vertical_scrollbar: false,
-        };
-
-        this.update_scrollbar_visibility(cx);
         this
     }
 
@@ -118,17 +145,68 @@ impl KeymapEditor {
     }
 
     fn update_scrollbar_visibility(&mut self, cx: &mut Context<Self>) {
-        use editor::EditorSettings;
-        use settings::Settings;
-
         let show_setting = EditorSettings::get_global(cx).scrollbar.show;
 
-        self.show_vertical_scrollbar = match show_setting {
-            ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
+        let scroll_handle = self.scroll_handle.0.borrow();
+
+        let autohide = |show: ShowScrollbar, cx: &mut Context<Self>| match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => cx
+                .try_global::<ScrollbarAutoHide>()
+                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
+            ShowScrollbar::Always => false,
             ShowScrollbar::Never => false,
         };
 
+        let longest_item_width = scroll_handle.last_item_size.and_then(|size| {
+            (size.contents.width > size.item.width).then_some(size.contents.width)
+        });
+
+        // is there an item long enough that we should show a horizontal scrollbar?
+        let item_wider_than_container = if let Some(longest_item_width) = longest_item_width {
+            longest_item_width > px(scroll_handle.base_handle.bounds().size.width.0)
+        } else {
+            true
+        };
+
+        let show_scrollbar = match show_setting {
+            ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
+        };
+        let show_vertical = show_scrollbar;
+
+        let show_horizontal = item_wider_than_container && show_scrollbar;
+
+        let show_horizontal_track =
+            show_horizontal && matches!(show_setting, ShowScrollbar::Always);
+
+        // TODO: we probably should hide the scroll track when the list doesn't need to scroll
+        let show_vertical_track = show_vertical && matches!(show_setting, ShowScrollbar::Always);
+
+        self.vertical_scrollbar = ScrollbarProperties {
+            axis: self.vertical_scrollbar.axis,
+            state: self.vertical_scrollbar.state.clone(),
+            show_scrollbar: show_vertical,
+            show_track: show_vertical_track,
+            auto_hide: autohide(show_setting, cx),
+            hide_task: None,
+        };
+
+        self.horizontal_scrollbar = ScrollbarProperties {
+            axis: self.horizontal_scrollbar.axis,
+            state: self.horizontal_scrollbar.state.clone(),
+            show_scrollbar: show_horizontal,
+            show_track: show_horizontal_track,
+            auto_hide: autohide(show_setting, cx),
+            hide_task: None,
+        };
+
         cx.notify();
+    }
+
+    fn hide_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.horizontal_scrollbar.hide(window, cx);
+        self.vertical_scrollbar.hide(window, cx);
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -150,13 +228,138 @@ impl KeymapEditor {
             .on_hover(|_, _, cx| {
                 cx.stop_propagation();
             })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.vertical_scrollbar.state.is_dragging()
+                        && !this.focus_handle.contains_focused(window, cx)
+                    {
+                        this.vertical_scrollbar.hide(window, cx);
+                        cx.notify();
+                    }
+
+                    cx.stop_propagation();
+                }),
+            )
             .on_any_mouse_down(|_, _, cx| {
                 cx.stop_propagation();
             })
             .on_scroll_wheel(cx.listener(|_, _, _, cx| {
                 cx.notify();
             }))
-            .children(Scrollbar::vertical(self.vertical_scrollbar_state.clone()))
+            .children(Scrollbar::vertical(self.vertical_scrollbar.state.clone()))
+    }
+
+    /// Renders the horizontal scrollbar.
+    ///
+    /// The right offset is used to determine how far to the right the
+    /// scrollbar should extend to, useful for ensuring it doesn't collide
+    /// with the vertical scrollbar when visible.
+    fn render_horizontal_scrollbar(
+        &self,
+        right_offset: Pixels,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("keymap-editor-horizontal-scroll")
+            .occlude()
+            .flex_none()
+            .w_full()
+            .cursor_default()
+            .absolute()
+            .bottom_neg_px()
+            .left_0()
+            .right_0()
+            .pr(right_offset)
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| {
+                    if !this.horizontal_scrollbar.state.is_dragging()
+                        && !this.focus_handle.contains_focused(window, cx)
+                    {
+                        this.horizontal_scrollbar.hide(window, cx);
+                        cx.notify();
+                    }
+
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .children(Scrollbar::horizontal(
+                // percentage as f32..end_offset as f32,
+                self.horizontal_scrollbar.state.clone(),
+            ))
+    }
+}
+
+// computed state related to how to render scrollbars
+// one per axis
+// on render we just read this off the keymap editor
+// we update it when
+// - settings change
+// - on focus in, on focus out, on hover, etc.
+#[derive(Debug)]
+struct ScrollbarProperties {
+    axis: Axis,
+    show_scrollbar: bool,
+    show_track: bool,
+    auto_hide: bool,
+    hide_task: Option<Task<()>>,
+    state: ScrollbarState,
+}
+
+impl ScrollbarProperties {
+    // Shows the scrollbar and cancels any pending hide task
+    fn show(&mut self, cx: &mut Context<KeymapEditor>) {
+        if !self.auto_hide {
+            return;
+        }
+        self.show_scrollbar = true;
+        self.hide_task.take();
+        cx.notify();
+    }
+
+    fn hide(&mut self, window: &mut Window, cx: &mut Context<KeymapEditor>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+
+        if !self.auto_hide {
+            return;
+        }
+
+        let axis = self.axis;
+        self.hide_task = Some(cx.spawn_in(window, async move |keymap_editor, cx| {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+
+            if let Some(keymap_editor) = keymap_editor.upgrade() {
+                keymap_editor
+                    .update(cx, |keymap_editor, cx| {
+                        match axis {
+                            Axis::Vertical => {
+                                keymap_editor.vertical_scrollbar.show_scrollbar = false
+                            }
+                            Axis::Horizontal => {
+                                keymap_editor.horizontal_scrollbar.show_scrollbar = false
+                            }
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+            }
+        }));
     }
 }
 
@@ -178,8 +381,15 @@ impl Render for KeymapEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
         if self.processed_bindings.is_empty() {
             self.processed_bindings = Self::process_bindings(cx);
-            self.update_scrollbar_visibility(cx);
         }
+
+        let scroll_track_size = px(16.);
+        let h_scroll_offset = if self.vertical_scrollbar.show_scrollbar {
+            // magic number
+            px(3.)
+        } else {
+            px(0.)
+        };
 
         let table = Table::new(self.processed_bindings.len());
 
@@ -189,7 +399,17 @@ impl Render for KeymapEditor {
         div()
             .size_full()
             .bg(theme.colors().background)
+            .id("keymap-editor")
             .track_focus(&self.focus_handle)
+            .on_hover(cx.listener(move |this, hovered, window, cx| {
+                if *hovered {
+                    this.horizontal_scrollbar.show(cx);
+                    this.vertical_scrollbar.show(cx);
+                    cx.notify();
+                } else if !this.focus_handle.contains_focused(window, cx) {
+                    this.hide_scrollbars(window, cx);
+                }
+            }))
             .child(
                 table
                     .render()
@@ -201,6 +421,7 @@ impl Render for KeymapEditor {
                             .flex_grow()
                             .w_full()
                             .relative()
+                            .overflow_hidden()
                             .child(
                                 uniform_list(
                                     cx.entity(),
@@ -232,10 +453,67 @@ impl Render for KeymapEditor {
                                     ListHorizontalSizingBehavior::Unconstrained,
                                 ),
                             )
-                            .when(self.show_vertical_scrollbar, |this| {
+                            .when(self.vertical_scrollbar.show_track, |this| {
+                                this.child(
+                                    v_flex()
+                                        .h_full()
+                                        .flex_none()
+                                        .w(scroll_track_size)
+                                        .bg(cx.theme().colors().background)
+                                        .child(
+                                            div()
+                                                .size_full()
+                                                .flex_1()
+                                                .border_l_1()
+                                                .border_color(cx.theme().colors().border),
+                                        ),
+                                )
+                            })
+                            .when(self.vertical_scrollbar.show_scrollbar, |this| {
                                 this.child(self.render_vertical_scrollbar(cx))
                             }),
-                    ),
+                    )
+                    .when(self.horizontal_scrollbar.show_track, |this| {
+                        this.child(
+                            h_flex()
+                                .w_full()
+                                .h(scroll_track_size)
+                                .flex_none()
+                                .relative()
+                                .child(
+                                    div()
+                                        .w_full()
+                                        .flex_1()
+                                        // for some reason the horizontal scrollbar is 1px
+                                        // taller than the vertical scrollbar??
+                                        .h(scroll_track_size - px(1.))
+                                        .bg(cx.theme().colors().background)
+                                        .border_t_1()
+                                        .border_color(cx.theme().colors().border),
+                                )
+                                .when(self.vertical_scrollbar.show_track, |this| {
+                                    this.child(
+                                        div()
+                                            .flex_none()
+                                            // -1px prevents a missing pixel between the two container borders
+                                            .w(scroll_track_size - px(1.))
+                                            .h_full(),
+                                    )
+                                    .child(
+                                        // HACK: Fill the missing 1px 🥲
+                                        div()
+                                            .absolute()
+                                            .right(scroll_track_size - px(1.))
+                                            .bottom(scroll_track_size - px(1.))
+                                            .size_px()
+                                            .bg(cx.theme().colors().border),
+                                    )
+                                }),
+                        )
+                    })
+                    .when(self.horizontal_scrollbar.show_scrollbar, |this| {
+                        this.child(self.render_horizontal_scrollbar(h_scroll_offset, cx))
+                    }),
             )
     }
 }
@@ -382,15 +660,15 @@ impl SerializableItem for KeymapEditor {
         _workspace: gpui::WeakEntity<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: workspace::ItemId,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<gpui::Entity<Self>>> {
-        cx.spawn(async move |cx| {
+        window.spawn(cx, async move |cx| {
             if KEYBINDING_EDITORS
                 .get_keybinding_editor(item_id, workspace_id)?
                 .is_some()
             {
-                cx.new(|cx| KeymapEditor::new(cx))
+                cx.update(|window, cx| KeymapEditor::new(window, cx))
             } else {
                 Err(anyhow!("No keybinding editor to deserialize"))
             }
