@@ -1944,11 +1944,11 @@ impl Session {
                             .filter(|frame| {
                                 // Workaround for JavaScript debug adapter sending out "fake" stack frames for delineating await points. This is fine,
                                 // except that they always use an id of 0 for it, which collides with other (valid) stack frames.
-                                frame.id == 0
+                                !(frame.id == 0
                                     && frame.line == 0
                                     && frame.column == 0
                                     && frame.presentation_hint
-                                        == Some(StackFramePresentationHint::Label)
+                                        == Some(StackFramePresentationHint::Label))
                             })
                             .cloned()
                             .map(|frame| (frame.id, StackFrame::from(frame))),
