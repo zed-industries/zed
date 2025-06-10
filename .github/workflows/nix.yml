@@ -52,10 +52,13 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - if: ${{ env.CACHIX_AUTH_TOKEN == '' }}
+        run: 'echo "SECRET NOT SET!"'
+
       - uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad # v16
         with:
           name: zed
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          authToken: "${{ env.CACHIX_AUTH_TOKEN }}"
           pushFilter: "${{ inputs.cachix-filter }}"
           cachixArgs: '-v'
 
