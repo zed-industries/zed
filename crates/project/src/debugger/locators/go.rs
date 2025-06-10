@@ -231,7 +231,6 @@ impl DapLocator for GoLocator {
 
 #[cfg(test)]
 mod tests {
-    // todo!(Add init_settings functions)
     use super::*;
     use task::{HideStrategy, RevealStrategy, RevealTarget, Shell, TaskTemplate};
 

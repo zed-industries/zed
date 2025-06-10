@@ -15,9 +15,9 @@ use dap::{
 use editor::{Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    InteractiveText, KeyContext, PromptButton, PromptLevel, Render, StyledText, Subscription,
-    TextStyle, UnderlineStyle, WeakEntity,
+    Action, App, AppContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    HighlightStyle, InteractiveText, KeyContext, PromptButton, PromptLevel, Render, StyledText,
+    Subscription, TextStyle, UnderlineStyle, WeakEntity,
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
@@ -28,10 +28,10 @@ use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
     ContextMenu, Disableable, DropdownMenu, FluentBuilder, Icon, IconName, IconSize,
-    IconWithIndicator, Indicator, InteractiveElement, IntoElement, Label, LabelCommon as _,
-    ListItem, ListItemSpacing, ParentElement, RenderOnce, SharedString, Styled, StyledExt,
-    StyledTypography, ToggleButton, ToggleState, Toggleable, Tooltip, Window, div, h_flex, px,
-    relative, rems, v_flex,
+    IconWithIndicator, Indicator, InteractiveElement, IntoElement, KeyBinding, Label,
+    LabelCommon as _, LabelSize, ListItem, ListItemSpacing, ParentElement, RenderOnce,
+    SharedString, Styled, StyledExt, StyledTypography, ToggleButton, ToggleState, Toggleable,
+    Tooltip, Window, div, h_flex, px, relative, rems, v_flex,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace, pane};
@@ -1205,10 +1205,6 @@ impl PickerDelegate for DebugDelegate {
         "Find a debug task, or debug a command.".into()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
-        Some("Debug custom command".into())
-    }
-
     fn update_matches(
         &mut self,
         query: String,
@@ -1392,6 +1388,60 @@ impl PickerDelegate for DebugDelegate {
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<picker::Picker<Self>>) {
         cx.emit(DismissEvent);
+    }
+
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<ui::AnyElement> {
+        let current_modifiers = window.modifiers();
+        let footer = h_flex()
+            .w_full()
+            .h_8()
+            .p_2()
+            .justify_between()
+            .rounded_b_sm()
+            .bg(cx.theme().colors().ghost_element_selected)
+            .border_t_1()
+            .border_color(cx.theme().colors().border_variant)
+            .child(
+                // TODO: add button to open selected task in debug.json
+                h_flex().into_any_element()
+            )
+            .map(|this| {
+                if (current_modifiers.alt || self.matches.is_empty()) && !self.prompt.is_empty() {
+                    let action = picker::ConfirmInput {
+                        secondary: current_modifiers.secondary(),
+                    }
+                    .boxed_clone();
+                    this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                        Button::new("launch-custom", "Launch Custom")
+                            .label_size(LabelSize::Small)
+                            .key_binding(keybind)
+                            .on_click(move |_, window, cx| {
+                                window.dispatch_action(action.boxed_clone(), cx)
+                            })
+                    }))
+                } else {
+                    this.children(KeyBinding::for_action(&menu::Confirm, window, cx).map(
+                        |keybind| {
+                            let is_recent_selected =
+                                self.divider_index >= Some(self.selected_index);
+                            let run_entry_label =
+                                if is_recent_selected { "Rerun" } else { "Spawn" };
+
+                            Button::new("spawn", run_entry_label)
+                                .label_size(LabelSize::Small)
+                                .key_binding(keybind)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+                                })
+                        },
+                    ))
+                }
+            });
+        Some(footer.into_any_element())
     }
 
     fn render_match(
