@@ -1244,6 +1244,13 @@ impl SelectionHistory {
         transaction_id: TransactionId,
         selections: Arc<[Selection<Anchor>]>,
     ) {
+        if selections.is_empty() {
+            log::error!(
+                "SelectionHistory::insert_transaction called with empty selections. Caller: {}",
+                std::panic::Location::caller()
+            );
+            return;
+        }
         self.selections_by_transaction
             .insert(transaction_id, (selections, None));
     }
