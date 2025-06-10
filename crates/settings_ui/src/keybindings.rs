@@ -44,8 +44,7 @@ impl KeymapEventChannel {
 
     pub fn trigger_keymap_changed(cx: &mut App) {
         cx.update_global(|_event_channel: &mut Self, _| {
-            dbg!("updating global");
-            *_event_channel = Self::new();
+            /* triggers observers in KeymapEditors */
         });
     }
 }
@@ -74,7 +73,6 @@ impl KeymapEditor {
         let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(|this, cx| {
             let key_bindings = Self::process_bindings(cx);
             this.processed_bindings = key_bindings;
-            _ = this.update_scrollbar_visibility(cx);
         });
         let scroll_handle = UniformListScrollHandle::new();
         let vertical_scrollbar_state = ScrollbarState::new(scroll_handle.clone());
@@ -178,7 +176,6 @@ impl Item for KeymapEditor {
 
 impl Render for KeymapEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
-        dbg!("rendering");
         if self.processed_bindings.is_empty() {
             self.processed_bindings = Self::process_bindings(cx);
             self.update_scrollbar_visibility(cx);
@@ -194,47 +191,37 @@ impl Render for KeymapEditor {
             .bg(theme.colors().background)
             .track_focus(&self.focus_handle)
             .child(
-                div()
-                    .relative()
-                    .size_full()
+                table
+                    .render()
+                    .h_full()
+                    .v_flex()
+                    .child(table.render_header(headers, cx))
                     .child(
-                        table
-                            .render()
-                            .h_full()
-                            .child(table.render_header(headers, cx))
+                        div()
+                            .flex_grow()
+                            .w_full()
+                            .relative()
                             .child(
                                 uniform_list(
                                     cx.entity(),
                                     "keybindings",
                                     table.row_count,
                                     move |this, range, _, cx| {
-                                        return range
+                                        range
                                             .map(|index| {
-                                                table.render_row(
-                                                    index,
-                                                    [
-                                                        string_cell(
-                                                            this.processed_bindings[index]
-                                                                .action
-                                                                .clone(),
-                                                        ),
-                                                        string_cell(
-                                                            this.processed_bindings[index]
-                                                                .keystroke_text
-                                                                .clone(),
-                                                        ),
-                                                        string_cell(
-                                                            this.processed_bindings[index]
-                                                                .context
-                                                                .clone(),
-                                                        ),
-                                                        // TODO: Add a source field
-                                                        // string_cell(keybinding.source().to_string()),
-                                                    ],
-                                                    cx,
-                                                )
+                                                let binding = &this.processed_bindings[index];
+                                                let row = [
+                                                    binding.action.clone(),
+                                                    binding.keystroke_text.clone(),
+                                                    binding.context.clone(),
+                                                    // TODO: Add a source field
+                                                    // string_cell(keybinding.source().to_string()),
+                                                ]
+                                                .map(string_cell);
+
+                                                table.render_row(index, row, cx)
                                             })
-                                            .collect();
+                                            .collect()
                                     },
                                 )
                                 .size_full()
@@ -244,11 +231,11 @@ impl Render for KeymapEditor {
                                 .with_horizontal_sizing_behavior(
                                     ListHorizontalSizingBehavior::Unconstrained,
                                 ),
-                            ),
-                    )
-                    .when(self.show_vertical_scrollbar, |this| {
-                        this.child(self.render_vertical_scrollbar(cx))
-                    }),
+                            )
+                            .when(self.show_vertical_scrollbar, |this| {
+                                this.child(self.render_vertical_scrollbar(cx))
+                            }),
+                    ),
             )
     }
 }
