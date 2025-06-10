@@ -1,16 +1,21 @@
+#![cfg_attr(not(unix), allow(unused))]
+
 use anyhow::{Context as _, Result};
-use collections::HashMap;
 use std::borrow::Cow;
-use std::ffi::OsStr;
-use std::io::Read;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use tempfile::NamedTempFile;
 
 /// Capture all environment variables from the login shell.
-pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, String>> {
-    let shell_path = std::env::var("SHELL").map(PathBuf::from)?;
-    let shell_name = shell_path.file_name().and_then(OsStr::to_str);
+#[cfg(unix)]
+pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    let shell_path = std::env::var("SHELL").map(std::path::PathBuf::from)?;
+    let shell_name = shell_path.file_name().and_then(std::ffi::OsStr::to_str);
+
+    let mut command = std::process::Command::new(&shell_path);
+    command.stdin(Stdio::null());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
 
     let mut command_string = String::new();
 
@@ -18,10 +23,7 @@ pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, S
     // the project directory to get the env in there as if the user
     // `cd`'d into it. We do that because tools like direnv, asdf, ...
     // hook into `cd` and only set up the env after that.
-    if let Some(dir) = change_dir {
-        let dir_str = dir.as_ref().to_string_lossy();
-        command_string.push_str(&format!("cd '{dir_str}';"));
-    }
+    command_string.push_str(&format!("cd '{}';", directory.display()));
 
     // In certain shells we need to execute additional_command in order to
     // trigger the behavior of direnv, etc.
@@ -30,26 +32,26 @@ pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, S
         _ => "",
     });
 
-    let mut env_output_file = NamedTempFile::new()?;
-    command_string.push_str(&format!(
-        "sh -c 'export -p' > '{}';",
-        env_output_file.path().to_string_lossy(),
-    ));
-
-    let mut command = Command::new(&shell_path);
+    // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
+    // so file descriptor 0 is used instead.
+    const ENV_OUTPUT_FD: std::os::fd::RawFd = 0;
+    command_string.push_str(&format!("sh -c 'export -p >&{ENV_OUTPUT_FD}';"));
 
     // For csh/tcsh, the login shell option is set by passing `-` as
     // the 0th argument instead of using `-l`.
     if let Some("tcsh" | "csh") = shell_name {
-        #[cfg(unix)]
-        std::os::unix::process::CommandExt::arg0(&mut command, "-");
+        command.arg0("-");
     } else {
         command.arg("-l");
     }
 
     command.args(["-i", "-c", &command_string]);
 
-    let process_output = super::set_pre_exec_to_start_new_session(&mut command).output()?;
+    super::set_pre_exec_to_start_new_session(&mut command);
+
+    let (env_output, process_output) = spawn_and_read_fd(command, ENV_OUTPUT_FD)?;
+    let env_output = String::from_utf8_lossy(&env_output);
+
     anyhow::ensure!(
         process_output.status.success(),
         "login shell exited with {}. stdout: {:?}, stderr: {:?}",
@@ -58,15 +60,36 @@ pub fn capture(change_dir: Option<impl AsRef<Path>>) -> Result<HashMap<String, S
         String::from_utf8_lossy(&process_output.stderr),
     );
 
-    let mut env_output = String::new();
-    env_output_file.read_to_string(&mut env_output)?;
-
     parse(&env_output)
         .filter_map(|entry| match entry {
             Ok((name, value)) => Some(Ok((name.into(), value?.into()))),
             Err(err) => Some(Err(err)),
         })
-        .collect::<Result<HashMap<String, String>>>()
+        .collect::<Result<_>>()
+}
+
+#[cfg(unix)]
+fn spawn_and_read_fd(
+    mut command: std::process::Command,
+    child_fd: std::os::fd::RawFd,
+) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
+    use command_fds::{CommandFdExt, FdMapping};
+    use std::io::Read;
+
+    let (mut reader, writer) = std::io::pipe()?;
+
+    command.fd_mappings(vec![FdMapping {
+        parent_fd: writer.into(),
+        child_fd,
+    }])?;
+
+    let process = command.spawn()?;
+    drop(command);
+
+    let mut buffer = Vec::new();
+    reader.read_to_end(&mut buffer)?;
+
+    Ok((buffer, process.wait_with_output()?))
 }
 
 /// Parse the result of calling `sh -c 'export -p'`.
@@ -153,6 +176,17 @@ fn parse_literal_double_quoted(input: &str) -> Option<(String, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn test_spawn_and_read_fd() -> anyhow::Result<()> {
+        let mut command = std::process::Command::new("sh");
+        super::super::set_pre_exec_to_start_new_session(&mut command);
+        command.args(["-lic", "printf 'abc%.0s' $(seq 1 65536) >&0"]);
+        let (bytes, _) = spawn_and_read_fd(command, 0)?;
+        assert_eq!(bytes.len(), 65536 * 3);
+        Ok(())
+    }
 
     #[test]
     fn test_parse() {
