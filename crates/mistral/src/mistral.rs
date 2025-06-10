@@ -64,6 +64,10 @@ pub enum Model {
     Pixtral12BLatest,
     #[serde(rename = "pixtral-large-latest", alias = "pixtral-large-latest")]
     PixtralLargeLatest,
+    #[serde(rename = "magistral-medium-latest", alias = "magistral-medium-latest")]
+    MagistralMediumLatest,
+    #[serde(rename = "magistral-small-latest", alias = "magistral-small-latest")]
+    MagistralSmallLatest,
 
     #[serde(rename = "custom")]
     Custom {
@@ -94,6 +98,8 @@ impl Model {
             "devstral-small-latest" => Ok(Self::DevstralSmallLatest),
             "pixtral-12b-latest" => Ok(Self::Pixtral12BLatest),
             "pixtral-large-latest" => Ok(Self::PixtralLargeLatest),
+            "magistral-medium-latest" => Ok(Self::MagistralMediumLatest),
+            "magistral-small-latest" => Ok(Self::MagistralSmallLatest),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -109,6 +115,8 @@ impl Model {
             Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Pixtral12BLatest => "pixtral-12b-latest",
             Self::PixtralLargeLatest => "pixtral-large-latest",
+            Self::MagistralMediumLatest => "magistral-medium-latest",
+            Self::MagistralSmallLatest => "magistral-small-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -124,6 +132,8 @@ impl Model {
             Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Pixtral12BLatest => "pixtral-12b-latest",
             Self::PixtralLargeLatest => "pixtral-large-latest",
+            Self::MagistralMediumLatest => "magistral-medium-latest",
+            Self::MagistralSmallLatest => "magistral-small-latest",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -141,6 +151,8 @@ impl Model {
             Self::DevstralSmallLatest => 262144,
             Self::Pixtral12BLatest => 128000,
             Self::PixtralLargeLatest => 128000,
+            Self::MagistralMediumLatest => 40960,
+            Self::MagistralSmallLatest => 40000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -164,7 +176,9 @@ impl Model {
             | Self::OpenCodestralMamba
             | Self::DevstralSmallLatest
             | Self::Pixtral12BLatest
-            | Self::PixtralLargeLatest => true,
+            | Self::PixtralLargeLatest
+            | Self::MagistralMediumLatest
+            | Self::MagistralSmallLatest => true,
             Self::Custom { supports_tools, .. } => supports_tools.unwrap_or(false),
         }
     }
@@ -179,7 +193,9 @@ impl Model {
             | Self::MistralLargeLatest
             | Self::OpenMistralNemo
             | Self::OpenCodestralMamba
-            | Self::DevstralSmallLatest => false,
+            | Self::DevstralSmallLatest
+            | Self::MagistralMediumLatest
+            | Self::MagistralSmallLatest => false,
             Self::Custom {
                 supports_images, ..
             } => supports_images.unwrap_or(false),
@@ -394,8 +410,6 @@ pub struct StreamDelta {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
