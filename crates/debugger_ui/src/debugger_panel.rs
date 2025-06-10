@@ -10,13 +10,13 @@ use crate::{
 };
 use anyhow::Result;
 use command_palette_hooks::CommandPaletteFilter;
-use dap::StartDebuggingRequestArguments;
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{
     ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
     client::SessionId, debugger_settings::DebuggerSettings,
 };
+use dap::{DapRegistry, StartDebuggingRequestArguments};
 use gpui::{
     Action, App, AsyncWindowContext, Context, DismissEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, MouseButton, MouseDownEvent, Point, Subscription, Task, WeakEntity,
@@ -445,10 +445,7 @@ impl DebugPanel {
         };
 
         let dap_store_handle = self.project.read(cx).dap_store().clone();
-        let mut label = parent_session.read(cx).label().clone();
-        if !label.ends_with("(child)") {
-            label = format!("{label} (child)").into();
-        }
+        let label = self.label_for_child_session(&parent_session, request, cx);
         let adapter = parent_session.read(cx).adapter().clone();
         let mut binary = parent_session.read(cx).binary().clone();
         binary.request_args = request.clone();
@@ -1038,6 +1035,25 @@ impl DebugPanel {
             }
             cx.emit(PanelEvent::ZoomIn);
         }
+    }
+
+    fn label_for_child_session(
+        &self,
+        parent_session: &Entity<Session>,
+        request: &StartDebuggingRequestArguments,
+        cx: &mut Context<'_, Self>,
+    ) -> SharedString {
+        let adapter = parent_session.read(cx).adapter();
+        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter) {
+            if let Some(label) = adapter.label_for_child_session(request) {
+                return label.into();
+            }
+        }
+        let mut label = parent_session.read(cx).label().clone();
+        if !label.ends_with("(child)") {
+            label = format!("{label} (child)").into();
+        }
+        label
     }
 }
 
