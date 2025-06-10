@@ -427,31 +427,13 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
-                PrimitiveBatch::Paths(paths) => {
-                    // TODO: `metal 0.32` added `metal::Device::support_indirect_command_buffers`` method,
-                    // which can be used to determine if we should use indirect command buffers
-                    // to draw paths.
-                    // let support_indirect_command_buffers =
-                    //     self.device.support_indirect_command_buffers();
-                    let support_indirect_command_buffers = false;
-                    if !support_indirect_command_buffers {
-                        self.draw_paths(
-                            paths,
-                            instance_buffer,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        )
-                    } else {
-                        self.draw_paths_icb(
-                            paths,
-                            instance_buffer,
-                            &mut instance_offset,
-                            viewport_size,
-                            command_encoder,
-                        )
-                    }
-                }
+                PrimitiveBatch::Paths(paths) => self.draw_paths(
+                    paths,
+                    instance_buffer,
+                    &mut instance_offset,
+                    viewport_size,
+                    command_encoder,
+                ),
                 PrimitiveBatch::Underlines(underlines) => self.draw_underlines(
                     underlines,
                     instance_buffer,
@@ -637,97 +619,6 @@ impl MetalRenderer {
     }
 
     fn draw_paths(
-        &self,
-        paths: &[Path<ScaledPixels>],
-        instance_buffer: &mut InstanceBuffer,
-        instance_offset: &mut usize,
-        viewport_size: Size<DevicePixels>,
-        command_encoder: &metal::RenderCommandEncoderRef,
-    ) -> bool {
-        if paths.is_empty() {
-            return true;
-        }
-
-        command_encoder.set_render_pipeline_state(&self.path_pipeline_state);
-
-        for path in paths {
-            align_offset(instance_offset);
-
-            // vertices
-            let vertices = path
-                .vertices
-                .iter()
-                .map(|v| PathVertex {
-                    xy_position: v.xy_position,
-                    content_mask: ContentMask {
-                        bounds: path.content_mask.bounds,
-                    },
-                })
-                .collect::<Vec<_>>();
-            let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
-            let next_offset = *instance_offset + vertices_bytes_len;
-            if next_offset > instance_buffer.size {
-                return false;
-            }
-
-            let buffer_contents = unsafe {
-                (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset)
-            };
-
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    vertices.as_ptr() as *const u8,
-                    buffer_contents,
-                    vertices_bytes_len,
-                );
-            }
-
-            command_encoder.set_vertex_buffer(
-                PathInputIndex::Vertices as u64,
-                Some(&instance_buffer.metal_buffer),
-                *instance_offset as u64,
-            );
-
-            command_encoder.set_vertex_bytes(
-                PathInputIndex::ViewportSize as u64,
-                mem::size_of_val(&viewport_size) as u64,
-                &viewport_size as *const Size<DevicePixels> as *const _,
-            );
-
-            let sprites = [PathSprite {
-                bounds: path
-                    .bounds
-                    .map_origin(|origin| origin.floor())
-                    .map_size(|size| size.ceil()),
-                color: path.color,
-            }];
-
-            command_encoder.set_vertex_bytes(
-                PathInputIndex::Sprites as u64,
-                mem::size_of_val(&sprites) as u64,
-                &sprites as *const PathSprite as *const _,
-            );
-
-            command_encoder.set_fragment_bytes(
-                PathInputIndex::Sprites as u64,
-                mem::size_of_val(&sprites) as u64,
-                &sprites as *const PathSprite as *const _,
-            );
-
-            command_encoder.draw_primitives_instanced(
-                metal::MTLPrimitiveType::Triangle,
-                0,
-                vertices.len() as u64,
-                1,
-            );
-
-            *instance_offset = next_offset;
-        }
-
-        true
-    }
-
-    fn draw_paths_icb(
         &self,
         paths: &[Path<ScaledPixels>],
         instance_buffer: &mut InstanceBuffer,
