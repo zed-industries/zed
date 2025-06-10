@@ -378,8 +378,6 @@ impl DataTable {
 
 impl Render for DataTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let entity = cx.entity();
-
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -431,8 +429,10 @@ impl Render for DataTable {
                             .relative()
                             .size_full()
                             .child(
-                                uniform_list(entity, "items", self.quotes.len(), {
-                                    move |this, range, _, _| {
+                                uniform_list(
+                                    "items",
+                                    self.quotes.len(),
+                                    cx.processor(move |this, range: Range<usize>, _, _| {
                                         this.visible_range = range.clone();
                                         let mut items = Vec::with_capacity(range.end - range.start);
                                         for i in range {
@@ -441,8 +441,8 @@ impl Render for DataTable {
                                             }
                                         }
                                         items
-                                    }
-                                })
+                                    }),
+                                )
                                 .size_full()
                                 .track_scroll(self.scroll_handle.clone()),
                             )
