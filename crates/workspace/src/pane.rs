@@ -935,6 +935,10 @@ impl Pane {
             .iter()
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
+        if !item_already_exists {
+            self.close_items_over_max_tabs(window, cx);
+        }
+
         if item.is_singleton(cx) {
             if let Some(&entry_id) = item.project_entry_ids(cx).first() {
                 let Some(project) = self.project.upgrade() else {
@@ -1032,12 +1036,6 @@ impl Pane {
                 self.activate_item(insertion_index, activate_pane, focus_item, window, cx);
             }
             cx.notify();
-        }
-
-        // Now that the item has been added (or moved), if it's a new item,
-        // check if we exceed the max tabs and close old ones.
-        if !item_already_exists {
-            self.close_items_over_max_tabs(window, cx);
         }
 
         cx.emit(Event::AddItem { item });
@@ -1440,7 +1438,7 @@ impl Pane {
         }
 
         for entry in self.activation_history.iter() {
-            if items_len <= max_tabs {
+            if items_len < max_tabs {
                 break;
             }
 
@@ -1451,6 +1449,7 @@ impl Pane {
             if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
                 continue;
             }
+
             if self.is_tab_pinned(index) {
                 continue;
             }
