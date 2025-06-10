@@ -874,6 +874,7 @@ impl EditorElement {
                 } else if !text_hitbox.is_hovered(window) {
                     editor.selection_drag_state = SelectionDragState::None;
                     cx.stop_propagation();
+                    cx.notify();
                     return;
                 }
             }
@@ -948,7 +949,8 @@ impl EditorElement {
             return;
         }
 
-        let text_bounds = position_map.text_hitbox.bounds;
+        let text_hitbox = &position_map.text_hitbox;
+        let text_bounds = text_hitbox.bounds;
         let point_for_position = position_map.point_for_position(event.position);
 
         let mut scroll_delta = gpui::Point::<f32>::default();
@@ -989,10 +991,12 @@ impl EditorElement {
             match editor.selection_drag_state {
                 SelectionDragState::Dragging {
                     ref mut drop_cursor,
+                    ref mut hide_drop_cursor,
                     ..
                 } => {
                     drop_cursor.start = drop_anchor;
                     drop_cursor.end = drop_anchor;
+                    *hide_drop_cursor = !text_hitbox.is_hovered(window);
                 }
                 SelectionDragState::ReadyToDrag { ref selection, .. } => {
                     let drop_cursor = Selection {
@@ -1005,6 +1009,7 @@ impl EditorElement {
                     editor.selection_drag_state = SelectionDragState::Dragging {
                         selection: selection.clone(),
                         drop_cursor,
+                        hide_drop_cursor: false,
                     };
                 }
                 _ => {}
@@ -1258,16 +1263,18 @@ impl EditorElement {
                 if let SelectionDragState::Dragging {
                     ref selection,
                     ref drop_cursor,
+                    ref hide_drop_cursor,
                 } = editor.selection_drag_state
                 {
-                    if drop_cursor
-                        .start
-                        .cmp(&selection.start, &snapshot.buffer_snapshot)
-                        .eq(&Ordering::Less)
-                        || drop_cursor
-                            .end
-                            .cmp(&selection.end, &snapshot.buffer_snapshot)
-                            .eq(&Ordering::Greater)
+                    if !hide_drop_cursor
+                        && (drop_cursor
+                            .start
+                            .cmp(&selection.start, &snapshot.buffer_snapshot)
+                            .eq(&Ordering::Less)
+                            || drop_cursor
+                                .end
+                                .cmp(&selection.end, &snapshot.buffer_snapshot)
+                                .eq(&Ordering::Greater))
                     {
                         let drag_cursor_layout = SelectionLayout::new(
                             drop_cursor.clone(),
