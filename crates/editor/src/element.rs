@@ -868,15 +868,11 @@ impl EditorElement {
                         window,
                         cx,
                     );
-                    editor.selection_drag_state = SelectionDragState::None;
-                    cx.stop_propagation();
-                    return;
-                } else if !text_hitbox.is_hovered(window) {
-                    editor.selection_drag_state = SelectionDragState::None;
-                    cx.stop_propagation();
-                    cx.notify();
-                    return;
                 }
+                editor.selection_drag_state = SelectionDragState::None;
+                cx.stop_propagation();
+                cx.notify();
+                return;
             }
             _ => {}
         }
