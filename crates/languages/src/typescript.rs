@@ -7,7 +7,8 @@ use collections::HashMap;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{
-    ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    ContextLocation, ContextProvider, File, LanguageToolchainStore, LocalFile, LspAdapter,
+    LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -259,6 +260,8 @@ impl TypeScriptContextProvider {
         &self,
         fs: Arc<dyn Fs>,
         worktree_root: &Path,
+        // TODO kb move from file_abs_path to workree_root to find all applicable package.json files
+        file_abs_path: &Path,
         cx: &App,
     ) -> Task<anyhow::Result<PackageJsonData>> {
         let package_json_path = worktree_root.join("package.json");
@@ -315,12 +318,15 @@ impl ContextProvider for TypeScriptContextProvider {
         file: Option<Arc<dyn File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
-        let package_json_data = project::File::from_dyn(file.as_ref())
-            .and_then(|f| f.worktree.read(cx).root_dir())
-            .map(|worktree_root| {
-                let data = self.package_json_data(fs.clone(), &worktree_root, cx);
-                (worktree_root, data)
-            });
+        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
+            return Task::ready(None);
+        };
+        let Some(worktree_root) = file.worktree.read(cx).root_dir() else {
+            return Task::ready(None);
+        };
+        let file_abs_path = file.abs_path(cx);
+        let package_json_data =
+            self.package_json_data(fs.clone(), &worktree_root, &file_abs_path, cx);
 
         cx.background_spawn(async move {
             let mut task_templates = TaskTemplates(Vec::new());
@@ -337,16 +343,14 @@ impl ContextProvider for TypeScriptContextProvider {
                 ..TaskTemplate::default()
             });
 
-            if let Some((worktree_root, package_json_data)) = package_json_data {
-                match package_json_data.await {
-                    Ok(package_json) => {
-                        package_json.fill_task_templates(&mut task_templates);
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "Failed to read package.json for worktree {worktree_root:?}: {e:#}"
-                        );
-                    }
+            match package_json_data.await {
+                Ok(package_json) => {
+                    package_json.fill_task_templates(&mut task_templates);
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to read package.json for worktree {file_abs_path:?}: {e:#}"
+                    );
                 }
             }
 
