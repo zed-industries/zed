@@ -801,6 +801,7 @@ jobs:
     name: Build with Nix
     uses: ./.github/workflows/nix.yml
     if: github.repository_owner == 'zed-industries' && contains(github.event.pull_request.labels.*.name, 'run-nix')
+    secrets: inherit
     with:
       flake-output: debug
       # excludes the final package to only cache dependencies
