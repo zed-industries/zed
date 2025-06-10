@@ -580,6 +580,7 @@ impl ContextEditor {
                 });
             }
             ContextEvent::SummaryGenerated => {}
+            ContextEvent::PathChanged { .. } => {}
             ContextEvent::StartedThoughtProcess(range) => {
                 let creases = self.insert_thought_process_output_sections(
                     [(

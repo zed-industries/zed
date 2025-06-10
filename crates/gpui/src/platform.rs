@@ -718,7 +718,7 @@ impl<T> ops::Index<usize> for AtlasTextureList<T> {
 
 impl<T> AtlasTextureList<T> {
     #[allow(unused)]
-    fn drain(&mut self) -> std::vec::Drain<Option<T>> {
+    fn drain(&mut self) -> std::vec::Drain<'_, Option<T>> {
         self.free_list.clear();
         self.textures.drain(..)
     }
