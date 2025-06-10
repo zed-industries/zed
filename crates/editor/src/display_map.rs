@@ -6,6 +6,7 @@
 //! we display as spaces and where to display custom blocks (like diagnostics).
 //! Seems like a lot? That's because it is. [`DisplayMap`] is conceptually made up
 //! of several smaller structures that form a hierarchy (starting at the bottom):
+//! - [`TokenMap`] that colorize tokens throughough semantic tokens
 //! - [`InlayMap`] that decides where the [`Inlay`]s should be displayed.
 //! - [`FoldMap`] that decides where the fold indicators should be; it also tracks parts of a source file that are currently folded.
 //! - [`TabMap`] that keeps track of hard tabs in a buffer.
@@ -23,6 +24,7 @@ mod custom_highlights;
 mod fold_map;
 mod inlay_map;
 pub(crate) mod invisibles;
+mod semantic_tokens;
 mod tab_map;
 mod wrap_map;
 
@@ -54,9 +56,11 @@ use multi_buffer::{
 use project::project_settings::DiagnosticSeverity;
 use serde::Deserialize;
 
+pub use semantic_tokens::Token;
 use std::{
     any::TypeId,
     borrow::Cow,
+    collections::BTreeSet,
     fmt::Debug,
     iter,
     num::NonZeroU32,
@@ -107,6 +111,8 @@ pub struct DisplayMap {
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
+    /// Semantic token highlights
+    pub tokens: Vec<Token>,
     pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
@@ -149,6 +155,7 @@ impl DisplayMap {
             crease_map,
             fold_placeholder,
             diagnostics_max_severity,
+            tokens: Default::default(),
             text_highlights: Default::default(),
             inlay_highlights: Default::default(),
             clip_at_line_ends: false,
@@ -175,6 +182,7 @@ impl DisplayMap {
             tab_snapshot,
             wrap_snapshot,
             block_snapshot,
+            tokens: self.tokens.clone(),
             diagnostics_max_severity: self.diagnostics_max_severity,
             crease_snapshot: self.crease_map.snapshot(),
             text_highlights: self.text_highlights.clone(),
@@ -520,6 +528,10 @@ impl DisplayMap {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
+    pub(crate) fn current_tokens(&self) -> impl Iterator<Item = &Token> {
+        self.tokens.iter()
+    }
+
     pub fn update_fold_widths(
         &mut self,
         widths: impl IntoIterator<Item = (FoldId, Pixels)>,
@@ -549,6 +561,40 @@ impl DisplayMap {
 
     pub(crate) fn current_inlays(&self) -> impl Iterator<Item = &Inlay> {
         self.inlay_map.current_inlays()
+    }
+
+    pub(crate) fn splice_tokens(
+        &mut self,
+        to_remove: &[usize],
+        to_insert: Vec<Token>,
+        cx: &mut Context<Self>,
+    ) {
+        if to_remove.is_empty() && to_insert.is_empty() {
+            return;
+        }
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut edits = BTreeSet::new();
+
+        self.tokens.retain(|token| {
+            let retain = !to_remove.contains(&token.id);
+            if !retain {
+                let offset = token.range.start.to_offset(&snapshot);
+                edits.insert(offset);
+            }
+            retain
+        });
+
+        for token_to_insert in to_insert {
+            edits.insert(token_to_insert.range.start.to_offset(&snapshot));
+            let (Ok(ix) | Err(ix)) = self.tokens.binary_search_by(|probe| {
+                probe
+                    .range
+                    .start
+                    .cmp(&token_to_insert.range.start, &snapshot)
+                    .then(std::cmp::Ordering::Less)
+            });
+            self.tokens.insert(ix, token_to_insert);
+        }
     }
 
     pub(crate) fn splice_inlays(
@@ -609,9 +655,9 @@ impl DisplayMap {
         self.wrap_map.read(cx).is_rewrapping()
     }
 }
-
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Highlights<'a> {
+    pub tokens: Vec<Token>,
     pub text_highlights: Option<&'a TextHighlights>,
     pub inlay_highlights: Option<&'a InlayHighlights>,
     pub styles: HighlightStyles,
@@ -754,6 +800,7 @@ pub struct DisplaySnapshot {
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
     inlay_highlights: InlayHighlights,
+    tokens: Vec<Token>,
     clip_at_line_ends: bool,
     masked: bool,
     diagnostics_max_severity: DiagnosticSeverity,
@@ -923,6 +970,7 @@ impl DisplaySnapshot {
             language_aware,
             self.masked,
             Highlights {
+                tokens: self.tokens.clone(),
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
                 styles: highlight_styles,

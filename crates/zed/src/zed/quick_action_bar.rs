@@ -92,8 +92,11 @@ impl Render for QuickActionBar {
         };
 
         let supports_inlay_hints = editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
+        let supports_semantic_tokens =
+            editor.update(cx, |editor, cx| editor.supports_inlay_hints(cx));
         let editor_value = editor.read(cx);
         let selection_menu_enabled = editor_value.selection_menu_enabled(cx);
+        let semantic_tokens_enabled = editor_value.semantic_tokens_enabled();
         let inlay_hints_enabled = editor_value.inlay_hints_enabled();
         let inline_values_enabled = editor_value.inline_values_enabled();
         let supports_diagnostics = editor_value.mode().is_full();
@@ -322,6 +325,29 @@ impl Render for QuickActionBar {
                         let focus_handle = editor_focus_handle.clone();
                         |mut menu, _, _| {
                             menu = menu.context(focus_handle);
+
+                            if supports_semantic_tokens {
+                                menu = menu.toggleable_entry(
+                                    "Semantic Tokens",
+                                    semantic_tokens_enabled,
+                                    IconPosition::Start,
+                                    Some(editor::actions::ToggleSemanticTokens.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_semantic_tokens(
+                                                        &editor::actions::ToggleSemanticTokens,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+                            }
 
                             if supports_inlay_hints {
                                 menu = menu.toggleable_entry(

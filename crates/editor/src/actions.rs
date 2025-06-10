@@ -433,6 +433,7 @@ actions!(
         OpenGitBlameCommit,
         ToggleDiagnostics,
         ToggleIndentGuides,
+        ToggleSemanticTokens,
         ToggleInlayHints,
         ToggleInlineValues,
         ToggleInlineDiagnostics,

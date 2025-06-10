@@ -1,3 +1,4 @@
+mod semantic_tokens;
 mod signature_help;
 
 use crate::{
@@ -15,6 +16,7 @@ use clock::Global;
 use collections::{HashMap, HashSet};
 use futures::future;
 use gpui::{App, AsyncApp, Entity, Task};
+use itertools::Itertools;
 use language::{
     Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
     ToOffset, ToPointUtf16, Transaction, Unclipped,
@@ -37,6 +39,8 @@ use std::{
 use text::{BufferId, LineEnding};
 use util::{ResultExt as _, debug_panic};
 
+pub use semantic_tokens::SemanticTokensFull;
+pub use semantic_tokens::SemanticTokensRange;
 pub use signature_help::SignatureHelp;
 
 pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOptions {

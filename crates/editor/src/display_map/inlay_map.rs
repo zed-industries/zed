@@ -11,7 +11,7 @@ use std::{
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{Patch, Rope};
 
-use super::{Highlights, custom_highlights::CustomHighlightsChunks};
+use super::{Highlights, semantic_tokens::TokenChunks};
 
 /// Decides where the [`Inlay`]s should be displayed.
 ///
@@ -212,7 +212,7 @@ pub struct InlayBufferRows<'a> {
 
 pub struct InlayChunks<'a> {
     transforms: Cursor<'a, Transform, (InlayOffset, usize)>,
-    buffer_chunks: CustomHighlightsChunks<'a>,
+    buffer_chunks: TokenChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::Chunks<'a>>,
     inlay_chunk: Option<&'a str>,
@@ -1005,11 +1005,11 @@ impl InlaySnapshot {
         cursor.seek(&range.start, Bias::Right, &());
 
         let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
-        let buffer_chunks = CustomHighlightsChunks::new(
+        let buffer_chunks = TokenChunks::new(
+            &self.buffer,
             buffer_range,
             language_aware,
-            highlights.text_highlights,
-            &self.buffer,
+            highlights.clone(),
         );
 
         InlayChunks {
@@ -1021,7 +1021,7 @@ impl InlaySnapshot {
             output_offset: range.start,
             max_output_offset: range.end,
             highlight_styles: highlights.styles,
-            highlights,
+            highlights: highlights,
             snapshot: self,
         }
     }
