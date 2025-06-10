@@ -605,6 +605,7 @@ impl RunningState {
         session: Entity<Session>,
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
+        parent_terminal: Option<Entity<DebugTerminal>>,
         serialized_pane_layout: Option<SerializedLayout>,
         dock_axis: Axis,
         window: &mut Window,
@@ -617,7 +618,8 @@ impl RunningState {
             StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
         });
 
-        let debug_terminal = cx.new(|cx| DebugTerminal::empty(window, cx));
+        let debug_terminal =
+            parent_terminal.unwrap_or_else(|| cx.new(|cx| DebugTerminal::empty(window, cx)));
 
         let variable_list =
             cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));

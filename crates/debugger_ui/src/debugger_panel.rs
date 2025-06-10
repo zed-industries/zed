@@ -1082,6 +1082,11 @@ async fn register_session_inner(
     .ok();
     let serialized_layout = persistence::get_serialized_layout(adapter_name).await;
     let debug_session = this.update_in(cx, |this, window, cx| {
+        let parent_session = this
+            .sessions
+            .iter()
+            .find(|p| Some(p.read(cx).session_id(cx)) == session.read(cx).parent_id(cx))
+            .cloned();
         this.sessions.retain(|session| {
             !session
                 .read(cx)
@@ -1095,8 +1100,8 @@ async fn register_session_inner(
         let debug_session = DebugSession::running(
             this.project.clone(),
             this.workspace.clone(),
+            parent_session.map(|p| p.read(cx).running_state().read(cx).debug_terminal.clone()),
             session,
-            cx.weak_entity(),
             serialized_layout,
             this.position(window, cx).axis(),
             window,
