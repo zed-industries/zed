@@ -368,7 +368,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         }
     }
 
-    async fn dap_schema(&self) -> serde_json::Value;
+    fn dap_schema(&self) -> serde_json::Value;
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -390,7 +390,7 @@ impl DebugAdapter for FakeAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         serde_json::Value::Null
     }
 

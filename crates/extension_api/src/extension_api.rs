@@ -204,7 +204,7 @@ pub trait Extension: Send + Sync {
         Err("`get_dap_binary` not implemented".to_string())
     }
 
-    fn dap_schema(&mut self) -> Result<serde_json::Value, String> {
+    fn dap_schema(&mut self, _adapter_name: String) -> Result<serde_json::Value, String> {
         Err("`dap_schema` not implemented".to_string())
     }
 }
@@ -399,10 +399,6 @@ impl wit::Guest for Component {
         worktree: &Worktree,
     ) -> Result<wit::DebugAdapterBinary, String> {
         extension().get_dap_binary(adapter_name, config, user_installed_path, worktree)
-    }
-
-    fn dap_schema() -> Result<String, String> {
-        extension().dap_schema().map(|schema| schema.to_string())
     }
 }
 

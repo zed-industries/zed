@@ -1,7 +1,7 @@
 use crate::wasm_host::wit::since_v0_6_0::{
     dap::{
-        StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, TcpArguments,
-        TcpArgumentsTemplate,
+        AttachRequest, BuildTaskDefinition, DebugRequest, LaunchRequest,
+        StartDebuggingRequestArguments, TcpArguments, TcpArgumentsTemplate,
     },
     slash_command::SlashCommandOutputSection,
 };
@@ -25,8 +25,10 @@ use std::{
     env,
     net::Ipv4Addr,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::{Arc, OnceLock},
 };
+use task::ZedDebugConfig;
 use util::{archive::extract_zip, maybe};
 use wasmtime::component::{Linker, Resource};
 
@@ -119,6 +121,16 @@ impl From<extension::TcpArgumentsTemplate> for TcpArgumentsTemplate {
     }
 }
 
+impl From<TcpArgumentsTemplate> for extension::TcpArgumentsTemplate {
+    fn from(value: TcpArgumentsTemplate) -> Self {
+        Self {
+            host: value.host.map(Ipv4Addr::from_bits),
+            port: value.port,
+            timeout: value.timeout,
+        }
+    }
+}
+
 impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
     type Error = anyhow::Error;
     fn try_from(value: extension::DebugTaskDefinition) -> Result<Self, Self::Error> {
@@ -131,6 +143,43 @@ impl TryFrom<extension::DebugTaskDefinition> for DebugTaskDefinition {
     }
 }
 
+impl From<task::DebugRequest> for DebugRequest {
+    fn from(value: task::DebugRequest) -> Self {
+        match value {
+            task::DebugRequest::Launch(launch_request) => Self::Launch(launch_request.into()),
+            task::DebugRequest::Attach(attach_request) => Self::Attach(attach_request.into()),
+        }
+    }
+}
+
+impl From<task::LaunchRequest> for LaunchRequest {
+    fn from(value: task::LaunchRequest) -> Self {
+        Self {
+            program: value.program,
+            cwd: value.cwd.map(|p| p.to_string_lossy().into_owned()),
+            args: value.args,
+            envs: value.env.into_iter().collect(),
+        }
+    }
+}
+impl From<task::AttachRequest> for AttachRequest {
+    fn from(value: task::AttachRequest) -> Self {
+        Self {
+            process_id: value.process_id,
+        }
+    }
+}
+
+impl From<ZedDebugConfig> for DebugConfig {
+    fn from(value: ZedDebugConfig) -> Self {
+        Self {
+            label: value.label.into(),
+            adapter: value.adapter.into(),
+            request: value.request.into(),
+            stop_on_entry: value.stop_on_entry.into(),
+        }
+    }
+}
 impl TryFrom<DebugAdapterBinary> for extension::DebugAdapterBinary {
     type Error = anyhow::Error;
     fn try_from(value: DebugAdapterBinary) -> Result<Self, Self::Error> {
@@ -141,6 +190,31 @@ impl TryFrom<DebugAdapterBinary> for extension::DebugAdapterBinary {
             cwd: value.cwd.map(|s| s.into()),
             connection: value.connection.map(Into::into),
             request_args: value.request_args.try_into()?,
+        })
+    }
+}
+
+impl From<BuildTaskDefinition> for extension::BuildTaskDefinition {
+    fn from(value: BuildTaskDefinition) -> Self {
+        match value {
+            BuildTaskDefinition::ByName(name) => Self::ByName(name.into()),
+            BuildTaskDefinition::Template(build_task_template) => Self::Template {
+                task_template: build_task_template.into(),
+                locator_name: (),
+            },
+        }
+    }
+}
+impl TryFrom<DebugScenario> for extension::DebugScenario {
+    type Error = anyhow::Error;
+
+    fn try_from(value: DebugScenario) -> std::result::Result<Self, Self::Error> {
+        Ok(Self {
+            adapter: value.adapter.into(),
+            label: value.label.into(),
+            build: value.build.map(Into::into),
+            config: serde_json::Value::from_str(&value.config)?,
+            tcp_connection: value.tcp_connection.map(Into::into),
         })
     }
 }

@@ -1,7 +1,7 @@
 use crate::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, parse_wasm_extension_version,
 };
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, bail, ensure};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::io::BufReader;
@@ -12,6 +12,7 @@ use std::{
     env, fs, mem,
     path::{Path, PathBuf},
     process::Stdio,
+    str::FromStr,
     sync::Arc,
 };
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};
@@ -97,6 +98,23 @@ impl ExtensionBuilder {
             log::info!("compiled Rust extension {}", extension_dir.display());
         }
 
+        let debug_adapters_dir = extension_dir.join("debug_adapter_schemas");
+        if !extension_manifest.debug_adapters.is_empty() {
+            ensure!(
+                debug_adapters_dir.exists(),
+                "Expected debug adapter schemas directory to exist"
+            );
+        }
+        for debug_adapter_name in &extension_manifest.debug_adapters {
+            let debug_adapter_schema_path = debug_adapters_dir.join(debug_adapter_name.as_ref());
+            let debug_adapter_schema = fs::read_to_string(&debug_adapter_schema_path)
+                .with_context(|| {
+                    format!("failed to read debug adapter schema for `{debug_adapter_name}`")
+                })?;
+            _ = serde_json::Value::from_str(&debug_adapter_schema).with_context(|| {
+                format!("Debug adapter schema for `{debug_adapter_name}` is not a valid JSON")
+            })?;
+        }
         for (grammar_name, grammar_metadata) in &extension_manifest.grammars {
             let snake_cased_grammar_name = grammar_name.to_snake_case();
             if grammar_name.as_ref() != snake_cased_grammar_name.as_str() {
