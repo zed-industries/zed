@@ -4057,7 +4057,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=68516de327fa1be15214133a0a2e52a12982ce75#68516de327fa1be15214133a0a2e52a12982ce75"
+source = "git+https://github.com/zed-industries/dap-types?rev=cef124a5109d6fd44a3f986882d78ce40b8d4fb5#cef124a5109d6fd44a3f986882d78ce40b8d4fb5"
 dependencies = [
  "schemars",
  "serde",
