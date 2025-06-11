@@ -39,8 +39,9 @@ pub async fn load_direnv_environment(
         return Err(DirenvError::NotFound);
     };
 
-    let Some(direnv_output) = smol::process::Command::new(direnv_path)
-        .args(["export", "json"])
+    let args = &["export", "json"];
+    let Some(direnv_output) = smol::process::Command::new(&direnv_path)
+        .args(args)
         .envs(env)
         .env("TERM", "dumb")
         .current_dir(dir)
@@ -68,9 +69,20 @@ pub async fn load_direnv_environment(
         return Err(DirenvError::EmptyOutput);
     }
 
-    let Some(env) = serde_json::from_str(&output).log_err() else {
-        return Err(DirenvError::InvalidJson);
-    };
-
-    Ok(env)
+    match serde_json::from_str::<HashMap<String, Option<String>>>(&output) {
+        Ok(env) => Ok(env
+            .into_iter()
+            .flat_map(|(k, v)| v.map(|v| (k, v)))
+            .collect()),
+        Err(err) => {
+            log::error!(
+                "json parse error {}, while parsing output of `{} {}`:\n{}",
+                err,
+                direnv_path.display(),
+                args.join(" "),
+                output
+            );
+            Err(DirenvError::InvalidJson)
+        }
+    }
 }
