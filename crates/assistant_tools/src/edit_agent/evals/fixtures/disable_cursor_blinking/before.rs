@@ -16632,56 +16632,6 @@ impl Editor {
         }
     }
 
-    // Returns true if the editor handled a go-to-line request
-    pub fn go_to_active_debug_line(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        maybe!({
-            let breakpoint_store = self.breakpoint_store.as_ref()?;
-
-            let Some(active_stack_frame) = breakpoint_store.read(cx).active_position().cloned()
-            else {
-                self.clear_row_highlights::<ActiveDebugLine>();
-                return None;
-            };
-
-            let position = active_stack_frame.position;
-            let buffer_id = position.buffer_id?;
-            let snapshot = self
-                .project
-                .as_ref()?
-                .read(cx)
-                .buffer_for_id(buffer_id, cx)?
-                .read(cx)
-                .snapshot();
-
-            let mut handled = false;
-            for (id, ExcerptRange { context, .. }) in
-                self.buffer.read(cx).excerpts_for_buffer(buffer_id, cx)
-            {
-                if context.start.cmp(&position, &snapshot).is_ge()
-                    || context.end.cmp(&position, &snapshot).is_lt()
-                {
-                    continue;
-                }
-                let snapshot = self.buffer.read(cx).snapshot(cx);
-                let multibuffer_anchor = snapshot.anchor_in_excerpt(id, position)?;
-
-                handled = true;
-                self.clear_row_highlights::<ActiveDebugLine>();
-                self.go_to_line::<ActiveDebugLine>(
-                    multibuffer_anchor,
-                    Some(cx.theme().colors().editor_debugger_active_line_background),
-                    window,
-                    cx,
-                );
-
-                cx.notify();
-            }
-
-            handled.then_some(())
-        })
-        .is_some()
-    }
-
     pub fn copy_file_name_without_extension(
         &mut self,
         _: &CopyFileNameWithoutExtension,

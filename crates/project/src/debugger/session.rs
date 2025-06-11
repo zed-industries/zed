@@ -1,4 +1,5 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
+use crate::debugger::dap_store::ActiveSessionEvent;
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
@@ -64,6 +65,13 @@ impl From<u64> for ThreadId {
     fn from(id: u64) -> Self {
         Self(id)
     }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub struct SourceStackFrameItem {
+    pub row: u32,
+    pub is_active: bool,
+    pub abs_path: Arc<Path>,
 }
 
 #[derive(Clone, Debug)]
@@ -599,6 +607,8 @@ pub struct Session {
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
     background_tasks: Vec<Task<()>>,
+    active_thread_id: Option<ThreadId>,
+    active_stack_frame: Option<StackFrameId>,
 }
 
 trait CacheableCommand: Any + Send + Sync {
@@ -763,6 +773,8 @@ impl Session {
                 exception_breakpoints: Default::default(),
                 label,
                 adapter,
+                active_stack_frame: None,
+                active_thread_id: None,
             };
 
             this
@@ -1296,9 +1308,6 @@ impl Session {
             Events::Continued(event) => {
                 if event.all_threads_continued.unwrap_or_default() {
                     self.thread_states.continue_all_threads();
-                    self.breakpoint_store.update(cx, |store, cx| {
-                        store.remove_active_position(Some(self.session_id()), cx)
-                    });
                 } else {
                     self.thread_states
                         .continue_thread(ThreadId(event.thread_id));
@@ -1306,9 +1315,7 @@ impl Session {
                 // todo(debugger): We should be able to get away with only invalidating generic if all threads were continued
                 self.invalidate_generic();
             }
-            Events::Exited(_event) => {
-                self.clear_active_debug_line(cx);
-            }
+            Events::Exited(_event) => {}
             Events::Terminated(_) => {
                 self.shutdown(cx).detach();
             }
@@ -1683,35 +1690,11 @@ impl Session {
         thread_id: ThreadId,
     ) -> impl FnOnce(&mut Self, Result<T::Response>, &mut Context<Self>) -> Option<T::Response> + 'static
     {
-        move |this, response, cx| match response.log_err() {
-            Some(response) => {
-                this.breakpoint_store.update(cx, |store, cx| {
-                    store.remove_active_position(Some(this.session_id()), cx)
-                });
-                Some(response)
-            }
-            None => {
-                this.thread_states.stop_thread(thread_id);
-                cx.notify();
-                None
-            }
+        move |this, response, cx| {
+            this.thread_states.continue_thread(thread_id);
+            cx.notify();
+            response.log_err()
         }
-    }
-
-    fn clear_active_debug_line_response(
-        &mut self,
-        response: Result<()>,
-        cx: &mut Context<Session>,
-    ) -> Option<()> {
-        response.log_err()?;
-        self.clear_active_debug_line(cx);
-        Some(())
-    }
-
-    fn clear_active_debug_line(&mut self, cx: &mut Context<Session>) {
-        self.breakpoint_store.update(cx, |store, cx| {
-            store.remove_active_position(Some(self.id), cx)
-        });
     }
 
     pub fn pause_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
@@ -1773,7 +1756,7 @@ impl Session {
                 TerminateCommand {
                     restart: Some(false),
                 },
-                Self::clear_active_debug_line_response,
+                Self::empty_response,
                 cx,
             )
         } else {
@@ -1783,7 +1766,7 @@ impl Session {
                     terminate_debuggee: Some(true),
                     suspend_debuggee: Some(false),
                 },
-                Self::clear_active_debug_line_response,
+                Self::empty_response,
                 cx,
             )
         };
@@ -2007,6 +1990,7 @@ impl Session {
                     this.invalidate_command_type::<VariablesCommand>();
 
                     cx.emit(SessionEvent::StackTrace);
+                    cx.emit(ActiveSessionEvent::StackTraceUpdated);
                     cx.notify();
                     Some(stack_frames)
                 },
@@ -2018,6 +2002,55 @@ impl Session {
             .get(&thread_id)
             .map(|thread| thread.stack_frames.clone())
             .unwrap_or_default()
+    }
+
+    pub fn set_active_stack_frame(&mut self, stack_frame: StackFrameId, cx: &mut Context<Self>) {
+        self.active_stack_frame = Some(stack_frame);
+        cx.notify();
+    }
+    pub fn set_active_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
+        self.active_thread_id = Some(thread_id);
+        self.active_stack_frame.take();
+        cx.notify();
+    }
+
+    pub(crate) fn active_stack_frame(&self) -> Option<StackFrameId> {
+        self.active_stack_frame
+    }
+    pub(crate) fn active_thread_id(&self) -> Option<ThreadId> {
+        self.active_thread_id
+    }
+
+    pub(crate) fn stack_frames_with_source_for_active_thread(
+        &self,
+    ) -> Option<IndexSet<SourceStackFrameItem>> {
+        self.active_thread_id.map(|tid| {
+            let active_stack_frame = self.active_stack_frame;
+            self.threads
+                .get(&tid)
+                .into_iter()
+                .flat_map(|thread| {
+                    thread.stack_frame_ids.iter().filter_map(|id| {
+                        self.stack_frames.get(id).and_then(|frame| {
+                            let source = frame.dap.source.as_ref()?;
+                            let path: &Path = source.path.as_ref().map(|p| p.as_ref())?;
+                            if !path.is_absolute() {
+                                return None;
+                            }
+                            let mut line = frame.dap.line.checked_sub(1)?;
+
+                            let row = line.try_into().unwrap_or(u32::MAX);
+                            let is_active = Some(*id) == active_stack_frame;
+                            Some(SourceStackFrameItem {
+                                row,
+                                is_active,
+                                abs_path: Arc::from(path),
+                            })
+                        })
+                    })
+                })
+                .collect()
+        })
     }
 
     pub fn scopes(&mut self, stack_frame_id: u64, cx: &mut Context<Self>) -> &[dap::Scope] {
@@ -2061,8 +2094,11 @@ impl Session {
             .unwrap_or_default()
     }
 
-    pub fn variables_by_stack_frame_id(&self, stack_frame_id: StackFrameId) -> Vec<dap::Variable> {
-        let Some(stack_frame) = self.stack_frames.get(&stack_frame_id) else {
+    pub fn variables_for_active_stack_frame_id(&self) -> Vec<dap::Variable> {
+        let Some(stack_frame) = self
+            .active_stack_frame
+            .and_then(|id| self.stack_frames.get(&id))
+        else {
             return Vec::new();
         };
 
@@ -2237,12 +2273,13 @@ impl Session {
                 TerminateThreadsCommand {
                     thread_ids: thread_ids.map(|ids| ids.into_iter().map(|id| id.0).collect()),
                 },
-                Self::clear_active_debug_line_response,
+                |_, response, cx| {
+                    cx.emit(ActiveSessionEvent::StackTraceUpdated);
+                    response.ok()
+                },
                 cx,
             )
             .detach();
-        } else {
-            self.shutdown(cx).detach();
         }
     }
 
@@ -2250,3 +2287,5 @@ impl Session {
         self.thread_states.thread_state(thread_id)
     }
 }
+
+impl EventEmitter<ActiveSessionEvent> for Session {}

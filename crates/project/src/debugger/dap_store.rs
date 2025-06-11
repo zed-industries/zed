@@ -6,16 +6,17 @@ use super::{
 };
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
+    debugger::session::{SourceStackFrameItem, StackFrame},
     project_settings::ProjectSettings,
     terminals::{SshCommand, wrap_for_ssh},
     worktree_store::WorktreeStore,
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
-use collections::HashMap;
+use collections::{HashMap, IndexSet};
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
-    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source, StackFrameId,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source,
     adapters::{
         DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
     },
@@ -30,7 +31,9 @@ use futures::{
     channel::mpsc::{self, UnboundedSender},
     future::{Shared, join_all},
 };
-use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+};
 use http_client::HttpClient;
 use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
 use node_runtime::NodeRuntime;
@@ -66,6 +69,12 @@ pub enum DapStoreEvent {
     RemoteHasInitialized,
 }
 
+#[derive(Clone, Copy)]
+pub enum ActiveSessionEvent {
+    /// There's a new stack trace, thus all existing highlight are invalidated.
+    StackTraceUpdated,
+}
+
 enum DapStoreMode {
     Local(LocalDapStore),
     Ssh(SshDapStore),
@@ -92,10 +101,18 @@ pub struct DapStore {
     breakpoint_store: Entity<BreakpointStore>,
     worktree_store: Entity<WorktreeStore>,
     sessions: BTreeMap<SessionId, Entity<Session>>,
+    active_session: Option<(Entity<Session>, Subscription)>,
     next_session_id: u32,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
+impl EventEmitter<ActiveSessionEvent> for DapStore {}
+
+#[derive(Clone)]
+pub struct ActiveSessionWithStack {
+    session: Entity<Session>,
+    pub stack: IndexSet<SourceStackFrameItem>,
+}
 
 impl DapStore {
     pub fn init(client: &AnyProtoClient, cx: &mut App) {
@@ -173,6 +190,7 @@ impl DapStore {
             breakpoint_store,
             worktree_store,
             sessions: Default::default(),
+            active_session: None,
         }
     }
 
@@ -382,6 +400,12 @@ impl DapStore {
             move |this: &mut DapStore, _, event: &SessionStateEvent, cx| match event {
                 SessionStateEvent::Shutdown => {
                     this.shutdown_session(session_id, cx).detach_and_log_err(cx);
+                    let session = this
+                        .active_session
+                        .take_if(|(session, _)| session.read(cx).session_id() == session_id);
+                    if session.is_some() {
+                        cx.emit(ActiveSessionEvent::StackTraceUpdated);
+                    }
                 }
                 SessionStateEvent::Restart | SessionStateEvent::SpawnChildSession { .. } => {}
                 SessionStateEvent::Running => {
@@ -564,14 +588,14 @@ impl DapStore {
     pub fn resolve_inline_value_locations(
         &self,
         session: Entity<Session>,
-        stack_frame_id: StackFrameId,
         buffer_handle: Entity<Buffer>,
         inline_value_locations: Vec<dap::inline_value::InlineValueLocation>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<InlayHint>>> {
         let snapshot = buffer_handle.read(cx).snapshot();
-        let all_variables = session.read(cx).variables_by_stack_frame_id(stack_frame_id);
 
+        let all_variables = session.read(cx).variables_for_active_stack_frame_id();
+        let id = session.read(cx).active_stack_frame();
         fn format_value(mut value: String) -> String {
             const LIMIT: usize = 100;
 
@@ -589,6 +613,9 @@ impl DapStore {
         }
 
         cx.spawn(async move |_, cx| {
+            let Some(stack_frame_id) = id else {
+                return Ok(vec![]);
+            };
             let mut inlay_hints = Vec::with_capacity(inline_value_locations.len());
             for inline_value_location in inline_value_locations.iter() {
                 let point = snapshot.point_to_point_utf16(language::Point::new(
@@ -801,6 +828,33 @@ impl DapStore {
                     .unbounded_send(envelope.payload.message)
                     .ok();
             })
+        })
+    }
+
+    pub(crate) fn active_session(&self) -> Option<&Entity<Session>> {
+        self.active_session.as_ref().map(|(session, _)| session)
+    }
+
+    pub fn set_active_session(&mut self, session: &Entity<Session>, cx: &mut Context<Self>) {
+        self.active_session = Some((
+            session.clone(),
+            cx.subscribe(session, |_, session, e: &ActiveSessionEvent, cx| {
+                cx.emit(*e);
+            }),
+        ));
+        cx.notify();
+    }
+
+    pub(crate) fn active_session_with_stack(&self, cx: &App) -> Option<ActiveSessionWithStack> {
+        self.active_session.as_ref().map(|(session, _)| {
+            let stack = session
+                .read(cx)
+                .stack_frames_with_source_for_active_thread()
+                .unwrap_or_default();
+            ActiveSessionWithStack {
+                stack,
+                session: session.clone(),
+            }
         })
     }
 }

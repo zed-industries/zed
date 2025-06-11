@@ -79,6 +79,7 @@ use futures::{
     stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
+use project::debugger::dap_store::ActiveSessionEvent;
 
 use ::git::blame::BlameEntry;
 use ::git::{Restore, blame::ParsedCommitMessage};
@@ -110,7 +111,7 @@ use itertools::Itertools;
 use language::{
     AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, DiagnosticEntry, DiagnosticSourceKind, DiffOptions, DocumentationConfig,
-    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language,
+    EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize, Language, LocalFile,
     OffsetRangeExt, Point, Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions,
     WordsQuery,
     language_settings::{
@@ -289,7 +290,8 @@ impl InlayId {
     }
 }
 
-pub enum ActiveDebugLine {}
+/// A highlight for a line that's a member of currently visible stack frame.
+pub enum StackFrameMemberLine {}
 pub enum DebugStackFrameLine {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
@@ -1766,21 +1768,12 @@ impl Editor {
                 };
 
                 project_subscriptions.push(cx.subscribe_in(
-                    &project.read(cx).breakpoint_store(),
+                    &project.read(cx).dap_store(),
                     window,
-                    |editor, _, event, window, cx| match event {
-                        BreakpointStoreEvent::ClearDebugLines => {
-                            editor.clear_row_highlights::<ActiveDebugLine>();
-                            editor.refresh_inline_values(cx);
+                    |editor, _, event, window, cx| {
+                        if let ActiveSessionEvent::StackTraceUpdated = event {
+                            editor.update_active_debug_line_highlights(window, cx);
                         }
-                        BreakpointStoreEvent::SetDebugLine => {
-                            if editor.go_to_active_debug_line(window, cx) {
-                                cx.stop_propagation();
-                            }
-
-                            editor.refresh_inline_values(cx);
-                        }
-                        _ => {}
                     },
                 ));
             }
@@ -2111,14 +2104,13 @@ impl Editor {
         jsx_tag_auto_close::refresh_enabled_in_any_buffer(&mut editor, &buffer, cx);
 
         if full_mode {
+            editor.update_active_debug_line_highlights(window, cx);
             let should_auto_hide_scrollbars = cx.should_auto_hide_scrollbars();
             cx.set_global(ScrollbarAutoHide(should_auto_hide_scrollbars));
 
             if editor.git_blame_inline_enabled {
                 editor.start_git_blame_inline(false, window, cx);
             }
-
-            editor.go_to_active_debug_line(window, cx);
 
             if let Some(buffer) = buffer.read(cx).as_singleton() {
                 if let Some(project) = editor.project.as_ref() {
@@ -7445,14 +7437,18 @@ impl Editor {
         let Some(breakpoint_store) = self.breakpoint_store.clone() else {
             return breakpoint_display_points;
         };
-
-        let snapshot = self.snapshot(window, cx);
-
-        let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
         let Some(project) = self.project.as_ref() else {
             return breakpoint_display_points;
         };
 
+        let snapshot = self.snapshot(window, cx);
+
+        let multi_buffer_snapshot = &snapshot.display_snapshot.buffer_snapshot;
+
+        let active_session = project
+            .read(cx)
+            .active_debug_session(cx)
+            .map(|session| session.read(cx).session_id());
         let range = snapshot.display_point_to_point(DisplayPoint::new(range.start, 0), Bias::Left)
             ..snapshot.display_point_to_point(DisplayPoint::new(range.end, 0), Bias::Right);
 
@@ -7471,6 +7467,7 @@ impl Editor {
                     buffer_snapshot.anchor_before(range.start)
                         ..buffer_snapshot.anchor_after(range.end),
                 ),
+                active_session,
                 buffer_snapshot,
                 cx,
             );
@@ -10078,7 +10075,10 @@ impl Editor {
                 .buffer_snapshot
                 .buffer_id_for_excerpt(breakpoint_position.excerpt_id)
         })?;
-
+        let active_session_id = project
+            .read(cx)
+            .active_debug_session(cx)
+            .map(|session| session.read(cx).session_id());
         let enclosing_excerpt = breakpoint_position.excerpt_id;
         let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
         let buffer_snapshot = buffer.read(cx).snapshot();
@@ -10100,6 +10100,7 @@ impl Editor {
                     .breakpoints(
                         &buffer,
                         Some(breakpoint_position.text_anchor..anchor_end.text_anchor),
+                        active_session_id,
                         &buffer_snapshot,
                         cx,
                     )
@@ -13403,6 +13404,62 @@ impl Editor {
         Ok(())
     }
 
+    fn update_active_debug_line_highlights(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        maybe!({
+            let project = self.project.as_ref()?.read(cx);
+
+            self.clear_row_highlights::<StackFrameMemberLine>();
+
+            let highlights_for_active_thread = project.active_debug_session_with_stack(cx)?;
+            let multi_buffer = self.buffer.read(cx);
+            let abs_path_to_buffer = multi_buffer
+                .all_buffers()
+                .into_iter()
+                .filter_map(|buffer| {
+                    let path: Arc<Path> = project::File::from_dyn(buffer.read(cx).file())?
+                        .abs_path(cx)
+                        .into();
+                    Some((path, buffer))
+                })
+                .collect::<HashMap<_, _>>();
+
+            for entry in highlights_for_active_thread.stack.into_iter() {
+                let Some(buffer) = abs_path_to_buffer.get(&entry.abs_path) else {
+                    continue;
+                };
+                let multi_buffer = self.buffer.read(cx);
+                let Some(start) = multi_buffer.buffer_point_to_anchor(
+                    buffer,
+                    Point {
+                        row: entry.row,
+                        column: 0,
+                    },
+                    cx,
+                ) else {
+                    continue;
+                };
+                let end = multi_buffer
+                    .buffer_point_to_anchor(
+                        buffer,
+                        Point {
+                            row: entry.row + 1,
+                            column: 0,
+                        },
+                        cx,
+                    )
+                    .unwrap_or_else(Anchor::max);
+
+                self.highlight_rows::<StackFrameMemberLine>(
+                    start..end,
+                    gpui::red(),
+                    RowHighlightOptions::default(),
+                    cx,
+                );
+            }
+            self.refresh_inline_values(cx);
+            Some(())
+        });
+    }
     pub fn toggle_comments(
         &mut self,
         action: &ToggleComments,
@@ -17699,57 +17756,6 @@ impl Editor {
         }
     }
 
-    // Returns true if the editor handled a go-to-line request
-    pub fn go_to_active_debug_line(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        maybe!({
-            let breakpoint_store = self.breakpoint_store.as_ref()?;
-
-            let Some(active_stack_frame) = breakpoint_store.read(cx).active_position().cloned()
-            else {
-                self.clear_row_highlights::<ActiveDebugLine>();
-                return None;
-            };
-
-            let position = active_stack_frame.position;
-            let buffer_id = position.buffer_id?;
-            let snapshot = self
-                .project
-                .as_ref()?
-                .read(cx)
-                .buffer_for_id(buffer_id, cx)?
-                .read(cx)
-                .snapshot();
-
-            let mut handled = false;
-            for (id, ExcerptRange { context, .. }) in
-                self.buffer.read(cx).excerpts_for_buffer(buffer_id, cx)
-            {
-                if context.start.cmp(&position, &snapshot).is_ge()
-                    || context.end.cmp(&position, &snapshot).is_lt()
-                {
-                    continue;
-                }
-                let snapshot = self.buffer.read(cx).snapshot(cx);
-                let multibuffer_anchor = snapshot.anchor_in_excerpt(id, position)?;
-
-                handled = true;
-                self.clear_row_highlights::<ActiveDebugLine>();
-
-                self.go_to_line::<ActiveDebugLine>(
-                    multibuffer_anchor,
-                    Some(cx.theme().colors().editor_debugger_active_line_background),
-                    window,
-                    cx,
-                );
-
-                cx.notify();
-            }
-
-            handled.then_some(())
-        })
-        .is_some()
-    }
-
     pub fn copy_file_name_without_extension(
         &mut self,
         _: &CopyFileNameWithoutExtension,
@@ -18817,7 +18823,7 @@ impl Editor {
 
         let current_execution_position = self
             .highlighted_rows
-            .get(&TypeId::of::<ActiveDebugLine>())
+            .get(&TypeId::of::<StackFrameMemberLine>())
             .and_then(|lines| lines.last().map(|line| line.range.start));
 
         self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
@@ -21153,7 +21159,7 @@ impl SemanticsProvider for Entity<Project> {
         self.update(cx, |project, cx| {
             if project
                 .active_debug_session(cx)
-                .is_some_and(|(session, _)| session.read(cx).any_stopped_thread())
+                .is_some_and(|session| session.read(cx).any_stopped_thread())
             {
                 return true;
             }
@@ -21172,9 +21178,9 @@ impl SemanticsProvider for Entity<Project> {
         cx: &mut App,
     ) -> Option<Task<anyhow::Result<Vec<InlayHint>>>> {
         self.update(cx, |project, cx| {
-            let (session, active_stack_frame) = project.active_debug_session(cx)?;
+            let session = project.active_debug_session(cx)?;
 
-            Some(project.inline_values(session, active_stack_frame, buffer_handle, range, cx))
+            Some(project.inline_values(session, buffer_handle, range, cx))
         })
     }
 

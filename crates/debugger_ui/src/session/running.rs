@@ -1396,7 +1396,9 @@ impl RunningState {
         if self.thread_id.is_some_and(|id| id == thread_id) {
             return;
         }
-
+        self.session.update(cx, |this, cx| {
+            this.set_active_thread(thread_id, cx);
+        });
         self.thread_id = Some(thread_id);
 
         self.stack_frame_list
@@ -1478,18 +1480,6 @@ impl RunningState {
     }
 
     pub(crate) fn shutdown(&mut self, cx: &mut Context<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace
-                    .project()
-                    .read(cx)
-                    .breakpoint_store()
-                    .update(cx, |store, cx| {
-                        store.remove_active_position(Some(self.session_id), cx)
-                    })
-            })
-            .log_err();
-
         self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
         })
@@ -1499,18 +1489,6 @@ impl RunningState {
         let Some(thread_id) = self.thread_id else {
             return;
         };
-
-        self.workspace
-            .update(cx, |workspace, cx| {
-                workspace
-                    .project()
-                    .read(cx)
-                    .breakpoint_store()
-                    .update(cx, |store, cx| {
-                        store.remove_active_position(Some(self.session_id), cx)
-                    })
-            })
-            .log_err();
 
         self.session().update(cx, |state, cx| {
             state.terminate_threads(Some(vec![thread_id; 1]), cx);
