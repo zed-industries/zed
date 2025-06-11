@@ -138,7 +138,19 @@ mod tests {
                 label: "Debug my JS app".into(),
                 adapter: "JavaScript".into(),
                 config: json!({
+                    "request": "launch",
+                    "program": "${ZED_WORKTREE_ROOT}/xyz.js",
                     "showDevDebugOutput": false,
+                    "stopOnEntry": true,
+                    "args": [
+                        "--foo",
+                        "${ZED_WORKTREE_ROOT}/thing",
+                    ],
+                    "cwd": "${ZED_WORKTREE_ROOT}/${FOO}/sub",
+                    "env": {
+                        "X": "Y",
+                    },
+                    "type": "node",
                 }),
                 tcp_connection: Some(TcpArgumentsTemplate {
                     port: Some(17),
