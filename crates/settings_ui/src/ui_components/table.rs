@@ -2,16 +2,17 @@ use std::{ops::Range, time::Duration};
 
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
-    AppContext, Axis, Context, Entity, FocusHandle, FontWeight, Length, MouseButton, Task,
-    UniformListScrollHandle, WeakEntity, uniform_list,
+    AppContext, Axis, Context, Entity, FocusHandle, FontWeight, Length,
+    ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Task, UniformListScrollHandle,
+    WeakEntity, uniform_list,
 };
 use settings::Settings as _;
 use ui::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement as _, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
-    Scrollbar, ScrollbarState, StatefulInteractiveElement as _, Styled, StyledTypography, Window,
-    div, example_group_with_title, px, single_example, v_flex,
+    Scrollbar, ScrollbarState, StatefulInteractiveElement as _, Styled, StyledExt as _,
+    StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
 
 struct UniformListData {
@@ -154,7 +155,19 @@ impl TableInteractionState {
         self.vertical_scrollbar.hide(window, cx);
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    // fn listener(this: Entity<Self>, fn: F) ->
+
+    pub fn listener<E: ?Sized>(
+        this: &Entity<Self>,
+        f: impl Fn(&mut Self, &E, &mut Window, &mut Context<Self>) + 'static,
+    ) -> impl Fn(&E, &mut Window, &mut App) + 'static {
+        let view = this.downgrade();
+        move |e: &E, window: &mut Window, cx: &mut App| {
+            view.update(cx, |view, cx| f(view, e, window, cx)).ok();
+        }
+    }
+
+    fn render_vertical_scrollbar(this: &Entity<Self>, cx: &mut App) -> impl IntoElement {
         div()
             .id("keymap-editor-vertical-scroll")
             .occlude()
@@ -166,7 +179,7 @@ impl TableInteractionState {
             .top_0()
             .bottom_0()
             .w(px(12.))
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
+            .on_mouse_move(Self::listener(this, |_, _, _, cx| {
                 cx.notify();
                 cx.stop_propagation()
             }))
@@ -175,7 +188,7 @@ impl TableInteractionState {
             })
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
+                Self::listener(this, |this, _, window, cx| {
                     if !this.vertical_scrollbar.state.is_dragging()
                         && !this.focus_handle.contains_focused(window, cx)
                     {
@@ -189,10 +202,12 @@ impl TableInteractionState {
             .on_any_mouse_down(|_, _, cx| {
                 cx.stop_propagation();
             })
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+            .on_scroll_wheel(Self::listener(&this, |_, _, _, cx| {
                 cx.notify();
             }))
-            .children(Scrollbar::vertical(self.vertical_scrollbar.state.clone()))
+            .children(Scrollbar::vertical(
+                this.read(cx).vertical_scrollbar.state.clone(),
+            ))
     }
 
     /// Renders the horizontal scrollbar.
@@ -201,9 +216,9 @@ impl TableInteractionState {
     /// scrollbar should extend to, useful for ensuring it doesn't collide
     /// with the vertical scrollbar when visible.
     fn render_horizontal_scrollbar(
-        &self,
+        this: &Entity<Self>,
         right_offset: Pixels,
-        cx: &mut Context<Self>,
+        cx: &mut App,
     ) -> impl IntoElement {
         div()
             .id("keymap-editor-horizontal-scroll")
@@ -216,7 +231,7 @@ impl TableInteractionState {
             .left_0()
             .right_0()
             .pr(right_offset)
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
+            .on_mouse_move(Self::listener(this, |_, _, _, cx| {
                 cx.notify();
                 cx.stop_propagation()
             }))
@@ -228,7 +243,7 @@ impl TableInteractionState {
             })
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
+                Self::listener(this, |this, _, window, cx| {
                     if !this.horizontal_scrollbar.state.is_dragging()
                         && !this.focus_handle.contains_focused(window, cx)
                     {
@@ -239,12 +254,12 @@ impl TableInteractionState {
                     cx.stop_propagation();
                 }),
             )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+            .on_scroll_wheel(Self::listener(this, |_, _, _, cx| {
                 cx.notify();
             }))
             .children(Scrollbar::horizontal(
                 // percentage as f32..end_offset as f32,
-                self.horizontal_scrollbar.state.clone(),
+                this.read(cx).horizontal_scrollbar.state.clone(),
             ))
     }
 }
@@ -400,14 +415,23 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
         // match self.ro
         let row_count = self.rows.len();
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
+
+        let scroll_track_size = px(16.);
+        let h_scroll_offset = if interaction_state
+            .as_ref()
+            .is_some_and(|state| state.read(cx).vertical_scrollbar.show_scrollbar)
+        {
+            // magic number
+            px(3.)
+        } else {
+            px(0.)
+        };
+
         div()
             .id("todo! how to have id")
             .w(self.width)
             .overflow_hidden()
-            .when_some(self.headers.take(), |this, headers| {
-                this.child(render_header(headers, cx))
-            })
-            .when_some(interaction_state, |this, interaction_state| {
+            .when_some(interaction_state.as_ref(), |this, interaction_state| {
                 this.track_focus(&interaction_state.read(cx).focus_handle)
                     .on_hover({
                         let interaction_state = interaction_state.downgrade();
@@ -429,18 +453,139 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                         }
                     })
             })
-            .map(|div| match self.rows {
-                TableContents::Vec(items) => div.children(
+            .when_some(self.headers.take(), |this, headers| {
+                this.child(render_header(headers, cx))
+            })
+            .map(|parent| match self.rows {
+                TableContents::Vec(items) => parent.children(
                     items
                         .into_iter()
                         .enumerate()
                         .map(|(index, row)| render_row(index, row, row_count, self.striped, cx)),
                 ),
-                TableContents::UniformList(uniform_list_data) => div.child(uniform_list(
-                    uniform_list_data.element_id,
-                    uniform_list_data.row_count,
-                    uniform_list_data.render_item_fn,
-                )),
+                TableContents::UniformList(uniform_list_data) => parent
+                    .h_full()
+                    .v_flex()
+                    .child(
+                        div()
+                            .flex_grow()
+                            .w_full()
+                            .relative()
+                            .overflow_hidden()
+                            .child(
+                                uniform_list(
+                                    uniform_list_data.element_id,
+                                    uniform_list_data.row_count,
+                                    uniform_list_data.render_item_fn,
+                                )
+                                .size_full()
+                                .flex_grow()
+                                .with_sizing_behavior(ListSizingBehavior::Auto)
+                                .with_horizontal_sizing_behavior(
+                                    ListHorizontalSizingBehavior::Unconstrained,
+                                )
+                                .when_some(
+                                    interaction_state.as_ref(),
+                                    |this, state| {
+                                        this.track_scroll(
+                                            state.read_with(cx, |s, _| s.scroll_handle.clone()),
+                                        )
+                                    },
+                                ),
+                            )
+                            .when(
+                                interaction_state.as_ref().is_some_and(|state| {
+                                    state.read(cx).vertical_scrollbar.show_track
+                                }),
+                                |this| {
+                                    this.child(
+                                        v_flex()
+                                            .h_full()
+                                            .flex_none()
+                                            .w(scroll_track_size)
+                                            .bg(cx.theme().colors().background)
+                                            .child(
+                                                div()
+                                                    .size_full()
+                                                    .flex_1()
+                                                    .border_l_1()
+                                                    .border_color(cx.theme().colors().border),
+                                            ),
+                                    )
+                                },
+                            )
+                            .when_some(
+                                interaction_state.as_ref().filter(|state| {
+                                    state.read(cx).vertical_scrollbar.show_scrollbar
+                                }),
+                                |this, interaction_state| {
+                                    this.child(TableInteractionState::render_vertical_scrollbar(
+                                        interaction_state,
+                                        cx,
+                                    ))
+                                },
+                            ),
+                    )
+                    .when(
+                        interaction_state
+                            .as_ref()
+                            .is_some_and(|state| state.read(cx).horizontal_scrollbar.show_track),
+                        |this| {
+                            this.child(
+                                h_flex()
+                                    .w_full()
+                                    .h(scroll_track_size)
+                                    .flex_none()
+                                    .relative()
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .flex_1()
+                                            // for some reason the horizontal scrollbar is 1px
+                                            // taller than the vertical scrollbar??
+                                            .h(scroll_track_size - px(1.))
+                                            .bg(cx.theme().colors().background)
+                                            .border_t_1()
+                                            .border_color(cx.theme().colors().border),
+                                    )
+                                    .when(
+                                        interaction_state.as_ref().is_some_and(|state| {
+                                            state.read(cx).vertical_scrollbar.show_track
+                                        }),
+                                        |this| {
+                                            this.child(
+                                                div()
+                                                    .flex_none()
+                                                    // -1px prevents a missing pixel between the two container borders
+                                                    .w(scroll_track_size - px(1.))
+                                                    .h_full(),
+                                            )
+                                            .child(
+                                                // HACK: Fill the missing 1px 🥲
+                                                div()
+                                                    .absolute()
+                                                    .right(scroll_track_size - px(1.))
+                                                    .bottom(scroll_track_size - px(1.))
+                                                    .size_px()
+                                                    .bg(cx.theme().colors().border),
+                                            )
+                                        },
+                                    ),
+                            )
+                        },
+                    )
+                    .when_some(
+                        interaction_state
+                            .as_ref()
+                            .filter(|state| state.read(cx).horizontal_scrollbar.show_scrollbar),
+                        |this, interaction_state| {
+                            this.child(TableInteractionState::render_horizontal_scrollbar(
+                                interaction_state,
+                                h_scroll_offset,
+                                cx,
+                            ))
+                        },
+                    ),
             })
     }
 }
