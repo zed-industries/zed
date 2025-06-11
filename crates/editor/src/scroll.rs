@@ -243,19 +243,17 @@ impl ScrollManager {
             };
 
             let scroll_top_buffer_point =
-                DisplayPoint::new(DisplayRow(scroll_top as u32), scroll_position.x as u32)
-                    .to_point(map);
+                DisplayPoint::new(DisplayRow(scroll_top as u32), 0).to_point(map);
             let top_anchor = map
                 .buffer_snapshot
                 .anchor_at(scroll_top_buffer_point, Bias::Right);
-            let display_point = top_anchor.to_display_point(map);
 
             (
                 ScrollAnchor {
                     anchor: top_anchor,
                     offset: point(
-                        display_point.column() as f32,
-                        scroll_top - display_point.row().as_f32(),
+                        scroll_position.x.max(0.),
+                        scroll_top - top_anchor.to_display_point(map).row().as_f32(),
                     ),
                 },
                 scroll_top_buffer_point.row,
@@ -549,20 +547,6 @@ impl Editor {
         );
     }
 
-    /// Scrolls the editor horizontally by the provided offset.
-    pub fn set_scroll_horizontal(
-        &mut self,
-        offset: f32,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) {
-        let mut anchor = self.scroll_manager.anchor();
-        let x = (anchor.offset.x + offset).max(0.0);
-
-        anchor.offset = gpui::Point::new(x, 0.0);
-        self.set_scroll_anchor(anchor, window, cx);
-    }
-
     pub(crate) fn set_scroll_position_internal(
         &mut self,
         scroll_position: gpui::Point<f32>,
@@ -685,17 +669,23 @@ impl Editor {
             return;
         }
 
-        let mut cur_position = self.scroll_position(cx);
+        let mut current_position = self.scroll_position(cx);
         let Some(visible_line_count) = self.visible_line_count() else {
             return;
         };
-        if cur_position.x == 0.0 && amount.columns() > 0. {
+
+        // If the scroll position is currently at the left edge of the document
+        // (x == 0.0) and the intent is to scroll right, the gutter's margin
+        // should first be added to the current position, otherwise the cursor
+        // will end at the column position minus the margin, which looks off.
+        if current_position.x == 0.0 && amount.columns() > 0. {
             if let Some(last_position_map) = &self.last_position_map {
-                cur_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
+                current_position.x += self.gutter_dimensions.margin / last_position_map.em_advance;
             }
         }
-        let new_pos = cur_position + point(amount.columns(), amount.lines(visible_line_count));
-        self.set_scroll_position(new_pos, window, cx);
+        let new_position =
+            current_position + point(amount.columns(), amount.lines(visible_line_count));
+        self.set_scroll_position(new_position, window, cx);
     }
 
     /// Returns an ordering. The newest selection is:

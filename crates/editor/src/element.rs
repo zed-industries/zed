@@ -7699,8 +7699,6 @@ impl Element for EditorElement {
                     let line_height = style.text.line_height_in_pixels(window.rem_size());
                     let em_width = window.text_system().em_width(font_id, font_size).unwrap();
                     let em_advance = window.text_system().em_advance(font_id, font_size).unwrap();
-                    dbg!(em_width, em_advance);
-
                     let glyph_grid_cell = size(em_advance, line_height);
 
                     let gutter_dimensions = snapshot
@@ -8290,8 +8288,6 @@ impl Element for EditorElement {
                         scroll_position.x * em_advance,
                         scroll_position.y * line_height,
                     );
-                    dbg!(scroll_pixel_position);
-
                     let indent_guides = self.layout_indent_guides(
                         content_origin,
                         text_hitbox.origin,
