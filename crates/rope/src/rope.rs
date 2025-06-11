@@ -793,9 +793,9 @@ impl<'a> Chunks<'a> {
 
         // Shift the tabs to align with our slice window
         let shifted_tabs = chunk.tabs >> chunk_start_offset;
-        let shifted_chars_utf16 = chunk.chars();
+        let shifted_chars = chunk.chars() >> chunk_start_offset;
 
-        Some((slice_text, shifted_tabs, shifted_chars_utf16))
+        Some((slice_text, shifted_tabs, shifted_chars))
     }
 
     pub fn lines(self) -> Lines<'a> {

@@ -258,6 +258,7 @@ impl<'a> Iterator for InlayChunks<'a> {
                     *chunk = self.buffer_chunks.next().unwrap();
                 }
 
+                // todo! create a tabs/chars bitmask here and pass it in chunk
                 let (prefix, suffix) = chunk.text.split_at(
                     chunk
                         .text
@@ -333,6 +334,7 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 self.output_offset.0 += chunk.len();
 
+                // todo! figure out how to get tabs here
                 Chunk {
                     text: chunk,
                     highlight_style,

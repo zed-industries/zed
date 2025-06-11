@@ -322,20 +322,6 @@ impl TabSnapshot {
             to_next_stop,
         );
 
-        // let expected = self.test_to_fold_point(output, bias);
-
-        // if result != expected {
-        //     let text = self.buffer_snapshot().text();
-        //     let bias = if bias == Bias::Left { "left" } else { "right" };
-        //     panic!(
-        //         "text: {text}, output: {}, bias: {bias}, result: {:?},{},{}, expected: {expected:?}",
-        //         output.row(),
-        //         result.0,
-        //         result.1,
-        //         result.2
-        //     );
-        // }
-
         result
     }
 
@@ -1030,7 +1016,6 @@ mod tests {
     #[gpui::test]
     fn test_tab_stop_cursor_utf8(cx: &mut gpui::App) {
         let text = "\tfoo\tbarbarbar\t\tbaz\n";
-        let text = "rikR~${H25ao'\\@r/<`&bjrzg(uQG})kl#!^r>Z\\27X$mmh\"tz;fq@F>=<Oi+R4;0Xt09,_!WxDZD&Rs/\"%5o7\\Kr`fIJR(.a]2SQHTZJJ)(^cx,%FfwrGkd,u&00&!;\t";
         let buffer = MultiBuffer::build_simple(text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
@@ -1210,28 +1195,28 @@ mod tests {
         );
         let mut cursor = TabStopCursor::new(chunks);
         assert!(cursor.seek(0).is_none());
-        let mut tab_stops = Vec::new();
 
-        let mut all_tab_stops = Vec::new();
+        let mut expected_tab_stops = Vec::new();
         let mut byte_offset = 0;
         let mut char_offset = 0;
-        for ch in buffer.read(cx).snapshot(cx).text().chars() {
-            // byte_offset += ch.len_utf8();
+        for ch in fold_snapshot.chars_at(FoldPoint::new(0, 0)) {
             byte_offset += ch.len_utf8() as u32;
             char_offset += 1;
 
             if ch == '\t' {
-                all_tab_stops.push(TabStop {
+                expected_tab_stops.push(TabStop {
                     byte_offset,
                     char_offset,
                 });
             }
         }
 
+        let mut actual_tab_stops = Vec::new();
         while let Some(tab_stop) = cursor.seek(u32::MAX) {
-            tab_stops.push(tab_stop);
+            actual_tab_stops.push(tab_stop);
         }
-        pretty_assertions::assert_eq!(tab_stops.as_slice(), all_tab_stops.as_slice(),);
+
+        pretty_assertions::assert_eq!(actual_tab_stops.as_slice(), expected_tab_stops.as_slice(),);
 
         assert_eq!(cursor.byte_offset(), byte_offset);
     }
@@ -1347,19 +1332,19 @@ impl<'a> TabStopCursor<'a> {
                 let chunk_distance = chunk.text.len() as u32 - chunk_position;
                 if chunk_distance + distance_traversed >= distance {
                     let overshoot = distance_traversed.abs_diff(distance);
-                    self.byte_offset += overshoot;
 
+                    self.byte_offset += overshoot;
                     self.char_offset += get_char_offset(
                         chunk_position..(chunk_position + overshoot).saturating_sub(1).min(127),
                         chunk.chars,
                     );
+
                     self.current_chunk = Some((chunk, chunk_position + overshoot));
 
                     return None;
                 }
 
                 self.byte_offset += chunk_distance;
-                // todo! calculate char offset
                 self.char_offset += get_char_offset(
                     chunk_position..(chunk_position + chunk_distance).saturating_sub(1).min(127),
                     chunk.chars,

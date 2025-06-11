@@ -526,6 +526,7 @@ impl FoldMap {
                                 },
                                 placeholder: Some(TransformPlaceholder {
                                     text: ELLIPSIS,
+                                    chars: 1,
                                     renderer: ChunkRenderer {
                                         id: fold.id,
                                         render: Arc::new(move |cx| {
@@ -1031,6 +1032,7 @@ struct Transform {
 #[derive(Clone, Debug)]
 struct TransformPlaceholder {
     text: &'static str,
+    chars: u128,
     renderer: ChunkRenderer,
 }
 
@@ -1386,6 +1388,7 @@ impl<'a> Iterator for FoldChunks<'a> {
             self.output_offset.0 += placeholder.text.len();
             return Some(Chunk {
                 text: placeholder.text,
+                chars: placeholder.chars,
                 renderer: Some(placeholder.renderer.clone()),
                 ..Default::default()
             });
@@ -1422,8 +1425,16 @@ impl<'a> Iterator for FoldChunks<'a> {
 
             chunk.text = &chunk.text
                 [(self.inlay_offset - buffer_chunk_start).0..(chunk_end - buffer_chunk_start).0];
-            chunk.tabs = chunk.tabs >> (self.inlay_offset - buffer_chunk_start).0;
-            chunk.chars = chunk.chars >> (self.inlay_offset - buffer_chunk_start).0;
+
+            let bit_end = (chunk_end - buffer_chunk_start).0;
+            let mask = if bit_end >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << bit_end) - 1
+            };
+
+            chunk.tabs = (chunk.tabs >> (self.inlay_offset - buffer_chunk_start).0) & mask;
+            chunk.chars = (chunk.chars >> (self.inlay_offset - buffer_chunk_start).0) & mask;
 
             if chunk_end == transform_end {
                 self.transform_cursor.next(&());

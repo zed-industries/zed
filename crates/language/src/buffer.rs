@@ -4597,10 +4597,18 @@ impl<'a> Iterator for BufferChunks<'a> {
                 }
             }
 
+            // todo! write a test for this
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
-            let tabs = tabs >> (chunk_start - self.chunks.offset());
-            let chars_map = chars_map >> (chunk_start - self.chunks.offset());
+            let bit_end = chunk_end - self.chunks.offset();
+
+            let mask = if bit_end >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << bit_end) - 1
+            };
+            let tabs = (tabs >> (chunk_start - self.chunks.offset())) & mask;
+            let chars_map = (chars_map >> (chunk_start - self.chunks.offset())) & mask;
 
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
