@@ -2380,3 +2380,55 @@ fn test_sort_matches_for_priotize_not_exact_match(_cx: &mut TestAppContext) {
         vec!["items", "Item", "Item", "ItemText"]
     );
 }
+
+#[gpui::test]
+fn test_sort_matches_for_tailwind_class(_cx: &mut TestAppContext) {
+    // Case 1: "roundedfull"
+    let query: Option<&str> = Some("roundedfull");
+    let mut matches: Vec<SortableMatch<'_>> = vec![
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 16136,
+                score: 0.7333333333333333,
+                positions: vec![],
+                string: "rounded-full".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("15788"),
+            sort_kind: 2,
+            sort_label: "rounded-full",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 16079,
+                score: 0.6285714285714286,
+                positions: vec![],
+                string: "rounded-b-full".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("15731"),
+            sort_kind: 2,
+            sort_label: "rounded-b-full",
+        },
+        SortableMatch {
+            string_match: StringMatch {
+                candidate_id: 16099,
+                score: 0.5866666666666667,
+                positions: vec![],
+                string: "rounded-br-full".to_string(),
+            },
+            is_snippet: false,
+            sort_text: Some("15751"),
+            sort_kind: 2,
+            sort_label: "rounded-br-full",
+        },
+    ];
+    CompletionsMenu::sort_matches(&mut matches, query, SnippetSortOrder::default());
+    assert_eq!(
+        matches
+            .iter()
+            .map(|m| m.string_match.string.as_str())
+            .collect::<Vec<&str>>(),
+        vec!["rounded-full", "rounded-b-full", "rounded-br-full",]
+    );
+}
