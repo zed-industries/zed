@@ -664,8 +664,8 @@ impl TcpTransport {
     }
 
     async fn kill(&self) {
-        let process = self.process.lock().await;
-        Child::kill(&process);
+        let mut process = self.process.lock().await;
+        Child::kill(&mut process);
     }
 }
 
@@ -733,8 +733,8 @@ impl StdioTransport {
     }
 
     async fn kill(&self) {
-        let process = self.process.lock().await;
-        Child::kill(&process);
+        let mut process = self.process.lock().await;
+        Child::kill(&mut process);
     }
 }
 
@@ -961,7 +961,7 @@ impl Child {
     }
 
     #[cfg(windows)]
-    fn spawn(mut cmd: smol::process::Command) -> Result<Self> {
+    fn spawn(mut command: smol::process::Command, stdin: Stdio) -> Result<Self> {
         // TODO(windows): create a job object and add the child process handle to it,
         // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
 
@@ -974,7 +974,7 @@ impl Child {
     }
 
     #[cfg(not(windows))]
-    fn kill(&self) {
+    fn kill(&mut self) {
         let pid = self.process.id();
         unsafe {
             libc::killpg(pid as i32, libc::SIGKILL);
