@@ -3,8 +3,8 @@ use std::{ops::Range, time::Duration};
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
     AppContext, Axis, Context, Entity, FocusHandle, FontWeight, Length,
-    ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Task, UniformListScrollHandle,
-    WeakEntity, uniform_list,
+    ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Stateful, Task,
+    UniformListScrollHandle, WeakEntity, uniform_list,
 };
 use settings::Settings as _;
 use ui::{
@@ -167,8 +167,35 @@ impl TableInteractionState {
         }
     }
 
-    fn render_vertical_scrollbar(this: &Entity<Self>, cx: &mut App) -> impl IntoElement {
-        div()
+    fn render_vertical_scrollbar_track(
+        this: &Entity<Self>,
+        parent: Div,
+        scroll_track_size: Pixels,
+        cx: &mut App,
+    ) -> Div {
+        if !this.read(cx).vertical_scrollbar.show_track {
+            return parent;
+        }
+        let child = v_flex()
+            .h_full()
+            .flex_none()
+            .w(scroll_track_size)
+            .bg(cx.theme().colors().background)
+            .child(
+                div()
+                    .size_full()
+                    .flex_1()
+                    .border_l_1()
+                    .border_color(cx.theme().colors().border),
+            );
+        parent.child(child)
+    }
+
+    fn render_vertical_scrollbar(this: &Entity<Self>, parent: Div, cx: &mut App) -> Div {
+        if !this.read(cx).vertical_scrollbar.show_scrollbar {
+            return parent;
+        }
+        let child = div()
             .id("keymap-editor-vertical-scroll")
             .occlude()
             .flex_none()
@@ -207,7 +234,8 @@ impl TableInteractionState {
             }))
             .children(Scrollbar::vertical(
                 this.read(cx).vertical_scrollbar.state.clone(),
-            ))
+            ));
+        parent.child(child)
     }
 
     /// Renders the horizontal scrollbar.
@@ -217,10 +245,14 @@ impl TableInteractionState {
     /// with the vertical scrollbar when visible.
     fn render_horizontal_scrollbar(
         this: &Entity<Self>,
+        parent: Stateful<Div>,
         right_offset: Pixels,
         cx: &mut App,
-    ) -> impl IntoElement {
-        div()
+    ) -> Stateful<Div> {
+        if !this.read(cx).horizontal_scrollbar.show_scrollbar {
+            return parent;
+        }
+        let child = div()
             .id("keymap-editor-horizontal-scroll")
             .occlude()
             .flex_none()
@@ -260,7 +292,56 @@ impl TableInteractionState {
             .children(Scrollbar::horizontal(
                 // percentage as f32..end_offset as f32,
                 this.read(cx).horizontal_scrollbar.state.clone(),
-            ))
+            ));
+        parent.child(child)
+    }
+
+    fn render_horizantal_scrollbar_track(
+        this: &Entity<Self>,
+        parent: Stateful<Div>,
+        scroll_track_size: Pixels,
+        cx: &mut App,
+    ) -> Stateful<Div> {
+        if !this.read(cx).horizontal_scrollbar.show_track {
+            return parent;
+        }
+        let child = h_flex()
+            .w_full()
+            .h(scroll_track_size)
+            .flex_none()
+            .relative()
+            .child(
+                div()
+                    .w_full()
+                    .flex_1()
+                    // for some reason the horizontal scrollbar is 1px
+                    // taller than the vertical scrollbar??
+                    .h(scroll_track_size - px(1.))
+                    .bg(cx.theme().colors().background)
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border),
+            )
+            .when(this.read(cx).vertical_scrollbar.show_track, |parent| {
+                parent
+                    .child(
+                        div()
+                            .flex_none()
+                            // -1px prevents a missing pixel between the two container borders
+                            .w(scroll_track_size - px(1.))
+                            .h_full(),
+                    )
+                    .child(
+                        // HACK: Fill the missing 1px 🥲
+                        div()
+                            .absolute()
+                            .right(scroll_track_size - px(1.))
+                            .bottom(scroll_track_size - px(1.))
+                            .size_px()
+                            .bg(cx.theme().colors().border),
+                    )
+            });
+
+        parent.child(child)
     }
 }
 
@@ -452,7 +533,8 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
         div()
             .id("todo! how to have id")
             .w(self.width)
-            .overflow_hidden()
+            .h_full()
+            .v_flex()
             .when_some(interaction_state.as_ref(), |this, interaction_state| {
                 this.track_focus(&interaction_state.read(cx).focus_handle)
                     .on_hover({
@@ -478,149 +560,88 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .when_some(self.headers.take(), |this, headers| {
                 this.child(render_header(headers, table_context, cx))
             })
-            .map(|parent| match self.rows {
-                TableContents::Vec(items) => parent.children(
-                    items
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, row)| render_row(index, row, table_context, cx)),
-                ),
-                TableContents::UniformList(uniform_list_data) => parent
-                    .h_full()
-                    .v_flex()
-                    .child(
-                        div()
-                            .flex_grow()
-                            .w_full()
-                            .relative()
-                            .overflow_hidden()
-                            .child(
-                                uniform_list(
-                                    uniform_list_data.element_id,
-                                    uniform_list_data.row_count,
-                                    {
-                                        let render_item_fn = uniform_list_data.render_item_fn;
-                                        move |range: Range<usize>, window, cx| {
-                                            let elements =
-                                                render_item_fn(range.clone(), window, cx);
-                                            elements
-                                                .into_iter()
-                                                .zip(range)
-                                                .map(|(row, row_index)| {
-                                                    render_row(row_index, row, table_context, cx)
-                                                })
-                                                .collect()
-                                        }
-                                    },
-                                )
-                                .size_full()
-                                .flex_grow()
-                                .with_sizing_behavior(ListSizingBehavior::Auto)
-                                .with_horizontal_sizing_behavior(
-                                    ListHorizontalSizingBehavior::Unconstrained,
-                                )
-                                .when_some(
-                                    interaction_state.as_ref(),
-                                    |this, state| {
-                                        this.track_scroll(
-                                            state.read_with(cx, |s, _| s.scroll_handle.clone()),
-                                        )
-                                    },
-                                ),
-                            )
-                            .when(
-                                interaction_state.as_ref().is_some_and(|state| {
-                                    state.read(cx).vertical_scrollbar.show_track
-                                }),
-                                |this| {
-                                    this.child(
-                                        v_flex()
-                                            .h_full()
-                                            .flex_none()
-                                            .w(scroll_track_size)
-                                            .bg(cx.theme().colors().background)
-                                            .child(
-                                                div()
-                                                    .size_full()
-                                                    .flex_1()
-                                                    .border_l_1()
-                                                    .border_color(cx.theme().colors().border),
-                                            ),
-                                    )
+            .child(
+                div()
+                    .flex_grow()
+                    .w_full()
+                    .relative()
+                    .overflow_hidden()
+                    .map(|parent| match self.rows {
+                        TableContents::Vec(items) => parent.children(
+                            items
+                                .into_iter()
+                                .enumerate()
+                                .map(|(index, row)| render_row(index, row, table_context, cx)),
+                        ),
+                        TableContents::UniformList(uniform_list_data) => parent.child(
+                            uniform_list(
+                                uniform_list_data.element_id,
+                                uniform_list_data.row_count,
+                                {
+                                    let render_item_fn = uniform_list_data.render_item_fn;
+                                    move |range: Range<usize>, window, cx| {
+                                        let elements = render_item_fn(range.clone(), window, cx);
+                                        elements
+                                            .into_iter()
+                                            .zip(range)
+                                            .map(|(row, row_index)| {
+                                                render_row(row_index, row, table_context, cx)
+                                            })
+                                            .collect()
+                                    }
                                 },
+                            )
+                            .size_full()
+                            .flex_grow()
+                            .with_sizing_behavior(ListSizingBehavior::Auto)
+                            .with_horizontal_sizing_behavior(
+                                ListHorizontalSizingBehavior::Unconstrained,
                             )
                             .when_some(
-                                interaction_state.as_ref().filter(|state| {
-                                    state.read(cx).vertical_scrollbar.show_scrollbar
-                                }),
-                                |this, interaction_state| {
-                                    this.child(TableInteractionState::render_vertical_scrollbar(
-                                        interaction_state,
-                                        cx,
-                                    ))
+                                interaction_state.as_ref(),
+                                |this, state| {
+                                    this.track_scroll(
+                                        state.read_with(cx, |s, _| s.scroll_handle.clone()),
+                                    )
                                 },
                             ),
-                    )
-                    .when(
-                        interaction_state
-                            .as_ref()
-                            .is_some_and(|state| state.read(cx).horizontal_scrollbar.show_track),
-                        |this| {
-                            this.child(
-                                h_flex()
-                                    .w_full()
-                                    .h(scroll_track_size)
-                                    .flex_none()
-                                    .relative()
-                                    .child(
-                                        div()
-                                            .w_full()
-                                            .flex_1()
-                                            // for some reason the horizontal scrollbar is 1px
-                                            // taller than the vertical scrollbar??
-                                            .h(scroll_track_size - px(1.))
-                                            .bg(cx.theme().colors().background)
-                                            .border_t_1()
-                                            .border_color(cx.theme().colors().border),
-                                    )
-                                    .when(
-                                        interaction_state.as_ref().is_some_and(|state| {
-                                            state.read(cx).vertical_scrollbar.show_track
-                                        }),
-                                        |this| {
-                                            this.child(
-                                                div()
-                                                    .flex_none()
-                                                    // -1px prevents a missing pixel between the two container borders
-                                                    .w(scroll_track_size - px(1.))
-                                                    .h_full(),
-                                            )
-                                            .child(
-                                                // HACK: Fill the missing 1px 🥲
-                                                div()
-                                                    .absolute()
-                                                    .right(scroll_track_size - px(1.))
-                                                    .bottom(scroll_track_size - px(1.))
-                                                    .size_px()
-                                                    .bg(cx.theme().colors().border),
-                                            )
-                                        },
-                                    ),
-                            )
-                        },
-                    )
-                    .when_some(
-                        interaction_state
-                            .as_ref()
-                            .filter(|state| state.read(cx).horizontal_scrollbar.show_scrollbar),
-                        |this, interaction_state| {
-                            this.child(TableInteractionState::render_horizontal_scrollbar(
+                        ),
+                    })
+                    .when_some(interaction_state.as_ref(), |this, interaction_state| {
+                        this.map(|this| {
+                            TableInteractionState::render_vertical_scrollbar_track(
                                 interaction_state,
-                                h_scroll_offset,
+                                this,
+                                scroll_track_size,
                                 cx,
-                            ))
-                        },
-                    ),
+                            )
+                        })
+                        .map(|this| {
+                            TableInteractionState::render_vertical_scrollbar(
+                                interaction_state,
+                                this,
+                                cx,
+                            )
+                        })
+                    }),
+            )
+            .when_some(interaction_state.as_ref(), |this, interaction_state| {
+                this.map(|this| {
+                    TableInteractionState::render_horizantal_scrollbar_track(
+                        interaction_state,
+                        this,
+                        scroll_track_size,
+                        cx,
+                    )
+                })
+                .map(|this| {
+                    TableInteractionState::render_horizontal_scrollbar(
+                        interaction_state,
+                        this,
+                        h_scroll_offset,
+                        cx,
+                    )
+                })
             })
     }
 }
