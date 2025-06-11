@@ -1634,7 +1634,9 @@ impl EditAgentTest {
 }
 
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
+    let mut attempt = 0;
     loop {
+        attempt += 1;
         match request().await {
             Ok(result) => return Ok(result),
             Err(err) => match err.downcast::<LanguageModelCompletionError>() {
@@ -1643,7 +1645,7 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
                         // Wait for the duration supplied, with some jitter to avoid all requests being made at the same time.
                         let jitter = duration.mul_f64(rand::thread_rng().gen_range(0.0..0.5));
                         eprintln!(
-                            "Rate limit exceeded. Retry after {duration:?} + jitter of {jitter:?}"
+                            "Attempt #{attempt}: Rate limit exceeded. Retry after {duration:?} + jitter of {jitter:?}"
                         );
                         Timer::after(duration + jitter).await;
                         continue;
