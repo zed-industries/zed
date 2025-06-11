@@ -253,6 +253,17 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
     let binary_path = version_path(download_info.version);
 
     if has_version(&binary_path).await {
+        // Due to an issue with the Supermaven binary not being made executable on
+        // earlier Zed versions and Supermaven releases not occuring that frequently,
+        // we ensure here that the found binary is actually executable.
+        #[cfg(not(windows))]
+        {
+            fs::set_permissions(
+                &binary_path,
+                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
+            )
+            .await?;
+        }
         return Ok(binary_path);
     }
 
