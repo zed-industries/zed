@@ -228,7 +228,8 @@ impl NeovimBackedTestContext {
             {
                 let keyboard_mapper = self.cx.keyboard_mapper();
                 self.neovim
-                    .send_keystroke(keystroke_text, keyboard_mapper.as_ref());
+                    .send_keystroke(keystroke_text, keyboard_mapper.as_ref())
+                    .await;
             }
         }
         self.simulate_keystrokes(keystroke_texts);
