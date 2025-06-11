@@ -73,7 +73,7 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
                 "relativeFile".to_owned(),
                 VariableName::RelativeFile.to_string(),
             ),
-            ("file".to_owned(), VariableName::Filename.to_string()), // TODO other interesting variables?
+            ("file".to_owned(), VariableName::File.to_string()),
         ]));
         let templates = file
             .configurations
