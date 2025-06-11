@@ -1,25 +1,23 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, hash_map},
+    collections::{HashMap, HashSet},
     path::PathBuf,
-    sync::Arc,
-    time::Duration,
 };
 
-use client::{proto, zed_urls};
-use collections::{HashMap, HashSet};
+use client::proto;
+use collections::HashMap as CollectionsHashMap;
 use editor::{
-    Editor, EditorEvent,
+    Editor,
     actions::{RestartLanguageServer, StopLanguageServer},
 };
-use gpui::{Corner, DismissEvent, Entity, Focusable, MouseButton, Subscription, Task, WeakEntity};
-use itertools::Itertools;
-use language::{BufferId, LocalFile};
+use gpui::{Entity, Subscription, WeakEntity};
+use language::BufferId;
 use lsp::{LanguageServerId, LanguageServerName};
-use picker::{Picker, PickerDelegate, popover_menu::PickerPopoverMenu};
 use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
-use ui::{Context, IconButtonShape, Indicator, KeyBinding, Tooltip, Window, prelude::*};
-use util::truncate_and_trailoff;
+use ui::{
+    Context, ContextMenu, IconButtonShape, Indicator, PopoverMenu, Tooltip, Window, prelude::*,
+};
+
 use workspace::{StatusItemView, Workspace};
 
 use crate::{LogStore, lsp_log::GlobalLogStore};
@@ -29,7 +27,6 @@ pub struct LspTool {
     lsp_store: WeakEntity<LspStore>,
     active_editor: Option<ActiveEditor>,
     language_servers: LanguageServers,
-    lsp_picker: Option<Entity<Picker<LspPickerDelegate>>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -39,145 +36,17 @@ struct ActiveEditor {
     editor_buffers: HashSet<BufferId>,
 }
 
-#[derive(Debug)]
-struct LspPickerDelegate {
-    language_servers: LanguageServers,
-    active_editor: WeakEntity<Editor>,
-    workspace: WeakEntity<Workspace>,
-    lsp_store: WeakEntity<LspStore>,
-    lsp_logs: WeakEntity<LogStore>,
-    editor_buffers: HashSet<BufferId>,
-    selected_index: usize,
-    items: Vec<LspItem>,
-    folded_sections: HashSet<SectionHeaderId>,
-}
-
-#[derive(Debug)]
-enum LspItem {
-    SectionHeader {
-        id: SectionHeaderId,
-        message: SharedString,
-        empty: bool,
-    },
-    ServerHeader {
-        server_id: LanguageServerId,
-        server_name: LanguageServerName,
-        status: LanguageServerStatus,
-        message: Option<(SharedString, Severity)>,
-    },
-    Server {
-        server_id: LanguageServerId,
-        status: LanguageServerStatus,
-    },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum SectionHeaderId {
-    ActiveServers = 1,
-    OtherServers = 2,
-}
-
 #[derive(Debug, Default, Clone)]
 struct LanguageServers {
     servers: HashMap<LanguageServerId, LanguageServerState>,
-    servers_per_buffer_abs_path: HashMap<PathBuf, HashSet<LanguageServerId>>,
-}
-
-impl LanguageServers {
-    fn remove(&mut self, id: LanguageServerId) {
-        self.servers.remove(&id);
-        self.servers_per_buffer_abs_path.retain(|_, servers| {
-            servers.remove(&id);
-            !servers.is_empty()
-        });
-    }
-
-    fn update_status(
-        &mut self,
-        id: LanguageServerId,
-        status: LanguageServerStatus,
-        message: Option<&str>,
-        name: Option<LanguageServerName>,
-    ) {
-        match self.servers.entry(id) {
-            hash_map::Entry::Occupied(mut o) => {
-                let state = o.get_mut();
-                if let Some(name) = name {
-                    state.name = name;
-                }
-                state.status = status;
-                state.message = message
-                    .map(|message| (SharedString::from(message.to_owned()), Severity::Other));
-            }
-            hash_map::Entry::Vacant(v) => {
-                if let Some(name) = name {
-                    v.insert(LanguageServerState {
-                        id,
-                        name,
-                        message: message.map(|message| {
-                            (SharedString::from(message.to_owned()), Severity::Other)
-                        }),
-                        status,
-                    });
-                }
-            }
-        }
-
-        let duplicate_server_statuses =
-            self.servers
-                .iter()
-                .fold(HashMap::default(), |mut acc, (id, state)| {
-                    acc.entry(state.name.clone())
-                        .or_insert_with(BTreeMap::new)
-                        .insert(*id, state.status);
-                    acc
-                });
-
-        for duplicate_statuses in duplicate_server_statuses.into_values() {
-            if duplicate_statuses.len() < 2 {
-                continue;
-            }
-
-            let mut stopped_servers = BTreeSet::new();
-            let mut not_stopped = Vec::new();
-            for (id, status) in duplicate_statuses {
-                if status == LanguageServerStatus::Stopped {
-                    stopped_servers.insert(id);
-                } else {
-                    not_stopped.push(id);
-                }
-            }
-
-            if not_stopped.is_empty() {
-                if stopped_servers.len() > 1 {
-                    for id in stopped_servers.into_iter().rev().skip(1) {
-                        self.remove(id);
-                    }
-                }
-            } else {
-                for id in stopped_servers {
-                    self.remove(id);
-                }
-            }
-        }
-    }
+    servers_per_buffer_abs_path: CollectionsHashMap<PathBuf, HashSet<LanguageServerId>>,
 }
 
 #[derive(Debug, Clone)]
 struct LanguageServerState {
-    id: LanguageServerId,
     name: LanguageServerName,
-    message: Option<(SharedString, Severity)>,
+    message: Option<String>,
     status: LanguageServerStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Severity {
-    Ok,
-    Info,
-    Warning,
-    Error,
-    Other,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -188,634 +57,13 @@ enum LanguageServerStatus {
     Stopped,
 }
 
-impl LspPickerDelegate {
-    fn render_section_header(
-        &self,
-        id: SectionHeaderId,
-        message: SharedString,
-        empty: bool,
-        cx: &mut Context<'_, Picker<Self>>,
-    ) -> AnyElement {
-        let expanded = !empty && !self.folded_sections.contains(&id);
-        h_flex()
-            .w_full()
-            .id(("lsp-selection-header", usize::from(id as u8)))
-            .child(Label::new(message.clone()))
-            .map(|div| {
-                if empty {
-                    div.cursor_default()
-                } else {
-                    let icon = if expanded {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronLeft
-                    };
-                    div.justify_between()
-                        .child(Icon::new(icon))
-                        .cursor_pointer()
-                        .on_mouse_down(MouseButton::Left, {
-                            cx.listener(move |picker, _, _, cx| {
-                                picker.delegate.toggle_section_header(id, cx);
-                            })
-                        })
-                }
-            })
-            .into_any_element()
-    }
-
-    fn render_server_header(
-        &self,
-        server_id: LanguageServerId,
-        language_server_name: &LanguageServerName,
-        status: LanguageServerStatus,
-        lsp_status: &Option<(SharedString, Severity)>,
-        cx: &mut Context<Picker<Self>>,
-    ) -> AnyElement {
-        let lsp_store = self.lsp_store.clone();
-        let Ok(buffer_store) = self.workspace.update(cx, |workspace, cx| {
-            workspace.project().read(cx).buffer_store().clone()
-        }) else {
-            return div().into_any_element();
-        };
-
-        let buffers = self
-            .editor_buffers
-            .iter()
-            .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
-            .collect::<Vec<_>>();
-
-        let restart_button = IconButton::new("restart-server", IconName::Rerun)
-            .icon_size(IconSize::Small)
-            .size(ButtonSize::Compact)
-            .icon_color(Color::Default)
-            .shape(ui::IconButtonShape::Square)
-            .tooltip(move |window, cx| {
-                Tooltip::for_action(
-                    format!("Restart server ({status:?})"),
-                    &RestartLanguageServer,
-                    window,
-                    cx,
-                )
-            })
-            .when(!buffers.is_empty(), |button| {
-                button.on_click({
-                    move |_, _, cx| {
-                        lsp_store
-                            .update(cx, |lsp_store, cx| {
-                                lsp_store.restart_language_servers_for_buffers(
-                                    buffers.clone(),
-                                    vec![server_id],
-                                    cx,
-                                )
-                            })
-                            .ok();
-                    }
-                })
-            });
-        let (icon, icon_color) = match status {
-            LanguageServerStatus::Running => (IconName::Play, Color::Success),
-            LanguageServerStatus::Starting => (IconName::Play, Color::Modified),
-            LanguageServerStatus::Stopping => (IconName::StopFilled, Color::Modified),
-            LanguageServerStatus::Stopped => (IconName::StopFilled, Color::Disabled),
-        };
-
-        v_flex()
-            .p_1()
-            .w_full()
-            .group("lsp-status")
-            .child(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .child(
-                        h_flex()
-                            .group("lsp-status")
-                            .child(
-                                div()
-                                    .hover(|style| style.invisible().w_0())
-                                    .child(Icon::new(icon).color(icon_color)),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .visible_on_hover("lsp-status")
-                                    .child(restart_button),
-                            ),
-                    )
-                    .child(Label::new(language_server_name.0.clone()).color(Color::Muted)),
-            )
-            .when_some(lsp_status.as_ref(), |header, (message, severity)| {
-                header.child(Self::render_server_message(
-                    server_id, message, severity, cx,
-                ))
-            })
-            .cursor_default()
-            .into_any_element()
-    }
-
-    fn render_server_actions(
-        &self,
-        server_id: LanguageServerId,
-        status: LanguageServerStatus,
-        cx: &mut Context<'_, Picker<Self>>,
-    ) -> AnyElement {
-        let lsp_logs = self.lsp_logs.clone();
-        let can_stop = match status {
-            LanguageServerStatus::Starting | LanguageServerStatus::Running => true,
-            LanguageServerStatus::Stopping | LanguageServerStatus::Stopped => false,
-        };
-        let Ok(has_logs) = lsp_logs.update(cx, |lsp_logs, _| {
-            lsp_logs.get_language_server_state(server_id).is_some()
-        }) else {
-            return div().into_any_element();
-        };
-
-        h_flex()
-            .w_full()
-            .gap_2()
-            .when(can_stop, |div| {
-                div.child(
-                    IconButton::new("stop-server", IconName::StopFilled)
-                        .tooltip(|_, cx| Tooltip::simple("Stop server", cx))
-                        .on_click({
-                            let lsp_store = self.lsp_store.clone();
-                            move |_, _, cx| {
-                                lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.stop_language_servers_for_buffers(
-                                            Vec::new(),
-                                            vec![server_id],
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-            })
-            .when(!can_stop, |div| {
-                let Ok(buffer_store) = self.workspace.update(cx, |workspace, cx| {
-                    workspace.project().read(cx).buffer_store().clone()
-                }) else {
-                    return div;
-                };
-                let buffers = self
-                    .editor_buffers
-                    .iter()
-                    .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
-                    .collect::<Vec<_>>();
-                if buffers.is_empty() {
-                    return div;
-                }
-
-                div.child(
-                    IconButton::new("restart-server", IconName::Rerun)
-                        .tooltip(|_, cx| Tooltip::simple("Restart server", cx))
-                        .on_click({
-                            let lsp_store = self.lsp_store.clone();
-                            move |_, _, cx| {
-                                lsp_store
-                                    .update(cx, |lsp_store, cx| {
-                                        lsp_store.restart_language_servers_for_buffers(
-                                            buffers.clone(),
-                                            vec![server_id],
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-            })
-            .when(has_logs, |div| {
-                div.child(
-                    IconButton::new("open-server-log", IconName::ListX)
-                        .tooltip(|_, cx| Tooltip::simple("Open Log", cx))
-                        .on_click({
-                            let workspace = self.workspace.clone();
-                            let lsp_logs = self.lsp_logs.clone();
-                            move |_, window, cx| {
-                                lsp_logs
-                                    .update(cx, |lsp_logs, cx| {
-                                        lsp_logs.open_server_log(
-                                            workspace.clone(),
-                                            server_id,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .child(
-                    IconButton::new("open-lsp-messages", IconName::BoltFilled)
-                        .icon_size(IconSize::Small)
-                        .tooltip(|_, cx| Tooltip::simple("Open LSP messages", cx))
-                        .on_click({
-                            let workspace = self.workspace.clone();
-                            let lsp_logs = self.lsp_logs.clone();
-                            move |_, window, cx| {
-                                lsp_logs
-                                    .update(cx, |lsp_logs, cx| {
-                                        lsp_logs.open_server_trace(
-                                            workspace.clone(),
-                                            server_id,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-            })
-            .into_any_element()
-    }
-
-    fn render_server_message(
-        server_id: LanguageServerId,
-        message: &SharedString,
-        severity: &Severity,
-        cx: &Context<'_, Picker<Self>>,
-    ) -> AnyElement {
-        let full_label_message = message.trim();
-        let shortened_message = truncate_and_trailoff(full_label_message, 30)
-            .lines()
-            .join(" ");
-        let tooltip = if full_label_message == shortened_message {
-            None
-        } else if full_label_message == message.as_ref() {
-            Some(message.clone())
-        } else {
-            Some(SharedString::new(full_label_message))
-        };
-
-        h_flex()
-            .id("server-message")
-            .justify_center()
-            .child(Label::new(shortened_message))
-            .when_some(tooltip, |div, tooltip| {
-                div.tooltip(move |_, cx| Tooltip::simple(tooltip.clone(), cx))
-            })
-            .hover(|s| s.opacity(0.6))
-            .border_1()
-            .map(|div| match severity {
-                Severity::Ok | Severity::Info => div.border_color(Color::Info.color(cx)),
-                Severity::Warning => div.border_color(Color::Warning.color(cx)),
-                Severity::Error => div.border_color(Color::Error.color(cx)),
-                Severity::Other => div.border_color(Color::Modified.color(cx)),
-            })
-            .cursor_pointer()
-            .on_mouse_down(MouseButton::Left, {
-                let message = message.clone();
-                let severity = *severity;
-                cx.listener(move |picker, _, _, cx| {
-                    if let Some(server_state) =
-                        picker.delegate.language_servers.servers.get_mut(&server_id)
-                    {
-                        if server_state.message.as_ref().is_some_and(
-                            |(state_message, state_severity)| {
-                                state_message == &message && state_severity == &severity
-                            },
-                        ) {
-                            server_state.message = None;
-                        }
-                    }
-                    if let Some(state_message) =
-                        picker
-                            .delegate
-                            .items
-                            .iter_mut()
-                            .find_map(|item| match item {
-                                LspItem::ServerHeader {
-                                    server_id: state_server_id,
-                                    message: state_message,
-                                    ..
-                                } => {
-                                    if server_id == *state_server_id
-                                        && state_message.as_ref().is_some_and(
-                                            |(state_message, state_severity)| {
-                                                state_message == &message
-                                                    && state_severity == &severity
-                                            },
-                                        )
-                                    {
-                                        Some(state_message)
-                                    } else {
-                                        None
-                                    }
-                                }
-                                LspItem::Server { .. } | LspItem::SectionHeader { .. } => None,
-                            })
-                    {
-                        *state_message = None;
-                        cx.notify();
-                    }
-                })
-            })
-            .into_any_element()
-    }
-
-    fn regenerate_items(&mut self, cx: &mut Context<'_, Picker<Self>>) {
-        let mut buffer_servers = Vec::with_capacity(self.language_servers.servers.len());
-        let mut other_servers = Vec::with_capacity(self.language_servers.servers.len());
-
-        let buffer_server_ids = self
-            .editor_buffers
-            .iter()
-            .filter_map(|buffer_id| {
-                let buffer_path = self
-                    .lsp_store
-                    .update(cx, |lsp_store, cx| {
-                        Some(
-                            project::File::from_dyn(
-                                lsp_store
-                                    .buffer_store()
-                                    .read(cx)
-                                    .get(*buffer_id)?
-                                    .read(cx)
-                                    .file(),
-                            )?
-                            .abs_path(cx),
-                        )
-                    })
-                    .ok()??;
-                self.language_servers
-                    .servers_per_buffer_abs_path
-                    .get(&buffer_path)
-            })
-            .flatten()
-            .unique()
-            .copied()
-            .collect::<HashSet<_>>();
-
-        for server_state in self.language_servers.servers.values() {
-            if buffer_server_ids.contains(&server_state.id) {
-                buffer_servers.push(server_state);
-            } else {
-                other_servers.push(server_state);
-            }
-        }
-        buffer_servers.sort_by_key(|state| state.name.clone());
-        other_servers.sort_by_key(|state| state.name.clone());
-
-        self.selected_index = 0;
-        self.items.clear();
-        if buffer_servers.is_empty() && other_servers.is_empty() {
-            return;
-        }
-
-        if buffer_servers.is_empty() {
-            self.items.push(LspItem::SectionHeader {
-                id: SectionHeaderId::ActiveServers,
-                message: SharedString::from("No active language servers"),
-                empty: true,
-            });
-        } else {
-            let active_section_id = SectionHeaderId::ActiveServers;
-            self.items.push(LspItem::SectionHeader {
-                id: active_section_id,
-                message: SharedString::from("Active language servers"),
-                empty: false,
-            });
-            if !self.folded_sections.contains(&active_section_id) {
-                buffer_servers.into_iter().for_each(|state| {
-                    self.items.push(LspItem::ServerHeader {
-                        server_id: state.id,
-                        server_name: state.name.clone(),
-                        status: state.status,
-                        message: state.message.clone(),
-                    });
-                    self.items.push(LspItem::Server {
-                        server_id: state.id,
-                        status: state.status,
-                    });
-                });
-            }
-        }
-
-        if !other_servers.is_empty() {
-            let other_section_id = SectionHeaderId::OtherServers;
-            self.items.push(LspItem::SectionHeader {
-                id: other_section_id,
-                message: SharedString::from("Other language servers"),
-                empty: false,
-            });
-            if !self.folded_sections.contains(&other_section_id) {
-                other_servers.into_iter().for_each(|state| {
-                    self.items.push(LspItem::ServerHeader {
-                        server_id: state.id,
-                        server_name: state.name.clone(),
-                        status: state.status,
-                        message: state.message.clone(),
-                    });
-                    self.items.push(LspItem::Server {
-                        server_id: state.id,
-                        status: state.status,
-                    });
-                });
-            }
-        }
-    }
-
-    fn toggle_section_header(&mut self, id: SectionHeaderId, cx: &mut Context<Picker<Self>>) {
-        if !self.folded_sections.remove(&id) {
-            self.folded_sections.insert(id);
-        }
-
-        self.regenerate_items(cx);
-        cx.notify();
-    }
-}
-
-impl PickerDelegate for LspPickerDelegate {
-    type ListItem = AnyElement;
-
-    fn match_count(&self) -> usize {
-        self.items.len()
-    }
-
-    fn selected_index(&self) -> usize {
-        self.selected_index
-    }
-
-    fn set_selected_index(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        self.selected_index = ix;
-        cx.notify();
-    }
-
-    fn update_matches(
-        &mut self,
-        _: String,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Task<()> {
-        cx.spawn(async move |lsp_picker, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(30))
-                .await;
-            lsp_picker
-                .update(cx, |lsp_picker, cx| {
-                    lsp_picker.delegate.regenerate_items(cx);
-                })
-                .ok();
-        })
-    }
-
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::default()
-    }
-
-    fn confirm(&mut self, _: bool, _: &mut Window, _: &mut Context<Picker<Self>>) {}
-
-    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        cx.emit(DismissEvent);
-    }
-
-    fn render_match(
-        &self,
-        ix: usize,
-        _: bool,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<Self::ListItem> {
-        Some(match self.items.get(ix)? {
-            LspItem::SectionHeader { id, message, empty } => {
-                self.render_section_header(*id, message.clone(), *empty, cx)
-            }
-            LspItem::ServerHeader {
-                server_id,
-                server_name,
-                status,
-                message,
-            } => self.render_server_header(*server_id, server_name, *status, message, cx),
-            LspItem::Server { server_id, status } => {
-                self.render_server_actions(*server_id, *status, cx)
-            }
-        })
-    }
-
-    fn render_editor(
-        &self,
-        editor: &Entity<Editor>,
-        _: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Div {
-        div().child(div().track_focus(&editor.focus_handle(cx)))
-    }
-
-    fn render_header(
-        &self,
-        _window: &mut Window,
-        _: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
-        Some(
-            Button::new("lsp-tool-header", "Language Servers")
-                .full_width()
-                .on_click(|_, _, cx| cx.open_url(&zed_urls::language_docs_url(cx)))
-                .into_any_element(),
-        )
-    }
-
-    fn render_footer(
-        &self,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Option<AnyElement> {
-        let editor = self.active_editor.clone();
-        Some(
-            h_flex()
-                .w_full()
-                .justify_between()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .child(
-                    Button::new("restart-all-servers", "Restart all servers")
-                        .key_binding(KeyBinding::for_action(&RestartLanguageServer, window, cx))
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_, window, cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.restart_language_server(
-                                            &RestartLanguageServer,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .child(
-                    Button::new("stop-all-servers", "Stop all servers")
-                        .key_binding(KeyBinding::for_action(&StopLanguageServer, window, cx))
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_, window, cx| {
-                                editor
-                                    .update(cx, |editor, cx| {
-                                        editor.stop_language_server(
-                                            &StopLanguageServer,
-                                            window,
-                                            cx,
-                                        );
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .into_any_element(),
-        )
-    }
-
-    fn separators_after_indices(&self) -> Vec<usize> {
-        self.items
-            .iter()
-            .enumerate()
-            .filter_map(|(i, item)| match item {
-                LspItem::ServerHeader { .. } => None,
-                LspItem::Server { .. } => Some(i),
-                LspItem::SectionHeader { empty, id, .. } => {
-                    if *empty || self.folded_sections.contains(id) {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                }
-            })
-            .collect()
-    }
-}
-
 impl LspTool {
     pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let lsp_store = workspace.project().read(cx).lsp_store();
 
-        let settings_workspace = workspace.weak_handle();
-        let settings_lsp_store = lsp_store.downgrade();
         let settings_subscription =
-            cx.observe_global_in::<SettingsStore>(window, move |lsp_tool, window, cx| {
-                if ProjectSettings::get_global(cx).global_lsp_settings.button {
-                    if lsp_tool.lsp_picker.is_none() {
-                        if let Some(active_editor) = lsp_tool.active_editor.as_ref() {
-                            lsp_tool.lsp_picker = Some(Self::new_lsp_picker(
-                                settings_workspace.clone(),
-                                settings_lsp_store.clone(),
-                                active_editor.editor.clone(),
-                                active_editor.editor_buffers.clone(),
-                                lsp_tool.language_servers.clone(),
-                                window,
-                                cx,
-                            ));
-                            cx.notify();
-                            return;
-                        }
-                    }
-                } else if lsp_tool.lsp_picker.take().is_some() {
-                    cx.notify();
-                }
+            cx.observe_global_in::<SettingsStore>(window, move |_lsp_tool, _window, cx| {
+                cx.notify();
             });
         let lsp_store_subscription =
             cx.subscribe_in(&lsp_store, window, |lsp_tool, _, e, window, cx| {
@@ -826,7 +74,6 @@ impl LspTool {
             workspace: workspace.weak_handle(),
             lsp_store: lsp_store.downgrade(),
             active_editor: None,
-            lsp_picker: None,
             _subscriptions: vec![settings_subscription, lsp_store_subscription],
             language_servers: LanguageServers::default(),
         }
@@ -835,106 +82,45 @@ impl LspTool {
     fn on_lsp_store_event(
         &mut self,
         e: &LspStoreEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(lsp_picker) = self.lsp_picker.clone() else {
-            return;
-        };
-
-        let mut updated = true;
         match e {
             project::LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 name,
                 message: proto::update_language_server::Variant::StatusUpdate(status_update),
-            } => match proto::status_update::Status::from_i32(status_update.status) {
-                Some(proto::status_update::Status::Starting) => {
-                    self.update_status(
-                        *language_server_id,
-                        LanguageServerStatus::Starting,
-                        status_update.message.as_deref(),
-                        name.as_ref(),
-                        cx,
-                    );
-                }
-                Some(proto::status_update::Status::Running) => {
-                    self.update_status(
-                        *language_server_id,
-                        LanguageServerStatus::Running,
-                        status_update.message.as_deref(),
-                        name.as_ref(),
-                        cx,
-                    );
-                }
-                Some(proto::status_update::Status::Stopping) => {
-                    self.update_status(
-                        *language_server_id,
-                        LanguageServerStatus::Stopping,
-                        status_update.message.as_deref(),
-                        name.as_ref(),
-                        cx,
-                    );
-                }
-                Some(proto::status_update::Status::Stopped) => {
-                    self.update_status(
-                        *language_server_id,
-                        LanguageServerStatus::Stopped,
-                        status_update.message.as_deref(),
-                        name.as_ref(),
-                        cx,
-                    );
-                }
+            } => {
+                let status = match proto::status_update::Status::from_i32(status_update.status) {
+                    Some(proto::status_update::Status::Starting) => LanguageServerStatus::Starting,
+                    Some(proto::status_update::Status::Running) => LanguageServerStatus::Running,
+                    Some(proto::status_update::Status::Stopping) => LanguageServerStatus::Stopping,
+                    Some(proto::status_update::Status::Stopped) => LanguageServerStatus::Stopped,
+                    _ => return,
+                };
 
-                Some(proto::status_update::Status::Ok) => {
-                    self.update_message(
+                let message = status_update.message.as_deref().map(|s| s.to_string());
+
+                if let Some(state) = self.language_servers.servers.get_mut(language_server_id) {
+                    state.status = status;
+                    if let Some(message) = message {
+                        state.message = Some(message);
+                    }
+                    if let Some(name) = name.as_ref() {
+                        state.name = name.clone();
+                    }
+                } else if let Some(name) = name.as_ref() {
+                    self.language_servers.servers.insert(
                         *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Ok,
-                        name.as_ref(),
-                        cx,
+                        LanguageServerState {
+                            name: name.clone(),
+                            message,
+                            status,
+                        },
                     );
                 }
-                Some(proto::status_update::Status::Info) => {
-                    self.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Info,
-                        name.as_ref(),
-                        cx,
-                    );
-                }
-                Some(proto::status_update::Status::Warning) => {
-                    self.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Warning,
-                        name.as_ref(),
-                        cx,
-                    );
-                }
-                Some(proto::status_update::Status::Error) => {
-                    self.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Error,
-                        name.as_ref(),
-                        cx,
-                    );
-                }
-                Some(proto::status_update::Status::Other) => {
-                    self.update_message(
-                        *language_server_id,
-                        status_update.message.as_deref(),
-                        Severity::Other,
-                        name.as_ref(),
-                        cx,
-                    );
-                }
-                None => {
-                    log::error!("Unexpected status update {}", status_update.status);
-                }
-            },
+                cx.notify();
+            }
             project::LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
                 message: proto::update_language_server::Variant::RegisteredForBuffer(update),
@@ -943,114 +129,173 @@ impl LspTool {
                 let buffer_abs_path = PathBuf::from(&update.buffer_abs_path);
                 self.language_servers
                     .servers_per_buffer_abs_path
-                    .entry(buffer_abs_path.clone())
+                    .entry(buffer_abs_path)
                     .or_default()
                     .insert(*language_server_id);
-                if let Some(picker) = &self.lsp_picker {
-                    picker.update(cx, |picker, _| {
-                        picker
-                            .delegate
-                            .language_servers
-                            .servers_per_buffer_abs_path
-                            .entry(buffer_abs_path)
-                            .or_default()
-                            .insert(*language_server_id);
-                    })
-                }
             }
-            _ => updated = false,
+            _ => {}
         };
-
-        if updated {
-            lsp_picker.update(cx, |lsp_picker, cx| {
-                lsp_picker.refresh(window, cx);
-            })
-        }
     }
 
-    fn new_lsp_picker(
-        workspace: WeakEntity<Workspace>,
-        lsp_store: WeakEntity<LspStore>,
-        active_editor: WeakEntity<Editor>,
-        editor_buffers: HashSet<BufferId>,
-        language_servers: LanguageServers,
+    fn build_context_menu(
+        &self,
+        lsp_logs: WeakEntity<LogStore>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<Picker<LspPickerDelegate>> {
-        cx.new(|cx| {
-            let mut delegate = LspPickerDelegate {
-                selected_index: 0,
-                items: Vec::new(),
-                folded_sections: HashSet::default(),
-                active_editor,
-                editor_buffers,
-                language_servers,
-                workspace,
-                lsp_store,
-                lsp_logs: cx.global::<GlobalLogStore>().0.downgrade(),
-            };
-            delegate.regenerate_items(cx);
-            Picker::list(delegate, window, cx)
-        })
-    }
+    ) -> Entity<ContextMenu> {
+        let workspace = self.workspace.clone();
+        let lsp_store = self.lsp_store.clone();
+        let active_editor = self.active_editor.as_ref().map(|ae| ae.editor.clone());
+        let editor_buffers = self
+            .active_editor
+            .as_ref()
+            .map(|active_editor| active_editor.editor_buffers.clone())
+            .unwrap_or_default();
+        let servers = self.language_servers.servers.clone();
 
-    fn update_message(
-        &mut self,
-        id: LanguageServerId,
-        message: Option<&str>,
-        severity: Severity,
-        name: Option<&LanguageServerName>,
-        cx: &mut App,
-    ) {
-        if let Some(state) = self.language_servers.servers.get_mut(&id) {
-            state.message =
-                message.map(|message| (SharedString::from(message.to_owned()), severity));
-            if let Some(name) = name.cloned() {
-                state.name = name;
+        ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
+            // Add global actions first
+            if let Some(active_editor) = active_editor.clone() {
+                menu = menu
+                    .entry("Restart All Servers", None, {
+                        let active_editor = active_editor.clone();
+                        move |window, cx| {
+                            if let Some(editor) = active_editor.upgrade() {
+                                editor.update(cx, |editor, cx| {
+                                    editor.restart_language_server(
+                                        &RestartLanguageServer,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }
+                    })
+                    .entry("Stop All Servers", None, {
+                        let active_editor = active_editor.clone();
+                        move |window, cx| {
+                            if let Some(editor) = active_editor.upgrade() {
+                                editor.update(cx, |editor, cx| {
+                                    editor.stop_language_server(&StopLanguageServer, window, cx);
+                                });
+                            }
+                        }
+                    })
+                    .separator();
             }
-        } else if let Some((message, name)) = message.zip(name.cloned()) {
-            self.language_servers.servers.insert(
-                id,
-                LanguageServerState {
-                    id,
-                    message: Some((SharedString::from(message.to_owned()), severity)),
-                    name,
-                    status: LanguageServerStatus::Running,
-                },
-            );
-        }
 
-        if let Some(picker) = &self.lsp_picker {
-            picker.update(cx, |picker, _| {
-                if let Some(state) = picker.delegate.language_servers.servers.get_mut(&id) {
-                    state.message =
-                        message.map(|message| (SharedString::from(message.to_owned()), severity));
-                    if let Some(name) = name.cloned() {
-                        state.name = name;
-                    }
+            // Add individual server entries
+            for (server_id, server) in servers.iter() {
+                let server_id = *server_id;
+                let server_name = server.name.0.clone();
+                let status = server.status;
+
+                let status_text = match status {
+                    LanguageServerStatus::Starting => "Starting",
+                    LanguageServerStatus::Running => "Running",
+                    LanguageServerStatus::Stopping => "Stopping",
+                    LanguageServerStatus::Stopped => "Stopped",
+                };
+
+                menu = menu.header(&format!("{} ({})", server_name, status_text));
+
+                // Add server-specific actions
+                let can_stop = matches!(
+                    status,
+                    LanguageServerStatus::Starting | LanguageServerStatus::Running
+                );
+                let can_restart = matches!(
+                    status,
+                    LanguageServerStatus::Stopping | LanguageServerStatus::Stopped
+                );
+
+                if can_stop {
+                    menu = menu.entry("Stop Server", None, {
+                        let lsp_store = lsp_store.clone();
+                        move |_window, cx| {
+                            lsp_store
+                                .update(cx, |lsp_store, cx| {
+                                    lsp_store.stop_language_servers_for_buffers(
+                                        Vec::new(),
+                                        vec![server_id],
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
+                    });
                 }
-            });
-        }
-    }
 
-    fn update_status(
-        &mut self,
-        id: LanguageServerId,
-        status: LanguageServerStatus,
-        message: Option<&str>,
-        name: Option<&LanguageServerName>,
-        cx: &mut App,
-    ) {
-        self.language_servers
-            .update_status(id, status, message, name.cloned());
-        if let Some(picker) = &self.lsp_picker {
-            picker.update(cx, |picker, _| {
-                picker
-                    .delegate
-                    .language_servers
-                    .update_status(id, status, message, name.cloned());
-            });
-        }
+                if can_restart {
+                    menu = menu.entry("Restart Server", None, {
+                        let lsp_store = lsp_store.clone();
+                        let workspace = workspace.clone();
+                        let editor_buffers = editor_buffers.clone();
+                        move |_window, cx| {
+                            if let Some(workspace) = workspace.upgrade() {
+                                let buffer_store =
+                                    workspace.read(cx).project().read(cx).buffer_store().clone();
+                                let buffers = editor_buffers
+                                    .iter()
+                                    .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
+                                    .collect::<Vec<_>>();
+                                if !buffers.is_empty() {
+                                    lsp_store
+                                        .update(cx, |lsp_store, cx| {
+                                            lsp_store.restart_language_servers_for_buffers(
+                                                buffers,
+                                                vec![server_id],
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // Check if server has logs
+                // Add log entries without checking - they'll be disabled if no logs exist
+                menu = menu
+                    .entry("Open Log", None, {
+                        let workspace = workspace.clone();
+                        let lsp_logs = lsp_logs.clone();
+                        move |window, cx| {
+                            if let Some(lsp_logs) = lsp_logs.upgrade() {
+                                lsp_logs.update(cx, |lsp_logs, cx| {
+                                    lsp_logs.open_server_log(
+                                        workspace.clone(),
+                                        server_id,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }
+                    })
+                    .entry("Open LSP Messages", None, {
+                        let workspace = workspace.clone();
+                        let lsp_logs = lsp_logs.clone();
+                        move |window, cx| {
+                            if let Some(lsp_logs) = lsp_logs.upgrade() {
+                                lsp_logs.update(cx, |lsp_logs, cx| {
+                                    lsp_logs.open_server_trace(
+                                        workspace.clone(),
+                                        server_id,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }
+                    });
+
+                menu = menu.separator();
+            }
+
+            menu
+        })
     }
 }
 
@@ -1058,7 +303,7 @@ impl StatusItemView for LspTool {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn workspace::ItemHandle>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if ProjectSettings::get_global(cx).global_lsp_settings.button {
@@ -1074,111 +319,43 @@ impl StatusItemView for LspTool {
                         HashSet::from_iter(editor.read(cx).buffer().read(cx).excerpt_buffer_ids());
                     self.active_editor = Some(ActiveEditor {
                         editor: editor.downgrade(),
-                        _editor_subscription: cx.subscribe_in(
-                            &editor,
-                            window,
-                            |lsp_tool, _, e: &EditorEvent, window, cx| match e {
-                                EditorEvent::ExcerptsAdded { buffer, .. } => {
-                                    if let Some(active_editor) = lsp_tool.active_editor.as_mut() {
-                                        let buffer_id = buffer.read(cx).remote_id();
-                                        if active_editor.editor_buffers.insert(buffer_id) {
-                                            if let Some(picker) = &lsp_tool.lsp_picker {
-                                                picker.update(cx, |picker, cx| {
-                                                    picker
-                                                        .delegate
-                                                        .editor_buffers
-                                                        .insert(buffer_id);
-                                                    picker.refresh(window, cx)
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                                EditorEvent::ExcerptsRemoved {
-                                    removed_buffer_ids, ..
-                                } => {
-                                    if let Some(active_editor) = lsp_tool.active_editor.as_mut() {
-                                        let mut removed = false;
-                                        for id in removed_buffer_ids {
-                                            active_editor.editor_buffers.retain(|buffer_id| {
-                                                let retain = buffer_id != id;
-                                                removed |= !retain;
-                                                retain
-                                            });
-                                        }
-                                        if removed {
-                                            if let Some(picker) = &lsp_tool.lsp_picker {
-                                                picker.update(cx, |picker, cx| {
-                                                    for id in removed_buffer_ids {
-                                                        picker
-                                                            .delegate
-                                                            .editor_buffers
-                                                            .retain(|buffer_id| buffer_id != id);
-                                                    }
-                                                    picker.refresh(window, cx)
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            },
-                        ),
-                        editor_buffers: editor_buffers.clone(),
-                    });
-
-                    let lsp_picker = Self::new_lsp_picker(
-                        self.workspace.clone(),
-                        self.lsp_store.clone(),
-                        editor.downgrade(),
+                        _editor_subscription: Subscription::new(|| {}),
                         editor_buffers,
-                        self.language_servers.clone(),
-                        window,
-                        cx,
-                    );
-                    self.lsp_picker = Some(lsp_picker.clone());
-                    lsp_picker.update(cx, |lsp_picker, cx| lsp_picker.refresh(window, cx));
+                    });
                 }
+            } else {
+                self.active_editor = None;
             }
         } else {
             self.active_editor = None;
-            self.lsp_picker = None;
         }
+        cx.notify();
     }
 }
 
 impl Render for LspTool {
-    // TODO kb keyboard story: toggling the button; navigation inside it; showing keybindings (need new actions?) for each button
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        let Some(lsp_picker) = &self.lsp_picker else {
-            return div();
-        };
-
-        let delegate = &lsp_picker.read(cx).delegate;
-        if self.active_editor.is_none() || delegate.items.is_empty() {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
+        if self.active_editor.is_none() || self.language_servers.servers.is_empty() {
             return div();
         }
 
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;
-        for item in &delegate.items {
-            match item {
-                LspItem::ServerHeader {
-                    message: Some((_, Severity::Error)),
-                    ..
-                } => has_errors = true,
-                LspItem::ServerHeader {
-                    message: Some((_, Severity::Warning)),
-                    ..
-                } => has_warnings = true,
-                LspItem::ServerHeader {
-                    message: Some((_, Severity::Other)),
-                    ..
-                } => has_other_notifications = true,
-                _ => {}
+        for server in self.language_servers.servers.values() {
+            if let Some(ref message) = server.message {
+                // Simple heuristic to determine severity from message content
+                let message_lower = message.to_lowercase();
+                if message_lower.contains("error") || message_lower.contains("failed") {
+                    has_errors = true;
+                } else if message_lower.contains("warning") || message_lower.contains("warn") {
+                    has_warnings = true;
+                } else {
+                    has_other_notifications = true;
+                }
             }
         }
+
         let indicator = if has_errors {
             Some(Indicator::dot().color(Color::Error))
         } else if has_warnings {
@@ -1189,19 +366,28 @@ impl Render for LspTool {
             None
         };
 
+        let lsp_logs = cx.global::<GlobalLogStore>().0.downgrade();
+
         div().child(
-            PickerPopoverMenu::new(
-                lsp_picker.clone(),
-                IconButton::new("zed-lsp-tool-button", IconName::Bolt)
-                    .when_some(indicator, IconButton::indicator)
-                    .shape(IconButtonShape::Square)
-                    .icon_size(IconSize::XSmall)
-                    .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
-                move |_, cx| Tooltip::simple("Language servers", cx),
-                Corner::BottomRight,
-                cx,
-            )
-            .render(window, cx),
+            PopoverMenu::new("lsp-tool-menu")
+                .trigger(
+                    IconButton::new("zed-lsp-tool-button", IconName::Bolt)
+                        .when_some(indicator, IconButton::indicator)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
+                        .indicator_border_color(Some(cx.theme().colors().status_bar_background))
+                        .tooltip(move |_, cx| Tooltip::simple("Language servers", cx)),
+                )
+                .menu({
+                    let this = cx.weak_entity();
+                    move |window, cx| {
+                        this.upgrade().map(|this| {
+                            this.update(cx, |this, cx| {
+                                this.build_context_menu(lsp_logs.clone(), window, cx)
+                            })
+                        })
+                    }
+                }),
         )
     }
 }
