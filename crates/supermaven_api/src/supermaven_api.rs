@@ -5,9 +5,10 @@ use http_client::{AsyncBody, HttpClient, Request as HttpRequest};
 use paths::supermaven_dir;
 use serde::{Deserialize, Serialize};
 use smol::fs::{self, File};
-use smol::stream::StreamExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+use util::fs::{make_file_executable, remove_matching};
 
 #[derive(Serialize)]
 pub struct GetExternalUserRequest {
@@ -256,14 +257,8 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
         // Due to an issue with the Supermaven binary not being made executable on
         // earlier Zed versions and Supermaven releases not occuring that frequently,
         // we ensure here that the found binary is actually executable.
-        #[cfg(not(windows))]
-        {
-            fs::set_permissions(
-                &binary_path,
-                <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-            )
-            .await?;
-        }
+        make_file_executable(&binary_path).await?;
+
         return Ok(binary_path);
     }
 
@@ -282,22 +277,9 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
         .await
         .with_context(|| format!("Unable to write binary to file at {:?}", binary_path))?;
 
-    #[cfg(not(windows))]
-    {
-        fs::set_permissions(
-            &binary_path,
-            <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
-        )
-        .await?;
-    }
+    make_file_executable(&binary_path).await?;
 
-    let mut old_binary_paths = fs::read_dir(supermaven_dir()).await?;
-    while let Some(old_binary_path) = old_binary_paths.next().await {
-        let old_binary_path = old_binary_path?;
-        if old_binary_path.path() != binary_path {
-            fs::remove_file(old_binary_path.path()).await?;
-        }
-    }
+    remove_matching(supermaven_dir(), |file| file != binary_path).await;
 
     Ok(binary_path)
 }

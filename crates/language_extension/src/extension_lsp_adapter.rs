@@ -146,10 +146,10 @@ impl LspAdapter for ExtensionLspAdapter {
             {
                 #[cfg(not(windows))]
                 {
-                    use std::fs::{self, Permissions};
-                    use std::os::unix::fs::PermissionsExt;
+                    use util::fs::make_file_executable;
 
-                    fs::set_permissions(&path, Permissions::from_mode(0o755))
+                    make_file_executable(&path)
+                        .await
                         .context("failed to set file permissions")?;
                 }
             }
