@@ -106,10 +106,15 @@ impl KeymapEditor {
                 .map(|predicate| predicate.to_string())
                 .unwrap_or_else(|| "<global>".to_string());
 
+            let source = key_binding
+                .meta()
+                .map(|meta| settings::KeybindSource::from_meta(meta).name().into());
+
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
                 action: key_binding.action().name().into(),
                 context: context.into(),
+                source,
             })
         }
         processed_bindings
@@ -120,6 +125,7 @@ struct ProcessedKeybinding {
     keystroke_text: SharedString,
     action: SharedString,
     context: SharedString,
+    source: Option<SharedString>,
 }
 
 impl Item for KeymapEditor {
@@ -148,7 +154,7 @@ impl Render for KeymapEditor {
             .child(
                 Table::new()
                     .interactable(&self.table_interaction_state)
-                    .header(["Command", "Keystrokes", "Context"])
+                    .header(["Command", "Keystrokes", "Context", "Source"])
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
@@ -160,8 +166,7 @@ impl Render for KeymapEditor {
                                         binding.action.clone(),
                                         binding.keystroke_text.clone(),
                                         binding.context.clone(),
-                                        // TODO: Add a source field
-                                        // binding.source.clone(),
+                                        binding.source.clone().unwrap_or_default(),
                                     ];
 
                                     // fixme: pass through callback as a row_cx param
