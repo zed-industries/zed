@@ -679,6 +679,7 @@ message MultiLspQuery {
         GetSignatureHelp get_signature_help = 7;
         GetCodeLens get_code_lens = 8;
         GetDocumentDiagnostics get_document_diagnostics = 9;
+        // TODO kb colors request
     }
 }
 

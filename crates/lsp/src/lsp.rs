@@ -804,6 +804,9 @@ impl LanguageServer {
                         related_document_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
+                    color_provider: Some(DocumentColorClientCapabilities {
+                        dynamic_registration: Some(false),
+                    }),
                     ..TextDocumentClientCapabilities::default()
                 }),
                 experimental: Some(json!({
