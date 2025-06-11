@@ -99,10 +99,6 @@ mod tests {
     fn test_scan_code_to_key() {
         let mapper = TestKeyboardMapper::new();
         for scan_code in ScanCode::iter() {
-            // The IntlBackslash and IntlRo keys are not mapped to any key on US layout
-            if scan_code == ScanCode::IntlBackslash || scan_code == ScanCode::IntlRo {
-                continue;
-            }
             let mut modifiers = Modifiers::default();
             let key = mapper.scan_code_to_key(scan_code, &mut modifiers).unwrap();
             assert_eq!(key, scan_code.to_key(false));

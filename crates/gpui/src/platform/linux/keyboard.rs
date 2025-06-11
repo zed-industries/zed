@@ -174,8 +174,6 @@ const TYPEABLE_CODES: &[u32] = &[
     0x003b, // , Comma
     0x003c, // . Period
     0x003d, // / Slash
-    0x005e, // \ IntlBackslash
-    0x0061, // ro IntlRo
 ];
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
@@ -253,8 +251,6 @@ fn get_scan_code(scan_code: ScanCode) -> Option<u32> {
         ScanCode::Comma => 0x003b,
         ScanCode::Period => 0x003c,
         ScanCode::Slash => 0x003d,
-        ScanCode::IntlBackslash => 0x005e,
-        ScanCode::IntlRo => 0x0061,
         ScanCode::Left => 0x0071,
         ScanCode::Up => 0x006f,
         ScanCode::Right => 0x0072,

@@ -148,10 +148,6 @@ pub enum ScanCode {
     Period,
     /// Slash key on the main keyboard: /
     Slash,
-    /// This key is typically located near LeftShift key, varies on international keyboards: Dan: <> Dutch: ][ Ger: <> UK: \|
-    IntlBackslash,
-    /// Used for Brazilian /? and Japanese _ 'ro'.
-    IntlRo,
 
     /// Left arrow key
     Left,
@@ -574,8 +570,6 @@ impl ScanCode {
                     "/"
                 }
             }
-            // Standard US keyboard layout does not have these keys, so we return "unknown".
-            ScanCode::IntlBackslash | ScanCode::IntlRo => "unknown",
             ScanCode::Left => "left",
             ScanCode::Up => "up",
             ScanCode::Right => "right",

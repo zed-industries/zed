@@ -212,8 +212,6 @@ fn get_virtual_key_from_scan_code(gpui_scan_code: ScanCode) -> Result<(u32, VIRT
         ScanCode::Comma => 0x0033,
         ScanCode::Period => 0x0034,
         ScanCode::Slash => 0x0035,
-        ScanCode::IntlBackslash => 0x0056,
-        ScanCode::IntlRo => 0x0073,
         _ => anyhow::bail!("Unsupported scan code: {:?}", gpui_scan_code),
     };
     let virtual_key = unsafe { MapVirtualKeyW(scan_code, MAPVK_VSC_TO_VK) };
