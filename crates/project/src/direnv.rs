@@ -9,7 +9,6 @@ pub enum DirenvError {
     NotFound,
     FailedRun,
     NonZeroExit(ExitStatus, Vec<u8>),
-    EmptyOutput,
     InvalidJson,
 }
 
@@ -22,7 +21,6 @@ impl From<DirenvError> for Option<EnvironmentErrorMessage> {
                     "Failed to run direnv. See logs for more info",
                 )))
             }
-            DirenvError::EmptyOutput => None,
             DirenvError::InvalidJson => Some(EnvironmentErrorMessage(String::from(
                 "Direnv returned invalid json. See logs for more info",
             ))),
@@ -66,7 +64,8 @@ pub async fn load_direnv_environment(
 
     let output = String::from_utf8_lossy(&direnv_output.stdout);
     if output.is_empty() {
-        return Err(DirenvError::EmptyOutput);
+        // direnv outputs nothing when it has no changes to apply to environment variables
+        return Ok(HashMap::new());
     }
 
     match serde_json::from_str::<HashMap<String, Option<String>>>(&output) {
