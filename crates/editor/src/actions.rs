@@ -87,6 +87,7 @@ pub struct ToggleCodeActions {
 #[derive(PartialEq, Clone, Debug)]
 pub enum CodeActionSource {
     Indicator(DisplayRow),
+    RunMenu(DisplayRow),
     QuickActionBar,
 }
 
