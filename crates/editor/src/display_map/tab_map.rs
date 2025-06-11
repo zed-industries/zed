@@ -301,8 +301,9 @@ impl TabSnapshot {
     }
 
     pub fn to_tab_point(&self, input: FoldPoint) -> TabPoint {
-        let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
-        let expanded = self.expand_tabs(chars, input.column());
+        let chunks = self.fold_snapshot.chunks_at(FoldPoint::new(input.row(), 0));
+        let tab_cursor = TabStopCursor::new(chunks);
+        let expanded = self.expand_tabs(tab_cursor, input.column());
         TabPoint::new(input.row(), expanded)
     }
 
@@ -340,27 +341,25 @@ impl TabSnapshot {
     }
 
     /// todo!(performance use tabs bitmask)
-    fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
+    fn expand_tabs(&self, mut cursor: TabStopCursor, column: u32) -> u32 {
         let tab_size = self.tab_size.get();
 
-        let mut expanded_chars = 0;
-        let mut expanded_bytes = 0;
-        let mut collapsed_bytes = 0;
         let end_column = column.min(self.max_expansion_column);
-        for c in chars {
-            if collapsed_bytes >= end_column {
-                break;
-            }
-            if c == '\t' {
-                let tab_len = tab_size - expanded_chars % tab_size;
-                expanded_bytes += tab_len;
-                expanded_chars += tab_len;
-            } else {
-                expanded_bytes += c.len_utf8() as u32;
-                expanded_chars += 1;
-            }
-            collapsed_bytes += c.len_utf8() as u32;
+        let mut seek_target = end_column;
+        let mut tab_count = 0;
+        let mut expanded_tab_len = 0;
+
+        while let Some(tab_stop) = cursor.seek(seek_target) {
+            let expanded_chars_old = tab_stop.char_offset + expanded_tab_len - tab_count;
+            let tab_len = tab_size - ((expanded_chars_old - 1) % tab_size);
+            tab_count += 1;
+            expanded_tab_len += tab_len;
+
+            seek_target = end_column - cursor.byte_offset;
         }
+
+        let collapsed_bytes = cursor.byte_offset();
+        let expanded_bytes = cursor.byte_offset() + expanded_tab_len - tab_count;
         expanded_bytes + column.saturating_sub(collapsed_bytes)
     }
 
@@ -557,6 +556,7 @@ impl<'a> Iterator for TabChunks<'a> {
             }
         }
 
+        //todo!(improve performance by using tab cursor)
         for (ix, c) in self.chunk.text.char_indices() {
             match c {
                 '\t' => {
@@ -623,7 +623,7 @@ mod tests {
     use util;
 
     impl TabSnapshot {
-        fn test_collapse_tabs(
+        fn expected_collapse_tabs(
             &self,
             chars: impl Iterator<Item = char>,
             column: u32,
@@ -675,11 +675,41 @@ mod tests {
             )
         }
 
-        fn test_to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
+        pub fn expected_to_tab_point(&self, input: FoldPoint) -> TabPoint {
+            let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
+            let expanded = self.expected_expand_tabs(chars, input.column());
+            TabPoint::new(input.row(), expanded)
+        }
+
+        fn expected_expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
+            let tab_size = self.tab_size.get();
+
+            let mut expanded_chars = 0;
+            let mut expanded_bytes = 0;
+            let mut collapsed_bytes = 0;
+            let end_column = column.min(self.max_expansion_column);
+            for c in chars {
+                if collapsed_bytes >= end_column {
+                    break;
+                }
+                if c == '\t' {
+                    let tab_len = tab_size - expanded_chars % tab_size;
+                    expanded_bytes += tab_len;
+                    expanded_chars += tab_len;
+                } else {
+                    expanded_bytes += c.len_utf8() as u32;
+                    expanded_chars += 1;
+                }
+                collapsed_bytes += c.len_utf8() as u32;
+            }
+            expanded_bytes + column.saturating_sub(collapsed_bytes)
+        }
+
+        fn expected_to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
             let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
             let expanded = output.column();
             let (collapsed, expanded_char_column, to_next_stop) =
-                self.test_collapse_tabs(chars, expanded, bias);
+                self.expected_collapse_tabs(chars, expanded, bias);
             (
                 FoldPoint::new(output.row(), collapsed),
                 expanded_char_column,
@@ -696,9 +726,10 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 0), 0);
-        assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 1), 4);
-        assert_eq!(tab_snapshot.expand_tabs("\ta".chars(), 2), 5);
+        // assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 0), 0);
+        // assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 1), 4);
+        // assert_eq!(tab_snapshot.expand_tabs("\ta".chars(), 2), 5);
+        panic!("Fix this test")
     }
 
     #[gpui::test]
@@ -715,23 +746,23 @@ mod tests {
             let range = TabPoint::new(0, ix as u32)..tab_snapshot.max_point();
 
             assert_eq!(
-                tab_snapshot.test_to_fold_point(range.start, Bias::Left),
+                tab_snapshot.expected_to_fold_point(range.start, Bias::Left),
                 tab_snapshot.to_fold_point(range.start, Bias::Left),
                 "Failed with tab_point at column {ix}"
             );
             assert_eq!(
-                tab_snapshot.test_to_fold_point(range.start, Bias::Right),
+                tab_snapshot.expected_to_fold_point(range.start, Bias::Right),
                 tab_snapshot.to_fold_point(range.start, Bias::Right),
                 "Failed with tab_point at column {ix}"
             );
 
             assert_eq!(
-                tab_snapshot.test_to_fold_point(range.end, Bias::Left),
+                tab_snapshot.expected_to_fold_point(range.end, Bias::Left),
                 tab_snapshot.to_fold_point(range.end, Bias::Left),
                 "Failed with tab_point at column {ix}"
             );
             assert_eq!(
-                tab_snapshot.test_to_fold_point(range.end, Bias::Right),
+                tab_snapshot.expected_to_fold_point(range.end, Bias::Right),
                 tab_snapshot.to_fold_point(range.end, Bias::Right),
                 "Failed with tab_point at column {ix}"
             );
@@ -752,7 +783,7 @@ mod tests {
         // This should panic with the expected vs actual mismatch
         let tab_point = TabPoint::new(6, 6);
         let result = tab_snapshot.to_fold_point(tab_point, Bias::Right);
-        let expected = tab_snapshot.test_to_fold_point(tab_point, Bias::Right);
+        let expected = tab_snapshot.expected_to_fold_point(tab_point, Bias::Right);
 
         assert_eq!(result, expected);
     }
@@ -794,26 +825,26 @@ mod tests {
             let range = TabPoint::new(0, ix as u32)..tab_snapshot.max_point();
 
             assert_eq!(
-                tab_snapshot.test_to_fold_point(range.start, Bias::Left),
+                tab_snapshot.expected_to_fold_point(range.start, Bias::Left),
                 tab_snapshot.to_fold_point(range.start, Bias::Left),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
             assert_eq!(
-                tab_snapshot.test_to_fold_point(range.start, Bias::Right),
+                tab_snapshot.expected_to_fold_point(range.start, Bias::Right),
                 tab_snapshot.to_fold_point(range.start, Bias::Right),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
 
             assert_eq!(
-                tab_snapshot.test_to_fold_point(range.end, Bias::Left),
+                tab_snapshot.expected_to_fold_point(range.end, Bias::Left),
                 tab_snapshot.to_fold_point(range.end, Bias::Left),
                 "Failed with input: {}, with idx: {ix}",
                 input
             );
             assert_eq!(
-                tab_snapshot.test_to_fold_point(range.end, Bias::Right),
+                tab_snapshot.expected_to_fold_point(range.end, Bias::Right),
                 tab_snapshot.to_fold_point(range.end, Bias::Right),
                 "Failed with input: {}, with idx: {ix}",
                 input
