@@ -5744,62 +5744,49 @@ impl Editor {
         }
         let project = self.project.clone();
 
-        let mut task = self.code_actions_task.take();
-        let code_actions_task = cx.spawn_in(window, async move |editor, cx| {
-            while let Some(prev_task) = task {
-                prev_task.await.log_err();
-                task = editor.update(cx, |this, _| this.code_actions_task.take())?;
+        let code_actions_task = match deployed_from {
+            Some(CodeActionSource::RunMenu(_)) => Task::ready(None),
+            _ => self.code_actions(buffer_row, window, cx),
+        };
+
+        let runnable_task = match deployed_from {
+            Some(CodeActionSource::Indicator(_)) => Task::ready(Ok(Default::default())),
+            _ => {
+                let mut task_context_task = Task::ready(None);
+                if let Some(tasks) = &tasks {
+                    if let Some(project) = project {
+                        task_context_task =
+                            Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
+                    }
+                }
+
+                cx.spawn_in(window, {
+                    let buffer = buffer.clone();
+                    async move |editor, cx| {
+                        let task_context = task_context_task.await;
+
+                        let resolved_tasks =
+                            tasks
+                                .zip(task_context.clone())
+                                .map(|(tasks, task_context)| ResolvedTasks {
+                                    templates: tasks.resolve(&task_context).collect(),
+                                    position: snapshot.buffer_snapshot.anchor_before(Point::new(
+                                        multibuffer_point.row,
+                                        tasks.column,
+                                    )),
+                                });
+                        let debug_scenarios = editor.update(cx, |editor, cx| {
+                            editor.debug_scenarios(&resolved_tasks, &buffer, cx)
+                        })?;
+                        anyhow::Ok((resolved_tasks, debug_scenarios, task_context))
+                    }
+                })
             }
-
-            editor.update(cx, |editor, cx| {
-                editor
-                    .available_code_actions
-                    .clone()
-                    .and_then(|(location, code_actions)| {
-                        let snapshot = location.buffer.read(cx).snapshot();
-                        let point_range = location.range.to_point(&snapshot);
-                        let point_range = point_range.start.row..=point_range.end.row;
-                        if point_range.contains(&buffer_row) {
-                            Some(code_actions)
-                        } else {
-                            None
-                        }
-                    })
-            })
-        });
-
-        let mut task_context_task = Task::ready(None);
-        if let Some(tasks) = &tasks {
-            if let Some(project) = project {
-                task_context_task =
-                    Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
-            }
-        }
-
-        let runnable_task = cx.spawn_in(window, {
-            let buffer = buffer.clone();
-            async move |editor, cx| {
-                let task_context = task_context_task.await;
-
-                let resolved_tasks =
-                    tasks
-                        .zip(task_context.clone())
-                        .map(|(tasks, task_context)| ResolvedTasks {
-                            templates: tasks.resolve(&task_context).collect(),
-                            position: snapshot
-                                .buffer_snapshot
-                                .anchor_before(Point::new(multibuffer_point.row, tasks.column)),
-                        });
-                let debug_scenarios = editor.update(cx, |editor, cx| {
-                    editor.debug_scenarios(&resolved_tasks, &buffer, cx)
-                })?;
-                anyhow::Ok((resolved_tasks, debug_scenarios, task_context))
-            }
-        });
+        };
 
         cx.spawn_in(window, async move |editor, cx| {
             let (resolved_tasks, debug_scenarios, task_context) = runnable_task.await?;
-            let code_actions = code_actions_task.await?;
+            let code_actions = code_actions_task.await;
             let spawn_straight_away = quick_launch
                 && resolved_tasks
                     .as_ref()
@@ -5880,6 +5867,42 @@ impl Editor {
         } else {
             vec![]
         }
+    }
+
+    fn code_actions(
+        &mut self,
+        buffer_row: u32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<Rc<[AvailableCodeAction]>>> {
+        let mut task = self.code_actions_task.take();
+        cx.spawn_in(window, async move |editor, cx| {
+            while let Some(prev_task) = task {
+                prev_task.await.log_err();
+                task = editor
+                    .update(cx, |this, _| this.code_actions_task.take())
+                    .ok()?;
+            }
+
+            editor
+                .update(cx, |editor, cx| {
+                    editor
+                        .available_code_actions
+                        .clone()
+                        .and_then(|(location, code_actions)| {
+                            let snapshot = location.buffer.read(cx).snapshot();
+                            let point_range = location.range.to_point(&snapshot);
+                            let point_range = point_range.start.row..=point_range.end.row;
+                            if point_range.contains(&buffer_row) {
+                                Some(code_actions)
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .ok()
+                .flatten()
+        })
     }
 
     pub fn confirm_code_action(
