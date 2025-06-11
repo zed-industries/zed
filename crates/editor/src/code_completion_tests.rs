@@ -155,46 +155,46 @@ async fn test_sort_matches_local_variable_over_global_enum(cx: &mut TestAppConte
 async fn test_sort_matches_for_unreachable(cx: &mut TestAppContext) {
     // Case 1: "unre"
     let completions = vec![
-        CompletionBuilder::constant("unreachable", "80000000"),
-        CompletionBuilder::snippet("unreachable!(…)", "7fffffff"),
-        CompletionBuilder::constant("unchecked_rem", "80000000"),
-        CompletionBuilder::constant("unreachable_unchecked", "80000000"),
+        CompletionBuilder::function("unreachable", "80000000"),
+        CompletionBuilder::function("unreachable!(…)", "7fffffff"),
+        CompletionBuilder::function("unchecked_rem", "80000000"),
+        CompletionBuilder::function("unreachable_unchecked", "80000000"),
     ];
     let matches = sort_matches("unre", completions, SnippetSortOrder::default(), cx).await;
     assert_eq!(matches[0], "unreachable!(…)");
 
     // Case 2: "unrea"
     let completions = vec![
-        CompletionBuilder::snippet("unreachable", "80000000"),
-        CompletionBuilder::snippet("unreachable!(…)", "7fffffff"),
-        CompletionBuilder::snippet("unreachable_unchecked", "80000000"),
+        CompletionBuilder::function("unreachable", "80000000"),
+        CompletionBuilder::function("unreachable!(…)", "7fffffff"),
+        CompletionBuilder::function("unreachable_unchecked", "80000000"),
     ];
     let matches = sort_matches("unrea", completions, SnippetSortOrder::default(), cx).await;
     assert_eq!(matches[0], "unreachable!(…)");
 
     // Case 3: "unreach"
     let completions = vec![
-        CompletionBuilder::constant("unreachable", "80000000"),
-        CompletionBuilder::snippet("unreachable!(…)", "7fffffff"),
-        CompletionBuilder::constant("unreachable_unchecked", "80000000"),
+        CompletionBuilder::function("unreachable", "80000000"),
+        CompletionBuilder::function("unreachable!(…)", "7fffffff"),
+        CompletionBuilder::function("unreachable_unchecked", "80000000"),
     ];
     let matches = sort_matches("unreach", completions, SnippetSortOrder::default(), cx).await;
     assert_eq!(matches[0], "unreachable!(…)");
 
     // Case 4: "unreachabl"
     let completions = vec![
-        CompletionBuilder::snippet("unreachable", "80000000"),
-        CompletionBuilder::constant("unreachable!(…)", "7fffffff"),
-        CompletionBuilder::constant("unreachable_unchecked", "80000000"),
+        CompletionBuilder::function("unreachable", "80000000"),
+        CompletionBuilder::function("unreachable!(…)", "7fffffff"),
+        CompletionBuilder::function("unreachable_unchecked", "80000000"),
     ];
     let matches = sort_matches("unreachable", completions, SnippetSortOrder::default(), cx).await;
     assert_eq!(matches[0], "unreachable!(…)");
 
     // Case 5: "unreachable"
     let completions = vec![
-        CompletionBuilder::constant("unreachable", "80000000"),
-        CompletionBuilder::constant("unreachable!(…)", "7fffffff"),
-        CompletionBuilder::constant("unreachable_unchecked", "80000000"),
+        CompletionBuilder::function("unreachable", "80000000"),
+        CompletionBuilder::function("unreachable!(…)", "7fffffff"),
+        CompletionBuilder::function("unreachable_unchecked", "80000000"),
     ];
     let matches = sort_matches("unreachable", completions, SnippetSortOrder::default(), cx).await;
     assert_eq!(matches[0], "unreachable!(…)");
