@@ -542,6 +542,8 @@ impl DebugPanel {
                                             project::debugger::session::ThreadStatus::Exited,
                                         );
                                     let capabilities = running_state.read(cx).capabilities(cx);
+                                    let supports_detach =
+                                        running_state.read(cx).session().read(cx).is_attached();
                                     this.map(|this| {
                                         if thread_status == ThreadStatus::Running {
                                             this.child(
@@ -730,27 +732,39 @@ impl DebugPanel {
                                                 }
                                             }),
                                     )
-                                    .child(
-                                        IconButton::new("debug-disconnect", IconName::DebugDetach)
-                                            .icon_size(IconSize::XSmall)
-                                            .on_click(window.listener_for(
-                                                &running_state,
-                                                |this, _, _, cx| {
-                                                    this.detach_client(cx);
-                                                },
-                                            ))
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |window, cx| {
-                                                    Tooltip::for_action_in(
-                                                        "Detach",
-                                                        &Detach,
-                                                        &focus_handle,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                }
-                                            }),
+                                    .when(
+                                        supports_detach,
+                                        |div| {
+                                            div.child(
+                                                IconButton::new(
+                                                    "debug-disconnect",
+                                                    IconName::DebugDetach,
+                                                )
+                                                .disabled(
+                                                    thread_status != ThreadStatus::Stopped
+                                                        && thread_status != ThreadStatus::Running,
+                                                )
+                                                .icon_size(IconSize::XSmall)
+                                                .on_click(window.listener_for(
+                                                    &running_state,
+                                                    |this, _, _, cx| {
+                                                        this.detach_client(cx);
+                                                    },
+                                                ))
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Detach",
+                                                            &Detach,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
+                                                }),
+                                            )
+                                        },
                                     )
                                 },
                             ),

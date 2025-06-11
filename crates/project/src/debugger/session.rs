@@ -26,6 +26,7 @@ use dap::{
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
     RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
+    StartDebuggingRequestArgumentsRequest,
 };
 use futures::SinkExt;
 use futures::channel::{mpsc, oneshot};
@@ -2217,10 +2218,17 @@ impl Session {
         self.locations.get(&reference).cloned()
     }
 
+    pub fn is_attached(&self) -> bool {
+        let Mode::Running(local_mode) = &self.mode else {
+            return false;
+        };
+        local_mode.binary.request_args.request == StartDebuggingRequestArgumentsRequest::Attach
+    }
+
     pub fn disconnect_client(&mut self, cx: &mut Context<Self>) {
         let command = DisconnectCommand {
             restart: Some(false),
-            terminate_debuggee: Some(true),
+            terminate_debuggee: Some(false),
             suspend_debuggee: Some(false),
         };
 
