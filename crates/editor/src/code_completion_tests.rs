@@ -2,8 +2,111 @@ use crate::{
     code_context_menus::{CompletionsMenu, SortableMatch},
     editor_settings::SnippetSortOrder,
 };
-use fuzzy::StringMatch;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::TestAppContext;
+use language::CodeLabel;
+use lsp::{CompletionItem, CompletionItemKind, LanguageServerId};
+use project::{Completion, CompletionSource, lsp_store::CompletionDocumentation};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use text::Anchor;
+
+pub struct TestCompletion {
+    pub label: &'static str,
+    pub sort_text: Option<&'static str>,
+    pub kind: CompletionItemKind,
+}
+
+impl TestCompletion {
+    pub fn variable(label: &'static str, sort_text: &'static str) -> Self {
+        Self {
+            label,
+            sort_text: Some(sort_text),
+            kind: CompletionItemKind::VARIABLE,
+        }
+    }
+
+    pub fn constant(label: &'static str, sort_text: &'static str) -> Self {
+        Self {
+            label,
+            sort_text: Some(sort_text),
+            kind: CompletionItemKind::CONSTANT,
+        }
+    }
+
+    pub fn function(label: &'static str, sort_text: &'static str) -> Self {
+        Self {
+            label,
+            sort_text: Some(sort_text),
+            kind: CompletionItemKind::FUNCTION,
+        }
+    }
+
+    pub fn snippet(label: &'static str) -> Self {
+        Self {
+            label,
+            sort_text: None,
+            kind: CompletionItemKind::SNIPPET,
+        }
+    }
+}
+
+pub fn create_completion(test_completion: &TestCompletion) -> Completion {
+    Completion {
+        replace_range: Anchor::MIN..Anchor::MAX,
+        new_text: test_completion.label.to_string(),
+        label: CodeLabel {
+            text: test_completion.label.to_string(),
+            runs: Default::default(),
+            filter_range: 0..test_completion.label.len(),
+        },
+        documentation: None,
+        source: CompletionSource::Lsp {
+            insert_range: None,
+            server_id: LanguageServerId(0),
+            lsp_completion: Box::new(CompletionItem {
+                label: test_completion.label.to_string(),
+                kind: Some(test_completion.kind),
+                sort_text: test_completion.sort_text.map(|s| s.to_string()),
+                ..Default::default()
+            }),
+            lsp_defaults: None,
+            resolved: false,
+        },
+        icon_path: None,
+        insert_text_mode: None,
+        confirm: None,
+    }
+}
+
+/// Generate completions with fuzzy matches from a query
+pub fn generate_completions_with_matches(
+    query: &str,
+    test_completions: Vec<TestCompletion>,
+) -> (Vec<Completion>, Vec<StringMatch>) {
+    let completions: Vec<Completion> = test_completions.iter().map(create_completion).collect();
+
+    // Generate StringMatch candidates
+    let candidates: Arc<[StringMatchCandidate]> = completions
+        .iter()
+        .enumerate()
+        .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.text))
+        .collect();
+
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let background_executor = gpui::BackgroundExecutor::deterministic();
+
+    let matches = smol::block_on(fuzzy::match_strings(
+        &candidates,
+        query,
+        query.chars().any(|c| c.is_uppercase()),
+        100,
+        &cancel_flag,
+        background_executor,
+    ));
+
+    (completions, matches)
+}
 
 #[gpui::test]
 fn test_sort_matches_local_variable_over_global_variable(_cx: &mut TestAppContext) {
