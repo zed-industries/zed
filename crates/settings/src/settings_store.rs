@@ -1362,7 +1362,9 @@ fn update_value_in_json_text<'a>(
                 );
             } else {
                 // Key was removed from new object, remove the entire key-value pair
-                remove_key_from_json_text(text, key_path, edits);
+                let (range, replacement) = replace_value_in_json_text(text, key_path, 0, None);
+                text.replace_range(range.clone(), &replacement);
+                edits.push((range, replacement));
             }
             key_path.pop();
         }
@@ -1390,123 +1392,18 @@ fn update_value_in_json_text<'a>(
         if let Some(new_object) = new_value.as_object_mut() {
             new_object.retain(|_, v| !v.is_null());
         }
-        let (range, replacement) = replace_value_in_json_text(text, key_path, tab_size, &new_value);
+        let (range, replacement) =
+            replace_value_in_json_text(text, key_path, tab_size, Some(&new_value));
         text.replace_range(range.clone(), &replacement);
         edits.push((range, replacement));
     }
-}
-
-fn remove_key_from_json_text(
-    text: &mut String,
-    key_path: &[&str],
-    edits: &mut Vec<(Range<usize>, String)>,
-) {
-    if let Some(range) = find_key_pair_range(text, key_path) {
-        text.replace_range(range.clone(), "");
-        edits.push((range, String::new()));
-    }
-}
-
-fn find_key_pair_range(text: &str, key_path: &[&str]) -> Option<Range<usize>> {
-    static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
-        Query::new(
-            &tree_sitter_json::LANGUAGE.into(),
-            "(pair key: (string) @key value: (_) @value)",
-        )
-        .expect("Failed to create PAIR_QUERY")
-    });
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_json::LANGUAGE.into())
-        .unwrap();
-    let syntax_tree = parser.parse(text, None).unwrap();
-
-    let mut cursor = tree_sitter::QueryCursor::new();
-
-    let mut depth = 0;
-    let mut last_value_range = 0..0;
-    let mut matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
-
-    while let Some(mat) = matches.next() {
-        if mat.captures.len() != 2 {
-            continue;
-        }
-
-        let key_range = mat.captures[0].node.byte_range();
-        let value_range = mat.captures[1].node.byte_range();
-
-        // Don't enter sub objects until we find an exact match for the current keypath
-        if last_value_range.contains_inclusive(&value_range) {
-            continue;
-        }
-
-        last_value_range = value_range.clone();
-
-        let key_text = text.get(key_range.clone()).unwrap_or("");
-        let expected_key = if depth < key_path.len() {
-            format!("\"{}\"", key_path[depth])
-        } else {
-            String::new()
-        };
-        let found_key = depth < key_path.len() && key_text == expected_key;
-        if !found_key {
-            continue;
-        }
-
-        depth += 1;
-
-        if depth == key_path.len() {
-            // Found the key to remove - determine removal range with comma handling
-            let mut removal_start = key_range.start;
-            let mut removal_end = value_range.end;
-
-            // Look backward for a preceding comma first
-            let preceding_text = text.get(0..key_range.start).unwrap_or("");
-            if let Some(comma_pos) = preceding_text.rfind(',') {
-                // Check if there are only whitespace characters between the comma and our key
-                let between_comma_and_key = text.get(comma_pos + 1..key_range.start).unwrap_or("");
-                if between_comma_and_key.trim().is_empty() {
-                    removal_start = comma_pos;
-                }
-            } else {
-                // No preceding comma, check for trailing comma
-                if let Some(remaining_text) = text.get(value_range.end..) {
-                    let mut chars = remaining_text.char_indices();
-                    while let Some((offset, ch)) = chars.next() {
-                        if ch == ',' {
-                            removal_end = value_range.end + offset + 1;
-                            // Also consume whitespace after the comma
-                            while let Some((_, next_ch)) = chars.next() {
-                                if next_ch.is_whitespace() {
-                                    removal_end += next_ch.len_utf8();
-                                } else {
-                                    break;
-                                }
-                            }
-                            break;
-                        } else if !ch.is_whitespace() {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            return Some(removal_start..removal_end);
-        }
-
-        // Reset for next level
-        last_value_range = value_range.start..value_range.start;
-    }
-
-    None
 }
 
 fn replace_value_in_json_text(
     text: &str,
     key_path: &[&str],
     tab_size: usize,
-    new_value: &Value,
+    new_value: Option<&Value>,
 ) -> (Range<usize>, String) {
     static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
         Query::new(
@@ -1572,16 +1469,64 @@ fn replace_value_in_json_text(
         }
     }
 
-    // We found the exact key we want, insert the new value
+    // We found the exact key we want
     if depth == key_path.len() {
-        let new_val = to_pretty_json(&new_value, tab_size, tab_size * depth);
-        (existing_value_range, new_val)
+        if let Some(new_value) = new_value {
+            let new_val = to_pretty_json(new_value, tab_size, tab_size * depth);
+            (existing_value_range, new_val)
+        } else {
+            let mut removal_start = first_key_start.unwrap_or(existing_value_range.start);
+            let mut removal_end = existing_value_range.end;
+
+            // Find the actual key position by looking for the key in the pair
+            // We need to extend the range to include the key, not just the value
+            if let Some(key_start) = text[..existing_value_range.start].rfind('"') {
+                if let Some(prev_key_start) = text[..key_start].rfind('"') {
+                    removal_start = prev_key_start;
+                } else {
+                    removal_start = key_start;
+                }
+            }
+
+            // Look backward for a preceding comma first
+            let preceding_text = text.get(0..removal_start).unwrap_or("");
+            if let Some(comma_pos) = preceding_text.rfind(',') {
+                // Check if there are only whitespace characters between the comma and our key
+                let between_comma_and_key = text.get(comma_pos + 1..removal_start).unwrap_or("");
+                if between_comma_and_key.trim().is_empty() {
+                    removal_start = comma_pos;
+                }
+            } else {
+                // No preceding comma, check for trailing comma
+                if let Some(remaining_text) = text.get(existing_value_range.end..) {
+                    let mut chars = remaining_text.char_indices();
+                    while let Some((offset, ch)) = chars.next() {
+                        if ch == ',' {
+                            removal_end = existing_value_range.end + offset + 1;
+                            // Also consume whitespace after the comma
+                            while let Some((_, next_ch)) = chars.next() {
+                                if next_ch.is_whitespace() {
+                                    removal_end += next_ch.len_utf8();
+                                } else {
+                                    break;
+                                }
+                            }
+                            break;
+                        } else if !ch.is_whitespace() {
+                            break;
+                        }
+                    }
+                }
+            }
+            (removal_start..removal_end, String::new())
+        }
     } else {
         // We have key paths, construct the sub objects
         let new_key = key_path[depth];
 
         // We don't have the key, construct the nested objects
-        let mut new_value = serde_json::to_value(new_value).unwrap();
+        let mut new_value =
+            serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
         for key in key_path[(depth + 1)..].iter().rev() {
             new_value = serde_json::json!({ key.to_string(): new_value });
         }
@@ -1907,6 +1852,33 @@ mod tests {
                 "languages": {
                     "Rust": {
                         "language_setting_2": true
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings.languages.remove("Rust").unwrap();
+            },
+            r#"{
+                "languages": {
+                    "JSON": {
+                        "language_setting_1": false
                     }
                 }
             }"#
