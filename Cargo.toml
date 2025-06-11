@@ -435,7 +435,7 @@ core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "68516de327fa1be15214133a0a2e52a12982ce75" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "b40956a7f4d1939da67429d941389ee306a3a308" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -698,6 +698,8 @@ codegen-units = 16
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+cranelift-codegen-meta = { opt-level = 3 }
+cranelift-codegen-shared = { opt-level = 3 }
 resvg = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }

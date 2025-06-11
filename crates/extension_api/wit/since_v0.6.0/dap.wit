@@ -102,7 +102,7 @@ interface dap {
     /// - How to start a debug session with it (using DAP protocol)
     /// for a given debug scenario.
     record debug-adapter-binary {
-        command: string,
+        command: option<string>,
         arguments: list<string>,
         envs: env-vars,
         cwd: option<string>,

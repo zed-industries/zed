@@ -359,7 +359,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         };
 
         Ok(DebugAdapterBinary {
-            command: command.unwrap(),
+            command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
             arguments: vec![
                 "--settings".into(),

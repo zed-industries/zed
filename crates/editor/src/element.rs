@@ -6,10 +6,10 @@ use crate::{
     Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, FILE_HEADER_HEIGHT,
     FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor,
     InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight, LineUp,
-    MAX_LINE_LEN, MIN_LINE_NUMBER_DIGITS, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
-    OpenExcerpts, PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt,
-    SelectPhase, SelectedTextHighlight, Selection, SelectionDragState, SoftWrap,
-    StickyHeaderExcerpt, ToPoint, ToggleFold,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
+    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
+    ToggleFold,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, EditorMargins, FoldId, HighlightedChunk,
@@ -187,7 +187,7 @@ impl EditorElement {
         let editor = &self.editor;
         editor.update(cx, |editor, cx| {
             for action in editor.editor_actions.borrow().values() {
-                (action)(window, cx)
+                (action)(editor, window, cx)
             }
         });
 
@@ -2826,7 +2826,8 @@ impl EditorElement {
                 let available_width = gutter_dimensions.left_padding - git_gutter_width;
 
                 let editor = self.editor.clone();
-                let is_wide = max_line_number_length >= MIN_LINE_NUMBER_DIGITS
+                let is_wide = max_line_number_length
+                    >= EditorSettings::get_global(cx).gutter.min_line_number_digits as u32
                     && row_info
                         .buffer_row
                         .is_some_and(|row| (row + 1).ilog10() + 1 == max_line_number_length)

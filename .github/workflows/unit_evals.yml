@@ -19,6 +19,7 @@ env:
 
 jobs:
   unit_evals:
+    if: github.repository_owner == 'zed-industries'
     timeout-minutes: 60
     name: Run unit evals
     runs-on:
