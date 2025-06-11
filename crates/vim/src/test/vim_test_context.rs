@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, Entity, SemanticVersion, UpdateGlobal, actions};
+use gpui::{Context, Entity, KeyBindingSource, SemanticVersion, UpdateGlobal, actions};
 use search::{BufferSearchBar, project_search::ProjectSearchBar};
 
 use crate::{state::Operator, *};
@@ -74,8 +74,12 @@ impl VimTestContext {
         .unwrap();
         cx.bind_keys(default_key_bindings);
         if enabled {
-            let vim_key_bindings =
-                settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+            let vim_key_bindings = settings::KeymapFile::load_asset(
+                "keymaps/vim.json",
+                Some(cx.register_key_binding_source(KeyBindingSource::new("vim"))),
+                cx,
+            )
+            .unwrap();
             cx.bind_keys(vim_key_bindings);
         }
     }

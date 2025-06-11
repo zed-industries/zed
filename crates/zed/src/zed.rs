@@ -25,9 +25,9 @@ use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
-    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
-    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
-    px, retain_all,
+    KeyBindingSource, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
+    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
+    image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
@@ -1403,10 +1403,18 @@ fn show_markdown_app_notification<F>(
     .detach();
 }
 
-fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
+fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
+
+    let user_keymap_source_index = cx.register_key_binding_source(
+        KeyBindingSource::new("User").with_static_path(paths::keymap_file()),
+    );
+    for key_binding in &mut user_key_bindings {
+        key_binding.set_source(user_keymap_source_index);
+    }
     cx.bind_keys(user_key_bindings);
+
     cx.set_menus(app_menus());
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
@@ -1422,14 +1430,20 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    cx.bind_keys(KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap());
+    let default_keymap_source = cx.register_key_binding_source(KeyBindingSource::new("Default"));
+    cx.bind_keys(
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(default_keymap_source), cx).unwrap(),
+    );
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
+        let base_keymap_source = cx
+            .register_key_binding_source(KeyBindingSource::new(format!("Base ({})", base_keymap)));
+        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(base_keymap_source), cx).unwrap());
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
-        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
+        let vim_keymap_source = cx.register_key_binding_source(KeyBindingSource::new("Vim"));
+        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(vim_keymap_source), cx).unwrap());
     }
 }
 

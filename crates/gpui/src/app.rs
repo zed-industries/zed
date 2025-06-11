@@ -35,12 +35,13 @@ use crate::InspectorElementRegistry;
 use crate::{
     Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
     AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
+    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyBindingSource,
+    KeyBindingSourceIndex, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu,
+    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, Point,
+    PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage,
+    RenderablePromptHandle, Reservation, ScreenCaptureSource, SubscriberSet, Subscription,
+    SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
+    WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -1326,6 +1327,14 @@ impl App {
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.borrow_mut().add_bindings(bindings);
         self.pending_effects.push_back(Effect::RefreshWindows);
+    }
+
+    /// Register key binding source
+    pub fn register_key_binding_source(
+        &mut self,
+        source: KeyBindingSource,
+    ) -> KeyBindingSourceIndex {
+        self.keymap.borrow_mut().register_source(source)
     }
 
     /// Clear all key bindings in the app.

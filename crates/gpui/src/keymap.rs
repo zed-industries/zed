@@ -3,11 +3,12 @@ mod context;
 
 pub use binding::*;
 pub use context::*;
+use util::arc_cow::ArcCow;
 
-use crate::{Action, Keystroke, is_no_action};
+use crate::{Action, Keystroke, SharedString, is_no_action};
 use collections::HashMap;
 use smallvec::SmallVec;
-use std::any::TypeId;
+use std::{any::TypeId, path::Path};
 
 /// An opaque identifier of which version of the keymap is currently active.
 /// The keymap's version is changed whenever bindings are added or removed.
@@ -21,6 +22,7 @@ pub struct Keymap {
     binding_indices_by_action_id: HashMap<TypeId, SmallVec<[usize; 3]>>,
     no_action_binding_indices: Vec<usize>,
     version: KeymapVersion,
+    sources: KeyBindingSourceRegistry,
 }
 
 /// Index of a binding within a keymap.
@@ -56,6 +58,16 @@ impl Keymap {
         }
 
         self.version.0 += 1;
+    }
+
+    /// Register a new source of key bindings, to be used with [`KeyBinding::with_source`].
+    pub fn register_source(&mut self, source: KeyBindingSource) -> KeyBindingSourceIndex {
+        self.sources.register(source)
+    }
+
+    /// Get a reference to the registry of key binding sources.
+    pub fn sources(&self) -> &KeyBindingSourceRegistry {
+        &self.sources
     }
 
     /// Reset this keymap to its initial state.
@@ -254,6 +266,83 @@ impl Keymap {
         }
 
         true
+    }
+}
+
+/// A unique identifier for a source of a key binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyBindingSourceIndex(pub u32);
+
+/// A source of a key binding. todo! improve docs
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct KeyBindingSource {
+    /// The name of the source.
+    name: SharedString,
+    /// The file path of the source.
+    file_path: Option<ArcCow<'static, Path>>,
+}
+
+impl KeyBindingSource {
+    /// Creates a new key binding source.
+    pub fn new(name: impl Into<SharedString>) -> Self {
+        Self {
+            name: name.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Returns the name of the source.
+    pub fn name(&self) -> &SharedString {
+        &self.name
+    }
+
+    /// Returns the file path of the source.
+    pub fn file_path(&self) -> Option<&Path> {
+        self.file_path.as_deref()
+    }
+
+    /// Sets the file path of the source to a static path.
+    pub fn with_static_path(mut self, path: &'static Path) -> Self {
+        self.file_path = Some(path.into());
+        self
+    }
+
+    /// Sets the file path of the source to a dynamic path.
+    pub fn with_path(mut self, path: &Path) -> Self {
+        self.file_path = Some(ArcCow::Owned(path.into()));
+        self
+    }
+}
+
+/// A registry of key binding sources.
+#[derive(Debug, Clone, Default)]
+pub struct KeyBindingSourceRegistry {
+    sources: Vec<KeyBindingSource>,
+    hashes: Vec<u64>,
+}
+
+impl KeyBindingSourceRegistry {
+    fn register(&mut self, source: KeyBindingSource) -> KeyBindingSourceIndex {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = collections::FxHasher::default();
+        source.hash(&mut hasher);
+        let source_hash = hasher.finish();
+
+        for (i, hash) in self.hashes.iter().enumerate() {
+            if *hash == source_hash {
+                self.sources[i] = source;
+                return KeyBindingSourceIndex(i as u32);
+            }
+        }
+        let index = self.sources.len();
+        self.sources.push(source);
+        self.hashes.push(source_hash);
+        KeyBindingSourceIndex(index as u32)
+    }
+
+    /// Returns a reference to the key binding source for the given source index.
+    pub fn get(&self, index: KeyBindingSourceIndex) -> &KeyBindingSource {
+        &self.sources[index.0 as usize]
     }
 }
 
