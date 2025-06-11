@@ -16,7 +16,7 @@ use ui::{
 };
 
 struct UniformListData<const COLS: usize> {
-    render_item_fn: Box<dyn Fn(RowRangeContext<COLS>, &mut Window, &mut App) -> Vec<AnyElement>>,
+    render_item_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
     element_id: ElementId,
     row_count: usize,
 }
@@ -296,7 +296,7 @@ impl<const COLS: usize> Table<COLS> {
         mut self,
         id: impl Into<ElementId>,
         row_count: usize,
-        render_item_fn: impl Fn(RowRangeContext<COLS>, &mut Window, &mut App) -> Vec<AnyElement>
+        render_item_fn: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>
         + 'static,
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
@@ -340,24 +340,13 @@ impl<const COLS: usize> Table<COLS> {
         self.column_widths = Some(widths.map(Into::into));
         self
     }
-
-    pub fn render_row(&self, items: [impl IntoElement; COLS], cx: &mut App) -> AnyElement {
-        return render_row(0, items, TableRenderContext::new(self), cx);
-    }
-
-    pub fn render_header(
-        &self,
-        headers: [impl IntoElement; COLS],
-        cx: &mut App,
-    ) -> impl IntoElement {
-        render_header(headers, cx)
-    }
 }
 
-fn base_cell_style(cx: &App) -> Div {
+fn base_cell_style(width: Option<Length>, cx: &App) -> Div {
     div()
         .px_1p5()
-        .flex_1()
+        .when_some(width, |this, width| this.w(width))
+        .when(width.is_none(), |this| this.flex_1())
         .justify_start()
         .text_ui(cx)
         .whitespace_nowrap()
@@ -368,15 +357,18 @@ fn base_cell_style(cx: &App) -> Div {
 pub fn render_row<const COLS: usize>(
     row_index: usize,
     items: [impl IntoElement; COLS],
-    rows_cx: TableRenderContext<COLS>,
+    table_context: TableRenderContext<COLS>,
     cx: &App,
 ) -> AnyElement {
-    let is_last = row_index == rows_cx.total_row_count - 1;
-    let bg = if row_index % 2 == 1 && rows_cx.striped {
+    let is_last = row_index == table_context.total_row_count - 1;
+    let bg = if row_index % 2 == 1 && table_context.striped {
         Some(cx.theme().colors().text.opacity(0.05))
     } else {
         None
     };
+    let column_widths = table_context
+        .column_widths
+        .map_or([None; COLS], |widths| widths.map(|width| Some(width)));
     div()
         .w_full()
         .flex()
@@ -392,15 +384,21 @@ pub fn render_row<const COLS: usize>(
         .children(
             items
                 .map(IntoElement::into_any_element)
-                .map(|cell| base_cell_style(cx).child(cell)),
+                .into_iter()
+                .zip(column_widths)
+                .map(|(cell, width)| base_cell_style(width, cx).child(cell)),
         )
         .into_any_element()
 }
 
 pub fn render_header<const COLS: usize>(
     headers: [impl IntoElement; COLS],
+    table_context: TableRenderContext<COLS>,
     cx: &mut App,
 ) -> impl IntoElement {
+    let column_widths = table_context
+        .column_widths
+        .map_or([None; COLS], |widths| widths.map(|width| Some(width)));
     div()
         .flex()
         .flex_row()
@@ -410,8 +408,8 @@ pub fn render_header<const COLS: usize>(
         .p_2()
         .border_b_1()
         .border_color(cx.theme().colors().border)
-        .children(headers.into_iter().map(|h| {
-            base_cell_style(cx)
+        .children(headers.into_iter().zip(column_widths).map(|(h, width)| {
+            base_cell_style(width, cx)
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(h)
         }))
@@ -432,12 +430,6 @@ impl<const COLS: usize> TableRenderContext<COLS> {
             column_widths: table.column_widths,
         }
     }
-}
-
-#[derive(Clone)]
-pub struct RowRangeContext<const COLS: usize> {
-    pub range: Range<usize>,
-    pub table_context: TableRenderContext<COLS>,
 }
 
 impl<const COLS: usize> RenderOnce for Table<COLS> {
@@ -484,7 +476,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     })
             })
             .when_some(self.headers.take(), |this, headers| {
-                this.child(render_header(headers, cx))
+                this.child(render_header(headers, table_context, cx))
             })
             .map(|parent| match self.rows {
                 TableContents::Vec(items) => parent.children(
@@ -509,11 +501,15 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                     {
                                         let render_item_fn = uniform_list_data.render_item_fn;
                                         move |range: Range<usize>, window, cx| {
-                                            let range_context = RowRangeContext {
-                                                range,
-                                                table_context,
-                                            };
-                                            render_item_fn(range_context, window, cx)
+                                            let elements =
+                                                render_item_fn(range.clone(), window, cx);
+                                            elements
+                                                .into_iter()
+                                                .zip(range)
+                                                .map(|(row, row_index)| {
+                                                    render_row(row_index, row, table_context, cx)
+                                                })
+                                                .collect()
                                         }
                                     },
                                 )
