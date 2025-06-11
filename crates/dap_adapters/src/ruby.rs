@@ -174,6 +174,13 @@ impl DebugAdapter for RubyDebugAdapter {
 
         arguments.extend(ruby_config.args);
 
+        let mut configuration = definition.config.clone();
+        if let Some(configuration) = configuration.as_object_mut() {
+            configuration
+                .entry("cwd")
+                .or_insert_with(|| delegate.worktree_root_path().to_string_lossy().into());
+        }
+
         Ok(DebugAdapterBinary {
             command: Some(rdbg_path.to_string_lossy().to_string()),
             arguments,
@@ -190,7 +197,7 @@ impl DebugAdapter for RubyDebugAdapter {
             envs: ruby_config.env.into_iter().collect(),
             request_args: StartDebuggingRequestArguments {
                 request: self.request_kind(&definition.config)?,
-                configuration: definition.config.clone(),
+                configuration,
             },
         })
     }
