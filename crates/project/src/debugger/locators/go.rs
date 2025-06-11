@@ -98,7 +98,6 @@ impl DapLocator for GoLocator {
         if build_config.command != "go" {
             return None;
         }
-
         let go_action = build_config.args.first()?;
 
         match go_action.as_str() {

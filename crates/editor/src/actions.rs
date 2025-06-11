@@ -243,6 +243,8 @@ impl_actions!(
     ]
 );
 
+actions!(debugger, [RunToCursor, EvaluateSelectedText]);
+
 actions!(
     editor,
     [
@@ -426,8 +428,6 @@ actions!(
         DisableBreakpoint,
         EnableBreakpoint,
         EditLogBreakpoint,
-        DebuggerRunToCursor,
-        DebuggerEvaluateSelectedText,
         ToggleAutoSignatureHelp,
         ToggleGitBlameInline,
         OpenGitBlameCommit,

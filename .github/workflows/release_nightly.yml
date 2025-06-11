@@ -214,6 +214,7 @@ jobs:
   bundle-nix:
     name: Build and cache Nix package
     needs: tests
+    secrets: inherit
     uses: ./.github/workflows/nix.yml
 
   update-nightly-tag:

@@ -4027,6 +4027,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "libc",
  "log",
  "node_runtime",
  "parking_lot",
@@ -4050,7 +4051,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=68516de327fa1be15214133a0a2e52a12982ce75#68516de327fa1be15214133a0a2e52a12982ce75"
+source = "git+https://github.com/zed-industries/dap-types?rev=b40956a7f4d1939da67429d941389ee306a3a308#b40956a7f4d1939da67429d941389ee306a3a308"
 dependencies = [
  "schemars",
  "serde",
@@ -4695,7 +4696,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "command_palette_hooks",
  "convert_case 0.8.0",
  "ctor",
  "dap",
@@ -9003,7 +9003,6 @@ dependencies = [
  "tree-sitter-yaml",
  "unindent",
  "util",
- "which 6.0.3",
  "workspace",
  "workspace-hack",
 ]
