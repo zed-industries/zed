@@ -447,7 +447,7 @@
     // Whether to show fold buttons in the gutter.
     "folds": true,
     // Minimum width for line numbers in characters.
-    "line_number_base_width": 4
+    "min_line_number_digits": 4
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.

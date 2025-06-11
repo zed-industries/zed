@@ -2827,7 +2827,7 @@ impl EditorElement {
 
                 let editor = self.editor.clone();
                 let is_wide = max_line_number_length
-                    >= EditorSettings::get_global(cx).gutter.line_number_base_width as u32
+                    >= EditorSettings::get_global(cx).gutter.min_line_number_digits as u32
                     && row_info
                         .buffer_row
                         .is_some_and(|row| (row + 1).ilog10() + 1 == max_line_number_length)
