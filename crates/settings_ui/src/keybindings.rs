@@ -1,9 +1,11 @@
-use std::{fmt::Write as _, ops::Range};
+use std::{fmt::Write as _, ops::Range, sync::Arc};
 
 use db::anyhow::anyhow;
+use editor::{Editor, EditorEvent};
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, Subscription,
-    actions, div,
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, ScrollStrategy,
+    Subscription, actions, div,
 };
 
 use ui::{
@@ -25,7 +27,7 @@ pub fn init(cx: &mut App) {
 
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &OpenKeymapEditor, window, cx| {
-            let open_keymap_editor = KeymapEditor::new(window, cx);
+            let open_keymap_editor = cx.new(|cx| KeymapEditor::new(window, cx));
             workspace.add_item_to_center(Box::new(open_keymap_editor), window, cx);
         });
     })
@@ -53,8 +55,12 @@ impl KeymapEventChannel {
 struct KeymapEditor {
     focus_handle: FocusHandle,
     _keymap_subscription: Subscription,
-    processed_bindings: Vec<ProcessedKeybinding>,
+    keybindings: Vec<ProcessedKeybinding>,
+    // corresponds 1 to 1 with keybindings
+    string_match_candidates: Arc<Vec<StringMatchCandidate>>,
+    matches: Vec<StringMatch>,
     table_interaction_state: Entity<TableInteractionState>,
+    filter_editor: Entity<Editor>,
 }
 
 impl EventEmitter<()> for KeymapEditor {}
@@ -66,33 +72,86 @@ impl Focusable for KeymapEditor {
 }
 
 impl KeymapEditor {
-    fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
-        let this = cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
+    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
 
-            let _keymap_subscription = cx.observe_global::<KeymapEventChannel>(|this, cx| {
-                let key_bindings = Self::process_bindings(cx);
-                this.processed_bindings = key_bindings;
-            });
+        let _keymap_subscription =
+            cx.observe_global::<KeymapEventChannel>(Self::update_keybindings);
+        let table_interaction_state = TableInteractionState::new(window, cx);
 
-            let table_interaction_state = TableInteractionState::new(window, cx);
-
-            Self {
-                focus_handle: focus_handle.clone(),
-                _keymap_subscription,
-                processed_bindings: vec![],
-                table_interaction_state,
-            }
+        let filter_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Filter action names...", cx);
+            editor
         });
+
+        cx.subscribe(&filter_editor, |this, _, e: &EditorEvent, cx| {
+            if !matches!(e, EditorEvent::BufferEdited) {
+                return;
+            }
+
+            this.update_matches(cx);
+        })
+        .detach();
+
+        let mut this = Self {
+            keybindings: vec![],
+            string_match_candidates: Arc::new(vec![]),
+            matches: vec![],
+            focus_handle: focus_handle.clone(),
+            _keymap_subscription,
+            table_interaction_state,
+            filter_editor,
+        };
+
+        this.update_keybindings(cx);
+
         this
     }
 
-    fn process_bindings(cx: &mut Context<Self>) -> Vec<ProcessedKeybinding> {
+    fn update_matches(&mut self, cx: &mut Context<Self>) {
+        let query = dbg!(self.filter_editor.read(cx).text(cx));
+        let string_match_candidates = self.string_match_candidates.clone();
+        let executor = cx.background_executor().clone();
+        let keybind_count = self.keybindings.len();
+        let query = command_palette::normalize_action_query(&query);
+        dbg!(&query);
+        let fuzzy_match = cx.background_spawn(async move {
+            fuzzy::match_strings(
+                &string_match_candidates,
+                &query,
+                true,
+                true,
+                keybind_count,
+                &Default::default(),
+                executor,
+            )
+            .await
+        });
+
+        cx.spawn(async move |this, cx| {
+            let matches = fuzzy_match.await;
+            dbg!(&matches);
+            this.update(cx, |this, cx| {
+                this.table_interaction_state.update(cx, |this, _cx| {
+                    this.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+                });
+                this.matches = matches;
+                cx.notify();
+            })
+        })
+        .detach();
+    }
+
+    fn process_bindings(
+        cx: &mut Context<Self>,
+    ) -> (Vec<ProcessedKeybinding>, Vec<StringMatchCandidate>) {
         let key_bindings_ptr = cx.key_bindings();
         let lock = key_bindings_ptr.borrow();
         let key_bindings = lock.bindings();
 
         let mut processed_bindings = Vec::new();
+        let mut string_match_candidates = Vec::new();
 
         for key_binding in key_bindings {
             let mut keystroke_text = String::new();
@@ -110,17 +169,43 @@ impl KeymapEditor {
                 .meta()
                 .map(|meta| settings::KeybindSource::from_meta(meta).name().into());
 
+            let action_name = key_binding.action().name();
+
+            let index = processed_bindings.len();
+            let string_match_candidate = StringMatchCandidate::new(index, &action_name);
             processed_bindings.push(ProcessedKeybinding {
                 keystroke_text: keystroke_text.into(),
-                action: key_binding.action().name().into(),
+                action: action_name.into(),
                 context: context.into(),
                 source,
-            })
+            });
+            string_match_candidates.push(string_match_candidate);
         }
-        processed_bindings
+        (processed_bindings, string_match_candidates)
+    }
+
+    fn update_keybindings(self: &mut KeymapEditor, cx: &mut Context<KeymapEditor>) {
+        let (key_bindings, string_match_candidates) = Self::process_bindings(cx);
+        self.keybindings = key_bindings;
+        self.string_match_candidates = Arc::new(string_match_candidates);
+        self.matches = self
+            .string_match_candidates
+            .iter()
+            .enumerate()
+            .map(|(ix, candidate)| StringMatch {
+                candidate_id: ix,
+                score: 0.0,
+                positions: vec![],
+                string: candidate.string.clone(),
+            })
+            .collect();
+
+        self.update_matches(cx);
+        cx.notify();
     }
 }
 
+#[derive(Clone)]
 struct ProcessedKeybinding {
     keystroke_text: SharedString,
     action: SharedString,
@@ -138,38 +223,41 @@ impl Item for KeymapEditor {
 
 impl Render for KeymapEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut ui::Context<Self>) -> impl ui::IntoElement {
-        if self.processed_bindings.is_empty() {
-            self.processed_bindings = Self::process_bindings(cx);
-        }
-
-        let row_count = self.processed_bindings.len();
-
+        let row_count = self.matches.len();
         let theme = cx.theme();
+
+        dbg!(&self.matches);
 
         div()
             .size_full()
             .bg(theme.colors().background)
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
+            .child(self.filter_editor.clone())
             .child(
                 Table::new()
                     .interactable(&self.table_interaction_state)
+                    .striped()
+                    .column_widths([rems(24.), rems(16.), rems(32.), rems(8.)])
                     .header(["Command", "Keystrokes", "Context", "Source"])
-                    .column_widths([rems(16.), rems(24.), rems(32.), rems(8.)])
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
                         cx.processor(move |this, range: Range<usize>, _window, _cx| {
                             range
-                                .map(|index| {
-                                    let binding = &this.processed_bindings[index];
-                                    [
-                                        binding.action.clone(),
-                                        binding.keystroke_text.clone(),
-                                        binding.context.clone(),
-                                        binding.source.clone().unwrap_or_default(),
-                                    ]
-                                    .map(IntoElement::into_any_element)
+                                .filter_map(|index| {
+                                    dbg!(index);
+                                    let candidate_id = this.matches.get(index)?.candidate_id;
+                                    let binding = &this.keybindings[candidate_id];
+                                    Some(
+                                        [
+                                            binding.action.clone(),
+                                            binding.keystroke_text.clone(),
+                                            binding.context.clone(),
+                                            binding.source.clone().unwrap_or_default(),
+                                        ]
+                                        .map(IntoElement::into_any_element),
+                                    )
                                 })
                                 .collect()
                         }),
@@ -211,7 +299,7 @@ impl SerializableItem for KeymapEditor {
                 .get_keybinding_editor(item_id, workspace_id)?
                 .is_some()
             {
-                cx.update(KeymapEditor::new)
+                cx.update(|window, cx| cx.new(|cx| KeymapEditor::new(window, cx)))
             } else {
                 Err(anyhow!("No keybinding editor to deserialize"))
             }
