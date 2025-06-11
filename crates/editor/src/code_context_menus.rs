@@ -1044,7 +1044,7 @@ impl CompletionsMenu {
         self.handle_selection_changed(provider.as_deref(), window, cx);
     }
 
-    fn sort_string_matches(
+    pub fn sort_string_matches(
         matches: Vec<StringMatch>,
         query: Option<&str>,
         snippet_sort_order: SnippetSortOrder,
