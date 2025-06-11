@@ -68,6 +68,26 @@ impl JsDebugAdapter {
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
+        let mut configuration = task_definition.config.clone();
+        if let Some(configuration) = configuration.as_object_mut() {
+            if let Some(program) = configuration
+                .get("program")
+                .cloned()
+                .and_then(|value| value.as_str().map(str::to_owned))
+            {
+                match program.as_str() {
+                    "npm" | "pnpm" | "yarn" | "bun" => {
+                        configuration.remove("program");
+                        configuration.insert("runtimeExecutable".to_owned(), program.into());
+                        if let Some(args) = configuration.remove("args") {
+                            configuration.insert("runtimeArgs".to_owned(), args);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         Ok(DebugAdapterBinary {
             command: Some(
                 delegate
@@ -93,7 +113,7 @@ impl JsDebugAdapter {
                 timeout,
             }),
             request_args: StartDebuggingRequestArguments {
-                configuration: task_definition.config.clone(),
+                configuration,
                 request: self.request_kind(&task_definition.config)?,
             },
         })
