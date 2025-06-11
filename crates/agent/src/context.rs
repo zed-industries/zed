@@ -216,10 +216,16 @@ impl FileContextHandle {
                             if let Ok(outline_text) =
                                 outline::render_outline(items, None, 0, usize::MAX).await
                             {
+                                let text = format!(
+                                    "This file was too big to include in full.\n\n\
+                                    Here is an outline of its symbols:\n\n\
+                                    {outline_text}\n\n\
+                                    Use a tool to read specific line ranges if you need to see the implementation."
+                                );
                                 let context = AgentContext::File(FileContext {
                                     handle: self,
                                     full_path,
-                                    text: outline_text.into(),
+                                    text: text.into(),
                                     is_outline: true,
                                 });
                                 return Some((context, vec![buffer]));
