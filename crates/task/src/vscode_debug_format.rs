@@ -19,8 +19,6 @@ enum Request {
 struct VsCodeDebugTaskDefinition {
     r#type: String,
     name: String,
-
-    // FIXME host?
     #[serde(default)]
     port: Option<u16>,
     #[serde(flatten)]
