@@ -99,6 +99,7 @@ dependencies = [
  "paths",
  "picker",
  "postage",
+ "pretty_assertions",
  "project",
  "prompt_store",
  "proto",
@@ -704,6 +705,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "smol",
  "streaming_diff",
  "strsim",
  "task",
@@ -3160,6 +3162,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "command-fds"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ec1052629a80c28594777d1252efc8a6b005d13f9edfd8c3fc0f44d5b32489a"
+dependencies = [
+ "nix 0.30.1",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
@@ -4015,6 +4027,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "libc",
  "log",
  "node_runtime",
  "parking_lot",
@@ -4038,7 +4051,7 @@ dependencies = [
 [[package]]
 name = "dap-types"
 version = "0.0.1"
-source = "git+https://github.com/zed-industries/dap-types?rev=68516de327fa1be15214133a0a2e52a12982ce75#68516de327fa1be15214133a0a2e52a12982ce75"
+source = "git+https://github.com/zed-industries/dap-types?rev=b40956a7f4d1939da67429d941389ee306a3a308#b40956a7f4d1939da67429d941389ee306a3a308"
 dependencies = [
  "schemars",
  "serde",
@@ -4051,6 +4064,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "collections",
  "dap",
  "futures 0.3.31",
  "gpui",
@@ -4682,7 +4696,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "command_palette_hooks",
  "convert_case 0.8.0",
  "ctor",
  "dap",
@@ -8990,7 +9003,6 @@ dependencies = [
  "tree-sitter-yaml",
  "unindent",
  "util",
- "which 6.0.3",
  "workspace",
  "workspace-hack",
 ]
@@ -10127,6 +10139,18 @@ dependencies = [
  "cfg_aliases 0.2.1",
  "libc",
  "memoffset",
+]
+
+[[package]]
+name = "nix"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
+dependencies = [
+ "bitflags 2.9.0",
+ "cfg-if",
+ "cfg_aliases 0.2.1",
+ "libc",
 ]
 
 [[package]]
@@ -12109,7 +12133,6 @@ dependencies = [
  "unindent",
  "url",
  "util",
- "uuid",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
@@ -17121,6 +17144,7 @@ dependencies = [
  "async-fs",
  "async_zip",
  "collections",
+ "command-fds",
  "dirs 4.0.0",
  "dunce",
  "futures 0.3.31",

@@ -69,12 +69,14 @@ impl JsDebugAdapter {
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
         Ok(DebugAdapterBinary {
-            command: delegate
-                .node_runtime()
-                .binary_path()
-                .await?
-                .to_string_lossy()
-                .into_owned(),
+            command: Some(
+                delegate
+                    .node_runtime()
+                    .binary_path()
+                    .await?
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             arguments: vec![
                 adapter_path
                     .join(Self::ADAPTER_PATH)
@@ -430,5 +432,10 @@ impl DebugAdapter for JsDebugAdapter {
 
         self.get_installed_binary(delegate, &config, user_installed_path, cx)
             .await
+    }
+
+    fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {
+        let label = args.configuration.get("name")?.as_str()?;
+        Some(label.to_owned())
     }
 }

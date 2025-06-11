@@ -496,7 +496,7 @@ message GetDebugAdapterBinary {
 }
 
 message DebugAdapterBinary {
-    string command = 1;
+    optional string command = 1;
     repeated string arguments = 2;
     map<string, string> envs = 3;
     optional string cwd = 4;

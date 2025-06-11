@@ -671,7 +671,7 @@ async fn test_remote_server_debugger(
     });
 
     session.update(cx_a, |session, _| {
-        assert_eq!(session.binary().command, "ssh");
+        assert_eq!(session.binary().command.as_deref(), Some("ssh"));
     });
 
     let shutdown_session = workspace.update(cx_a, |workspace, cx| {

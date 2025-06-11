@@ -39,7 +39,7 @@ enum ProxyType<'t> {
     HttpProxy(HttpProxyType<'t>),
 }
 
-fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType)> {
+fn parse_proxy_type(proxy: &Url) -> Option<((String, u16), ProxyType<'_>)> {
     let scheme = proxy.scheme();
     let host = proxy.host()?.to_string();
     let port = proxy.port_or_known_default()?;

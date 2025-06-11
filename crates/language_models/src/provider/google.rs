@@ -409,6 +409,7 @@ impl LanguageModel for GoogleLanguageModel {
                 'static,
                 Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
             >,
+            LanguageModelCompletionError,
         >,
     > {
         let request = into_google(
