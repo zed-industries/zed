@@ -19742,7 +19742,7 @@ impl Editor {
             .flatten()
             .filter_map(|keystroke| {
                 if keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
-                    Some(keystroke.key_char.clone().unwrap_or(keystroke.key.clone()))
+                    keystroke.key_char.clone()
                 } else {
                     None
                 }
