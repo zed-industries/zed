@@ -285,10 +285,12 @@ pub fn task_contexts(
                 .worktree_for_id(*worktree_id, cx)
                 .map_or(false, |worktree| is_visible_directory(&worktree, cx))
         })
-        .or(workspace
-            .visible_worktrees(cx)
-            .next()
-            .map(|tree| tree.read(cx).id()));
+        .or_else(|| {
+            workspace
+                .visible_worktrees(cx)
+                .next()
+                .map(|tree| tree.read(cx).id())
+        });
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 
