@@ -5611,6 +5611,14 @@ impl EditorElement {
                 let editor = self.editor.read(cx);
                 if editor.mouse_cursor_hidden {
                     window.set_window_cursor_style(CursorStyle::None);
+                } else if matches!(
+                    editor.selection_drag_state,
+                    SelectionDragState::Dragging { .. }
+                ) {
+                    window.set_cursor_style(
+                        CursorStyle::ClosedHand,
+                        &layout.position_map.text_hitbox,
+                    );
                 } else if editor
                     .hovered_link_state
                     .as_ref()
