@@ -698,6 +698,8 @@ codegen-units = 16
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
+cranelift-codegen-meta = { opt-level = 3 }
+cranelift-codegen-shared = { opt-level = 3 }
 resvg = { opt-level = 3 }
 rustybuzz = { opt-level = 3 }
 ttf-parser = { opt-level = 3 }
