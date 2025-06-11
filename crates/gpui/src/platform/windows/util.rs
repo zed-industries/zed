@@ -187,12 +187,12 @@ fn is_color_light(color: &Color) -> bool {
     ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
 }
 
-pub(crate) fn show_error(content: String) {
+pub(crate) fn show_error(title: &str, content: &str) {
     let _ = unsafe {
         MessageBoxW(
             None,
             &HSTRING::from(content),
-            windows::core::w!("Error: Zed failed to launch"),
+            &HSTRING::from(title),
             MB_ICONERROR | MB_SYSTEMMODAL,
         )
     };

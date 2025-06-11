@@ -1288,26 +1288,9 @@ mod windows_renderer {
     use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
     use raw_window_handle as rwh;
     use std::num::NonZeroIsize;
-    use windows::{
-        Win32::{
-            Foundation::HWND,
-            UI::WindowsAndMessaging::{GWLP_HINSTANCE, MB_ICONERROR, MB_SYSTEMMODAL, MessageBoxW},
-        },
-        core::HSTRING,
-    };
+    use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
-    use crate::get_window_long;
-
-    fn show_error(content: String) {
-        let _ = unsafe {
-            MessageBoxW(
-                None,
-                &HSTRING::from(content),
-                windows::core::w!("Error: Zed failed to connect to the GPU renderer"),
-                MB_ICONERROR | MB_SYSTEMMODAL,
-            )
-        };
-    }
+    use crate::{get_window_long, show_error};
 
     pub(super) fn init(
         context: &BladeContext,
@@ -1319,8 +1302,12 @@ mod windows_renderer {
             size: Default::default(),
             transparent,
         };
-        println!("==> Initializing BladeRenderer with hwnd: {:?}", hwnd);
-        BladeRenderer::new(context, &raw, config).inspect_err(|err| show_error(err.to_string()))
+        BladeRenderer::new(context, &raw, config).inspect_err(|err| {
+            show_error(
+                "Error: Zed failed to initialize BladeRenderer",
+                err.to_string().as_str(),
+            )
+        })
     }
 
     struct RawWindow {
