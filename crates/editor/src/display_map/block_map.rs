@@ -1743,8 +1743,8 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
-        self.input_chunk.tabs >>= prefix_bytes;
-        self.input_chunk.chars >>= prefix_bytes;
+        self.input_chunk.tabs >>= prefix_bytes.saturating_sub(1);
+        self.input_chunk.chars >>= prefix_bytes.saturating_sub(1);
 
         let mut tabs = self.input_chunk.tabs;
         let mut chars = self.input_chunk.chars;
