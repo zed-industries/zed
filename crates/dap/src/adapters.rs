@@ -437,7 +437,7 @@ impl DebugAdapter for FakeAdapter {
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {
-            command: "command".into(),
+            command: Some("command".into()),
             arguments: vec![],
             connection: None,
             envs: HashMap::default(),
