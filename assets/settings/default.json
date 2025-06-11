@@ -446,7 +446,7 @@
     "breakpoints": true,
     // Whether to show fold buttons in the gutter.
     "folds": true,
-    // Minimum width for line numbers in characters.
+    // Minimum number of characters to reserve space for in the gutter.
     "min_line_number_digits": 4
   },
   "indent_guides": {
