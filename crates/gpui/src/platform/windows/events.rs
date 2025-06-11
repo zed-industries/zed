@@ -956,10 +956,6 @@ fn handle_nc_mouse_move_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
-        return None;
-    }
-
     start_tracking_mouse(handle, &state_ptr, TME_LEAVE | TME_NONCLIENT);
 
     let mut lock = state_ptr.state.borrow_mut();
@@ -990,10 +986,6 @@ fn handle_nc_mouse_down_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
-        return None;
-    }
-
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
@@ -1045,10 +1037,6 @@ fn handle_nc_mouse_up_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.hide_title_bar {
-        return None;
-    }
-
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut func) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
