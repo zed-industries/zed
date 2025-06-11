@@ -181,7 +181,7 @@ impl DebugTaskDefinition {
 /// Created from a [DebugTaskDefinition], this struct describes how to spawn the debugger to create a previously-configured debug session.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DebugAdapterBinary {
-    pub command: String,
+    pub command: Option<String>,
     pub arguments: Vec<String>,
     pub envs: HashMap<String, String>,
     pub cwd: Option<PathBuf>,

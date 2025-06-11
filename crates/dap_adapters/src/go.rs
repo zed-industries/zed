@@ -463,7 +463,7 @@ impl DebugAdapter for GoDebugAdapter {
         };
 
         Ok(DebugAdapterBinary {
-            command: minidelve_path.to_string_lossy().into_owned(),
+            command: Some(minidelve_path.to_string_lossy().into_owned()),
             arguments,
             cwd: Some(cwd),
             envs: HashMap::default(),

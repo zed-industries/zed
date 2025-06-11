@@ -85,10 +85,12 @@ impl Transport {
             TcpTransport::start(binary, cx)
                 .await
                 .map(|(transports, tcp)| (transports, Self::Tcp(tcp)))
+                .context("Tried to connect to a debug adapter via TCP transport layer")
         } else {
             StdioTransport::start(binary, cx)
                 .await
                 .map(|(transports, stdio)| (transports, Self::Stdio(stdio)))
+                .context("Tried to connect to a debug adapter via stdin/stdout transport layer")
         }
     }
 
@@ -567,7 +569,7 @@ pub struct TcpTransport {
     pub port: u16,
     pub host: Ipv4Addr,
     pub timeout: u64,
-    process: Mutex<Child>,
+    process: Option<Mutex<Child>>,
 }
 
 impl TcpTransport {
@@ -596,17 +598,23 @@ impl TcpTransport {
         let host = connection_args.host;
         let port = connection_args.port;
 
-        let mut command = util::command::new_std_command(&binary.command);
+        let mut process = if let Some(command) = &binary.command {
+            let mut command = util::command::new_std_command(&command);
 
-        if let Some(cwd) = &binary.cwd {
-            command.current_dir(cwd);
-        }
+            if let Some(cwd) = &binary.cwd {
+                command.current_dir(cwd);
+            }
 
-        command.args(&binary.arguments);
-        command.envs(&binary.envs);
+            command.args(&binary.arguments);
+            command.envs(&binary.envs);
 
-        let mut process = Child::spawn(command, Stdio::null())
-            .with_context(|| "failed to start debug adapter.")?;
+            Some(
+                Child::spawn(command, Stdio::null())
+                    .with_context(|| "failed to start debug adapter.")?,
+            )
+        } else {
+            None
+        };
 
         let address = SocketAddrV4::new(host, port);
 
@@ -624,15 +632,18 @@ impl TcpTransport {
                     match TcpStream::connect(address).await {
                         Ok(stream) => return Ok((process, stream.split())),
                         Err(_) => {
-                            if let Ok(Some(_)) = process.try_status() {
-                                let output = process.into_inner().output().await?;
-                                let output = if output.stderr.is_empty() {
-                                    String::from_utf8_lossy(&output.stdout).to_string()
-                                } else {
-                                    String::from_utf8_lossy(&output.stderr).to_string()
-                                };
-                                anyhow::bail!("{output}\nerror: process exited before debugger attached.");
+                            if let Some(p) = &mut process {
+                                if let Ok(Some(_)) = p.try_status() {
+                                    let output = process.take().unwrap().into_inner().output().await?;
+                                    let output = if output.stderr.is_empty() {
+                                        String::from_utf8_lossy(&output.stdout).to_string()
+                                    } else {
+                                        String::from_utf8_lossy(&output.stderr).to_string()
+                                    };
+                                    anyhow::bail!("{output}\nerror: process exited before debugger attached.");
+                                }
                             }
+
                             cx.background_executor().timer(Duration::from_millis(100)).await;
                         }
                     }
@@ -645,13 +656,13 @@ impl TcpTransport {
             host,
             port
         );
-        let stdout = process.stdout.take();
-        let stderr = process.stderr.take();
+        let stdout = process.as_mut().and_then(|p| p.stdout.take());
+        let stderr = process.as_mut().and_then(|p| p.stderr.take());
 
         let this = Self {
             port,
             host,
-            process: Mutex::new(process),
+            process: process.map(Mutex::new),
             timeout,
         };
 
@@ -670,14 +681,18 @@ impl TcpTransport {
     }
 
     async fn kill(&self) {
-        let mut process = self.process.lock().await;
-        Child::kill(&mut process);
+        if let Some(process) = &self.process {
+            let mut process = process.lock().await;
+            Child::kill(&mut process);
+        }
     }
 }
 
 impl Drop for TcpTransport {
     fn drop(&mut self) {
-        self.process.get_mut().kill();
+        if let Some(mut p) = self.process.take() {
+            p.get_mut().kill();
+        }
     }
 }
 
@@ -688,7 +703,12 @@ pub struct StdioTransport {
 impl StdioTransport {
     #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
-        let mut command = util::command::new_std_command(&binary.command);
+        let Some(binary_command) = &binary.command else {
+            bail!(
+                "When using the `stdio` transport, the path to a debug adapter binary must be set by Zed."
+            );
+        };
+        let mut command = util::command::new_std_command(&binary_command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
@@ -700,7 +720,7 @@ impl StdioTransport {
         let mut process = Child::spawn(command, Stdio::piped()).with_context(|| {
             format!(
                 "failed to spawn command `{} {}`.",
-                binary.command,
+                binary_command,
                 binary.arguments.join(" ")
             )
         })?;
@@ -715,7 +735,7 @@ impl StdioTransport {
         if stderr.is_none() {
             bail!(
                 "Failed to connect to stderr for debug adapter command {}",
-                &binary.command
+                &binary_command
             );
         }
 

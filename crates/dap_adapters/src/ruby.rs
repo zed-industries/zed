@@ -175,7 +175,7 @@ impl DebugAdapter for RubyDebugAdapter {
         arguments.extend(ruby_config.args);
 
         Ok(DebugAdapterBinary {
-            command: rdbg_path.to_string_lossy().to_string(),
+            command: Some(rdbg_path.to_string_lossy().to_string()),
             arguments,
             connection: Some(dap::adapters::TcpArguments {
                 host,
