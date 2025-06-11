@@ -10,7 +10,6 @@ pub struct BladeContext {
 
 impl BladeContext {
     pub fn new() -> anyhow::Result<Self> {
-        println!("==> Initializing Blade GPU context...");
         let device_id_forced = match std::env::var("ZED_DEVICE_ID") {
             Ok(val) => parse_pci_id(&val)
                 .context("Failed to parse device ID from `ZED_DEVICE_ID` environment variable")
@@ -33,7 +32,6 @@ impl BladeContext {
             }
             .map_err(|e| anyhow::anyhow!("{e:?}"))?,
         );
-        println!("==> Finish initializing Blade GPU context...");
         Ok(Self { gpu })
     }
 }
