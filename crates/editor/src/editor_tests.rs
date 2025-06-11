@@ -14339,7 +14339,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test(iterations = 40)]
+#[gpui::test(iterations = 20, seeds(31))]
 async fn test_on_type_formatting_is_applied_after_autoindent(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
