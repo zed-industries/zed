@@ -183,6 +183,7 @@ impl StackFrameList {
         let mut entries = Vec::new();
         let mut collapsed_entries = Vec::new();
         let mut first_stack_frame = None;
+        let mut first_not_subtle_frame = None;
 
         let stack_frames = self.stack_frames(cx);
         for stack_frame in &stack_frames {
@@ -197,6 +198,11 @@ impl StackFrameList {
                     }
 
                     first_stack_frame.get_or_insert(entries.len());
+                    if stack_frame.dap.presentation_hint
+                        != Some(dap::StackFramePresentationHint::Subtle)
+                    {
+                        first_not_subtle_frame.get_or_insert(entries.len());
+                    }
                     entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
                 }
             }
@@ -209,7 +215,10 @@ impl StackFrameList {
 
         std::mem::swap(&mut self.entries, &mut entries);
 
-        if let Some(ix) = first_stack_frame.filter(|_| open_first_stack_frame) {
+        if let Some(ix) = first_not_subtle_frame
+            .or(first_stack_frame)
+            .filter(|_| open_first_stack_frame)
+        {
             self.select_ix(Some(ix), cx);
             self.activate_selected_entry(window, cx);
         } else if let Some(old_selected_frame_id) = old_selected_frame_id {

@@ -6,25 +6,28 @@ It allows Zed to support various debuggers without needing to implement language
 This protocol enables features like setting breakpoints, stepping through code, inspecting variables,
 and more, in a consistent manner across different programming languages and runtime environments.
 
+> We currently offer onboarding support for users. We are eager to hear from you if you encounter any issues or have suggestions for improvement for our debugging experience.
+> You can schedule a call via [Cal.com](https://cal.com/team/zed-research/debugger)
+
 ## Supported Debug Adapters
 
-Zed supports a variety of debug adapters for different programming languages:
+Zed supports a variety of debug adapters for different programming languages out of the box:
 
-- JavaScript (node): Enables debugging of Node.js applications, including setting breakpoints, stepping through code, and inspecting variables in JavaScript.
+- JavaScript ([vscode-js-debug](https://github.com/microsoft/vscode-js-debug.git)): Enables debugging of Node.js applications, including setting breakpoints, stepping through code, and inspecting variables in JavaScript.
 
-- Python (debugpy): Provides debugging capabilities for Python applications, supporting features like remote debugging, multi-threaded debugging, and Django/Flask application debugging.
+- Python ([debugpy](https://github.com/microsoft/debugpy.git)): Provides debugging capabilities for Python applications, supporting features like remote debugging, multi-threaded debugging, and Django/Flask application debugging.
 
-- LLDB: A powerful debugger for C, C++, Objective-C, and Swift, offering low-level debugging features and support for Apple platforms.
+- LLDB ([CodeLLDB](https://github.com/vadimcn/codelldb.git)): A powerful debugger for C, C++, Objective-C, and Swift, offering low-level debugging features and support for Apple platforms.
 
-- GDB: The GNU Debugger, which supports debugging for multiple programming languages including C, C++, Go, and Rust, across various platforms.
+- GDB ([GDB](https://sourceware.org/gdb/)): The GNU Debugger, which supports debugging for multiple programming languages including C, C++, Go, and Rust, across various platforms.
 
-- Go (dlv): Delve, a debugger for the Go programming language, offering both local and remote debugging capabilities with full support for Go's runtime and standard library.
+- Go ([Delve](https://github.com/go-delve/delve)): Delve, a debugger for the Go programming language, offering both local and remote debugging capabilities with full support for Go's runtime and standard library.
 
-- PHP (xdebug): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
+- PHP ([Xdebug](https://xdebug.org/)): Provides debugging and profiling capabilities for PHP applications, including remote debugging and code coverage analysis.
+
+- Ruby ([rdbg](https://github.com/ruby/debug)): Provides debugging for Ruby.
 
 These adapters enable Zed to provide a consistent debugging experience across multiple languages while leveraging the specific features and capabilities of each debugger.
-
-Additionally, Ruby support (via rdbg) is being actively worked on.
 
 ## Getting Started
 

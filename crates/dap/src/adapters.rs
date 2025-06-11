@@ -369,6 +369,10 @@ pub trait DebugAdapter: 'static + Send + Sync {
     }
 
     async fn dap_schema(&self) -> serde_json::Value;
+
+    fn label_for_child_session(&self, _args: &StartDebuggingRequestArguments) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]

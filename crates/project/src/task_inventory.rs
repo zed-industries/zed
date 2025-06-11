@@ -11,7 +11,8 @@ use std::{
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use dap::DapRegistry;
-use gpui::{App, AppContext as _, Entity, SharedString, Task};
+use fs::Fs;
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Task};
 use itertools::Itertools;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
@@ -31,12 +32,23 @@ use worktree::WorktreeId;
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
 /// Inventory tracks available tasks for a given project.
-#[derive(Debug, Default)]
 pub struct Inventory {
+    fs: Arc<dyn Fs>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
     last_scheduled_scenarios: VecDeque<DebugScenario>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
+}
+
+impl std::fmt::Debug for Inventory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inventory")
+            .field("last_scheduled_tasks", &self.last_scheduled_tasks)
+            .field("last_scheduled_scenarios", &self.last_scheduled_scenarios)
+            .field("templates_from_settings", &self.templates_from_settings)
+            .field("scenarios_from_settings", &self.scenarios_from_settings)
+            .finish()
+    }
 }
 
 // Helper trait for better error messages in [InventoryFor]
@@ -223,8 +235,14 @@ impl TaskSourceKind {
 }
 
 impl Inventory {
-    pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new(|_| Self::default())
+    pub fn new(fs: Arc<dyn Fs>, cx: &mut App) -> Entity<Self> {
+        cx.new(|_| Self {
+            fs,
+            last_scheduled_tasks: VecDeque::default(),
+            last_scheduled_scenarios: VecDeque::default(),
+            templates_from_settings: InventoryFor::default(),
+            scenarios_from_settings: InventoryFor::default(),
+        })
     }
 
     pub fn scenario_scheduled(&mut self, scenario: DebugScenario) {
@@ -311,7 +329,7 @@ impl Inventory {
         worktree_id: Option<WorktreeId>,
         label: &str,
         cx: &App,
-    ) -> Option<TaskTemplate> {
+    ) -> Task<Option<TaskTemplate>> {
         let (buffer_worktree_id, file, language) = buffer
             .map(|buffer| {
                 let buffer = buffer.read(cx);
@@ -324,10 +342,15 @@ impl Inventory {
             })
             .unwrap_or((None, None, None));
 
-        self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx)
-            .into_iter()
-            .find(|(_, template)| template.label == label)
-            .map(|val| val.1)
+        let tasks = self.list_tasks(file, language, worktree_id.or(buffer_worktree_id), cx);
+        let label = label.to_owned();
+        cx.background_spawn(async move {
+            tasks
+                .await
+                .into_iter()
+                .find(|(_, template)| template.label == label)
+                .map(|val| val.1)
+        })
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -339,11 +362,13 @@ impl Inventory {
         language: Option<Arc<Language>>,
         worktree: Option<WorktreeId>,
         cx: &App,
-    ) -> Vec<(TaskSourceKind, TaskTemplate)> {
-        let global_tasks = self.global_templates_from_settings();
-        let worktree_tasks = worktree
+    ) -> Task<Vec<(TaskSourceKind, TaskTemplate)>> {
+        let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
+        let fs = self.fs.clone();
+        let mut worktree_tasks = worktree
             .into_iter()
-            .flat_map(|worktree| self.worktree_templates_from_settings(worktree));
+            .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
+            .collect::<Vec<_>>();
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
@@ -353,29 +378,38 @@ impl Inventory {
                     .tasks
                     .enabled
             })
-            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
-            .into_iter()
-            .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.clone()?, task)));
-
-        worktree_tasks
-            .chain(language_tasks)
-            .chain(global_tasks)
-            .collect()
+            .and_then(|language| {
+                language
+                    .context_provider()
+                    .map(|provider| provider.associated_tasks(fs, file, cx))
+            });
+        cx.background_spawn(async move {
+            if let Some(t) = language_tasks {
+                worktree_tasks.extend(t.await.into_iter().flat_map(|tasks| {
+                    tasks
+                        .0
+                        .into_iter()
+                        .filter_map(|task| Some((task_source_kind.clone()?, task)))
+                }));
+            }
+            worktree_tasks.extend(global_tasks);
+            worktree_tasks
+        })
     }
 
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContexts`] given.
     /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
     /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.
     /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
-    pub fn used_and_current_resolved_tasks<'a>(
-        &'a self,
-        task_contexts: &'a TaskContexts,
-        cx: &'a App,
-    ) -> (
+    pub fn used_and_current_resolved_tasks(
+        &self,
+        task_contexts: Arc<TaskContexts>,
+        cx: &mut Context<Self>,
+    ) -> Task<(
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
-    ) {
+    )> {
+        let fs = self.fs.clone();
         let worktree = task_contexts.worktree();
         let location = task_contexts.location();
         let language = location
@@ -423,85 +457,103 @@ impl Inventory {
             .collect::<Vec<_>>();
 
         let not_used_score = post_inc(&mut lru_score);
-        let global_tasks = self.global_templates_from_settings();
-
-        let language_tasks = language
+        let global_tasks = self.global_templates_from_settings().collect::<Vec<_>>();
+        let associated_tasks = language
             .filter(|language| {
                 language_settings(Some(language.name()), file.as_ref(), cx)
                     .tasks
                     .enabled
             })
-            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
-            .into_iter()
-            .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.clone()?, task)));
+            .and_then(|language| {
+                language
+                    .context_provider()
+                    .map(|provider| provider.associated_tasks(fs, file, cx))
+            });
         let worktree_tasks = worktree
             .into_iter()
             .flat_map(|worktree| self.worktree_templates_from_settings(worktree))
-            .chain(language_tasks)
-            .chain(global_tasks);
-
-        let new_resolved_tasks = worktree_tasks
-            .flat_map(|(kind, task)| {
-                let id_base = kind.to_id_base();
-                if let TaskSourceKind::Worktree { id, .. } = &kind {
-                    None.or_else(|| {
-                        let (_, _, item_context) = task_contexts
-                            .active_item_context
-                            .as_ref()
-                            .filter(|(worktree_id, _, _)| Some(id) == worktree_id.as_ref())?;
-                        task.resolve_task(&id_base, item_context)
-                    })
-                    .or_else(|| {
-                        let (_, worktree_context) = task_contexts
-                            .active_worktree_context
-                            .as_ref()
-                            .filter(|(worktree_id, _)| id == worktree_id)?;
-                        task.resolve_task(&id_base, worktree_context)
-                    })
-                    .or_else(|| {
-                        if let TaskSourceKind::Worktree { id, .. } = &kind {
-                            let worktree_context = task_contexts
-                                .other_worktree_contexts
-                                .iter()
-                                .find(|(worktree_id, _)| worktree_id == id)
-                                .map(|(_, context)| context)?;
-                            task.resolve_task(&id_base, worktree_context)
-                        } else {
-                            None
-                        }
-                    })
-                } else {
-                    None.or_else(|| {
-                        let (_, _, item_context) = task_contexts.active_item_context.as_ref()?;
-                        task.resolve_task(&id_base, item_context)
-                    })
-                    .or_else(|| {
-                        let (_, worktree_context) =
-                            task_contexts.active_worktree_context.as_ref()?;
-                        task.resolve_task(&id_base, worktree_context)
-                    })
-                }
-                .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
-                .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
-            })
-            .filter(|(_, resolved_task, _)| {
-                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
-                    hash_map::Entry::Occupied(mut o) => {
-                        // Allow new tasks with the same label, if their context is different
-                        o.get_mut().insert(resolved_task.id.clone())
-                    }
-                    hash_map::Entry::Vacant(v) => {
-                        v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
-                        true
-                    }
-                }
-            })
-            .sorted_unstable_by(task_lru_comparator)
-            .map(|(kind, task, _)| (kind, task))
             .collect::<Vec<_>>();
+        let task_contexts = task_contexts.clone();
+        cx.background_spawn(async move {
+            let language_tasks = if let Some(task) = associated_tasks {
+                task.await.map(|templates| {
+                    templates
+                        .0
+                        .into_iter()
+                        .flat_map(|task| Some((task_source_kind.clone()?, task)))
+                })
+            } else {
+                None
+            };
 
-        (previously_spawned_tasks, new_resolved_tasks)
+            let worktree_tasks = worktree_tasks
+                .into_iter()
+                .chain(language_tasks.into_iter().flatten())
+                .chain(global_tasks);
+
+            let new_resolved_tasks = worktree_tasks
+                .flat_map(|(kind, task)| {
+                    let id_base = kind.to_id_base();
+                    if let TaskSourceKind::Worktree { id, .. } = &kind {
+                        None.or_else(|| {
+                            let (_, _, item_context) =
+                                task_contexts.active_item_context.as_ref().filter(
+                                    |(worktree_id, _, _)| Some(id) == worktree_id.as_ref(),
+                                )?;
+                            task.resolve_task(&id_base, item_context)
+                        })
+                        .or_else(|| {
+                            let (_, worktree_context) = task_contexts
+                                .active_worktree_context
+                                .as_ref()
+                                .filter(|(worktree_id, _)| id == worktree_id)?;
+                            task.resolve_task(&id_base, worktree_context)
+                        })
+                        .or_else(|| {
+                            if let TaskSourceKind::Worktree { id, .. } = &kind {
+                                let worktree_context = task_contexts
+                                    .other_worktree_contexts
+                                    .iter()
+                                    .find(|(worktree_id, _)| worktree_id == id)
+                                    .map(|(_, context)| context)?;
+                                task.resolve_task(&id_base, worktree_context)
+                            } else {
+                                None
+                            }
+                        })
+                    } else {
+                        None.or_else(|| {
+                            let (_, _, item_context) =
+                                task_contexts.active_item_context.as_ref()?;
+                            task.resolve_task(&id_base, item_context)
+                        })
+                        .or_else(|| {
+                            let (_, worktree_context) =
+                                task_contexts.active_worktree_context.as_ref()?;
+                            task.resolve_task(&id_base, worktree_context)
+                        })
+                    }
+                    .or_else(|| task.resolve_task(&id_base, &TaskContext::default()))
+                    .map(move |resolved_task| (kind.clone(), resolved_task, not_used_score))
+                })
+                .filter(|(_, resolved_task, _)| {
+                    match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+                        hash_map::Entry::Occupied(mut o) => {
+                            // Allow new tasks with the same label, if their context is different
+                            o.get_mut().insert(resolved_task.id.clone())
+                        }
+                        hash_map::Entry::Vacant(v) => {
+                            v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
+                            true
+                        }
+                    }
+                })
+                .sorted_unstable_by(task_lru_comparator)
+                .map(|(kind, task, _)| (kind, task))
+                .collect::<Vec<_>>();
+
+            (previously_spawned_tasks, new_resolved_tasks)
+        })
     }
 
     /// Returns the last scheduled task by task_id if provided.
@@ -746,7 +798,7 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 
 #[cfg(test)]
 mod test_inventory {
-    use gpui::{Entity, TestAppContext};
+    use gpui::{AppContext as _, Entity, Task, TestAppContext};
     use itertools::Itertools;
     use task::TaskContext;
     use worktree::WorktreeId;
@@ -759,10 +811,13 @@ mod test_inventory {
         inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
-    ) -> Vec<String> {
-        inventory.update(cx, |inventory, cx| {
-            inventory
-                .list_tasks(None, None, worktree, cx)
+    ) -> Task<Vec<String>> {
+        let new_tasks = inventory.update(cx, |inventory, cx| {
+            inventory.list_tasks(None, None, worktree, cx)
+        });
+        cx.background_spawn(async move {
+            new_tasks
+                .await
                 .into_iter()
                 .map(|(_, task)| task.label)
                 .sorted()
@@ -774,20 +829,33 @@ mod test_inventory {
         inventory: &Entity<Inventory>,
         task_name: &str,
         cx: &mut TestAppContext,
-    ) {
-        inventory.update(cx, |inventory, cx| {
-            let (task_source_kind, task) = inventory
-                .list_tasks(None, None, None, cx)
+    ) -> Task<()> {
+        let tasks = inventory.update(cx, |inventory, cx| {
+            inventory.list_tasks(None, None, None, cx)
+        });
+
+        let task_name = task_name.to_owned();
+        let inventory = inventory.clone();
+        cx.spawn(|mut cx| async move {
+            let (task_source_kind, task) = tasks
+                .await
                 .into_iter()
                 .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
+
             let id_base = task_source_kind.to_id_base();
-            inventory.task_scheduled(
-                task_source_kind.clone(),
-                task.resolve_task(&id_base, &TaskContext::default())
-                    .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
-            );
-        });
+            inventory
+                .update(&mut cx, |inventory, _| {
+                    inventory.task_scheduled(
+                        task_source_kind.clone(),
+                        task.resolve_task(&id_base, &TaskContext::default())
+                            .unwrap_or_else(|| {
+                                panic!("Failed to resolve task with name {task_name}")
+                            }),
+                    )
+                })
+                .unwrap();
+        })
     }
 
     pub(super) fn register_worktree_task_used(
@@ -795,20 +863,32 @@ mod test_inventory {
         worktree_id: WorktreeId,
         task_name: &str,
         cx: &mut TestAppContext,
-    ) {
-        inventory.update(cx, |inventory, cx| {
-            let (task_source_kind, task) = inventory
-                .list_tasks(None, None, Some(worktree_id), cx)
+    ) -> Task<()> {
+        let tasks = inventory.update(cx, |inventory, cx| {
+            inventory.list_tasks(None, None, Some(worktree_id), cx)
+        });
+
+        let inventory = inventory.clone();
+        let task_name = task_name.to_owned();
+        cx.spawn(|mut cx| async move {
+            let (task_source_kind, task) = tasks
+                .await
                 .into_iter()
                 .find(|(_, task)| task.label == task_name)
                 .unwrap_or_else(|| panic!("Failed to find task with name {task_name}"));
             let id_base = task_source_kind.to_id_base();
-            inventory.task_scheduled(
-                task_source_kind.clone(),
-                task.resolve_task(&id_base, &TaskContext::default())
-                    .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
-            );
-        });
+            inventory
+                .update(&mut cx, |inventory, _| {
+                    inventory.task_scheduled(
+                        task_source_kind.clone(),
+                        task.resolve_task(&id_base, &TaskContext::default())
+                            .unwrap_or_else(|| {
+                                panic!("Failed to resolve task with name {task_name}")
+                            }),
+                    );
+                })
+                .unwrap();
+        })
     }
 
     pub(super) async fn list_tasks(
@@ -816,18 +896,19 @@ mod test_inventory {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
-        inventory.update(cx, |inventory, cx| {
-            let task_context = &TaskContext::default();
-            inventory
-                .list_tasks(None, None, worktree, cx)
-                .into_iter()
-                .filter_map(|(source_kind, task)| {
-                    let id_base = source_kind.to_id_base();
-                    Some((source_kind, task.resolve_task(&id_base, task_context)?))
-                })
-                .map(|(source_kind, resolved_task)| (source_kind, resolved_task.resolved_label))
-                .collect()
-        })
+        let task_context = &TaskContext::default();
+        inventory
+            .update(cx, |inventory, cx| {
+                inventory.list_tasks(None, None, worktree, cx)
+            })
+            .await
+            .into_iter()
+            .filter_map(|(source_kind, task)| {
+                let id_base = source_kind.to_id_base();
+                Some((source_kind, task.resolve_task(&id_base, task_context)?))
+            })
+            .map(|(source_kind, resolved_task)| (source_kind, resolved_task.resolved_label))
+            .collect()
     }
 }
 
@@ -959,15 +1040,17 @@ impl ContextProviderWithTasks {
 impl ContextProvider for ContextProviderWithTasks {
     fn associated_tasks(
         &self,
-        _: Option<Arc<dyn language::File>>,
+        _: Arc<dyn Fs>,
+        _: Option<Arc<dyn File>>,
         _: &App,
-    ) -> Option<TaskTemplates> {
-        Some(self.templates.clone())
+    ) -> Task<Option<TaskTemplates>> {
+        Task::ready(Some(self.templates.clone()))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use fs::FakeFs;
     use gpui::TestAppContext;
     use paths::tasks_file;
     use pretty_assertions::assert_eq;
@@ -982,13 +1065,14 @@ mod tests {
     #[gpui::test]
     async fn test_task_list_sorting(cx: &mut TestAppContext) {
         init_test(cx);
-        let inventory = cx.update(Inventory::new);
-        let initial_tasks = resolved_task_names(&inventory, None, cx);
+        let fs = FakeFs::new(cx.executor());
+        let inventory = cx.update(|cx| Inventory::new(fs, cx));
+        let initial_tasks = resolved_task_names(&inventory, None, cx).await;
         assert!(
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
         );
-        let initial_tasks = task_template_names(&inventory, None, cx);
+        let initial_tasks = task_template_names(&inventory, None, cx).await;
         assert!(
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
@@ -1012,22 +1096,22 @@ mod tests {
                 .unwrap();
         });
         assert_eq!(
-            task_template_names(&inventory, None, cx),
+            task_template_names(&inventory, None, cx).await,
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             &expected_initial_state,
             "Tasks with equal amount of usages should be sorted alphanumerically"
         );
 
-        register_task_used(&inventory, "2_task", cx);
+        register_task_used(&inventory, "2_task", cx).await;
         assert_eq!(
-            task_template_names(&inventory, None, cx),
+            task_template_names(&inventory, None, cx).await,
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "2_task".to_string(),
                 "1_a_task".to_string(),
@@ -1036,16 +1120,16 @@ mod tests {
             ],
         );
 
-        register_task_used(&inventory, "1_task", cx);
-        register_task_used(&inventory, "1_task", cx);
-        register_task_used(&inventory, "1_task", cx);
-        register_task_used(&inventory, "3_task", cx);
+        register_task_used(&inventory, "1_task", cx).await;
+        register_task_used(&inventory, "1_task", cx).await;
+        register_task_used(&inventory, "1_task", cx).await;
+        register_task_used(&inventory, "3_task", cx).await;
         assert_eq!(
-            task_template_names(&inventory, None, cx),
+            task_template_names(&inventory, None, cx).await,
             &expected_initial_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -1069,7 +1153,7 @@ mod tests {
                 .unwrap();
         });
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -1079,7 +1163,7 @@ mod tests {
             "Most recently used task should be at the top"
         );
         assert_eq!(
-            resolved_task_names(&inventory, Some(worktree_id), cx),
+            resolved_task_names(&inventory, Some(worktree_id), cx).await,
             vec![
                 "3_task".to_string(),
                 "1_task".to_string(),
@@ -1088,9 +1172,9 @@ mod tests {
                 "1_a_task".to_string(),
             ],
         );
-        register_worktree_task_used(&inventory, worktree_id, "worktree_task_1", cx);
+        register_worktree_task_used(&inventory, worktree_id, "worktree_task_1", cx).await;
         assert_eq!(
-            resolved_task_names(&inventory, Some(worktree_id), cx),
+            resolved_task_names(&inventory, Some(worktree_id), cx).await,
             vec![
                 "worktree_task_1".to_string(),
                 "3_task".to_string(),
@@ -1123,11 +1207,11 @@ mod tests {
             "3_task".to_string(),
         ];
         assert_eq!(
-            task_template_names(&inventory, None, cx),
+            task_template_names(&inventory, None, cx).await,
             &expected_updated_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "worktree_task_1".to_string(),
                 "1_a_task".to_string(),
@@ -1140,13 +1224,13 @@ mod tests {
             "After global tasks update, worktree task usage is not erased and it's the first still; global task is back to regular order as its file was updated"
         );
 
-        register_task_used(&inventory, "11_hello", cx);
+        register_task_used(&inventory, "11_hello", cx).await;
         assert_eq!(
-            task_template_names(&inventory, None, cx),
+            task_template_names(&inventory, None, cx).await,
             &expected_updated_state,
         );
         assert_eq!(
-            resolved_task_names(&inventory, None, cx),
+            resolved_task_names(&inventory, None, cx).await,
             vec![
                 "11_hello".to_string(),
                 "worktree_task_1".to_string(),
@@ -1162,7 +1246,8 @@ mod tests {
     #[gpui::test]
     async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
         init_test(cx);
-        let inventory = cx.update(Inventory::new);
+        let fs = FakeFs::new(cx.executor());
+        let inventory = cx.update(|cx| Inventory::new(fs, cx));
         let common_name = "common_task_name";
         let worktree_1 = WorktreeId::from_usize(1);
         let worktree_2 = WorktreeId::from_usize(2);
@@ -1319,12 +1404,17 @@ mod tests {
         inventory: &Entity<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
-    ) -> Vec<String> {
-        inventory.update(cx, |inventory, cx| {
+    ) -> Task<Vec<String>> {
+        let tasks = inventory.update(cx, |inventory, cx| {
             let mut task_contexts = TaskContexts::default();
             task_contexts.active_worktree_context =
                 worktree.map(|worktree| (worktree, TaskContext::default()));
-            let (used, current) = inventory.used_and_current_resolved_tasks(&task_contexts, cx);
+
+            inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+        });
+
+        cx.background_spawn(async move {
+            let (used, current) = tasks.await;
             used.into_iter()
                 .chain(current)
                 .map(|(_, task)| task.original_task().label.clone())
@@ -1353,17 +1443,20 @@ mod tests {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
-        inventory.update(cx, |inventory, cx| {
-            let mut task_contexts = TaskContexts::default();
-            task_contexts.active_worktree_context =
-                worktree.map(|worktree| (worktree, TaskContext::default()));
-            let (used, current) = inventory.used_and_current_resolved_tasks(&task_contexts, cx);
-            let mut all = used;
-            all.extend(current);
-            all.into_iter()
-                .map(|(source_kind, task)| (source_kind, task.resolved_label))
-                .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
-                .collect()
-        })
+        let (used, current) = inventory
+            .update(cx, |inventory, cx| {
+                let mut task_contexts = TaskContexts::default();
+                task_contexts.active_worktree_context =
+                    worktree.map(|worktree| (worktree, TaskContext::default()));
+
+                inventory.used_and_current_resolved_tasks(Arc::new(task_contexts), cx)
+            })
+            .await;
+        let mut all = used;
+        all.extend(current);
+        all.into_iter()
+            .map(|(source_kind, task)| (source_kind, task.resolved_label))
+            .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
+            .collect()
     }
 }

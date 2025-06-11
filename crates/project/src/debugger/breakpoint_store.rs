@@ -665,6 +665,7 @@ impl BreakpointStore {
             .as_ref()
             .is_some_and(|active_position| active_position == &position)
         {
+            cx.emit(BreakpointStoreEvent::SetDebugLine);
             return;
         }
 
