@@ -888,6 +888,32 @@ fn handle_hit_test_msg(
         return None;
     }
 
+    let mut lock = state_ptr.state.borrow_mut();
+    if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
+        drop(lock);
+        let area = callback();
+        state_ptr
+            .state
+            .borrow_mut()
+            .callbacks
+            .hit_test_window_control = Some(callback);
+        if let Some(area) = area {
+            return match area {
+                WindowControlArea::Drag => Some(HTCAPTION as _),
+                WindowControlArea::Close => Some(HTCLOSE as _),
+                WindowControlArea::Max => Some(HTMAXBUTTON as _),
+                WindowControlArea::Min => Some(HTMINBUTTON as _),
+            };
+        }
+    } else {
+        drop(lock);
+    }
+
+    if !state_ptr.hide_title_bar {
+        // If the OS draws the title bar, we don't need to handle hit test messages.
+        return None;
+    }
+
     // default handler for resize areas
     let hit = unsafe { DefWindowProcW(handle, msg, wparam, lparam) };
     if matches!(
@@ -920,25 +946,6 @@ fn handle_hit_test_msg(
     if !state_ptr.state.borrow().is_maximized() && cursor_point.y >= 0 && cursor_point.y <= frame_y
     {
         return Some(HTTOP as _);
-    }
-
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.hit_test_window_control.take() {
-        drop(lock);
-        let area = callback();
-        state_ptr
-            .state
-            .borrow_mut()
-            .callbacks
-            .hit_test_window_control = Some(callback);
-        if let Some(area) = area {
-            return match area {
-                WindowControlArea::Drag => Some(HTCAPTION as _),
-                WindowControlArea::Close => Some(HTCLOSE as _),
-                WindowControlArea::Max => Some(HTMAXBUTTON as _),
-                WindowControlArea::Min => Some(HTMINBUTTON as _),
-            };
-        }
     }
 
     Some(HTCLIENT as _)
