@@ -69,6 +69,10 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
                 "workspaceFolder".to_owned(),
                 VariableName::WorktreeRoot.to_string(),
             ),
+            (
+                "relativeFile".to_owned(),
+                VariableName::RelativeFile.to_string(),
+            ),
             ("file".to_owned(), VariableName::Filename.to_string()), // TODO other interesting variables?
         ]));
         let templates = file
@@ -80,7 +84,6 @@ impl TryFrom<VsCodeDebugTaskFile> for DebugTaskFile {
     }
 }
 
-// todo(debugger) figure out how to make JsDebugAdapter::ADAPTER_NAME et al available here
 fn task_type_to_adapter_name(task_type: &str) -> String {
     match task_type {
         "pwa-node" | "node" | "chrome" | "pwa-chrome" | "edge" | "pwa-edge" | "msedge"

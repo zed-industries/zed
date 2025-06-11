@@ -103,7 +103,7 @@ impl JsDebugAdapter {
                 timeout,
             }),
             request_args: StartDebuggingRequestArguments {
-                configuration: task_definition.config.clone(),
+                configuration,
                 request: self.request_kind(&task_definition.config)?,
             },
         })
