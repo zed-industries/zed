@@ -175,7 +175,10 @@ impl PackageJsonData {
                     "vitest".to_owned(),
                     "run".to_owned(),
                     "--testNamePattern".to_owned(),
-                    format!("\"{}\"", "vitest".to_owned()),
+                    format!(
+                        "\"{}\"",
+                        TYPESCRIPT_VITEST_TEST_NAME_VARIABLE.template_value()
+                    ),
                     VariableName::RelativeFile.template_value(),
                 ],
                 tags: vec![

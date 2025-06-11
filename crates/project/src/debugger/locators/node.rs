@@ -54,6 +54,10 @@ impl DapLocator for NodeLocator {
             "runtimeExecutable": program_path,
             "args": args,
             "cwd": build_config.cwd.clone(),
+            "env": {
+                "VITEST_MIN_FORKS": "0",
+                "VITEST_MAX_FORKS": "1"
+            },
             "runtimeArgs": ["--inspect-brk"],
             "console": "integratedTerminal",
         });
