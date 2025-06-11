@@ -533,78 +533,61 @@ mod tests {
 
     #[test]
     fn test_text_for_keystroke() {
+        let cmd_keystroke = |key: &str| Keystroke {
+            modifiers: Modifiers::command(),
+            key: key.to_owned(),
+            key_char: None,
+        };
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
-                PlatformStyle::Mac,
-                false
-            ),
+            keystroke_text(&cmd_keystroke("c"), PlatformStyle::Mac, false),
             "Command-C".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
-                PlatformStyle::Linux,
-                false
-            ),
+            keystroke_text(&cmd_keystroke("c"), PlatformStyle::Linux, false),
             "Super-C".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("cmd-c").unwrap(),
-                PlatformStyle::Windows,
-                false
-            ),
+            keystroke_text(&cmd_keystroke("c"), PlatformStyle::Windows, false),
             "Win-C".to_string()
         );
 
+        let ctrl_alt_keystroke = |key: &str| Keystroke {
+            modifiers: Modifiers {
+                control: true,
+                alt: true,
+                ..Default::default()
+            },
+            key: key.to_owned(),
+            key_char: None,
+        };
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
-                PlatformStyle::Mac,
-                false
-            ),
+            keystroke_text(&ctrl_alt_keystroke("delete"), PlatformStyle::Mac, false),
             "Control-Option-Delete".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
-                PlatformStyle::Linux,
-                false
-            ),
+            keystroke_text(&ctrl_alt_keystroke("delete"), PlatformStyle::Linux, false),
             "Ctrl-Alt-Delete".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("ctrl-alt-delete").unwrap(),
-                PlatformStyle::Windows,
-                false
-            ),
+            keystroke_text(&ctrl_alt_keystroke("delete"), PlatformStyle::Windows, false),
             "Ctrl-Alt-Delete".to_string()
         );
 
+        let shift_keystroke = |key: &str| Keystroke {
+            modifiers: Modifiers::shift(),
+            key: key.to_owned(),
+            key_char: None,
+        };
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
-                PlatformStyle::Mac,
-                false
-            ),
+            keystroke_text(&shift_keystroke("pageup"), PlatformStyle::Mac, false),
             "Shift-PageUp".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
-                PlatformStyle::Linux,
-                false,
-            ),
+            keystroke_text(&shift_keystroke("pageup"), PlatformStyle::Linux, false,),
             "Shift-PageUp".to_string()
         );
         assert_eq!(
-            keystroke_text(
-                &Keystroke::parse("shift-pageup").unwrap(),
-                PlatformStyle::Windows,
-                false
-            ),
+            keystroke_text(&shift_keystroke("pageup"), PlatformStyle::Windows, false),
             "Shift-PageUp".to_string()
         );
     }
