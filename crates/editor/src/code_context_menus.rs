@@ -1435,7 +1435,9 @@ impl CodeActionsMenu {
 
     fn origin(&self) -> ContextMenuOrigin {
         match &self.deployed_from {
-            Some(CodeActionSource::Indicator(row)) => ContextMenuOrigin::GutterIndicator(*row),
+            Some(CodeActionSource::Indicator(row)) | Some(CodeActionSource::RunMenu(row)) => {
+                ContextMenuOrigin::GutterIndicator(*row)
+            }
             Some(CodeActionSource::QuickActionBar) => ContextMenuOrigin::QuickActionBar,
             None => ContextMenuOrigin::Cursor,
         }
