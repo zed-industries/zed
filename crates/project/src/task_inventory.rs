@@ -412,8 +412,7 @@ impl Inventory {
         let fs = self.fs.clone();
         let worktree = task_contexts.worktree();
         let location = task_contexts.location();
-        let language = location
-            .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
+        let language = location.and_then(|location| location.buffer.read(cx).language());
         let task_source_kind = language.as_ref().map(|language| TaskSourceKind::Language {
             name: language.name().into(),
         });
