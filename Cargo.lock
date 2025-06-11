@@ -4024,6 +4024,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "libc",
  "log",
  "node_runtime",
  "parking_lot",
