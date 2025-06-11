@@ -21556,7 +21556,7 @@ impl EditorSnapshot {
             .show_line_numbers
             .unwrap_or(gutter_settings.line_numbers);
         let line_gutter_width = if show_line_numbers {
-            // Avoid flicker-like gutter resizes when the line number gains another digit by 
+            // Avoid flicker-like gutter resizes when the line number gains another digit by
             // only resizing the gutter on files with > 10**min_line_number_digits lines.
             let min_width_for_number_on_gutter =
                 ch_advance * gutter_settings.min_line_number_digits as f32;
