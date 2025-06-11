@@ -255,7 +255,7 @@ pub async fn get_supermaven_agent_path(client: Arc<dyn HttpClient>) -> Result<Pa
 
     if has_version(&binary_path).await {
         // Due to an issue with the Supermaven binary not being made executable on
-        // earlier Zed versions and Supermaven releases not occuring that frequently,
+        // earlier Zed versions and Supermaven releases not occurring that frequently,
         // we ensure here that the found binary is actually executable.
         make_file_executable(&binary_path).await?;
 
