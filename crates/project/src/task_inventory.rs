@@ -720,20 +720,37 @@ impl Inventory {
             }
         };
 
-        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
-            serde_json::from_value::<DebugScenario>(raw_template).log_err()
-        });
+        let new_templates = raw_tasks
+            .into_iter()
+            .filter_map(|raw_template| {
+                serde_json::from_value::<DebugScenario>(raw_template).log_err()
+            })
+            .collect::<Vec<_>>();
 
         let parsed_scenarios = &mut self.scenarios_from_settings;
+        let mut new_definitions: HashMap<_, _> = new_templates
+            .iter()
+            .map(|template| (template.label.clone(), template.clone()))
+            .collect();
+        let previously_existing_scenarios;
+
         match location {
             TaskSettingsLocation::Global(path) => {
+                previously_existing_scenarios = parsed_scenarios
+                    .global_scenarios()
+                    .map(|(_, scenario)| scenario.label.clone())
+                    .collect::<HashSet<_>>();
                 parsed_scenarios
                     .global
                     .entry(path.to_owned())
-                    .insert_entry(new_templates.collect());
+                    .insert_entry(new_templates);
             }
             TaskSettingsLocation::Worktree(location) => {
-                let new_templates = new_templates.collect::<Vec<_>>();
+                previously_existing_scenarios = parsed_scenarios
+                    .worktree_scenarios(location.worktree_id)
+                    .map(|(_, scenario)| scenario.label.clone())
+                    .collect::<HashSet<_>>();
+
                 if new_templates.is_empty() {
                     if let Some(worktree_tasks) =
                         parsed_scenarios.worktree.get_mut(&location.worktree_id)
@@ -749,6 +766,17 @@ impl Inventory {
                 }
             }
         }
+        self.last_scheduled_scenarios.retain_mut(|scenario| {
+            if !previously_existing_scenarios.contains(&scenario.label) {
+                return true;
+            }
+            if let Some(new_definition) = new_definitions.remove(&scenario.label) {
+                *scenario = new_definition;
+                true
+            } else {
+                false
+            }
+        });
 
         Ok(())
     }
@@ -1241,6 +1269,99 @@ mod tests {
                 "10_hello".to_string(),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let inventory = cx.update(|cx| Inventory::new(fs, cx));
+        inventory.update(cx, |inventory, cx| {
+            inventory
+                .update_file_based_scenarios(
+                    TaskSettingsLocation::Global(Path::new("")),
+                    Some(
+                        r#"
+                        [{
+                            "label": "test scenario",
+                            "adapter": "CodeLLDB",
+                            "request": "launch",
+                            "program": "wowzer",
+                        }]
+                        "#,
+                    ),
+                )
+                .unwrap();
+
+            let (_, scenario) = inventory
+                .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                .1
+                .first()
+                .unwrap()
+                .clone();
+
+            inventory.scenario_scheduled(scenario.clone());
+
+            assert_eq!(
+                inventory
+                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                    .0
+                    .first()
+                    .unwrap()
+                    .clone(),
+                scenario
+            );
+
+            inventory
+                .update_file_based_scenarios(
+                    TaskSettingsLocation::Global(Path::new("")),
+                    Some(
+                        r#"
+                        [{
+                            "label": "test scenario",
+                            "adapter": "Delve",
+                            "request": "launch",
+                            "program": "wowzer",
+                        }]
+                        "#,
+                    ),
+                )
+                .unwrap();
+
+            assert_eq!(
+                inventory
+                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                    .0
+                    .first()
+                    .unwrap()
+                    .adapter,
+                "Delve",
+            );
+
+            inventory
+                .update_file_based_scenarios(
+                    TaskSettingsLocation::Global(Path::new("")),
+                    Some(
+                        r#"
+                        [{
+                            "label": "testing scenario",
+                            "adapter": "Delve",
+                            "request": "launch",
+                            "program": "wowzer",
+                        }]
+                        "#,
+                    ),
+                )
+                .unwrap();
+
+            assert_eq!(
+                inventory
+                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                    .0
+                    .first(),
+                None
+            );
+        });
     }
 
     #[gpui::test]
