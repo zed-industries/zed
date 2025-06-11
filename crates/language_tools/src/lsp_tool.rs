@@ -15,7 +15,8 @@ use lsp::{LanguageServerId, LanguageServerName};
 use project::{LspStore, LspStoreEvent, project_settings::ProjectSettings};
 use settings::{Settings as _, SettingsStore};
 use ui::{
-    Context, ContextMenu, IconButtonShape, Indicator, PopoverMenu, Tooltip, Window, prelude::*,
+    Context, ContextMenu, ContextMenuEntry, IconButtonShape, Indicator, PopoverMenu, Tooltip,
+    Window, prelude::*,
 };
 
 use workspace::{StatusItemView, Workspace};
@@ -154,7 +155,332 @@ impl LspTool {
         let servers = self.language_servers.servers.clone();
 
         ContextMenu::build(window, cx, move |mut menu, _window, _cx| {
-            // Add global actions first
+            if active_editor.is_none() {
+                menu = menu
+                    .item(
+                        ContextMenuEntry::new(
+                            "No active editor - open a file to manage language servers",
+                        )
+                        .disabled(true),
+                    )
+                    .separator();
+
+                // Still show global actions even without an active editor
+                menu = menu
+                    .item(
+                        ContextMenuEntry::new("Restart All Servers")
+                            .disabled(true)
+                            .handler(|_, _| {}),
+                    )
+                    .item(
+                        ContextMenuEntry::new("Stop All Servers")
+                            .disabled(true)
+                            .handler(|_, _| {}),
+                    )
+                    .separator();
+            }
+
+            if servers.is_empty() {
+                menu = menu.item(
+                    ContextMenuEntry::new("No language servers are currently running")
+                        .disabled(true),
+                );
+                return menu;
+            }
+
+            // For now, categorize all servers as "Other Active Servers"
+            // TODO: Implement proper buffer association to show "Current Buffer" servers
+            let current_buffer_servers: Vec<(&LanguageServerId, &LanguageServerState)> = Vec::new();
+            let other_servers: Vec<_> = servers.iter().collect();
+
+            // Current Buffer section
+            if !current_buffer_servers.is_empty() {
+                menu = menu.header("Current Buffer");
+                for (server_id, server) in current_buffer_servers {
+                    let server_id = *server_id;
+                    let status_color = match server.status {
+                        LanguageServerStatus::Running => Color::Success,
+                        LanguageServerStatus::Starting => Color::Modified,
+                        LanguageServerStatus::Stopping => Color::Warning,
+                        LanguageServerStatus::Stopped => Color::Error,
+                    };
+
+                    menu = menu.custom_entry(
+                        {
+                            let server_name = server.name.0.clone();
+                            let lsp_store = lsp_store.clone();
+                            let workspace = workspace.clone();
+                            let editor_buffers = editor_buffers.clone();
+                            let lsp_logs = lsp_logs.clone();
+                            let server_status = server.status;
+                            move |_window, _cx| {
+                                let can_stop = matches!(
+                                    server_status,
+                                    LanguageServerStatus::Starting | LanguageServerStatus::Running
+                                );
+                                let can_restart = matches!(
+                                    server_status,
+                                    LanguageServerStatus::Stopping | LanguageServerStatus::Stopped
+                                );
+
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(Indicator::dot().color(status_color))
+                                            .child(Label::new(server_name.clone()))
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .when(can_restart, |div| {
+                                                div.child(
+                                                    IconButton::new("restart-server", IconName::Rerun)
+                                                        .icon_size(IconSize::XSmall)
+                                                        .tooltip(|_, cx| Tooltip::simple("Restart server", cx))
+                                                        .on_click({
+                                                            let lsp_store = lsp_store.clone();
+                                                            let workspace = workspace.clone();
+                                                            let editor_buffers = editor_buffers.clone();
+                                                            move |_event, _window, cx| {
+                                                                if let Some(workspace) = workspace.upgrade() {
+                                                                    let buffer_store = workspace.read(cx).project().read(cx).buffer_store().clone();
+                                                                    let buffers = editor_buffers
+                                                                        .iter()
+                                                                        .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
+                                                                        .collect::<Vec<_>>();
+                                                                    if !buffers.is_empty() {
+                                                                        lsp_store.update(cx, |lsp_store, cx| {
+                                                                            lsp_store.restart_language_servers_for_buffers(
+                                                                                buffers,
+                                                                                vec![server_id],
+                                                                                cx,
+                                                                            );
+                                                                        }).ok();
+                                                                    }
+                                                                }
+                                                            }
+                                                        })
+                                                )
+                                            })
+                                            .when(can_stop, |div| {
+                                                div.child(
+                                                    IconButton::new("stop-server", IconName::Stop)
+                                                        .icon_size(IconSize::XSmall)
+                                                        .tooltip(|_, cx| Tooltip::simple("Stop server", cx))
+                                                        .on_click({
+                                                            let lsp_store = lsp_store.clone();
+                                                            move |_event, _window, cx| {
+                                                                lsp_store.update(cx, |lsp_store, cx| {
+                                                                    lsp_store.stop_language_servers_for_buffers(
+                                                                        Vec::new(),
+                                                                        vec![server_id],
+                                                                        cx,
+                                                                    );
+                                                                }).ok();
+                                                            }
+                                                        })
+                                                )
+                                            })
+                                            .child(
+                                                IconButton::new("open-logs", IconName::FileText)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .tooltip(|_, cx| Tooltip::simple("Open logs", cx))
+                                                    .on_click({
+                                                        let workspace = workspace.clone();
+                                                        let lsp_logs = lsp_logs.clone();
+                                                        move |_event, window, cx| {
+                                                            if let Some(lsp_logs) = lsp_logs.upgrade() {
+                                                                lsp_logs.update(cx, |lsp_logs, cx| {
+                                                                    lsp_logs.open_server_log(
+                                                                        workspace.clone(),
+                                                                        server_id,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            }
+                                                        }
+                                                    })
+                                            )
+                                            .child(
+                                                IconButton::new("open-lsp-messages-current", IconName::MessageBubbles)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .tooltip(|_, cx| Tooltip::simple("Open LSP messages", cx))
+                                                    .on_click({
+                                                        let workspace = workspace.clone();
+                                                        let lsp_logs = lsp_logs.clone();
+                                                        move |_event, window, cx| {
+                                                            if let Some(lsp_logs) = lsp_logs.upgrade() {
+                                                                lsp_logs.update(cx, |lsp_logs, cx| {
+                                                                    lsp_logs.open_server_trace(
+                                                                        workspace.clone(),
+                                                                        server_id,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            }
+                                                        }
+                                                    })
+                                            )
+                                    )
+                                    .into_any_element()
+                            }
+                        },
+                        |_, _| {},
+                    );
+                }
+            }
+
+            // Other Active Servers section
+            if !other_servers.is_empty() {
+                menu = menu.header("Other Active Servers");
+                for (server_id, server) in other_servers {
+                    let server_id = *server_id;
+                    let status_color = match server.status {
+                        LanguageServerStatus::Running => Color::Success,
+                        LanguageServerStatus::Starting => Color::Modified,
+                        LanguageServerStatus::Stopping => Color::Warning,
+                        LanguageServerStatus::Stopped => Color::Error,
+                    };
+
+                    menu = menu.custom_entry(
+                        {
+                            let server_name = server.name.0.clone();
+                            let lsp_store = lsp_store.clone();
+                            let workspace = workspace.clone();
+                            let editor_buffers = editor_buffers.clone();
+                            let lsp_logs = lsp_logs.clone();
+                            let server_status = server.status;
+                            move |_window, _cx| {
+                                let can_stop = matches!(
+                                    server_status,
+                                    LanguageServerStatus::Starting | LanguageServerStatus::Running
+                                );
+                                let can_restart = matches!(
+                                    server_status,
+                                    LanguageServerStatus::Stopping | LanguageServerStatus::Stopped
+                                );
+
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .gap_2()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(Indicator::dot().color(status_color))
+                                            .child(Label::new(server_name.clone()))
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .when(can_restart, |div| {
+                                                div.child(
+                                                    IconButton::new("restart-server", IconName::Rerun)
+                                                        .icon_size(IconSize::XSmall)
+                                                        .tooltip(|_, cx| Tooltip::simple("Restart server", cx))
+                                                        .on_click({
+                                                            let lsp_store = lsp_store.clone();
+                                                            let workspace = workspace.clone();
+                                                            let editor_buffers = editor_buffers.clone();
+                                                            move |_event, _window, cx| {
+                                                                if let Some(workspace) = workspace.upgrade() {
+                                                                    let buffer_store = workspace.read(cx).project().read(cx).buffer_store().clone();
+                                                                    let buffers = editor_buffers
+                                                                        .iter()
+                                                                        .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
+                                                                        .collect::<Vec<_>>();
+                                                                    if !buffers.is_empty() {
+                                                                        lsp_store.update(cx, |lsp_store, cx| {
+                                                                            lsp_store.restart_language_servers_for_buffers(
+                                                                                buffers,
+                                                                                vec![server_id],
+                                                                                cx,
+                                                                            );
+                                                                        }).ok();
+                                                                    }
+                                                                }
+                                                            }
+                                                        })
+                                                )
+                                            })
+                                            .when(can_stop, |div| {
+                                                div.child(
+                                                    IconButton::new("stop-server", IconName::Stop)
+                                                        .icon_size(IconSize::XSmall)
+                                                        .tooltip(|_, cx| Tooltip::simple("Stop server", cx))
+                                                        .on_click({
+                                                            let lsp_store = lsp_store.clone();
+                                                            move |_event, _window, cx| {
+                                                                lsp_store.update(cx, |lsp_store, cx| {
+                                                                    lsp_store.stop_language_servers_for_buffers(
+                                                                        Vec::new(),
+                                                                        vec![server_id],
+                                                                        cx,
+                                                                    );
+                                                                }).ok();
+                                                            }
+                                                        })
+                                                )
+                                            })
+                                            .child(
+                                                IconButton::new("open-logs", IconName::FileText)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .tooltip(|_, cx| Tooltip::simple("Open logs", cx))
+                                                    .on_click({
+                                                        let workspace = workspace.clone();
+                                                        let lsp_logs = lsp_logs.clone();
+                                                        move |_event, window, cx| {
+                                                            if let Some(lsp_logs) = lsp_logs.upgrade() {
+                                                                lsp_logs.update(cx, |lsp_logs, cx| {
+                                                                    lsp_logs.open_server_log(
+                                                                        workspace.clone(),
+                                                                        server_id,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            }
+                                                        }
+                                                    })
+                                            )
+                                            .child(
+                                                IconButton::new("open-lsp-messages-other", IconName::MessageBubbles)
+                                                    .icon_size(IconSize::XSmall)
+                                                    .tooltip(|_, cx| Tooltip::simple("Open LSP messages", cx))
+                                                    .on_click({
+                                                        let workspace = workspace.clone();
+                                                        let lsp_logs = lsp_logs.clone();
+                                                        move |_event, window, cx| {
+                                                            if let Some(lsp_logs) = lsp_logs.upgrade() {
+                                                                lsp_logs.update(cx, |lsp_logs, cx| {
+                                                                    lsp_logs.open_server_trace(
+                                                                        workspace.clone(),
+                                                                        server_id,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            }
+                                                        }
+                                                    })
+                                            )
+                                    )
+                                    .into_any_element()
+                            }
+                        },
+                        |_, _| {},
+                    );
+                }
+                menu = menu.separator();
+            }
+
+            // Add global actions at the end
             if let Some(active_editor) = active_editor.clone() {
                 menu = menu
                     .entry("Restart All Servers", None, {
@@ -180,118 +506,7 @@ impl LspTool {
                                 });
                             }
                         }
-                    })
-                    .separator();
-            }
-
-            // Add individual server entries
-            for (server_id, server) in servers.iter() {
-                let server_id = *server_id;
-                let server_name = server.name.0.clone();
-                let status = server.status;
-
-                let status_text = match status {
-                    LanguageServerStatus::Starting => "Starting",
-                    LanguageServerStatus::Running => "Running",
-                    LanguageServerStatus::Stopping => "Stopping",
-                    LanguageServerStatus::Stopped => "Stopped",
-                };
-
-                menu = menu.header(&format!("{} ({})", server_name, status_text));
-
-                // Add server-specific actions
-                let can_stop = matches!(
-                    status,
-                    LanguageServerStatus::Starting | LanguageServerStatus::Running
-                );
-                let can_restart = matches!(
-                    status,
-                    LanguageServerStatus::Stopping | LanguageServerStatus::Stopped
-                );
-
-                if can_stop {
-                    menu = menu.entry("Stop Server", None, {
-                        let lsp_store = lsp_store.clone();
-                        move |_window, cx| {
-                            lsp_store
-                                .update(cx, |lsp_store, cx| {
-                                    lsp_store.stop_language_servers_for_buffers(
-                                        Vec::new(),
-                                        vec![server_id],
-                                        cx,
-                                    );
-                                })
-                                .ok();
-                        }
                     });
-                }
-
-                if can_restart {
-                    menu = menu.entry("Restart Server", None, {
-                        let lsp_store = lsp_store.clone();
-                        let workspace = workspace.clone();
-                        let editor_buffers = editor_buffers.clone();
-                        move |_window, cx| {
-                            if let Some(workspace) = workspace.upgrade() {
-                                let buffer_store =
-                                    workspace.read(cx).project().read(cx).buffer_store().clone();
-                                let buffers = editor_buffers
-                                    .iter()
-                                    .flat_map(|buffer_id| buffer_store.read(cx).get(*buffer_id))
-                                    .collect::<Vec<_>>();
-                                if !buffers.is_empty() {
-                                    lsp_store
-                                        .update(cx, |lsp_store, cx| {
-                                            lsp_store.restart_language_servers_for_buffers(
-                                                buffers,
-                                                vec![server_id],
-                                                cx,
-                                            );
-                                        })
-                                        .ok();
-                                }
-                            }
-                        }
-                    });
-                }
-
-                // Check if server has logs
-                // Add log entries without checking - they'll be disabled if no logs exist
-                menu = menu
-                    .entry("Open Log", None, {
-                        let workspace = workspace.clone();
-                        let lsp_logs = lsp_logs.clone();
-                        move |window, cx| {
-                            if let Some(lsp_logs) = lsp_logs.upgrade() {
-                                lsp_logs.update(cx, |lsp_logs, cx| {
-                                    lsp_logs.open_server_log(
-                                        workspace.clone(),
-                                        server_id,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            }
-                        }
-                    })
-                    .entry("Open LSP Messages", None, {
-                        let workspace = workspace.clone();
-                        let lsp_logs = lsp_logs.clone();
-                        move |window, cx| {
-                            if let Some(lsp_logs) = lsp_logs.upgrade() {
-                                lsp_logs.update(cx, |lsp_logs, cx| {
-                                    lsp_logs.open_server_trace(
-                                        workspace.clone(),
-                                        server_id,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            }
-                        }
-                    });
-
-                menu = menu.separator();
             }
 
             menu
@@ -335,10 +550,6 @@ impl StatusItemView for LspTool {
 
 impl Render for LspTool {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        if self.active_editor.is_none() || self.language_servers.servers.is_empty() {
-            return div();
-        }
-
         let mut has_errors = false;
         let mut has_warnings = false;
         let mut has_other_notifications = false;
