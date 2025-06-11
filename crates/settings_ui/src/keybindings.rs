@@ -146,33 +146,34 @@ impl Render for KeymapEditor {
             .id("keymap-editor")
             .track_focus(&self.focus_handle)
             .child(
-                Table::uniform_list(
-                    "keymap-editor-table",
-                    row_count,
-                    cx.processor(|this, range: Range<usize>, window, cx| {
-                        range
-                            .map(|index| {
-                                let binding = &this.processed_bindings[index];
-                                let row = [
-                                    binding.action.clone(),
-                                    binding.keystroke_text.clone(),
-                                    binding.context.clone(),
-                                    // TODO: Add a source field
-                                    // binding.source.clone(),
-                                ];
+                Table::new()
+                    .interactable(&self.table_interaction_state)
+                    .header(["Command", "Keystrokes", "Context"])
+                    .uniform_list(
+                        "keymap-editor-table",
+                        row_count,
+                        cx.processor(move |this, range: Range<usize>, _window, cx| {
+                            range
+                                .map(|index| {
+                                    let binding = &this.processed_bindings[index];
+                                    let row = [
+                                        binding.action.clone(),
+                                        binding.keystroke_text.clone(),
+                                        binding.context.clone(),
+                                        // TODO: Add a source field
+                                        // binding.source.clone(),
+                                    ];
 
-                                // fixme: pass through callback as a row_cx param
-                                let striped = false;
+                                    // fixme: pass through callback as a row_cx param
+                                    let striped = false;
 
-                                crate::ui_components::table::render_row(
-                                    index, row, row_count, striped, cx,
-                                )
-                            })
-                            .collect()
-                    }),
-                )
-                .header(["Command", "Keystrokes", "Context"])
-                .interactable(&self.table_interaction_state),
+                                    crate::ui_components::table::render_row(
+                                        index, row, row_count, striped, cx,
+                                    )
+                                })
+                                .collect()
+                        }),
+                    ),
             )
     }
 }

@@ -275,24 +275,6 @@ pub struct Table<const COLS: usize = 3> {
 }
 
 impl<const COLS: usize> Table<COLS> {
-    pub fn uniform_list(
-        id: impl Into<ElementId>,
-        row_count: usize,
-        render_item_fn: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
-    ) -> Self {
-        Table {
-            striped: false,
-            width: Length::Auto,
-            headers: None,
-            rows: TableContents::UniformList(UniformListData {
-                element_id: id.into(),
-                row_count: row_count,
-                render_item_fn: Box::new(render_item_fn),
-            }),
-            interaction_state: None,
-        }
-    }
-
     /// number of headers provided.
     pub fn new() -> Self {
         Table {
@@ -302,6 +284,24 @@ impl<const COLS: usize> Table<COLS> {
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
         }
+    }
+
+    /// Enables uniform list rendering.
+    /// The provided function will be passed directly to the `uniform_list` element.
+    /// Therefore, if this method is called, any calls to [`Table::row`] before or after
+    /// this method is called will be ignored.
+    pub fn uniform_list(
+        mut self,
+        id: impl Into<ElementId>,
+        row_count: usize,
+        render_item_fn: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
+    ) -> Self {
+        self.rows = TableContents::UniformList(UniformListData {
+            element_id: id.into(),
+            row_count: row_count,
+            render_item_fn: Box::new(render_item_fn),
+        });
+        self
     }
 
     /// Enables row striping.
