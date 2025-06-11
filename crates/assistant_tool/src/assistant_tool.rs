@@ -214,7 +214,7 @@ pub trait Tool: 'static + Send + Sync {
         ToolSource::Native
     }
 
-    /// Returns true iff the tool needs the users's confirmation
+    /// Returns true if the tool needs the users's confirmation
     /// before having permission to run.
     fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool;
 

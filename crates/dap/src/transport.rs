@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use dap_types::{
     ErrorResponse,
     messages::{Message, Response},
@@ -12,7 +12,6 @@ use smol::{
     io::{AsyncBufReadExt as _, AsyncWriteExt, BufReader},
     lock::Mutex,
     net::{TcpListener, TcpStream},
-    process::Child,
 };
 use std::{
     collections::HashMap,
@@ -22,7 +21,7 @@ use std::{
     time::Duration,
 };
 use task::TcpArgumentsTemplate;
-use util::{ConnectionResult, ResultExt as _};
+use util::ConnectionResult;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -102,7 +101,7 @@ impl Transport {
         }
     }
 
-    async fn kill(&self) -> Result<()> {
+    async fn kill(&self) {
         match self {
             Transport::Stdio(stdio_transport) => stdio_transport.kill().await,
             Transport::Tcp(tcp_transport) => tcp_transport.kill().await,
@@ -191,7 +190,7 @@ impl TransportDelegate {
                 match Self::handle_output(
                     params.output,
                     client_tx,
-                    pending_requests,
+                    pending_requests.clone(),
                     output_log_handler,
                 )
                 .await
@@ -199,6 +198,12 @@ impl TransportDelegate {
                     Ok(()) => {}
                     Err(e) => log::error!("Error handling debugger output: {e}"),
                 }
+                let mut pending_requests = pending_requests.lock().await;
+                pending_requests.drain().for_each(|(_, request)| {
+                    request
+                        .send(Err(anyhow!("debugger shutdown unexpectedly")))
+                        .ok();
+                });
             }));
 
             if let Some(stderr) = params.stderr.take() {
@@ -531,7 +536,7 @@ impl TransportDelegate {
         current_requests.clear();
         pending_requests.clear();
 
-        let _ = self.transport.kill().await.log_err();
+        self.transport.kill().await;
 
         drop(current_requests);
         drop(pending_requests);
@@ -592,8 +597,6 @@ impl TcpTransport {
         let port = connection_args.port;
 
         let mut command = util::command::new_std_command(&binary.command);
-        util::set_pre_exec_to_start_new_session(&mut command);
-        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
@@ -602,14 +605,7 @@ impl TcpTransport {
         command.args(&binary.arguments);
         command.envs(&binary.envs);
 
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut process = command
-            .spawn()
+        let mut process = Child::spawn(command, Stdio::null())
             .with_context(|| "failed to start debug adapter.")?;
 
         let address = SocketAddrV4::new(host, port);
@@ -629,7 +625,7 @@ impl TcpTransport {
                         Ok(stream) => return Ok((process, stream.split())),
                         Err(_) => {
                             if let Ok(Some(_)) = process.try_status() {
-                                let output = process.output().await?;
+                                let output = process.into_inner().output().await?;
                                 let output = if output.stderr.is_empty() {
                                     String::from_utf8_lossy(&output.stdout).to_string()
                                 } else {
@@ -673,10 +669,15 @@ impl TcpTransport {
         true
     }
 
-    async fn kill(&self) -> Result<()> {
-        self.process.lock().await.kill()?;
+    async fn kill(&self) {
+        let mut process = self.process.lock().await;
+        Child::kill(&mut process);
+    }
+}
 
-        Ok(())
+impl Drop for TcpTransport {
+    fn drop(&mut self) {
+        self.process.get_mut().kill();
     }
 }
 
@@ -688,8 +689,6 @@ impl StdioTransport {
     #[allow(dead_code, reason = "This is used in non test builds of Zed")]
     async fn start(binary: &DebugAdapterBinary, _: AsyncApp) -> Result<(TransportPipe, Self)> {
         let mut command = util::command::new_std_command(&binary.command);
-        util::set_pre_exec_to_start_new_session(&mut command);
-        let mut command = smol::process::Command::from(command);
 
         if let Some(cwd) = &binary.cwd {
             command.current_dir(cwd);
@@ -698,13 +697,7 @@ impl StdioTransport {
         command.args(&binary.arguments);
         command.envs(&binary.envs);
 
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-
-        let mut process = command.spawn().with_context(|| {
+        let mut process = Child::spawn(command, Stdio::piped()).with_context(|| {
             format!(
                 "failed to spawn command `{} {}`.",
                 binary.command,
@@ -745,9 +738,15 @@ impl StdioTransport {
         false
     }
 
-    async fn kill(&self) -> Result<()> {
-        self.process.lock().await.kill()?;
-        Ok(())
+    async fn kill(&self) {
+        let mut process = self.process.lock().await;
+        Child::kill(&mut process);
+    }
+}
+
+impl Drop for StdioTransport {
+    fn drop(&mut self) {
+        self.process.get_mut().kill();
     }
 }
 
@@ -921,7 +920,66 @@ impl FakeTransport {
         false
     }
 
-    async fn kill(&self) -> Result<()> {
-        Ok(())
+    async fn kill(&self) {}
+}
+
+struct Child {
+    process: smol::process::Child,
+}
+
+impl std::ops::Deref for Child {
+    type Target = smol::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.process
+    }
+}
+
+impl std::ops::DerefMut for Child {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.process
+    }
+}
+
+impl Child {
+    fn into_inner(self) -> smol::process::Child {
+        self.process
+    }
+
+    #[cfg(not(windows))]
+    fn spawn(mut command: std::process::Command, stdin: Stdio) -> Result<Self> {
+        util::set_pre_exec_to_start_new_session(&mut command);
+        let process = smol::process::Command::from(command)
+            .stdin(stdin)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        Ok(Self { process })
+    }
+
+    #[cfg(windows)]
+    fn spawn(command: std::process::Command, stdin: Stdio) -> Result<Self> {
+        // TODO(windows): create a job object and add the child process handle to it,
+        // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
+        let process = smol::process::Command::from(command)
+            .stdin(stdin)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        Ok(Self { process })
+    }
+
+    #[cfg(not(windows))]
+    fn kill(&mut self) {
+        let pid = self.process.id();
+        unsafe {
+            libc::killpg(pid as i32, libc::SIGKILL);
+        }
+    }
+
+    #[cfg(windows)]
+    fn kill(&mut self) {
+        // TODO(windows): terminate the job object in kill
+        let _ = self.process.kill();
     }
 }

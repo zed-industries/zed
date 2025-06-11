@@ -32,7 +32,7 @@ impl ChannelIndex {
             .retain(|channel_id| !channels.contains(channel_id));
     }
 
-    pub fn bulk_insert(&mut self) -> ChannelPathsInsertGuard {
+    pub fn bulk_insert(&mut self) -> ChannelPathsInsertGuard<'_> {
         ChannelPathsInsertGuard {
             channels_ordered: &mut self.channels_ordered,
             channels_by_id: &mut self.channels_by_id,

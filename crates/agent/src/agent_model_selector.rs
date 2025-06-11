@@ -91,12 +91,13 @@ impl AgentModelSelector {
 
 impl Render for AgentModelSelector {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle.clone();
-
         let model = self.selector.read(cx).delegate.active_model(cx);
         let model_name = model
             .map(|model| model.model.name().0)
             .unwrap_or_else(|| SharedString::from("No model selected"));
+
+        let focus_handle = self.focus_handle.clone();
+
         PickerPopoverMenu::new(
             self.selector.clone(),
             Button::new("active-model", model_name)

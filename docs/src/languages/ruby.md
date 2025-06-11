@@ -21,7 +21,11 @@ There are multiple language servers available for Ruby. Zed supports the two fol
 
 They both have an overlapping feature set of autocomplete, diagnostics, code actions, etc. and it's up to you to decide which one you want to use. Note that you can't use both at the same time.
 
-In addition to these two language servers, Zed also supports [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
+In addition to these two language servers, Zed also supports:
+
+- [rubocop](https://github.com/rubocop/rubocop) which is a static code analyzer and linter for Ruby. Under the hood, it's also used by Zed as a language server, but its functionality is complimentary to that of solargraph and ruby-lsp.
+- [sorbet](https://sorbet.org/) which is a static type checker for Ruby with a custom gradual type system.
+- [steep](https://github.com/soutaro/steep) which is a static type checker for Ruby that leverages Ruby Signature (RBS).
 
 When configuring a language server, it helps to open the LSP Logs window using the 'dev: Open Language Server Logs' command. You can then choose the corresponding language instance to see any logged information.
 
@@ -31,7 +35,7 @@ The [Ruby extension](https://github.com/zed-extensions/ruby) offers both `solarg
 
 ### Language Server Activation
 
-For all Ruby language servers (`solargraph`, `ruby-lsp`, and `rubocop`), the Ruby extension follows this activation sequence:
+For all supported Ruby language servers (`solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, and `steep`), the Ruby extension follows this activation sequence:
 
 1. If the language server is found in your project's `Gemfile`, it will be used through `bundle exec`.
 2. If not found in the `Gemfile`, the Ruby extension will look for the executable in your system `PATH`.
@@ -188,6 +192,52 @@ Rubocop has unsafe autocorrection disabled by default. We can tell Zed to enable
 }
 ```
 
+## Setting up Sorbet
+
+[Sorbet](https://sorbet.org/) is a popular static type checker for Ruby that includes a language server.
+
+To enable Sorbet, add `\"sorbet\"` to the `language_servers` list for Ruby in your `settings.json`. You may want to disable other language servers if Sorbet is intended to be your primary LSP, or if you plan to use it alongside another LSP for specific features like type checking.
+
+```json
+{
+  "languages": {
+    "Ruby": {
+      "language_servers": [
+        "ruby-lsp",
+        "sorbet",
+        "!rubocop",
+        "!solargraph",
+        "..."
+      ]
+    }
+  }
+}
+```
+
+For all aspects of installing Sorbet, setting it up in your project, and configuring its behavior, please refer to the [official Sorbet documentation](https://sorbet.org/docs/overview).
+
+## Setting up Steep
+
+[Steep](https://github.com/soutaro/steep) is a static type checker for Ruby that uses RBS files to define types.
+
+To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby in your `settings.json`. You may need to adjust the order or disable other LSPs depending on your desired setup.
+
+```json
+{
+  "languages": {
+    "Ruby": {
+      "language_servers": [
+        "ruby-lsp",
+        "steep",
+        "!solargraph",
+        "!rubocop",
+        "..."
+      ]
+    }
+  }
+}
+```
+
 ## Using the Tailwind CSS Language Server with Ruby
 
 It's possible to use the [Tailwind CSS Language Server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in Ruby and ERB files.
@@ -241,25 +291,36 @@ To run tests in your Ruby project, you can set up custom tasks in your local `.z
 ```json
 [
   {
-    "label": "test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
-    "command": "bin/rails test $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
+    "label": "test $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
+    "command": "bin/rails",
+    "args": [
+      "test",
+      "$ZED_RELATIVE_FILE",
+      "-n",
+      "\"$ZED_CUSTOM_RUBY_TEST_NAME\""
+    ],
     "tags": ["ruby-test"]
   }
 ]
 ```
 
-Note: We can't use `args` here because of the way quotes are handled.
-
 ### Minitest
 
-Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_SYMBOL` instead:
+Plain minitest does not support running tests by line number, only by name, so we need to use `$ZED_CUSTOM_RUBY_TEST_NAME` instead:
 
 ```json
 [
   {
-    "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_SYMBOL/",
-    "command": "bundle exec ruby",
-    "args": ["-Itest", "$ZED_RELATIVE_FILE", "-n /$ZED_SYMBOL/"],
+    "label": "-Itest $ZED_RELATIVE_FILE -n /$ZED_CUSTOM_RUBY_TEST_NAME/",
+    "command": "bundle",
+    "args": [
+      "exec",
+      "ruby",
+      "-Itest",
+      "$ZED_RELATIVE_FILE",
+      "-n",
+      "\"$ZED_CUSTOM_RUBY_TEST_NAME\""
+    ],
     "tags": ["ruby-test"]
   }
 ]
@@ -271,35 +332,11 @@ Plain minitest does not support running tests by line number, only by name, so w
 [
   {
     "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec rspec",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
+    "command": "bundle",
+    "args": ["exec", "rspec", "\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
     "tags": ["ruby-test"]
   }
 ]
 ```
 
-### quickdraw
-
-```json
-[
-  {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec qt",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
-    "tags": ["ruby-test"]
-  }
-]
-```
-
-### tldr
-
-```json
-[
-  {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "bundle exec tldr",
-    "args": ["\"$ZED_RELATIVE_FILE:$ZED_ROW\""],
-    "tags": ["ruby-test"]
-  }
-]
-```
+Similar task syntax can be used for other test frameworks such as `quickdraw` or `tldr`.

@@ -362,7 +362,7 @@ impl LanguageModel for GoogleLanguageModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("google/{}", self.model.id())
+        format!("google/{}", self.model.request_id())
     }
 
     fn max_token_count(&self) -> usize {
@@ -374,7 +374,7 @@ impl LanguageModel for GoogleLanguageModel {
         request: LanguageModelRequest,
         cx: &App,
     ) -> BoxFuture<'static, Result<usize>> {
-        let model_id = self.model.id().to_string();
+        let model_id = self.model.request_id().to_string();
         let request = into_google(request, model_id.clone(), self.model.mode());
         let http_client = self.http_client.clone();
         let api_key = self.state.read(cx).api_key.clone();
@@ -409,9 +409,14 @@ impl LanguageModel for GoogleLanguageModel {
                 'static,
                 Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
             >,
+            LanguageModelCompletionError,
         >,
     > {
-        let request = into_google(request, self.model.id().to_string(), self.model.mode());
+        let request = into_google(
+            request,
+            self.model.request_id().to_string(),
+            self.model.mode(),
+        );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request
