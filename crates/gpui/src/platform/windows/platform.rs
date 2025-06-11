@@ -81,9 +81,9 @@ impl WindowsPlatformState {
 }
 
 impl WindowsPlatform {
-    pub(crate) fn new() -> anyhow::Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         unsafe {
-            OleInitialize(None).expect("unable to initialize Windows OLE");
+            OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
@@ -97,17 +97,17 @@ impl WindowsPlatform {
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let bitmap_factory = ManuallyDrop::new(unsafe {
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
-                .expect("Error creating bitmap factory.")
+                .context("Error creating bitmap factory.")?
         });
         let text_system = Arc::new(
             DirectWriteTextSystem::new(&bitmap_factory)
-                .expect("Error creating DirectWriteTextSystem"),
+                .context("Error creating DirectWriteTextSystem")?,
         );
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
-        let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
+        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
+        let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
             state,
