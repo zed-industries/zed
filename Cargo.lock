@@ -652,7 +652,6 @@ dependencies = [
  "settings",
  "text",
  "util",
- "watch",
  "workspace",
  "workspace-hack",
  "zlog",
