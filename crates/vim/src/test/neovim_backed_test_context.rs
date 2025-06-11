@@ -222,7 +222,14 @@ impl NeovimBackedTestContext {
     pub async fn simulate_shared_keystrokes(&mut self, keystroke_texts: &str) {
         for keystroke_text in keystroke_texts.split(' ') {
             self.recent_keystrokes.push(keystroke_text.to_string());
+            #[cfg(not(feature = "neovim"))]
             self.neovim.send_keystroke(keystroke_text).await;
+            #[cfg(feature = "neovim")]
+            {
+                let keyboard_mapper = self.cx.keyboard_mapper();
+                self.neovim
+                    .send_keystroke(keystroke_text, keyboard_mapper.as_ref());
+            }
         }
         self.simulate_keystrokes(keystroke_texts);
     }

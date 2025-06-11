@@ -10,7 +10,7 @@ use async_compat::Compat;
 #[cfg(feature = "neovim")]
 use async_trait::async_trait;
 #[cfg(feature = "neovim")]
-use gpui::Keystroke;
+use gpui::{Keystroke, PlatformKeyboardMapper};
 
 #[cfg(feature = "neovim")]
 use language::Point;
@@ -110,8 +110,12 @@ impl NeovimConnection {
 
     // Sends a keystroke to the neovim process.
     #[cfg(feature = "neovim")]
-    pub async fn send_keystroke(&mut self, keystroke_text: &str) {
-        let mut keystroke = Keystroke::parse(keystroke_text).unwrap();
+    pub async fn send_keystroke(
+        &mut self,
+        keystroke_text: &str,
+        keyboard_mapper: &dyn PlatformKeyboardMapper,
+    ) {
+        let mut keystroke = Keystroke::parse(keystroke_text, keyboard_mapper).unwrap();
 
         if keystroke.key == "<" {
             keystroke.key = "lt".to_string()
