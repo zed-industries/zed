@@ -15,15 +15,15 @@ use ui::{
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
 
-struct UniformListData {
-    render_item_fn: Box<dyn Fn(RowRangeContext, &mut Window, &mut App) -> Vec<AnyElement>>,
+struct UniformListData<const COLS: usize> {
+    render_item_fn: Box<dyn Fn(RowRangeContext<COLS>, &mut Window, &mut App) -> Vec<AnyElement>>,
     element_id: ElementId,
     row_count: usize,
 }
 
 enum TableContents<const COLS: usize> {
     Vec(Vec<[AnyElement; COLS]>),
-    UniformList(UniformListData),
+    UniformList(UniformListData<COLS>),
 }
 
 impl<const COLS: usize> TableContents<COLS> {
@@ -272,6 +272,7 @@ pub struct Table<const COLS: usize = 3> {
     headers: Option<[AnyElement; COLS]>,
     rows: TableContents<COLS>,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
+    column_widths: Option<[Length; COLS]>,
 }
 
 impl<const COLS: usize> Table<COLS> {
@@ -283,6 +284,7 @@ impl<const COLS: usize> Table<COLS> {
             headers: None,
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
+            column_widths: None,
         }
     }
 
@@ -294,7 +296,8 @@ impl<const COLS: usize> Table<COLS> {
         mut self,
         id: impl Into<ElementId>,
         row_count: usize,
-        render_item_fn: impl Fn(RowRangeContext, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
+        render_item_fn: impl Fn(RowRangeContext<COLS>, &mut Window, &mut App) -> Vec<AnyElement>
+        + 'static,
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
             element_id: id.into(),
@@ -333,6 +336,11 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
+    pub fn column_widths(mut self, widths: [impl Into<Length>; COLS]) -> Self {
+        self.column_widths = Some(widths.map(Into::into));
+        self
+    }
+
     pub fn render_row(&self, items: [impl IntoElement; COLS], cx: &mut App) -> AnyElement {
         return render_row(0, items, TableRenderContext::new(self), cx);
     }
@@ -360,7 +368,7 @@ fn base_cell_style(cx: &App) -> Div {
 pub fn render_row<const COLS: usize>(
     row_index: usize,
     items: [impl IntoElement; COLS],
-    rows_cx: TableRenderContext,
+    rows_cx: TableRenderContext<COLS>,
     cx: &App,
 ) -> AnyElement {
     let is_last = row_index == rows_cx.total_row_count - 1;
@@ -410,24 +418,26 @@ pub fn render_header<const COLS: usize>(
 }
 
 #[derive(Clone, Copy)]
-pub struct TableRenderContext {
+pub struct TableRenderContext<const COLS: usize> {
     pub striped: bool,
     pub total_row_count: usize,
+    pub column_widths: Option<[Length; COLS]>,
 }
 
-impl TableRenderContext {
-    fn new<const COLS: usize>(table: &Table<COLS>) -> Self {
+impl<const COLS: usize> TableRenderContext<COLS> {
+    fn new(table: &Table<COLS>) -> Self {
         Self {
             striped: table.striped,
             total_row_count: table.rows.len(),
+            column_widths: table.column_widths,
         }
     }
 }
 
 #[derive(Clone)]
-pub struct RowRangeContext {
+pub struct RowRangeContext<const COLS: usize> {
     pub range: Range<usize>,
-    pub table_context: TableRenderContext,
+    pub table_context: TableRenderContext<COLS>,
 }
 
 impl<const COLS: usize> RenderOnce for Table<COLS> {

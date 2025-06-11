@@ -155,10 +155,11 @@ impl Render for KeymapEditor {
                 Table::new()
                     .interactable(&self.table_interaction_state)
                     .header(["Command", "Keystrokes", "Context", "Source"])
+                    .column_widths([rems(16.), rems(24.), rems(32.), rems(8.)])
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
-                        cx.processor(move |this, rows: RowRangeContext, _window, cx| {
+                        cx.processor(move |this, rows: RowRangeContext<4>, _window, cx| {
                             rows.range
                                 .map(|index| {
                                     let binding = &this.processed_bindings[index];
