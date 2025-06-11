@@ -231,9 +231,7 @@ impl SerializableItem for KeymapEditor {
         _window: &mut Window,
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
-        let Some(workspace_id) = workspace.database_id() else {
-            return None;
-        };
+        let workspace_id = workspace.database_id()?;
         Some(cx.background_spawn(async move {
             KEYBINDING_EDITORS
                 .save_keybinding_editor(item_id, workspace_id)
