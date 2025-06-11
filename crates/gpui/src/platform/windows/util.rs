@@ -8,7 +8,7 @@ use windows::{
     },
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{Foundation::*, Graphics::Dwm::*, UI::WindowsAndMessaging::*},
-    core::BOOL,
+    core::{BOOL, HSTRING},
 };
 
 use crate::*;
@@ -185,4 +185,15 @@ pub(crate) fn system_appearance() -> Result<WindowAppearance> {
 #[inline(always)]
 fn is_color_light(color: &Color) -> bool {
     ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
+}
+
+pub(crate) fn show_error(content: String) {
+    let _ = unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(content),
+            windows::core::w!("Error: Zed failed to launch"),
+            MB_ICONERROR | MB_SYSTEMMODAL,
+        )
+    };
 }
