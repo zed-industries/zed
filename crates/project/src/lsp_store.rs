@@ -3934,6 +3934,7 @@ impl LspStore {
     ) {
         match evt {
             extension::Event::ExtensionInstalled(_)
+            | extension::Event::ExtensionUninstalled(_)
             | extension::Event::ConfigureExtensionRequested(_) => return,
             extension::Event::ExtensionsInstalledChanged => {}
         }
