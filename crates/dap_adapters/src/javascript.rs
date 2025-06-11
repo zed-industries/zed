@@ -77,7 +77,10 @@ impl JsDebugAdapter {
                 .and_then(|value| value.as_str().map(str::to_owned))
             {
                 match program.as_str() {
-                    "npm" | "pnpm" | "yarn" | "bun" => {
+                    "npm" | "pnpm" | "yarn" | "bun"
+                        if !configuration.contains_key("runtimeExecutable")
+                            && !configuration.contains_key("runtimeArgs") =>
+                    {
                         configuration.remove("program");
                         configuration.insert("runtimeExecutable".to_owned(), program.into());
                         if let Some(args) = configuration.remove("args") {
