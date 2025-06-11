@@ -71,6 +71,26 @@ impl JsDebugAdapter {
 
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
+            if let Some(program) = configuration
+                .get("program")
+                .cloned()
+                .and_then(|value| value.as_str().map(str::to_owned))
+            {
+                match program.as_str() {
+                    "npm" | "pnpm" | "yarn" | "bun"
+                        if !configuration.contains_key("runtimeExecutable")
+                            && !configuration.contains_key("runtimeArgs") =>
+                    {
+                        configuration.remove("program");
+                        configuration.insert("runtimeExecutable".to_owned(), program.into());
+                        if let Some(args) = configuration.remove("args") {
+                            configuration.insert("runtimeArgs".to_owned(), args);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             configuration
                 .entry("cwd")
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
