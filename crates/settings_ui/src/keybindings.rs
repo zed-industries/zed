@@ -14,7 +14,7 @@ use workspace::{Item, SerializableItem, Workspace, register_serializable_item};
 
 use crate::{
     keybindings::persistence::KEYBINDING_EDITORS,
-    ui_components::table::{Table, TableInteractionState},
+    ui_components::table::{RowRangeContext, Table, TableInteractionState},
 };
 
 actions!(zed, [OpenKeymapEditor]);
@@ -158,8 +158,8 @@ impl Render for KeymapEditor {
                     .uniform_list(
                         "keymap-editor-table",
                         row_count,
-                        cx.processor(move |this, range: Range<usize>, _window, cx| {
-                            range
+                        cx.processor(move |this, rows: RowRangeContext, _window, cx| {
+                            rows.range
                                 .map(|index| {
                                     let binding = &this.processed_bindings[index];
                                     let row = [
@@ -169,11 +169,11 @@ impl Render for KeymapEditor {
                                         binding.source.clone().unwrap_or_default(),
                                     ];
 
-                                    // fixme: pass through callback as a row_cx param
-                                    let striped = false;
-
                                     crate::ui_components::table::render_row(
-                                        index, row, row_count, striped, cx,
+                                        index,
+                                        row,
+                                        rows.table_context,
+                                        cx,
                                     )
                                 })
                                 .collect()

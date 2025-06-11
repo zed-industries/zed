@@ -16,7 +16,7 @@ use ui::{
 };
 
 struct UniformListData {
-    render_item_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement>>,
+    render_item_fn: Box<dyn Fn(RowRangeContext, &mut Window, &mut App) -> Vec<AnyElement>>,
     element_id: ElementId,
     row_count: usize,
 }
@@ -294,7 +294,7 @@ impl<const COLS: usize> Table<COLS> {
         mut self,
         id: impl Into<ElementId>,
         row_count: usize,
-        render_item_fn: impl Fn(Range<usize>, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
+        render_item_fn: impl Fn(RowRangeContext, &mut Window, &mut App) -> Vec<AnyElement> + 'static,
     ) -> Self {
         self.rows = TableContents::UniformList(UniformListData {
             element_id: id.into(),
@@ -334,7 +334,7 @@ impl<const COLS: usize> Table<COLS> {
     }
 
     pub fn render_row(&self, items: [impl IntoElement; COLS], cx: &mut App) -> AnyElement {
-        return render_row(0, items, self.rows.len(), self.striped, cx);
+        return render_row(0, items, TableRenderContext::new(self), cx);
     }
 
     pub fn render_header(
@@ -360,12 +360,11 @@ fn base_cell_style(cx: &App) -> Div {
 pub fn render_row<const COLS: usize>(
     row_index: usize,
     items: [impl IntoElement; COLS],
-    row_count: usize,
-    striped: bool,
+    rows_cx: TableRenderContext,
     cx: &App,
 ) -> AnyElement {
-    let is_last = row_index == row_count - 1;
-    let bg = if row_index % 2 == 1 && striped {
+    let is_last = row_index == rows_cx.total_row_count - 1;
+    let bg = if row_index % 2 == 1 && rows_cx.striped {
         Some(cx.theme().colors().text.opacity(0.05))
     } else {
         None
@@ -410,10 +409,31 @@ pub fn render_header<const COLS: usize>(
         }))
 }
 
+#[derive(Clone, Copy)]
+pub struct TableRenderContext {
+    pub striped: bool,
+    pub total_row_count: usize,
+}
+
+impl TableRenderContext {
+    fn new<const COLS: usize>(table: &Table<COLS>) -> Self {
+        Self {
+            striped: table.striped,
+            total_row_count: table.rows.len(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct RowRangeContext {
+    pub range: Range<usize>,
+    pub table_context: TableRenderContext,
+}
+
 impl<const COLS: usize> RenderOnce for Table<COLS> {
     fn render(mut self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         // match self.ro
-        let row_count = self.rows.len();
+        let table_context = TableRenderContext::new(&self);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
 
         let scroll_track_size = px(16.);
@@ -461,7 +481,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     items
                         .into_iter()
                         .enumerate()
-                        .map(|(index, row)| render_row(index, row, row_count, self.striped, cx)),
+                        .map(|(index, row)| render_row(index, row, table_context, cx)),
                 ),
                 TableContents::UniformList(uniform_list_data) => parent
                     .h_full()
@@ -476,7 +496,16 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 uniform_list(
                                     uniform_list_data.element_id,
                                     uniform_list_data.row_count,
-                                    uniform_list_data.render_item_fn,
+                                    {
+                                        let render_item_fn = uniform_list_data.render_item_fn;
+                                        move |range: Range<usize>, window, cx| {
+                                            let range_context = RowRangeContext {
+                                                range,
+                                                table_context,
+                                            };
+                                            render_item_fn(range_context, window, cx)
+                                        }
+                                    },
                                 )
                                 .size_full()
                                 .flex_grow()
