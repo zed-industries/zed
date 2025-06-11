@@ -610,7 +610,7 @@ pub struct GutterContent {
     ///
     /// Default: true
     pub line_numbers: Option<bool>,
-    /// Minimum width for line numbers in characters.
+    /// Minimum number of characters to reserve space for in the gutter.
     ///
     /// Default: 4
     pub min_line_number_digits: Option<usize>,
