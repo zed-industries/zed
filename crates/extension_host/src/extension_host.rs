@@ -1682,12 +1682,15 @@ impl ExtensionStore {
 
     pub fn register_ssh_client(&mut self, client: Entity<SshRemoteClient>, cx: &mut Context<Self>) {
         let connection_options = client.read(cx).connection_options();
-        if self.ssh_clients.contains_key(&connection_options.ssh_url()) {
-            return;
+        let ssh_url = connection_options.ssh_url();
+
+        if let Some(existing_client) = self.ssh_clients.get(&ssh_url) {
+            if existing_client.upgrade().is_some() {
+                return;
+            }
         }
 
-        self.ssh_clients
-            .insert(connection_options.ssh_url(), client.downgrade());
+        self.ssh_clients.insert(ssh_url, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

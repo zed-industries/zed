@@ -13,7 +13,7 @@ use super::dap_command::{
 };
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
-use collections::{HashMap, HashSet, IndexMap, IndexSet};
+use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
 use dap::requests::{Request, RunInTerminal, StartDebugging};
@@ -25,8 +25,9 @@ use dap::{
 };
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
-    RunInTerminalRequestArguments, StartDebuggingRequestArguments,
+    RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
 };
+use futures::SinkExt;
 use futures::channel::{mpsc, oneshot};
 use futures::{FutureExt, future::Shared};
 use gpui::{
@@ -105,7 +106,7 @@ impl ThreadStatus {
 #[derive(Debug)]
 pub struct Thread {
     dap: dap::Thread,
-    stack_frame_ids: IndexSet<StackFrameId>,
+    stack_frames: Vec<StackFrame>,
     _has_stopped: bool,
 }
 
@@ -113,7 +114,7 @@ impl From<dap::Thread> for Thread {
     fn from(dap: dap::Thread) -> Self {
         Self {
             dap,
-            stack_frame_ids: Default::default(),
+            stack_frames: Default::default(),
             _has_stopped: false,
         }
     }
@@ -458,7 +459,7 @@ impl RunningMode {
         let task = cx.background_spawn(futures::future::try_join(launch, configuration_sequence));
 
         cx.spawn(async move |this, cx| {
-            task.await?;
+            let result = task.await;
 
             this.update(cx, |this, cx| {
                 if let Some(this) = this.as_running_mut() {
@@ -468,6 +469,7 @@ impl RunningMode {
             })
             .ok();
 
+            result?;
             anyhow::Ok(())
         })
     }
@@ -823,7 +825,7 @@ impl Session {
                 id,
                 parent_session,
                 worktree.downgrade(),
-                binary,
+                binary.clone(),
                 message_tx,
                 cx.clone(),
             )
@@ -836,10 +838,26 @@ impl Session {
             this.update(cx, |session, cx| session.request_initialize(cx))?
                 .await?;
 
-            this.update(cx, |session, cx| {
-                session.initialize_sequence(initialized_rx, dap_store.clone(), cx)
-            })?
-            .await
+            let result = this
+                .update(cx, |session, cx| {
+                    session.initialize_sequence(initialized_rx, dap_store.clone(), cx)
+                })?
+                .await;
+
+            if result.is_err() {
+                let mut console = this.update(cx, |session, cx| session.console_output(cx))?;
+
+                console
+                    .send(format!(
+                        "Tried to launch debugger with: {}",
+                        serde_json::to_string_pretty(&binary.request_args.configuration)
+                            .unwrap_or_default(),
+                    ))
+                    .await
+                    .ok();
+            }
+
+            result
         })
     }
 
@@ -990,10 +1008,41 @@ impl Session {
         request: dap::messages::Request,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let request_args = serde_json::from_value::<RunInTerminalRequestArguments>(
+        let request_args = match serde_json::from_value::<RunInTerminalRequestArguments>(
             request.arguments.unwrap_or_default(),
-        )
-        .expect("To parse StartDebuggingRequestArguments");
+        ) {
+            Ok(args) => args,
+            Err(error) => {
+                return cx.spawn(async move |session, cx| {
+                    let error = serde_json::to_value(dap::ErrorResponse {
+                        error: Some(dap::Message {
+                            id: request.seq,
+                            format: error.to_string(),
+                            variables: None,
+                            send_telemetry: None,
+                            show_user: None,
+                            url: None,
+                            url_label: None,
+                        }),
+                    })
+                    .ok();
+
+                    session
+                        .update(cx, |this, cx| {
+                            this.respond_to_client(
+                                request.seq,
+                                false,
+                                StartDebugging::COMMAND.to_string(),
+                                error,
+                                cx,
+                            )
+                        })?
+                        .await?;
+
+                    Err(anyhow!("Failed to parse RunInTerminalRequestArguments"))
+                });
+            }
+        };
 
         let seq = request.seq;
 
@@ -1930,8 +1979,8 @@ impl Session {
                     let stack_frames = stack_frames.log_err()?;
 
                     let entry = this.threads.entry(thread_id).and_modify(|thread| {
-                        thread.stack_frame_ids =
-                            stack_frames.iter().map(|frame| frame.id).collect();
+                        thread.stack_frames =
+                            stack_frames.iter().cloned().map(StackFrame::from).collect();
                     });
                     debug_assert!(
                         matches!(entry, indexmap::map::Entry::Occupied(_)),
@@ -1941,6 +1990,15 @@ impl Session {
                     this.stack_frames.extend(
                         stack_frames
                             .iter()
+                            .filter(|frame| {
+                                // Workaround for JavaScript debug adapter sending out "fake" stack frames for delineating await points. This is fine,
+                                // except that they always use an id of 0 for it, which collides with other (valid) stack frames.
+                                !(frame.id == 0
+                                    && frame.line == 0
+                                    && frame.column == 0
+                                    && frame.presentation_hint
+                                        == Some(StackFramePresentationHint::Label))
+                            })
                             .cloned()
                             .map(|frame| (frame.id, StackFrame::from(frame))),
                     );
@@ -1958,14 +2016,7 @@ impl Session {
 
         self.threads
             .get(&thread_id)
-            .map(|thread| {
-                thread
-                    .stack_frame_ids
-                    .iter()
-                    .filter_map(|id| self.stack_frames.get(id))
-                    .cloned()
-                    .collect()
-            })
+            .map(|thread| thread.stack_frames.clone())
             .unwrap_or_default()
     }
 
