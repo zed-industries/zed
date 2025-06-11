@@ -477,10 +477,9 @@ impl NewProcessModal {
                     .get_index_of(adapter.0.as_ref())
                     .unwrap_or(usize::MAX)
             });
-        }
-
-        if self.debugger.is_none() {
-            self.debugger = available_adapters.first().cloned();
+            if self.debugger.is_none() {
+                self.debugger = available_adapters.first().cloned();
+            }
         }
 
         let label = self
@@ -1513,41 +1512,4 @@ pub(crate) fn resolve_path(path: &mut String) {
             &strip_path
         );
     };
-}
-
-#[cfg(test)]
-impl NewProcessModal {
-    // #[cfg(test)]
-    // pub(crate) fn set_configure(
-    //     &mut self,
-    //     program: impl AsRef<str>,
-    //     cwd: impl AsRef<str>,
-    //     stop_on_entry: bool,
-    //     window: &mut Window,
-    //     cx: &mut Context<Self>,
-    // ) {
-    //     self.mode = NewProcessMode::Launch;
-    //     self.debugger = Some(dap::adapters::DebugAdapterName("fake-adapter".into()));
-
-    //     self.launch_mode.update(cx, |configure, cx| {
-    //         configure.program.update(cx, |editor, cx| {
-    //             editor.clear(window, cx);
-    //             editor.set_text(program.as_ref(), window, cx);
-    //         });
-
-    //         configure.cwd.update(cx, |editor, cx| {
-    //             editor.clear(window, cx);
-    //             editor.set_text(cwd.as_ref(), window, cx);
-    //         });
-
-    //         configure.stop_on_entry = match stop_on_entry {
-    //             true => ToggleState::Selected,
-    //             _ => ToggleState::Unselected,
-    //         }
-    //     })
-    // }
-
-    // pub(crate) fn save_scenario(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
-    //     self.save_debug_scenario(window, cx);
-    // }
 }
