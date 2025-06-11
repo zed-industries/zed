@@ -952,7 +952,7 @@ impl Child {
     }
 
     #[cfg(windows)]
-    fn spawn(mut command: smol::process::Command, stdin: Stdio) -> Result<Self> {
+    fn spawn(command: std::process::Command, stdin: Stdio) -> Result<Self> {
         // TODO(windows): create a job object and add the child process handle to it,
         // see https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects
         let process = smol::process::Command::from(command)
@@ -972,8 +972,8 @@ impl Child {
     }
 
     #[cfg(windows)]
-    fn kill(&self) {
+    fn kill(&mut self) {
         // TODO(windows): terminate the job object in kill
-        self.process.kill();
+        let _ = self.process.kill();
     }
 }
