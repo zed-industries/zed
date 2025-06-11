@@ -187,7 +187,7 @@ impl PythonDebugAdapter {
         );
 
         Ok(DebugAdapterBinary {
-            command: python_command,
+            command: Some(python_command),
             arguments,
             connection: Some(adapters::TcpArguments {
                 host,

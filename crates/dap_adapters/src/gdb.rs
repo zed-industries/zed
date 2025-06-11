@@ -183,7 +183,7 @@ impl DebugAdapter for GdbDebugAdapter {
         };
 
         Ok(DebugAdapterBinary {
-            command: gdb_path,
+            command: Some(gdb_path),
             arguments: vec!["-i=dap".into()],
             envs: HashMap::default(),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
