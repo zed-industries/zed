@@ -1,16 +1,12 @@
-use std::{fmt::Write as _, ops::Range, time::Duration};
+use std::{fmt::Write as _, ops::Range};
 
 use db::anyhow::anyhow;
 use gpui::{
-    AnyElement, AppContext as _, Axis, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    FontWeight, Global, IntoElement, Length, ListHorizontalSizingBehavior, ListSizingBehavior,
-    MouseButton, Subscription, Task, UniformListScrollHandle, actions, div, px, uniform_list,
+    AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, Subscription, actions, div,
 };
 
-use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
-use settings::Settings as _;
 use ui::{
-    ActiveTheme as _, App, BorrowAppContext, ParentElement as _, Render, Scrollbar, ScrollbarState,
+    ActiveTheme as _, App, BorrowAppContext, ParentElement as _, Render,
     SharedString, Styled as _, Window, prelude::*,
 };
 use workspace::{Item, SerializableItem, Workspace, register_serializable_item};
@@ -308,7 +304,7 @@ impl SerializableItem for KeymapEditor {
                 .get_keybinding_editor(item_id, workspace_id)?
                 .is_some()
             {
-                cx.update(|window, cx| KeymapEditor::new(window, cx))
+                cx.update(KeymapEditor::new)
             } else {
                 Err(anyhow!("No keybinding editor to deserialize"))
             }
