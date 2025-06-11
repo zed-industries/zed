@@ -8,89 +8,6 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use text::Anchor;
 
-struct CompletionBuilder;
-
-impl CompletionBuilder {
-    fn constant(label: &str, sort_text: &str) -> Completion {
-        Self::new(label, sort_text, CompletionItemKind::CONSTANT)
-    }
-
-    fn function(label: &str, sort_text: &str) -> Completion {
-        Self::new(label, sort_text, CompletionItemKind::FUNCTION)
-    }
-
-    fn variable(label: &str, sort_text: &str) -> Completion {
-        Self::new(label, sort_text, CompletionItemKind::VARIABLE)
-    }
-
-    fn keyword(label: &str, sort_text: &str) -> Completion {
-        Self::new(label, sort_text, CompletionItemKind::KEYWORD)
-    }
-
-    fn snippet(label: &str, sort_text: &str) -> Completion {
-        Self::new(label, sort_text, CompletionItemKind::SNIPPET)
-    }
-
-    fn new(label: &str, sort_text: &str, kind: CompletionItemKind) -> Completion {
-        Completion {
-            replace_range: Anchor::MIN..Anchor::MAX,
-            new_text: label.to_string(),
-            label: CodeLabel {
-                text: label.to_string(),
-                runs: Default::default(),
-                filter_range: 0..label.len(),
-            },
-            documentation: None,
-            source: CompletionSource::Lsp {
-                insert_range: None,
-                server_id: LanguageServerId(0),
-                lsp_completion: Box::new(CompletionItem {
-                    label: label.to_string(),
-                    kind: Some(kind),
-                    sort_text: Some(sort_text.to_string()),
-                    ..Default::default()
-                }),
-                lsp_defaults: None,
-                resolved: false,
-            },
-            icon_path: None,
-            insert_text_mode: None,
-            confirm: None,
-        }
-    }
-}
-
-async fn sort_matches(
-    query: &str,
-    completions: Vec<Completion>,
-    snippet_sort_order: SnippetSortOrder,
-    cx: &mut TestAppContext,
-) -> Vec<String> {
-    let candidates: Arc<[StringMatchCandidate]> = completions
-        .iter()
-        .enumerate()
-        .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.text))
-        .collect();
-    let cancel_flag = Arc::new(AtomicBool::new(false));
-    let background_executor = cx.executor();
-    let matches = fuzzy::match_strings(
-        &candidates,
-        query,
-        query.chars().any(|c| c.is_uppercase()),
-        100,
-        &cancel_flag,
-        background_executor,
-    )
-    .await;
-    let sorted_matches = CompletionsMenu::sort_string_matches(
-        matches,
-        Some(query),
-        snippet_sort_order,
-        &completions,
-    );
-    sorted_matches.into_iter().map(|m| m.string).collect()
-}
-
 #[gpui::test]
 async fn test_sort_matches_local_variable_over_global_variable(cx: &mut TestAppContext) {
     // Case 1: "foo"
@@ -467,4 +384,87 @@ async fn test_sort_matches_for_prioritize_not_exact_match(cx: &mut TestAppContex
     assert_eq!(matches[1], "Item");
     assert_eq!(matches[2], "Item");
     assert_eq!(matches[3], "ItemText");
+}
+
+struct CompletionBuilder;
+
+impl CompletionBuilder {
+    fn constant(label: &str, sort_text: &str) -> Completion {
+        Self::new(label, sort_text, CompletionItemKind::CONSTANT)
+    }
+
+    fn function(label: &str, sort_text: &str) -> Completion {
+        Self::new(label, sort_text, CompletionItemKind::FUNCTION)
+    }
+
+    fn variable(label: &str, sort_text: &str) -> Completion {
+        Self::new(label, sort_text, CompletionItemKind::VARIABLE)
+    }
+
+    fn keyword(label: &str, sort_text: &str) -> Completion {
+        Self::new(label, sort_text, CompletionItemKind::KEYWORD)
+    }
+
+    fn snippet(label: &str, sort_text: &str) -> Completion {
+        Self::new(label, sort_text, CompletionItemKind::SNIPPET)
+    }
+
+    fn new(label: &str, sort_text: &str, kind: CompletionItemKind) -> Completion {
+        Completion {
+            replace_range: Anchor::MIN..Anchor::MAX,
+            new_text: label.to_string(),
+            label: CodeLabel {
+                text: label.to_string(),
+                runs: Default::default(),
+                filter_range: 0..label.len(),
+            },
+            documentation: None,
+            source: CompletionSource::Lsp {
+                insert_range: None,
+                server_id: LanguageServerId(0),
+                lsp_completion: Box::new(CompletionItem {
+                    label: label.to_string(),
+                    kind: Some(kind),
+                    sort_text: Some(sort_text.to_string()),
+                    ..Default::default()
+                }),
+                lsp_defaults: None,
+                resolved: false,
+            },
+            icon_path: None,
+            insert_text_mode: None,
+            confirm: None,
+        }
+    }
+}
+
+async fn sort_matches(
+    query: &str,
+    completions: Vec<Completion>,
+    snippet_sort_order: SnippetSortOrder,
+    cx: &mut TestAppContext,
+) -> Vec<String> {
+    let candidates: Arc<[StringMatchCandidate]> = completions
+        .iter()
+        .enumerate()
+        .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.text))
+        .collect();
+    let cancel_flag = Arc::new(AtomicBool::new(false));
+    let background_executor = cx.executor();
+    let matches = fuzzy::match_strings(
+        &candidates,
+        query,
+        query.chars().any(|c| c.is_uppercase()),
+        100,
+        &cancel_flag,
+        background_executor,
+    )
+    .await;
+    let sorted_matches = CompletionsMenu::sort_string_matches(
+        matches,
+        Some(query),
+        snippet_sort_order,
+        &completions,
+    );
+    sorted_matches.into_iter().map(|m| m.string).collect()
 }
