@@ -78,9 +78,8 @@ pub struct ToggleCodeActions {
     #[serde(default)]
     #[serde(skip)]
     pub deployed_from: Option<CodeActionSource>,
-    // Run first available task if there is only one.
+    // Run the preferred action or the first available task if there is only one.
     #[serde(default)]
-    #[serde(skip)]
     pub quick_launch: bool,
 }
 
