@@ -39,7 +39,7 @@ use util::{ResultExt, maybe, post_inc};
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
-pub struct LanguageName(SharedString);
+pub struct LanguageName(pub SharedString);
 
 impl LanguageName {
     pub fn new(s: &str) -> Self {

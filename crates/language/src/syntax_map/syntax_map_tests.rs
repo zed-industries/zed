@@ -788,11 +788,11 @@ fn test_empty_combined_injections_inside_injections(cx: &mut App) {
             "(template...",
             // Markdown inline content
             "(inline)",
-            // HTML within the ERB
-            "(document (text))",
             // The ruby syntax tree should be empty, since there are
             // no interpolations in the ERB template.
             "(program)",
+            // HTML within the ERB
+            "(document (text))",
         ],
     );
 }
