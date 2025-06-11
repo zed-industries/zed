@@ -1008,10 +1008,41 @@ impl Session {
         request: dap::messages::Request,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let request_args = serde_json::from_value::<RunInTerminalRequestArguments>(
+        let request_args = match serde_json::from_value::<RunInTerminalRequestArguments>(
             request.arguments.unwrap_or_default(),
-        )
-        .expect("To parse StartDebuggingRequestArguments");
+        ) {
+            Ok(args) => args,
+            Err(error) => {
+                return cx.spawn(async move |session, cx| {
+                    let error = serde_json::to_value(dap::ErrorResponse {
+                        error: Some(dap::Message {
+                            id: request.seq,
+                            format: error.to_string(),
+                            variables: None,
+                            send_telemetry: None,
+                            show_user: None,
+                            url: None,
+                            url_label: None,
+                        }),
+                    })
+                    .ok();
+
+                    session
+                        .update(cx, |this, cx| {
+                            this.respond_to_client(
+                                request.seq,
+                                false,
+                                StartDebugging::COMMAND.to_string(),
+                                error,
+                                cx,
+                            )
+                        })?
+                        .await?;
+
+                    Err(anyhow!("Failed to parse RunInTerminalRequestArguments"))
+                });
+            }
+        };
 
         let seq = request.seq;
 
