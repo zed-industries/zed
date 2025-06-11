@@ -445,7 +445,9 @@
     // Whether to show breakpoints in the gutter.
     "breakpoints": true,
     // Whether to show fold buttons in the gutter.
-    "folds": true
+    "folds": true,
+    // Minimum number of characters to reserve space for in the gutter.
+    "min_line_number_digits": 4
   },
   "indent_guides": {
     // Whether to show indent guides in the editor.
