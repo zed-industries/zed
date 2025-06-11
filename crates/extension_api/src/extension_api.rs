@@ -204,8 +204,19 @@ pub trait Extension: Send + Sync {
         Err("`get_dap_binary` not implemented".to_string())
     }
 
-    fn dap_schema(&mut self, _adapter_name: String) -> Result<serde_json::Value, String> {
-        Err("`dap_schema` not implemented".to_string())
+    fn dap_request_kind(
+        &mut self,
+        _adapter_name: String,
+        _config: serde_json::Value,
+    ) -> Result<StartDebuggingRequestArgumentsRequest, String> {
+        Err("`dap_request_kind` not implemented".to_string())
+    }
+    fn dap_config_to_scenario(
+        &mut self,
+        _adapter_name: DebugConfig,
+        _config: &Worktree,
+    ) -> Result<DebugScenario, String> {
+        Err("`dap_config_to_scenario` not implemented".to_string())
     }
 }
 
@@ -399,6 +410,22 @@ impl wit::Guest for Component {
         worktree: &Worktree,
     ) -> Result<wit::DebugAdapterBinary, String> {
         extension().get_dap_binary(adapter_name, config, user_installed_path, worktree)
+    }
+
+    fn dap_request_kind(
+        adapter_name: String,
+        config: String,
+    ) -> Result<StartDebuggingRequestArgumentsRequest, String> {
+        extension().dap_request_kind(
+            adapter_name,
+            serde_json::from_str(&config).map_err(|e| format!("Failed to parse config: {e}"))?,
+        )
+    }
+    fn dap_config_to_scenario(
+        config: DebugConfig,
+        worktree: &Worktree,
+    ) -> Result<DebugScenario, String> {
+        extension().dap_config_to_scenario(config, worktree)
     }
 }
 

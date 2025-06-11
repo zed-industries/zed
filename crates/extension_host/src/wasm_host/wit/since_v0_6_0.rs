@@ -1,6 +1,6 @@
 use crate::wasm_host::wit::since_v0_6_0::{
     dap::{
-        AttachRequest, BuildTaskDefinition, DebugRequest, LaunchRequest,
+        AttachRequest, BuildTaskDefinition, BuildTaskTemplate, DebugRequest, LaunchRequest,
         StartDebuggingRequestArguments, TcpArguments, TcpArgumentsTemplate,
     },
     slash_command::SlashCommandOutputSection,
@@ -205,6 +205,19 @@ impl From<BuildTaskDefinition> for extension::BuildTaskDefinition {
         }
     }
 }
+impl From<BuildTaskTemplate> for extension::BuildTaskTemplate {
+    fn from(value: BuildTaskTemplate) -> Self {
+        Self {
+            label: value.label,
+            command: value.command,
+            args: value.args,
+            env: value.env.into_iter().collect(),
+            cwd: value.cwd,
+            ..Default::default()
+        }
+    }
+}
+
 impl TryFrom<DebugScenario> for extension::DebugScenario {
     type Error = anyhow::Error;
 

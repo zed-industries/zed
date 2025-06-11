@@ -4,5 +4,5 @@ pub use dap::{
 };
 pub use task::{
     AttachRequest, BuildTaskDefinition, DebugRequest, DebugScenario, LaunchRequest,
-    TcpArgumentsTemplate,
+    TaskTemplate as BuildTaskTemplate, TcpArgumentsTemplate,
 };
