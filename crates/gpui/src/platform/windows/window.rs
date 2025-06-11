@@ -1305,7 +1305,7 @@ mod windows_renderer {
         BladeRenderer::new(context, &raw, config).inspect_err(|err| {
             show_error(
                 "Error: Zed failed to initialize BladeRenderer",
-                err.to_string().as_str(),
+                err.to_string(),
             )
         })
     }

@@ -187,7 +187,7 @@ fn is_color_light(color: &Color) -> bool {
     ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
 }
 
-pub(crate) fn show_error(title: &str, content: &str) {
+pub(crate) fn show_error(title: &str, content: String) {
     let _ = unsafe {
         MessageBoxW(
             None,

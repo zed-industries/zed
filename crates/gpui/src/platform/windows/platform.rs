@@ -81,7 +81,7 @@ impl WindowsPlatformState {
 }
 
 impl WindowsPlatform {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new() -> anyhow::Result<Self> {
         unsafe {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
@@ -109,7 +109,7 @@ impl WindowsPlatform {
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
 
-        Self {
+        Ok(Self {
             state,
             raw_window_handles,
             gpu_context,
@@ -122,7 +122,7 @@ impl WindowsPlatform {
             bitmap_factory,
             validation_number,
             main_thread_id_win32,
-        }
+        })
     }
 
     fn redraw_all(&self) {
