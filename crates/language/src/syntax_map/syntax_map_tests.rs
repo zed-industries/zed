@@ -812,19 +812,22 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
     .unindent();
 
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
-    let buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
+    let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), text);
 
     let mut syntax_map = SyntaxMap::new(&buffer);
     syntax_map.set_language_registry(registry.clone());
 
     let language = Arc::new(erb_lang());
 
+    log::info!("parsing");
     registry.add(language.clone());
     syntax_map.reparse(language.clone(), &buffer);
 
+    log::info!("loading html");
     registry.add(Arc::new(html_lang()));
     syntax_map.reparse(language.clone(), &buffer);
 
+    log::info!("loading ruby");
     registry.add(Arc::new(ruby_lang()));
     syntax_map.reparse(language.clone(), &buffer);
 
@@ -835,6 +838,39 @@ fn test_syntax_map_languages_loading_with_erb(cx: &mut App) {
         "
             <«body»>
                 <% if «@one» %>
+                    <«div» class=one>
+                <% else %>
+                    <«div» class=two>
+                <% end %>
+                </«div»>
+            </«body»>
+        ",
+    );
+
+    let text = r#"
+        <body>
+            <% if @one«_hundred» %>
+                <div class=one>
+            <% else %>
+                <div class=two>
+            <% end %>
+            </div>
+        </body>
+    "#
+    .unindent();
+
+    log::info!("editing");
+    buffer.edit_via_marked_text(&text);
+    syntax_map.interpolate(&buffer);
+    syntax_map.reparse(language.clone(), &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["tag", "ivar"],
+        "
+            <«body»>
+                <% if «@one_hundred» %>
                     <«div» class=one>
                 <% else %>
                     <«div» class=two>
