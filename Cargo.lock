@@ -4695,7 +4695,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "command_palette_hooks",
  "convert_case 0.8.0",
  "ctor",
  "dap",
